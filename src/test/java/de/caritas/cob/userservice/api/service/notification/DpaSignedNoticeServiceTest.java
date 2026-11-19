@@ -36,8 +36,10 @@ import de.caritas.cob.userservice.api.tenant.TenantContext;
 import de.caritas.cob.userservice.tenantadminservice.generated.web.model.DpaSignatureDTO;
 import de.caritas.cob.userservice.tenantservice.generated.web.model.RestrictedTenantDTO;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -91,8 +93,15 @@ class DpaSignedNoticeServiceTest {
   void setUp() {
     TransactionStatus transactionStatus = new SimpleTransactionStatus();
     when(transactionManager.getTransaction(any())).thenReturn(transactionStatus);
+    var nextNoticeId = new AtomicLong(1);
     when(noticeRepository.save(any(DpaSignedNotice.class)))
-        .thenAnswer(invocation -> invocation.getArgument(0));
+        .thenAnswer(
+            invocation -> {
+              DpaSignedNotice notice = invocation.getArgument(0);
+              if (notice.getId() == null) notice.setId(nextNoticeId.getAndIncrement());
+              return notice;
+            });
+    when(noticeRepository.beginAdminHandoff(anyLong())).thenReturn(1);
     when(templateRepository.findByKindAndActiveTrueAndTenantIdIsNullOrderByCreateDateDesc(
             InviteEmailTemplateKind.DPA_SIGNED_NOTICE))
         .thenReturn(List.of());
@@ -302,10 +311,7 @@ class DpaSignedNoticeServiceTest {
   }
 
   @Test
-  void onSignatureHint_releasesTheClaim_When_renderingFailsBeforeDispatch() {
-    // the claim is committed in its own transaction and its unique key is what makes the notice
-    // exactly-once — a claim stranded by a PRE-dispatch failure would not just lose this attempt,
-    // it would make every later hint lose the race and the notice would never be sent
+  void onSignatureHint_keepsTheAdminClaimPending_When_renderingFailsBeforeHandoff() {
     givenSignatures(forwardedSignature("kc-admin-1"));
     when(adminRepository.findById("kc-admin-1")).thenReturn(Optional.of(forwardingAdmin()));
     when(templateRepository.findByKindAndActiveTrueAndTenantIdIsNullOrderByCreateDateDesc(
@@ -314,7 +320,12 @@ class DpaSignedNoticeServiceTest {
 
     service.onSignatureHint(TENANT_ID);
 
-    verify(noticeRepository).delete(any(DpaSignedNotice.class));
+    var captured = ArgumentCaptor.forClass(DpaSignedNotice.class);
+    verify(noticeRepository).save(captured.capture());
+    assertThat(captured.getValue().getAdminNextAttemptAt()).isNotNull();
+    assertThat(captured.getValue().getAdminRecoverySignatureAt()).isEqualTo("2026-08-14T09:15:00");
+    verify(noticeRepository, never()).beginAdminHandoff(anyLong());
+    verify(noticeRepository, never()).delete(any(DpaSignedNotice.class));
     verify(inviteMailDispatchService, never())
         .send(any(), any(), any(), any(), any(), any(), any());
   }
@@ -353,7 +364,12 @@ class DpaSignedNoticeServiceTest {
     givenSignatures(forwardedSignature("kc-admin-1"));
     when(adminRepository.findById("kc-admin-1")).thenReturn(Optional.of(forwardingAdmin()));
     when(noticeRepository.save(any(DpaSignedNotice.class)))
-        .thenAnswer(invocation -> invocation.getArgument(0)) // the claim
+        .thenAnswer(
+            invocation -> {
+              DpaSignedNotice notice = invocation.getArgument(0);
+              notice.setId(1L);
+              return notice;
+            }) // the claim
         .thenThrow(new IllegalStateException("connection lost")); // recording sent_at
 
     service.onSignatureHint(TENANT_ID);
@@ -624,6 +640,87 @@ class DpaSignedNoticeServiceTest {
     assertEquals(TENANT_ID, claim.getTenantId());
     assertEquals(DPA_VERSION, claim.getDpaVersion());
     assertEquals("toni@example.org", claim.getRecipientEmail());
+  }
+
+  @Test
+  void recoveryDeliversTheRecordedSignatureEvenAfterALaterSignatureAppears() {
+    var signature = forwardedSignature("kc-admin-1");
+    var later = forwardedSignature("kc-admin-2").signedAt("2026-08-14T10:15:00");
+    var pending = dueAdminNotice(signature);
+    givenPending(pending);
+    givenSignatures(later, signature);
+    when(adminRepository.findById("kc-admin-1")).thenReturn(Optional.of(forwardingAdmin()));
+
+    service.retryPendingAdminNotices();
+
+    verify(adminRepository, never()).findById("kc-admin-2");
+    verify(noticeRepository).beginAdminHandoff(pending.getId());
+    verify(inviteMailDispatchService)
+        .send(eq("toni@example.org"), any(), any(), isNull(), eq(TENANT_ID), eq("de"), any());
+    assertThat(pending.getSentAt()).isNotNull();
+    assertThat(pending.getAdminNextAttemptAt()).isNull();
+  }
+
+  @Test
+  void recoveryKeepsItsClaimPendingWhenTheExactSignatureIsUnavailable() {
+    var signature = forwardedSignature("kc-admin-1");
+    var pending = dueAdminNotice(signature);
+    givenPending(pending);
+    givenSignatures(signature.signedAt("2026-08-14T10:15:00"));
+
+    service.retryPendingAdminNotices();
+
+    verify(noticeRepository, never()).beginAdminHandoff(anyLong());
+    verify(inviteMailDispatchService, never()).send(any(), any(), any(), any(), any(), any(), any());
+    assertThat(pending.getSentAt()).isNull();
+  }
+
+  @Test
+  void recoveryDoesNotDeliverToAnAddressThatNoLongerMatchesTheRecordedRecipient() {
+    var signature = forwardedSignature("kc-admin-1");
+    var pending = dueAdminNotice(signature);
+    givenPending(pending);
+    givenSignatures(signature);
+    var currentAdmin = forwardingAdmin();
+    currentAdmin.setEmail("changed@example.org");
+    when(adminRepository.findById("kc-admin-1")).thenReturn(Optional.of(currentAdmin));
+
+    service.retryPendingAdminNotices();
+
+    verify(noticeRepository, never()).beginAdminHandoff(anyLong());
+    verify(inviteMailDispatchService, never()).send(any(), any(), any(), any(), any(), any(), any());
+  }
+
+  @Test
+  void recoveryDoesNotSendWhenAnotherWorkerHasAlreadyStartedHandoff() {
+    var signature = forwardedSignature("kc-admin-1");
+    var pending = dueAdminNotice(signature);
+    givenPending(pending);
+    givenSignatures(signature);
+    when(adminRepository.findById("kc-admin-1")).thenReturn(Optional.of(forwardingAdmin()));
+    when(noticeRepository.beginAdminHandoff(pending.getId())).thenReturn(0);
+
+    service.retryPendingAdminNotices();
+
+    verify(inviteMailDispatchService, never()).send(any(), any(), any(), any(), any(), any(), any());
+    verify(noticeRepository, never()).delete(any(DpaSignedNotice.class));
+  }
+
+  private DpaSignedNotice dueAdminNotice(DpaSignatureDTO signature) {
+    return DpaSignedNotice.builder()
+        .id(99L)
+        .tenantId(TENANT_ID)
+        .dpaVersion(DPA_VERSION)
+        .recipientEmail("toni@example.org")
+        .adminRecoverySignatureAt(signature.getSignedAt())
+        .adminNextAttemptAt(LocalDateTime.parse("2026-08-15T00:00:00"))
+        .build();
+  }
+
+  private void givenPending(DpaSignedNotice pending) {
+    when(noticeRepository.findDueAdminNoticeIds(any(), any())).thenReturn(List.of(pending.getId()));
+    when(noticeRepository.reserveAdminPreparation(eq(pending.getId()), any(), any())).thenReturn(1);
+    when(noticeRepository.findById(pending.getId())).thenReturn(Optional.of(pending));
   }
 
   // --- DPA signed write-back to the invite (ORISO-Admin#896, epic #725) ---

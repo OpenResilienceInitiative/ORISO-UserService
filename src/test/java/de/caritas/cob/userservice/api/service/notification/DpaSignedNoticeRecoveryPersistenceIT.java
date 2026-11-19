@@ -1,0 +1,172 @@
+package de.caritas.cob.userservice.api.service.notification;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
+import static org.mockito.Mockito.when;
+
+import de.caritas.cob.userservice.api.admin.service.tenant.TenantService;
+import de.caritas.cob.userservice.api.config.observability.DpaSignedNoticeMetrics;
+import de.caritas.cob.userservice.api.model.Admin;
+import de.caritas.cob.userservice.api.model.DpaSignedNotice;
+import de.caritas.cob.userservice.api.model.DpaSignedNotice.NoticeRole;
+import de.caritas.cob.userservice.api.port.out.AccountInviteRepository;
+import de.caritas.cob.userservice.api.port.out.AdminRepository;
+import de.caritas.cob.userservice.api.port.out.DpaSignedNoticeRepository;
+import de.caritas.cob.userservice.api.port.out.IdentityLocaleLookup;
+import de.caritas.cob.userservice.api.port.out.InviteEmailTemplateRepository;
+import de.caritas.cob.userservice.api.service.accountinvite.InviteEmailTemplateKind;
+import de.caritas.cob.userservice.api.service.accountinvite.mail.InviteMailDispatchService;
+import de.caritas.cob.userservice.tenantadminservice.generated.web.model.DpaSignatureDTO;
+import de.caritas.cob.userservice.tenantservice.generated.web.model.RestrictedTenantDTO;
+import java.time.LocalDateTime;
+import java.time.ZoneOffset;
+import java.util.List;
+import java.util.Optional;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.data.jpa.test.autoconfigure.DataJpaTest;
+import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.test.context.ActiveProfiles;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.annotation.Propagation;
+import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
+
+@DataJpaTest
+@ActiveProfiles("testing")
+@AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
+@Transactional(propagation = Propagation.NOT_SUPPORTED)
+class DpaSignedNoticeRecoveryPersistenceIT {
+
+  private static final long TENANT_ID = 91704L;
+  private static final String VERSION = "2026-11-01T07:00:00";
+  private static final String SIGNED_AT = "2026-11-19T10:10:00.123";
+  private static final String RECIPIENT = "forwarder@example.test";
+
+  @Autowired private DpaSignedNoticeRepository notices;
+  @Autowired private PlatformTransactionManager transactionManager;
+
+  @AfterEach
+  void removeCommittedFixtures() {
+    notices.deleteAllInBatch(
+        notices.findAll().stream().filter(notice -> notice.getTenantId().equals(TENANT_ID)).toList());
+  }
+
+  @Test
+  void aNewWorkerRecoversAPersistedAdminClaimAndIgnoresOldAndSignerRows() {
+    var currentSender = mock(InviteMailDispatchService.class);
+    var interrupted = service(currentSender, true);
+    interrupted.onSignatureHint(TENANT_ID);
+
+    verifyNoInteractions(currentSender);
+    var pending = notices.findAll().stream()
+            .filter(
+                notice ->
+                    notice.getTenantId().equals(TENANT_ID)
+                        && VERSION.equals(notice.getDpaVersion()))
+        .findFirst().orElseThrow();
+    assertThat(pending.getAdminRecoverySignatureAt()).isEqualTo(SIGNED_AT);
+    assertThat(pending.getSentAt()).isNull();
+    assertThat(pending.getAdminNextAttemptAt()).isNotNull();
+
+    var due = LocalDateTime.now(ZoneOffset.UTC).minusSeconds(1);
+    pending.setAdminNextAttemptAt(due);
+    notices.saveAndFlush(pending);
+    var historic = saveClaim("legacy", NoticeRole.ADMIN, null, null);
+    var signer = saveClaim("signer", NoticeRole.SIGNER, SIGNED_AT, due);
+
+    var recoveredSender = mock(InviteMailDispatchService.class);
+    var restarted = service(recoveredSender, false);
+    restarted.retryPendingAdminNotices();
+    restarted.retryPendingAdminNotices();
+    restarted.onSignatureHint(TENANT_ID);
+
+    verify(recoveredSender, times(1))
+        .send(eq(RECIPIENT), any(), any(), isNull(), eq(TENANT_ID), eq("de"), any());
+    assertThat(notices.findById(pending.getId()).orElseThrow().getSentAt()).isNotNull();
+    assertThat(notices.findById(historic.getId()).orElseThrow().getSentAt()).isNull();
+    assertThat(notices.findById(signer.getId()).orElseThrow().getSentAt()).isNull();
+  }
+
+  @Test
+  void aSecondContenderCannotReopenTheCommittedHandoffBoundary() {
+    var now = LocalDateTime.now(ZoneOffset.UTC);
+    var notice = saveClaim("racing", NoticeRole.ADMIN, SIGNED_AT, now.minusSeconds(1));
+    var tx = new TransactionTemplate(transactionManager);
+    assertThat(notices.findDueAdminNoticeIds(now, PageRequest.of(0, 8))).contains(notice.getId());
+
+    assertThat((Integer) tx.execute(status -> notices.beginAdminHandoff(notice.getId())))
+        .isEqualTo(1);
+    assertThat((Integer) tx.execute(status -> notices.beginAdminHandoff(notice.getId())))
+        .isZero();
+    assertThat(notices.findDueAdminNoticeIds(now.plusHours(1), PageRequest.of(0, 8)))
+        .doesNotContain(notice.getId());
+  }
+
+  private DpaSignedNotice saveClaim(
+      String version, NoticeRole role, String signingTime, LocalDateTime retryAt) {
+    return notices.saveAndFlush(
+        DpaSignedNotice.builder()
+            .tenantId(TENANT_ID)
+            .dpaVersion(version)
+            .noticeRole(role)
+            .recipientEmail(RECIPIENT)
+            .adminRecoverySignatureAt(signingTime)
+            .adminNextAttemptAt(retryAt)
+            .createDate(LocalDateTime.now(ZoneOffset.UTC))
+            .build());
+  }
+
+  private DpaSignedNoticeService service(InviteMailDispatchService mail, boolean failBeforeHandoff) {
+    var signatures = mock(TenantDpaSignatureReadClient.class);
+    var signature =
+        new DpaSignatureDTO()
+            .tenantId(TENANT_ID)
+            .dpaVersion(VERSION)
+            .status("SIGNED")
+            .source("FORWARDED_EXTERNAL")
+            .signedAt(SIGNED_AT)
+            .forwardedByUserId("forwarder");
+    when(signatures.readSignatures(TENANT_ID)).thenReturn(List.of(signature));
+    var admins = mock(AdminRepository.class);
+    when(admins.findById("forwarder"))
+        .thenReturn(Optional.of(Admin.builder().id("forwarder").email(RECIPIENT).build()));
+    var locales = mock(IdentityLocaleLookup.class);
+    when(locales.findLocaleById("forwarder")).thenReturn(Optional.of("de"));
+    var templates = mock(InviteEmailTemplateRepository.class);
+    var activeTemplates =
+        when(templates.findByKindAndActiveTrueAndTenantIdIsNullOrderByCreateDateDesc(
+            InviteEmailTemplateKind.DPA_SIGNED_NOTICE));
+    if (failBeforeHandoff) {
+      activeTemplates.thenThrow(new IllegalStateException("simulated interruption before handoff"));
+    } else {
+      activeTemplates.thenReturn(List.of());
+    }
+    var tenants = mock(TenantService.class);
+    when(tenants.getRestrictedTenantData(TENANT_ID))
+        .thenReturn(new RestrictedTenantDTO().name("Synthetic tenant"));
+    var service =
+        new DpaSignedNoticeService(
+            signatures,
+            notices,
+            admins,
+            mock(AccountInviteRepository.class),
+            locales,
+            templates,
+            mail,
+            tenants,
+            transactionManager,
+            mock(DpaSignedNoticeMetrics.class),
+            new AdminPanelUrl("https://admin.example.test"));
+    service.useExecutor(Runnable::run);
+    return service;
+  }
+}

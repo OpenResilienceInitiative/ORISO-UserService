@@ -22,6 +22,7 @@ import de.caritas.cob.userservice.api.service.accountinvite.mail.InviteMailOrigi
 import de.caritas.cob.userservice.api.tenant.TenantContext;
 import de.caritas.cob.userservice.tenantadminservice.generated.web.model.DpaSignatureDTO;
 import jakarta.annotation.PreDestroy;
+import java.time.Duration;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.time.ZoneOffset;
@@ -30,13 +31,16 @@ import java.time.format.DateTimeParseException;
 import java.util.Comparator;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.Executor;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
+import java.util.stream.Stream;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
@@ -57,8 +61,9 @@ import org.springframework.web.client.HttpClientErrorException;
  *
  * <p>Per-role deduplication: a ledger row per (tenant, signed version, recipient role) is claimed
  * in its own transaction BEFORE sending — of two concurrent hints exactly one wins the unique
- * constraint. When anything fails before the SMTP handover, the claim is compensated (deleted) so a
- * later hint can retry.
+ * constraint. New verified administrator claims stay pending through mail preparation, so a
+ * recovery sweep can pick them up after interruption. Explicit handoff failures release the
+ * claim so a later hint can retry. Legacy and signer claims also release on preparation failure.
  *
  * <p><b>Deliberate duplicate on an uncertain delivery (#1341).</b> The release happens for EVERY
  * failure before the handover, including {@link
@@ -88,6 +93,10 @@ import org.springframework.web.client.HttpClientErrorException;
 @Service
 @Slf4j
 public class DpaSignedNoticeService {
+
+  private static final PageRequest ADMIN_RECOVERY_BATCH = PageRequest.of(0, 8);
+  private static final Duration ADMIN_RECOVERY_BUDGET = Duration.ofSeconds(45);
+  private static final Duration ADMIN_RECOVERY_DELAY = Duration.ofMinutes(1);
 
   static final String SOURCE_FORWARDED_EXTERNAL = "FORWARDED_EXTERNAL";
   static final String STATUS_SIGNED = "SIGNED";
@@ -358,13 +367,78 @@ public class DpaSignedNoticeService {
     }
   }
 
-  private Optional<DpaSignatureDTO> findLatestForwardedSignature(Long tenantId) {
+  private Stream<DpaSignatureDTO> forwardedSignatures(Long tenantId) {
     return signatureReadClient.readSignatures(tenantId).stream()
         .filter(signature -> STATUS_SIGNED.equalsIgnoreCase(signature.getStatus()))
-        .filter(signature -> SOURCE_FORWARDED_EXTERNAL.equalsIgnoreCase(signature.getSource()))
+        .filter(signature -> SOURCE_FORWARDED_EXTERNAL.equalsIgnoreCase(signature.getSource()));
+  }
+
+  private Optional<DpaSignatureDTO> findLatestForwardedSignature(Long tenantId) {
+    return forwardedSignatures(tenantId)
         .max(
             Comparator.comparing(
                 DpaSignatureDTO::getSignedAt, Comparator.nullsFirst(Comparator.naturalOrder())));
+  }
+
+  void submitAdminRecovery(Runnable recovery) {
+    noticeExecutor.execute(recovery);
+  }
+
+  void retryPendingAdminNotices() {
+    long started = System.nanoTime();
+    for (long id : noticeRepository.findDueAdminNoticeIds(nowUtc(), ADMIN_RECOVERY_BATCH)) {
+      if (System.nanoTime() - started >= ADMIN_RECOVERY_BUDGET.toNanos()) {
+        break;
+      }
+      try {
+        var now = nowUtc();
+        var reserved =
+            requiresNewTransaction.execute(
+                tx ->
+                    noticeRepository.reserveAdminPreparation(
+                        id, now, now.plus(ADMIN_RECOVERY_DELAY)));
+        if (Integer.valueOf(1).equals(reserved)) {
+          noticeRepository.findById(id).ifPresent(this::retryAdminNotice);
+        }
+      } catch (RuntimeException failure) {
+        log.warn(
+            "DPA administrator notice {} recovery deferred ({})",
+            id,
+            failure.getClass().getSimpleName());
+      }
+    }
+  }
+
+  private void retryAdminNotice(DpaSignedNotice claim) {
+    if (claim.getNoticeRole() != NoticeRole.ADMIN
+        || claim.getSentAt() != null
+        || claim.getAdminNextAttemptAt() == null
+        || claim.getAdminRecoverySignatureAt() == null) {
+      return;
+    }
+    var tenantId = claim.getTenantId();
+    TenantContext.runIn(
+        tenantId,
+        () -> {
+          var signature =
+              forwardedSignatures(tenantId)
+                  .filter(row -> Objects.equals(row.getTenantId(), tenantId))
+                  .filter(row -> claim.getDpaVersion().equals(dedupKeyFor(row)))
+                  .filter(row -> claim.getAdminRecoverySignatureAt().equals(row.getSignedAt()))
+                  .limit(2)
+                  .toList();
+          if (signature.size() != 1) {
+            return;
+          }
+          var signed = signature.getFirst();
+          resolveRecipient(tenantId, signed)
+              .filter(recipient -> claim.getRecipientEmail().equals(recipient.email()))
+              .ifPresent(recipient -> sendNotice(tenantId, signed, recipient, claim));
+        });
+  }
+
+  private static LocalDateTime nowUtc() {
+    return LocalDateTime.now(ZoneOffset.UTC);
   }
 
   private Optional<Recipient> resolveRecipient(Long tenantId, DpaSignatureDTO signature) {
@@ -406,6 +480,12 @@ public class DpaSignedNoticeService {
   private Optional<DpaSignedNotice> claimNotice(
       Long tenantId, DpaSignatureDTO signature, Recipient recipient, NoticeRole role) {
     var dpaVersion = dedupKeyFor(signature);
+    var signedAt = signature.getSignedAt();
+    boolean recoverableAdmin =
+        role == NoticeRole.ADMIN
+            && Objects.equals(tenantId, signature.getTenantId())
+            && !isBlank(signedAt)
+            && signedAt.length() <= 64;
     try {
       return Optional.ofNullable(
           requiresNewTransaction.execute(
@@ -416,7 +496,10 @@ public class DpaSignedNoticeService {
                           .dpaVersion(dpaVersion)
                           .noticeRole(role)
                           .recipientEmail(recipient.email())
-                          .signedAt(parseDateTime(signature.getSignedAt()))
+                          .signedAt(parseDateTime(signedAt))
+                          .adminRecoverySignatureAt(recoverableAdmin ? signedAt : null)
+                          .adminNextAttemptAt(
+                              recoverableAdmin ? nowUtc().plus(ADMIN_RECOVERY_DELAY) : null)
                           .createDate(LocalDateTime.now())
                           .build())));
     } catch (DataIntegrityViolationException exception) {
@@ -426,46 +509,43 @@ public class DpaSignedNoticeService {
 
   private void sendNotice(
       Long tenantId, DpaSignatureDTO signature, Recipient recipient, DpaSignedNotice claim) {
-    // Everything from here until the mail is handed over must be compensated on failure. The claim
-    // is already committed in its own transaction, and its unique key is what makes the notice
-    // exactly-once — so a claim left behind with sent_at still null does not merely lose THIS
-    // attempt, it makes every later hint lose the race and the notice is never sent at all.
-    // Loading a template, resolving the tenant name and rendering all reach out or can throw.
+    PreparedNotice mail;
     try {
-      var language = recipient.language();
-      var signerReceipt = claim.getNoticeRole() == NoticeRole.SIGNER;
-      var template =
-          signerReceipt ? Optional.<InviteEmailTemplate>empty() : findActiveTemplate(language);
-      var placeholders = buildPlaceholders(tenantId, signature, language);
-      var subject =
-          render(
-              template
-                  .map(InviteEmailTemplate::getSubject)
-                  .orElse(signerReceipt ? signerSubject(language) : defaultSubject(language)),
-              placeholders);
-      var body =
-          render(
-              template
-                  .map(InviteEmailTemplate::getBody)
-                  .orElse(signerReceipt ? signerBody(language) : defaultBody(language)),
-              placeholders);
-      // No primary action: the notice carries its link as {{adminUrl}} inline in the prose, and
-      // the layout would render a second CTA button on top of it. InviteEmailPreviewService passes
-      // null for this kind, so passing the Admin URL here made the delivered mail carry a button
-      // the operator never saw in the preview.
+      mail = prepareNotice(tenantId, signature, recipient, claim);
+    } catch (RuntimeException failure) {
+      if (claim.getAdminRecoverySignatureAt() == null) {
+        releaseClaim(claim, tenantId, failure);
+      } else {
+        log.warn(
+            "DPA administrator notice {} remains pending after preparation failed ({})",
+            claim.getId(),
+            failure.getClass().getSimpleName());
+      }
+      return;
+    }
+
+    // The row changes before I/O and only one contender can cross this boundary. A process
+    // interruption after this point is ambiguous and stays outside automatic recovery.
+    if (claim.getAdminRecoverySignatureAt() != null) {
+      var started =
+          requiresNewTransaction.execute(tx -> noticeRepository.beginAdminHandoff(claim.getId()));
+      if (!Integer.valueOf(1).equals(started)) {
+        return;
+      }
+      claim.setAdminNextAttemptAt(null);
+    }
+
+    try {
+      // No primary action: the notice carries its link inline and the preview also passes null.
       inviteMailDispatchService.send(
           recipient.email(),
-          subject,
-          body,
+          mail.subject(),
+          mail.body(),
           null,
           tenantId,
-          language,
+          recipient.language(),
           InviteMailOrigin.of(tenantId, TenantSystemEmailDelivery.Purpose.DPA_SIGNED_NOTICE));
     } catch (RuntimeException failure) {
-      // Every failure up to the handoff, not only SmtpSendException: a template load, the
-      // tenant-name lookup or the rendering can fail too, and a stranded claim silently disables
-      // the notice forever. SmtpSendException is the only one that can mean "the mail may already
-      // be out" — see releaseClaim and the "better twice than never" rule in the class javadoc.
       releaseClaim(claim, tenantId, failure);
       return;
     }
@@ -491,6 +571,25 @@ public class DpaSignedNoticeService {
           tenantId,
           afterDispatch);
     }
+  }
+
+  private record PreparedNotice(String subject, String body) {}
+
+  private PreparedNotice prepareNotice(
+      Long tenantId, DpaSignatureDTO signature, Recipient recipient, DpaSignedNotice claim) {
+    var language = recipient.language();
+    var signerReceipt = claim.getNoticeRole() == NoticeRole.SIGNER;
+    var template = signerReceipt ? Optional.<InviteEmailTemplate>empty() : findActiveTemplate(language);
+    var placeholders = buildPlaceholders(tenantId, signature, language);
+    return new PreparedNotice(
+        render(
+            template.map(InviteEmailTemplate::getSubject)
+                .orElse(signerReceipt ? signerSubject(language) : defaultSubject(language)),
+            placeholders),
+        render(
+            template.map(InviteEmailTemplate::getBody)
+                .orElse(signerReceipt ? signerBody(language) : defaultBody(language)),
+            placeholders));
   }
 
   /**

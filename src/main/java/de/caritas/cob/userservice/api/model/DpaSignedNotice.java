@@ -71,6 +71,14 @@ public class DpaSignedNotice {
   @Column(name = "sent_at", columnDefinition = "datetime")
   private LocalDateTime sentAt;
 
+  /** Exact signing timestamp from the verified owner response, for new ADMIN work only. */
+  @Column(name = "admin_recovery_signature_at", length = 64, updatable = false)
+  private String adminRecoverySignatureAt;
+
+  /** Non-null only while the verified ADMIN claim has not begun its mail handoff. */
+  @Column(name = "admin_next_attempt_at")
+  private LocalDateTime adminNextAttemptAt;
+
   @Column(name = "create_date", nullable = false, columnDefinition = "datetime")
   private LocalDateTime createDate;
 }

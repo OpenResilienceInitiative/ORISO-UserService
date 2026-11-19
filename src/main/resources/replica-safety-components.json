@@ -682,6 +682,22 @@
       "status": "bounded"
     },
     {
+      "id": "dpa-signed-notice-admin-recovery",
+      "source": "src/main/java/de/caritas/cob/userservice/api/service/notification/DpaSignedNoticeRecoveryScheduler.java",
+      "kind": "scheduler",
+      "owner": "notifications",
+      "risk": "duplicate-side-effect",
+      "components": [
+        "retryPending"
+      ],
+      "decision": "Dispatch a bounded sweep using the existing notice executor and shared database lease. A conditional row transition fences mail handoff even after lease expiry. Only positively marked pre-handoff administrator work is retryable.",
+      "signals": [
+        "userservice.scheduler.executions",
+        "userservice.scheduler.duration"
+      ],
+      "status": "bounded"
+    },
+    {
       "id": "reply-email-delivery-scheduler",
       "source": "src/main/java/de/caritas/cob/userservice/api/service/notification/ReplyEmailDeliveryScheduler.java",
       "kind": "scheduler",

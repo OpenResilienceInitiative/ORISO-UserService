@@ -88,7 +88,13 @@ class DpaConfirmationReceiptTest {
                         .primaryColor("#1c4f8f")));
     when(transactionManager.getTransaction(any())).thenReturn(new SimpleTransactionStatus());
     when(noticeRepository.save(any(DpaSignedNotice.class)))
-        .thenAnswer(invocation -> invocation.getArgument(0));
+        .thenAnswer(
+            invocation -> {
+              DpaSignedNotice notice = invocation.getArgument(0);
+              if (notice.getId() == null) notice.setId((long) notice.getNoticeRole().ordinal() + 1);
+              return notice;
+            });
+    when(noticeRepository.beginAdminHandoff(1L)).thenReturn(1);
     when(templateRepository.findByKindAndActiveTrueAndTenantIdIsNullOrderByCreateDateDesc(
             InviteEmailTemplateKind.DPA_SIGNED_NOTICE))
         .thenReturn(List.of());
@@ -244,6 +250,7 @@ class DpaConfirmationReceiptTest {
         .thenAnswer(
             invocation -> {
               DpaSignedNotice notice = invocation.getArgument(0);
+              if (notice.getId() == null) notice.setId((long) notice.getNoticeRole().ordinal() + 1);
               DpaSignedNotice existing = ledger.putIfAbsent(notice.getNoticeRole(), notice);
               if (existing != null && existing != notice) {
                 throw new DataIntegrityViolationException("duplicate recipient role");
