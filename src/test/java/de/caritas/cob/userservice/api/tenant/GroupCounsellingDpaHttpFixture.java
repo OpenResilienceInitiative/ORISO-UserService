@@ -169,6 +169,19 @@ abstract class GroupCounsellingDpaHttpFixture {
                         MediaType.APPLICATION_JSON)
                     .createResponse(request);
               }
+              if (path.equals(
+                  "/_matrix/client/r0/rooms/!synthetic-created:synthetic.oriso.test"
+                      + "/state/m.room.power_levels")) {
+                // Part of creating the room (passage-blur rule, ORISO-Frontend#2229); not counted
+                // as a further Matrix write.
+                return withSuccess(
+                        request.getMethod() == org.springframework.http.HttpMethod.PUT
+                            ? "{\"event_id\":\"$synthetic-power\"}"
+                            : "{\"users\":{},\"events\":{\"m.room.power_levels\":100},"
+                                + "\"events_default\":0,\"redact\":50}",
+                        MediaType.APPLICATION_JSON)
+                    .createResponse(request);
+              }
               return additionalExternalResponse(request);
             });
   }
