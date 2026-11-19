@@ -147,4 +147,38 @@ class PublicJourneyServiceTest {
     assertThat(service.forLink("anders", null)).isEmpty();
     assertThat(service.forLink("../etc", null)).isEmpty();
   }
+
+  @Test
+  void aCentreOfAnotherTraegerThanTheDomainsIsNotFound() throws Exception {
+    platform(mail("j1"));
+    var agency = new AgencyDTO();
+    agency.setTenantId(7L);
+    when(agencyService.getAgency(42L)).thenReturn(agency);
+    TenantContext.setCurrentTenant(8L);
+    assertThatThrownBy(() -> service.forRegistration(1, 42L))
+        .isInstanceOf(NoSuchElementException.class);
+  }
+
+  @Test
+  void anAgencyServiceOutageIsNotFoundNotAServerError() throws Exception {
+    platform(mail("j1"));
+    when(agencyService.getAgency(42L)).thenThrow(new IllegalStateException("down"));
+    assertThatThrownBy(() -> service.forRegistration(1, 42L))
+        .isInstanceOf(NoSuchElementException.class);
+  }
+
+  @Test
+  @SuppressWarnings("unchecked")
+  void editorFieldsAreDroppedWhereverTheySitAndOnlyPublicJourneyFieldsRemain() throws Exception {
+    var journey = mail("j1");
+    journey.put("internalNote", "nur für Redaktion");
+    var question = new java.util.LinkedHashMap<String, Object>();
+    question.put("id", "q1");
+    question.put("profile", Map.of("author", "Frank"));
+    ((Map<String, Object>) phase(journey, "flight").get(0)).put("questions", List.of(question));
+    platform(journey);
+    var found = service.forRegistration(1, null).orElseThrow().journey();
+    assertThat(found).containsOnlyKeys("id", "conversationType", "phases", "survey");
+    assertThat(found.toString()).doesNotContain("profile").contains("q1");
+  }
 }

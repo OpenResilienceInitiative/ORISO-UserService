@@ -72,6 +72,7 @@ public final class JourneyRules {
       require(linkIds.add((String) link.get("id")), "link id used twice");
       var slug = link.get("slug");
       require(slug == null || slug instanceof String s && isSlug(s), "link slug invalid");
+      require(link.get("name") == null || link.get("name") instanceof String, "link name invalid");
     }
   }
 
@@ -97,7 +98,7 @@ public final class JourneyRules {
       Map<String, Object> journey, Map<String, Object> stored, Collection<String> takenElsewhere) {
     var before = slugsById(stored);
     var taken = new HashSet<>(takenElsewhere);
-    var links = (List<Object>) ((Map<String, Object>) journey.get("routes")).get("links");
+    var links = list(asMap(journey.get("routes"), "routes").get("links"), "routes.links");
     // Slugs this journey keeps or brings come first, so a new link never takes one of them.
     for (var entry : links) {
       var link = (Map<String, Object>) entry;
@@ -116,7 +117,8 @@ public final class JourneyRules {
     for (var entry : links) {
       var link = (Map<String, Object>) entry;
       if (link.get("slug") == null) {
-        var slug = freeSlug(slugOf((String) link.get("name")), taken);
+        var name = link.get("name") instanceof String text ? text : "";
+        var slug = freeSlug(slugOf(name), taken);
         taken.add(slug);
         link.put("slug", slug);
       }
@@ -140,6 +142,22 @@ public final class JourneyRules {
       }
     }
     return slugs;
+  }
+
+  /** The topics whose registration runs this journey. */
+  public static Set<Long> registrationTopics(Map<String, Object> journey) {
+    var topics = new HashSet<Long>();
+    if (journey != null
+        && journey.get("routes") instanceof Map<?, ?> routes
+        && routes.get("registration") instanceof List<?> ids) {
+      ids.forEach(
+          id -> {
+            if (id instanceof Number number) {
+              topics.add(number.longValue());
+            }
+          });
+    }
+    return topics;
   }
 
   /** The step ids of a journey, for the rule that no two journeys share one. */

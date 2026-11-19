@@ -1,6 +1,5 @@
 package de.caritas.cob.userservice.api.service.journey;
 
-import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -47,36 +46,47 @@ public final class JourneyView {
     return journey;
   }
 
-  /** Drops what only editors see: block profiles and machine-translation marks. */
+  /** The journey fields an advice seeker's app needs; everything else stays with the editors. */
+  private static final List<String> PUBLIC_JOURNEY_FIELDS =
+      List.of("id", "conversationType", "phases", "survey");
+
+  /**
+   * Keeps only what the advice seeker's app needs (an allow-list of journey fields) and drops what
+   * only editors see (block profiles, machine-translation marks) wherever it sits in the steps.
+   */
   @SuppressWarnings("unchecked")
   public static Map<String, Object> forAdviceSeekers(Map<String, Object> journey) {
-    var copy = new LinkedHashMap<>(journey);
-    var phases = new LinkedHashMap<String, Object>();
-    if (journey.get("phases") instanceof Map<?, ?> map) {
+    var copy = new LinkedHashMap<String, Object>();
+    PUBLIC_JOURNEY_FIELDS.forEach(
+        field -> {
+          if (journey.containsKey(field)) {
+            copy.put(
+                field,
+                field.equals("phases")
+                    ? withoutEditorFields(journey.get(field))
+                    : journey.get(field));
+          }
+        });
+    return copy;
+  }
+
+  @SuppressWarnings("unchecked")
+  private static Object withoutEditorFields(Object node) {
+    if (node instanceof Map<?, ?> map) {
+      var kept = new LinkedHashMap<String, Object>();
       ((Map<String, Object>) map)
           .forEach(
-              (phase, steps) -> {
-                var cleaned = new ArrayList<Object>();
-                if (steps instanceof List<?> list) {
-                  list.forEach(
-                      step -> {
-                        if (step instanceof Map<?, ?> fields) {
-                          var kept = new LinkedHashMap<>((Map<String, Object>) fields);
-                          EDITOR_ONLY_STEP_FIELDS.forEach(kept::remove);
-                          cleaned.add(kept);
-                        }
-                      });
+              (key, value) -> {
+                if (!EDITOR_ONLY_STEP_FIELDS.contains(key)) {
+                  kept.put(key, withoutEditorFields(value));
                 }
-                phases.put(phase, cleaned);
               });
+      return kept;
     }
-    copy.put("phases", phases);
-    // The journey's name is the editors' label ("Schulden ausführlich"); the person never sees it.
-    copy.remove("name");
-    // The other ways in (other links, their topics) are none of the person's business; the way
-    // they came by is answered beside the journey.
-    copy.remove("routes");
-    return copy;
+    if (node instanceof List<?> list) {
+      return list.stream().map(JourneyView::withoutEditorFields).toList();
+    }
+    return node;
   }
 
   /** Whether the journey's official registration runs for this topic. */

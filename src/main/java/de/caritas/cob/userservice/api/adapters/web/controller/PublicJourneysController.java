@@ -51,7 +51,7 @@ public class PublicJourneysController {
     if (journey == null) {
       return ResponseEntity.status(HttpStatus.NOT_FOUND).build();
     }
-    // Admins see their changes on the next registration, not after a cache expires.
+    // Browsers ask again each time; the service itself shares one parse for half a minute.
     return ResponseEntity.ok().cacheControl(CacheControl.noCache()).body(journey);
   }
 }

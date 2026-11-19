@@ -25,6 +25,10 @@
     </createTable>
     <addPrimaryKey tableName="journey" columnNames="scope, scope_id, journey_id"
       constraintName="pk_journey"/>
+    <!-- Deleting a platform journey removes its layers: findByJourneyId. -->
+    <createIndex tableName="journey" indexName="idx_journey_journey_id">
+      <column name="journey_id"/>
+    </createIndex>
     <rollback><dropTable tableName="journey"/></rollback>
   </changeSet>
 </databaseChangeLog>

@@ -169,4 +169,27 @@ class JourneyServiceTest {
     assertThat(saved.body().get("id")).isEqualTo(saved.journeyId());
     assertThat(JourneyRules.stepIds(saved.body())).noneMatch(JourneyIds::isDraft);
   }
+
+  @Test
+  @SuppressWarnings("unchecked")
+  void aJourneyWithoutLinksIsSaved() {
+    var journey = mail("j9");
+    ((Map<String, Object>) journey.get("routes")).remove("links");
+    assertThat(service.savePlatformJourney("j9", 0, journey, "admin").journeyId()).isEqualTo("j9");
+  }
+
+  @Test
+  void aTopicRegistersOneJourneyOnly() throws Exception {
+    var other = new JourneyRecord();
+    other.setScope(JourneyRecord.PLATFORM);
+    other.setScopeId(0L);
+    other.setJourneyId("j1");
+    other.setVersion(0L);
+    other.setBody(MAPPER.writeValueAsString(mail("j1")));
+    when(repository.findByScopeAndScopeIdOrderByJourneyId(anyString(), any()))
+        .thenReturn(List.of(other));
+    assertThatThrownBy(() -> service.savePlatformJourney("j2", 0, mail("j2"), "admin"))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("topics registered by another journey");
+  }
 }

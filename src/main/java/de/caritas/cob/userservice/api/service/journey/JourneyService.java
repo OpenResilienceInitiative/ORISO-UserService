@@ -77,11 +77,19 @@ public class JourneyService {
             .toList();
     var takenSlugs = new HashSet<String>();
     var takenStepIds = new HashSet<String>();
+    var takenTopics = new HashSet<Long>();
     others.forEach(
         other -> {
           takenSlugs.addAll(JourneyRules.slugsById(other).values());
           takenStepIds.addAll(JourneyRules.stepIds(other));
+          takenTopics.addAll(JourneyRules.registrationTopics(other));
         });
+    // One topic, one registration journey: otherwise which one a person runs would be a guess.
+    var sharedTopics = new HashSet<>(JourneyRules.registrationTopics(journey));
+    sharedTopics.retainAll(takenTopics);
+    if (!sharedTopics.isEmpty()) {
+      throw new IllegalArgumentException("topics registered by another journey: " + sharedTopics);
+    }
     var shared = new HashSet<>(JourneyRules.stepIds(journey));
     shared.retainAll(takenStepIds);
     if (!shared.isEmpty()) {
