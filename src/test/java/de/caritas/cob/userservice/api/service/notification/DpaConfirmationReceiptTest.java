@@ -34,6 +34,7 @@ import de.caritas.cob.userservice.api.service.email.sender.SenderOrganisationRes
 import de.caritas.cob.userservice.api.service.emailsupplier.TenantTemplateSupplier;
 import de.caritas.cob.userservice.tenantadminservice.generated.web.model.DpaSignatureDTO;
 import de.caritas.cob.userservice.tenantservice.generated.web.model.RestrictedTenantDTO;
+import java.time.Clock;
 import java.time.Instant;
 import java.util.HashMap;
 import java.util.List;
@@ -94,7 +95,8 @@ class DpaConfirmationReceiptTest {
               if (notice.getId() == null) notice.setId((long) notice.getNoticeRole().ordinal() + 1);
               return notice;
             });
-    when(noticeRepository.beginAdminHandoff(1L)).thenReturn(1);
+    when(noticeRepository.lockAdminPreparation(eq(1L), any()))
+        .thenReturn(Optional.of(new DpaSignedNotice()));
     when(templateRepository.findByKindAndActiveTrueAndTenantIdIsNullOrderByCreateDateDesc(
             InviteEmailTemplateKind.DPA_SIGNED_NOTICE))
         .thenReturn(List.of());
@@ -311,7 +313,8 @@ class DpaConfirmationReceiptTest {
             tenantService,
             transactionManager,
             metrics,
-            new AdminPanelUrl("https://admin.example.org"));
+            new AdminPanelUrl("https://admin.example.org"),
+            Clock.systemUTC());
     service.useExecutor(Runnable::run);
 
     return service;

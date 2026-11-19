@@ -27,7 +27,7 @@ public class DpaSignedNoticeRecoveryScheduler {
       return;
     }
     try {
-      // Reuse the existing bounded executor; the scheduler thread never waits for mail or HTTP.
+      // The dedicated bounded executor keeps recovery off the scheduler and the public hint lane.
       notices.submitAdminRecovery(this::runRecovery);
     } catch (RuntimeException failure) {
       queued.set(false);

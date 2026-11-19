@@ -24,8 +24,11 @@ import de.caritas.cob.userservice.api.service.accountinvite.InviteEmailTemplateK
 import de.caritas.cob.userservice.api.service.accountinvite.mail.InviteMailDispatchService;
 import de.caritas.cob.userservice.tenantadminservice.generated.web.model.DpaSignatureDTO;
 import de.caritas.cob.userservice.tenantservice.generated.web.model.RestrictedTenantDTO;
+import java.time.Clock;
+import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
+import java.time.temporal.ChronoUnit;
 import java.util.List;
 import java.util.Optional;
 import org.junit.jupiter.api.AfterEach;
@@ -33,12 +36,10 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.data.jpa.test.autoconfigure.DataJpaTest;
 import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase;
-import org.springframework.data.domain.PageRequest;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
-import org.springframework.transaction.support.TransactionTemplate;
 
 @DataJpaTest
 @ActiveProfiles("testing")
@@ -101,17 +102,66 @@ class DpaSignedNoticeRecoveryPersistenceIT {
   }
 
   @Test
-  void aSecondContenderCannotReopenTheCommittedHandoffBoundary() {
-    var now = LocalDateTime.now(ZoneOffset.UTC);
-    var notice = saveClaim("racing", NoticeRole.ADMIN, SIGNED_AT, now.minusSeconds(1));
-    var tx = new TransactionTemplate(transactionManager);
-    assertThat(notices.findDueAdminNoticeIds(now, PageRequest.of(0, 8))).contains(notice.getId());
+  void aDelayedWorkerCannotUseTheReservationOfAWorkerThatRejectedAChangedAddress() {
+    var start = Instant.parse("2026-11-19T11:00:00.123456789Z");
+    var clock = mock(Clock.class);
+    when(clock.instant()).thenReturn(start);
+    var notice = saveClaim(VERSION, NoticeRole.ADMIN, SIGNED_AT, utc(start.minusSeconds(1)));
+    var delayedMail = mock(InviteMailDispatchService.class);
+    var changedAddressMail = mock(InviteMailDispatchService.class);
+    var changedAddressRecovery =
+        service(changedAddressMail, clock, "changed@example.test", () -> {});
+    var delayedRecovery =
+        service(
+            delayedMail,
+            clock,
+            RECIPIENT,
+            () -> {
+              when(clock.instant()).thenReturn(start.plusSeconds(61));
+              changedAddressRecovery.retryPendingAdminNotices();
+            });
 
-    assertThat((Integer) tx.execute(status -> notices.beginAdminHandoff(notice.getId())))
-        .isEqualTo(1);
-    assertThat((Integer) tx.execute(status -> notices.beginAdminHandoff(notice.getId()))).isZero();
-    assertThat(notices.findDueAdminNoticeIds(now.plusHours(1), PageRequest.of(0, 8)))
-        .doesNotContain(notice.getId());
+    delayedRecovery.retryPendingAdminNotices();
+
+    verifyNoInteractions(delayedMail, changedAddressMail);
+    var retained = notices.findById(notice.getId()).orElseThrow();
+    assertThat(retained.getAdminNextAttemptAt()).isEqualTo(utc(start.plusSeconds(61 + 900)));
+    assertThat(retained.getRecipientEmail()).isEqualTo(RECIPIENT);
+    assertThat(retained.getAdminRecoverySignatureAt()).isEqualTo(SIGNED_AT);
+    assertThat(retained.getSentAt()).isNull();
+
+    when(clock.instant()).thenReturn(start.plusSeconds(61 + 901));
+    var verifiedMail = mock(InviteMailDispatchService.class);
+    var verifiedRecovery = service(verifiedMail, clock, RECIPIENT, () -> {});
+    verifiedRecovery.retryPendingAdminNotices();
+    verifiedRecovery.retryPendingAdminNotices();
+
+    verify(verifiedMail)
+        .send(eq(RECIPIENT), any(), any(), isNull(), eq(TENANT_ID), eq("de"), any());
+    assertThat(notices.findById(notice.getId()).orElseThrow().getSentAt()).isNotNull();
+  }
+
+  @Test
+  void anExpiredReservationIsRejectedEvenWhenNoOtherWorkerHasClaimedTheRow() {
+    var start = Instant.parse("2026-11-19T11:00:00.123456789Z");
+    var clock = mock(Clock.class);
+    when(clock.instant()).thenReturn(start);
+    var notice = saveClaim(VERSION, NoticeRole.ADMIN, SIGNED_AT, utc(start.minusSeconds(1)));
+    var mail = mock(InviteMailDispatchService.class);
+    var recovery =
+        service(
+            mail, clock, RECIPIENT, () -> when(clock.instant()).thenReturn(start.plusSeconds(60)));
+
+    recovery.retryPendingAdminNotices();
+
+    verifyNoInteractions(mail);
+    var retained = notices.findById(notice.getId()).orElseThrow();
+    assertThat(retained.getAdminNextAttemptAt()).isEqualTo(utc(start.plusSeconds(60)));
+    assertThat(retained.getSentAt()).isNull();
+  }
+
+  private static LocalDateTime utc(Instant instant) {
+    return LocalDateTime.ofInstant(instant, ZoneOffset.UTC).truncatedTo(ChronoUnit.MICROS);
   }
 
   private DpaSignedNotice saveClaim(
@@ -130,6 +180,19 @@ class DpaSignedNoticeRecoveryPersistenceIT {
 
   private DpaSignedNoticeService service(
       InviteMailDispatchService mail, boolean failBeforeHandoff) {
+    return service(
+        mail,
+        Clock.systemUTC(),
+        RECIPIENT,
+        () -> {
+          if (failBeforeHandoff) {
+            throw new IllegalStateException("simulated interruption before handoff");
+          }
+        });
+  }
+
+  private DpaSignedNoticeService service(
+      InviteMailDispatchService mail, Clock clock, String address, Runnable duringPreparation) {
     var signatures = mock(TenantDpaSignatureReadClient.class);
     var signature =
         new DpaSignatureDTO()
@@ -150,7 +213,7 @@ class DpaSignedNoticeRecoveryPersistenceIT {
                     .username("forwarder")
                     .firstName("Synthetic")
                     .lastName("Forwarder")
-                    .email(RECIPIENT)
+                    .email(address)
                     .type(Admin.AdminType.TENANT)
                     .build()));
     var locales = mock(IdentityLocaleLookup.class);
@@ -160,11 +223,11 @@ class DpaSignedNoticeRecoveryPersistenceIT {
         when(
             templates.findByKindAndActiveTrueAndTenantIdIsNullOrderByCreateDateDesc(
                 InviteEmailTemplateKind.DPA_SIGNED_NOTICE));
-    if (failBeforeHandoff) {
-      activeTemplates.thenThrow(new IllegalStateException("simulated interruption before handoff"));
-    } else {
-      activeTemplates.thenReturn(List.of());
-    }
+    activeTemplates.thenAnswer(
+        invocation -> {
+          duringPreparation.run();
+          return List.of();
+        });
     var tenants = mock(TenantService.class);
     when(tenants.getRestrictedTenantData(TENANT_ID))
         .thenReturn(new RestrictedTenantDTO().name("Synthetic tenant"));
@@ -180,7 +243,8 @@ class DpaSignedNoticeRecoveryPersistenceIT {
             tenants,
             transactionManager,
             mock(DpaSignedNoticeMetrics.class),
-            new AdminPanelUrl("https://admin.example.test"));
+            new AdminPanelUrl("https://admin.example.test"),
+            clock);
     service.useExecutor(Runnable::run);
     return service;
   }

@@ -22,12 +22,14 @@ import de.caritas.cob.userservice.api.service.accountinvite.mail.InviteMailOrigi
 import de.caritas.cob.userservice.api.tenant.TenantContext;
 import de.caritas.cob.userservice.tenantadminservice.generated.web.model.DpaSignatureDTO;
 import jakarta.annotation.PreDestroy;
+import java.time.Clock;
 import java.time.Duration;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
+import java.time.temporal.ChronoUnit;
 import java.util.Comparator;
 import java.util.Locale;
 import java.util.Map;
@@ -37,6 +39,7 @@ import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.Executor;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
+import java.util.function.UnaryOperator;
 import java.util.stream.Stream;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.dao.DataIntegrityViolationException;
@@ -97,6 +100,7 @@ public class DpaSignedNoticeService {
   private static final PageRequest ADMIN_RECOVERY_BATCH = PageRequest.of(0, 8);
   private static final Duration ADMIN_RECOVERY_BUDGET = Duration.ofSeconds(45);
   private static final Duration ADMIN_RECOVERY_DELAY = Duration.ofMinutes(1);
+  private static final Duration ADMIN_PROOF_RETRY_DELAY = Duration.ofMinutes(15);
 
   static final String SOURCE_FORWARDED_EXTERNAL = "FORWARDED_EXTERNAL";
   static final String STATUS_SIGNED = "SIGNED";
@@ -206,6 +210,20 @@ public class DpaSignedNoticeService {
           },
           new ThreadPoolExecutor.AbortPolicy());
 
+  private final ThreadPoolExecutor adminRecoveryExecutor =
+      new ThreadPoolExecutor(
+          1,
+          1,
+          0,
+          TimeUnit.SECONDS,
+          new ArrayBlockingQueue<>(1),
+          runnable -> {
+            Thread thread = new Thread(runnable, "dpa-signed-notice-recovery");
+            thread.setDaemon(true);
+            return thread;
+          },
+          new ThreadPoolExecutor.AbortPolicy());
+
   /** Seam: tests substitute a synchronous executor. */
   private Executor noticeExecutor = defaultNoticeExecutor;
 
@@ -216,6 +234,7 @@ public class DpaSignedNoticeService {
   @PreDestroy
   void shutdownNoticeExecutor() {
     defaultNoticeExecutor.shutdown();
+    adminRecoveryExecutor.shutdown();
   }
 
   private final TenantDpaSignatureReadClient signatureReadClient;
@@ -231,6 +250,7 @@ public class DpaSignedNoticeService {
   private final TransactionTemplate requiresNewTransaction;
   private final DpaSignedNoticeMetrics metrics;
   private final String adminPanelUrl;
+  private final Clock clock;
 
   public DpaSignedNoticeService(
       TenantDpaSignatureReadClient signatureReadClient,
@@ -243,7 +263,8 @@ public class DpaSignedNoticeService {
       TenantService tenantService,
       PlatformTransactionManager transactionManager,
       DpaSignedNoticeMetrics metrics,
-      AdminPanelUrl adminPanelUrlProvider) {
+      AdminPanelUrl adminPanelUrlProvider,
+      Clock clock) {
     this.signatureReadClient = signatureReadClient;
     this.noticeRepository = noticeRepository;
     this.adminRepository = adminRepository;
@@ -257,6 +278,7 @@ public class DpaSignedNoticeService {
         TransactionDefinition.PROPAGATION_REQUIRES_NEW);
     this.metrics = metrics;
     this.adminPanelUrl = adminPanelUrlProvider.value();
+    this.clock = clock;
   }
 
   /**
@@ -339,7 +361,8 @@ public class DpaSignedNoticeService {
         log.debug("DPA {} notice for tenant {} already claimed", role, tenantId);
         return;
       }
-      sendNotice(tenantId, signature, recipient.get(), claim.get());
+      var notice = claim.get();
+      sendNotice(tenantId, signature, recipient.get(), notice, notice.getAdminNextAttemptAt());
     } catch (RuntimeException failure) {
       // Recipient resolution or claim failure must not suppress the other role's notification.
       log.warn("DPA {} notice for tenant {} could not be processed", role, tenantId, failure);
@@ -381,7 +404,7 @@ public class DpaSignedNoticeService {
   }
 
   void submitAdminRecovery(Runnable recovery) {
-    noticeExecutor.execute(recovery);
+    adminRecoveryExecutor.execute(recovery);
   }
 
   void retryPendingAdminNotices() {
@@ -392,13 +415,12 @@ public class DpaSignedNoticeService {
       }
       try {
         var now = nowUtc();
+        var reservedUntil = now.plus(ADMIN_RECOVERY_DELAY);
         var reserved =
             requiresNewTransaction.execute(
-                tx ->
-                    noticeRepository.reserveAdminPreparation(
-                        id, now, now.plus(ADMIN_RECOVERY_DELAY)));
+                tx -> noticeRepository.reserveAdminPreparation(id, now, reservedUntil));
         if (Integer.valueOf(1).equals(reserved)) {
-          noticeRepository.findById(id).ifPresent(this::retryAdminNotice);
+          noticeRepository.findById(id).ifPresent(claim -> retryAdminNotice(claim, reservedUntil));
         }
       } catch (RuntimeException failure) {
         log.warn(
@@ -409,10 +431,10 @@ public class DpaSignedNoticeService {
     }
   }
 
-  private void retryAdminNotice(DpaSignedNotice claim) {
+  private void retryAdminNotice(DpaSignedNotice claim, LocalDateTime reservedUntil) {
     if (claim.getNoticeRole() != NoticeRole.ADMIN
         || claim.getSentAt() != null
-        || claim.getAdminNextAttemptAt() == null
+        || !reservedUntil.equals(claim.getAdminNextAttemptAt())
         || claim.getAdminRecoverySignatureAt() == null) {
       return;
     }
@@ -428,17 +450,50 @@ public class DpaSignedNoticeService {
                   .limit(2)
                   .toList();
           if (signature.size() != 1) {
+            deferMissingAdminProof(claim, reservedUntil);
             return;
           }
+
           var signed = signature.getFirst();
-          resolveRecipient(tenantId, signed)
-              .filter(recipient -> claim.getRecipientEmail().equals(recipient.email()))
-              .ifPresent(recipient -> sendNotice(tenantId, signed, recipient, claim));
+          var recipient = resolveRecipient(tenantId, signed);
+          if (recipient.isEmpty() || !claim.getRecipientEmail().equals(recipient.get().email())) {
+            // A verified hint is still a tenant-level trigger, not authority to readdress a
+            // pending notice. Wizard recipient resolution can point to a different invite.
+            deferMissingAdminProof(claim, reservedUntil);
+            return;
+          }
+          sendNotice(tenantId, signed, recipient.get(), claim, reservedUntil);
         });
   }
 
-  private static LocalDateTime nowUtc() {
-    return LocalDateTime.now(ZoneOffset.UTC);
+  private void deferMissingAdminProof(DpaSignedNotice claim, LocalDateTime reservedUntil) {
+    if (transitionAdminPreparation(
+        claim.getId(), reservedUntil, now -> now.plus(ADMIN_PROOF_RETRY_DELAY))) {
+      log.warn(
+          "DPA administrator notice {} deferred because its delivery proof changed or is unavailable",
+          claim.getId());
+    }
+  }
+
+  private boolean transitionAdminPreparation(
+      long id, LocalDateTime reservedUntil, UnaryOperator<LocalDateTime> nextAttempt) {
+    return Boolean.TRUE.equals(
+        requiresNewTransaction.execute(
+            tx -> {
+              var held = noticeRepository.lockAdminPreparation(id, reservedUntil);
+              // Check the deadline after acquiring the lock so a blocked writer cannot use a
+              // timestamp taken while its reservation was still live.
+              var now = nowUtc();
+              if (held.isEmpty() || !reservedUntil.isAfter(now)) {
+                return false;
+              }
+              held.get().setAdminNextAttemptAt(nextAttempt.apply(now));
+              return true;
+            }));
+  }
+
+  private LocalDateTime nowUtc() {
+    return LocalDateTime.ofInstant(clock.instant(), ZoneOffset.UTC).truncatedTo(ChronoUnit.MICROS);
   }
 
   private Optional<Recipient> resolveRecipient(Long tenantId, DpaSignatureDTO signature) {
@@ -508,7 +563,11 @@ public class DpaSignedNoticeService {
   }
 
   private void sendNotice(
-      Long tenantId, DpaSignatureDTO signature, Recipient recipient, DpaSignedNotice claim) {
+      Long tenantId,
+      DpaSignatureDTO signature,
+      Recipient recipient,
+      DpaSignedNotice claim,
+      LocalDateTime reservedUntil) {
     PreparedNotice mail;
     try {
       mail = prepareNotice(tenantId, signature, recipient, claim);
@@ -527,9 +586,7 @@ public class DpaSignedNoticeService {
     // The row changes before I/O and only one contender can cross this boundary. A process
     // interruption after this point is ambiguous and stays outside automatic recovery.
     if (claim.getAdminRecoverySignatureAt() != null) {
-      var started =
-          requiresNewTransaction.execute(tx -> noticeRepository.beginAdminHandoff(claim.getId()));
-      if (!Integer.valueOf(1).equals(started)) {
+      if (!transitionAdminPreparation(claim.getId(), reservedUntil, now -> null)) {
         return;
       }
       claim.setAdminNextAttemptAt(null);
