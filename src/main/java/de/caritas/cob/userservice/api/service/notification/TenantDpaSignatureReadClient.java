@@ -163,8 +163,12 @@ public class TenantDpaSignatureReadClient {
     throw new IllegalStateException("TenantService did not confirm the exact DPA acknowledgement");
   }
 
+  boolean isOutboxEnabled() {
+    return outboxReadEnabled && identityClientConfig.isFiveActorMode();
+  }
+
   private HttpEntity<Void> outboxRequest() {
-    if (!outboxReadEnabled || !identityClientConfig.isFiveActorMode()) {
+    if (!isOutboxEnabled()) {
       throw new IllegalStateException("Signed DPA outbox transport is disabled");
     }
     String token = identityClientConfig.taskAccessToken(TaskPurpose.NOTIFICATION_DISPATCH);
