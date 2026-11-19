@@ -1,9 +1,11 @@
 package de.caritas.cob.userservice.api.service.notification;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -12,6 +14,9 @@ import static org.mockito.Mockito.when;
 
 import de.caritas.cob.userservice.api.admin.service.tenant.TenantService;
 import de.caritas.cob.userservice.api.config.observability.DpaSignedNoticeMetrics;
+import de.caritas.cob.userservice.api.exception.SmtpSendException;
+import de.caritas.cob.userservice.api.exception.SmtpSendException.Category;
+import de.caritas.cob.userservice.api.exception.SmtpSendException.DeliveryDisposition;
 import de.caritas.cob.userservice.api.model.Admin;
 import de.caritas.cob.userservice.api.model.DpaSignedNotice;
 import de.caritas.cob.userservice.api.model.DpaSignedNotice.NoticeRole;
@@ -22,6 +27,8 @@ import de.caritas.cob.userservice.api.port.out.IdentityLocaleLookup;
 import de.caritas.cob.userservice.api.port.out.InviteEmailTemplateRepository;
 import de.caritas.cob.userservice.api.service.accountinvite.InviteEmailTemplateKind;
 import de.caritas.cob.userservice.api.service.accountinvite.mail.InviteMailDispatchService;
+import de.caritas.cob.userservice.api.service.notification.DpaAdminNoticeOutboxConsumer.Event;
+import de.caritas.cob.userservice.api.service.notification.DpaAdminNoticeOutboxConsumer.VerifiedSignature;
 import de.caritas.cob.userservice.tenantadminservice.generated.web.model.DpaSignatureDTO;
 import de.caritas.cob.userservice.tenantservice.generated.web.model.RestrictedTenantDTO;
 import java.time.Clock;
@@ -31,6 +38,10 @@ import java.time.ZoneOffset;
 import java.time.temporal.ChronoUnit;
 import java.util.List;
 import java.util.Optional;
+import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -51,6 +62,8 @@ class DpaSignedNoticeRecoveryPersistenceIT {
   private static final String VERSION = "2026-11-01T07:00:00";
   private static final String SIGNED_AT = "2026-11-19T10:10:00.123";
   private static final String RECIPIENT = "forwarder@example.test";
+  private static final Event EVENT =
+      new Event(1704L, TENANT_ID, Instant.parse("2026-11-19T09:10:00.123Z").toEpochMilli());
 
   @Autowired private DpaSignedNoticeRepository notices;
   @Autowired private PlatformTransactionManager transactionManager;
@@ -164,6 +177,169 @@ class DpaSignedNoticeRecoveryPersistenceIT {
     return LocalDateTime.ofInstant(instant, ZoneOffset.UTC).truncatedTo(ChronoUnit.MICROS);
   }
 
+  @Test
+  void aLostAcknowledgementCanBeRetriedAgainstTheSameCommittedEvent() {
+    var mail = mock(InviteMailDispatchService.class);
+    var firstService = service(mail, false);
+    var failedAck =
+        new DpaAdminNoticeOutboxConsumer(
+            firstService,
+            this::readExact,
+            event -> {
+              assertThat(notices.findByAdminSourceEventId(event.id())).isPresent();
+              throw new IllegalStateException("simulated lost acknowledgement");
+            });
+    assertThatThrownBy(() -> failedAck.accept(EVENT)).isInstanceOf(IllegalStateException.class);
+
+    var acknowledged = new java.util.ArrayList<Event>();
+    var newWorker =
+        new DpaAdminNoticeOutboxConsumer(service(mail, false), this::readExact, acknowledged::add);
+    assertThat(newWorker.accept(EVENT)).isTrue();
+    assertThat(acknowledged).containsExactly(EVENT);
+    assertThat(notices.findByAdminSourceEventId(EVENT.id()).orElseThrow().getRecipientEmail())
+        .isEqualTo(RECIPIENT);
+    verifyNoInteractions(mail);
+  }
+
+  @Test
+  void twoWorkersAcceptOneEventWithoutDuplicatingTheDurableClaim() throws Exception {
+    var mail = mock(InviteMailDispatchService.class);
+    var ready = new CyclicBarrier(2);
+    var acknowledgements = new ConcurrentLinkedQueue<Event>();
+    var first =
+        new DpaAdminNoticeOutboxConsumer(
+            service(mail, false), this::readExact, acknowledgements::add);
+    var second =
+        new DpaAdminNoticeOutboxConsumer(
+            service(mail, false), this::readExact, acknowledgements::add);
+    try (var workers = Executors.newFixedThreadPool(2)) {
+      var acceptedFirst =
+          workers.submit(
+              () -> {
+                ready.await(10, TimeUnit.SECONDS);
+                return first.accept(EVENT);
+              });
+      var acceptedSecond =
+          workers.submit(
+              () -> {
+                ready.await(10, TimeUnit.SECONDS);
+                return second.accept(EVENT);
+              });
+      assertThat(acceptedFirst.get(15, TimeUnit.SECONDS)).isTrue();
+      assertThat(acceptedSecond.get(15, TimeUnit.SECONDS)).isTrue();
+    }
+    assertThat(acknowledgements).containsExactly(EVENT, EVENT);
+    assertThat(notices.findAll()).filteredOn(row -> row.getTenantId().equals(TENANT_ID)).hasSize(1);
+    verifyNoInteractions(mail);
+  }
+
+  @Test
+  void exactClaimSurvivesExplicitNonDeliveryAndCanBeRecoveredByAnotherWorker() {
+    var start = Instant.parse("2026-11-19T11:00:00Z");
+    var clock = mock(Clock.class);
+    when(clock.instant()).thenReturn(start);
+    var rejectedMail = mock(InviteMailDispatchService.class);
+    doThrow(
+            new SmtpSendException(
+                Category.SMTP_TRANSPORT_FAILED,
+                DeliveryDisposition.CONFIRMED_NOT_SENT,
+                "synthetic refusal"))
+        .when(rejectedMail)
+        .send(eq(RECIPIENT), any(), any(), isNull(), eq(TENANT_ID), eq("de"), any());
+    var firstWorker =
+        new DpaAdminNoticeOutboxConsumer(
+            service(rejectedMail, clock, RECIPIENT, () -> {}), this::readExact, event -> {});
+    assertThat(firstWorker.accept(EVENT)).isTrue();
+    var accepted = notices.findByAdminSourceEventId(EVENT.id()).orElseThrow();
+
+    when(clock.instant()).thenReturn(start.plusSeconds(61));
+    firstWorker.recover();
+    var retained = notices.findByAdminSourceEventId(EVENT.id()).orElseThrow();
+    assertThat(retained.getId()).isEqualTo(accepted.getId());
+    assertThat(retained.getAdminSourceSignedAtEpochMillis()).isEqualTo(EVENT.signedAtEpochMillis());
+    assertThat(retained.getAdminNextAttemptAt()).isAfter(utc(start.plusSeconds(61)));
+    assertThat(retained.getSentAt()).isNull();
+
+    when(clock.instant())
+        .thenReturn(retained.getAdminNextAttemptAt().toInstant(ZoneOffset.UTC).plusSeconds(1));
+    var verifiedMail = mock(InviteMailDispatchService.class);
+    var newWorker =
+        new DpaAdminNoticeOutboxConsumer(
+            service(verifiedMail, clock, RECIPIENT, () -> {}), this::readExact, event -> {});
+    newWorker.recover();
+    newWorker.recover();
+    verify(verifiedMail)
+        .send(eq(RECIPIENT), any(), any(), isNull(), eq(TENANT_ID), eq("de"), any());
+    assertThat(notices.findByAdminSourceEventId(EVENT.id()).orElseThrow().getSentAt()).isNotNull();
+  }
+
+  @Test
+  void exactAcceptanceRejectsUnverifiedEventsLegacyCollisionsAndChangedRecipients() {
+    var mail = mock(InviteMailDispatchService.class);
+    var acknowledged = new java.util.ArrayList<Event>();
+    var consumer =
+        new DpaAdminNoticeOutboxConsumer(service(mail, false), this::readExact, acknowledged::add);
+    var wrongId = new Event(EVENT.id() + 1, EVENT.tenantId(), EVENT.signedAtEpochMillis());
+    var wrongTime = new Event(EVENT.id(), EVENT.tenantId(), EVENT.signedAtEpochMillis() + 1);
+    assertThat(consumer.accept(wrongId)).isFalse();
+    assertThat(consumer.accept(wrongTime)).isFalse();
+    var oldClaim = saveClaim(VERSION, NoticeRole.ADMIN, null, null);
+    assertThat(consumer.accept(EVENT)).isFalse();
+    assertThat(notices.findByAdminSourceEventId(EVENT.id())).isEmpty();
+    assertThat(acknowledged).isEmpty();
+    notices.deleteById(oldClaim.getId());
+
+    assertThat(consumer.accept(EVENT)).isTrue();
+    var changedConsumer =
+        new DpaAdminNoticeOutboxConsumer(
+            service(mail, Clock.systemUTC(), "changed@example.test", () -> {}),
+            this::readExact,
+            acknowledged::add);
+    assertThat(changedConsumer.accept(EVENT)).isFalse();
+    assertThat(acknowledged).containsExactly(EVENT);
+    verifyNoInteractions(mail);
+  }
+
+  @Test
+  void ambiguousExactDeliveryRetainsItsOriginalClaimAndDoesNotIssueANewAcknowledgement() {
+    var start = Instant.parse("2026-11-19T11:00:00Z");
+    var clock = mock(Clock.class);
+    when(clock.instant()).thenReturn(start);
+    var mail = mock(InviteMailDispatchService.class);
+    doThrow(
+            new SmtpSendException(
+                Category.SMTP_TRANSPORT_FAILED,
+                DeliveryDisposition.DELIVERY_UNCERTAIN,
+                "synthetic unconfirmed handoff"))
+        .when(mail)
+        .send(eq(RECIPIENT), any(), any(), isNull(), eq(TENANT_ID), eq("de"), any());
+
+    var acknowledged = new java.util.ArrayList<Event>();
+    var worker =
+        new DpaAdminNoticeOutboxConsumer(
+            service(mail, clock, RECIPIENT, () -> {}), this::readExact, acknowledged::add);
+    assertThat(worker.accept(EVENT)).isTrue();
+    var accepted = notices.findByAdminSourceEventId(EVENT.id()).orElseThrow();
+
+    when(clock.instant()).thenReturn(start.plusSeconds(61));
+    worker.recover();
+    when(clock.instant()).thenReturn(start.plusSeconds(3600));
+    worker.recover();
+    assertThat(worker.accept(EVENT)).isFalse();
+
+    var retained = notices.findByAdminSourceEventId(EVENT.id()).orElseThrow();
+    assertThat(retained.getId()).isEqualTo(accepted.getId());
+    assertThat(retained.getRecipientEmail()).isEqualTo(RECIPIENT);
+    assertThat(retained.getAdminNextAttemptAt()).isNull();
+    assertThat(retained.getSentAt()).isNull();
+    assertThat(acknowledged).containsExactly(EVENT);
+    verify(mail).send(eq(RECIPIENT), any(), any(), isNull(), eq(TENANT_ID), eq("de"), any());
+  }
+
+  private Optional<VerifiedSignature> readExact(Event ignored) {
+    return Optional.of(new VerifiedSignature(EVENT, signature()));
+  }
+
   private DpaSignedNotice saveClaim(
       String version, NoticeRole role, String signingTime, LocalDateTime retryAt) {
     return notices.saveAndFlush(
@@ -194,14 +370,7 @@ class DpaSignedNoticeRecoveryPersistenceIT {
   private DpaSignedNoticeService service(
       InviteMailDispatchService mail, Clock clock, String address, Runnable duringPreparation) {
     var signatures = mock(TenantDpaSignatureReadClient.class);
-    var signature =
-        new DpaSignatureDTO()
-            .tenantId(TENANT_ID)
-            .dpaVersion(VERSION)
-            .status("SIGNED")
-            .source("FORWARDED_EXTERNAL")
-            .signedAt(SIGNED_AT)
-            .forwardedByUserId("forwarder");
+    var signature = signature();
     when(signatures.readSignatures(TENANT_ID)).thenReturn(List.of(signature));
     var admins = mock(AdminRepository.class);
     when(admins.findById("forwarder"))
@@ -247,5 +416,15 @@ class DpaSignedNoticeRecoveryPersistenceIT {
             clock);
     service.useExecutor(Runnable::run);
     return service;
+  }
+
+  private DpaSignatureDTO signature() {
+    return new DpaSignatureDTO()
+        .tenantId(TENANT_ID)
+        .dpaVersion(VERSION)
+        .status("SIGNED")
+        .source("FORWARDED_EXTERNAL")
+        .signedAt(SIGNED_AT)
+        .forwardedByUserId("forwarder");
   }
 }

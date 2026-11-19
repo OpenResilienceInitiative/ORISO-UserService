@@ -16,14 +16,37 @@ public interface DpaSignedNoticeRepository extends JpaRepository<DpaSignedNotice
 
   boolean existsByTenantIdAndDpaVersion(Long tenantId, String dpaVersion);
 
+  Optional<DpaSignedNotice> findByAdminSourceEventId(Long eventId);
+
   @Query(
       """
       select n.id from DpaSignedNotice n
       where n.noticeRole = ADMIN and n.adminRecoverySignatureAt is not null
         and n.adminNextAttemptAt <= :now and n.sentAt is null
+        and n.adminSourceEventId is null
       order by n.adminNextAttemptAt, n.id
       """)
   List<Long> findDueAdminNoticeIds(@Param("now") LocalDateTime now, Pageable limit);
+
+  @Query(
+      """
+      select n.id from DpaSignedNotice n
+      where n.noticeRole = ADMIN and n.adminSourceEventId is not null
+        and n.adminNextAttemptAt <= :now and n.sentAt is null
+      order by n.adminNextAttemptAt, n.id
+      """)
+  List<Long> findDueExactAdminNoticeIds(@Param("now") LocalDateTime now, Pageable limit);
+
+  /** Preserve exact outbox ownership when the attempted delivery is confirmed unsent. */
+  @Modifying
+  @Query(
+      """
+      update DpaSignedNotice n set n.adminNextAttemptAt = :next
+      where n.id = :id and n.adminSourceEventId = :eventId and n.noticeRole = ADMIN
+        and n.adminNextAttemptAt is null and n.sentAt is null
+      """)
+  int rearmExactAdminNotice(
+      @Param("id") long id, @Param("eventId") long eventId, @Param("next") LocalDateTime next);
 
   @Modifying
   @Query(
