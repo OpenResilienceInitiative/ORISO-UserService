@@ -690,7 +690,7 @@
       "components": [
         "retryPending"
       ],
-      "decision": "Dispatch a bounded sweep using the existing notice executor and shared database lease. A conditional row transition fences mail handoff even after lease expiry. Only positively marked pre-handoff administrator work is retryable.",
+      "decision": "Dispatch the bounded sweep on its dedicated recovery executor under the shared database lease. Match the current unexpired row reservation before mail handoff. Only positively marked pre-handoff administrator work is retryable.",
       "signals": [
         "userservice.scheduler.executions",
         "userservice.scheduler.duration"
