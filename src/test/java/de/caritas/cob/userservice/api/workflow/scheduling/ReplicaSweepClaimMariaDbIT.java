@@ -309,11 +309,18 @@ class ReplicaSweepClaimMariaDbIT {
   }
 
   private boolean awaitSecondInstanceMoved(
-      java.util.concurrent.Future<?> second, AtomicInteger reads) throws InterruptedException {
+      java.util.concurrent.Future<?> second, AtomicInteger reads) throws Exception {
     var deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
     while (System.nanoTime() < deadline) {
-      if (reads.get() >= 2 || second.isDone() || lockWaits() > 0) {
+      // Only positive evidence releases the first instance: the second is blocked on the lease
+      // row, or it read the same pending session.
+      if (reads.get() >= 2 || lockWaits() > 0) {
         return true;
+      }
+      if (second.isDone()) {
+        second.get(); // surface the second instance's own failure first
+        throw new AssertionError(
+            "the second instance finished without waiting on the lease or reading the session");
       }
       Thread.sleep(20);
     }
