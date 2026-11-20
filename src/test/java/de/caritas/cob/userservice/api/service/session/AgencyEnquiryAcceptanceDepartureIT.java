@@ -2,7 +2,9 @@ package de.caritas.cob.userservice.api.service.session;
 
 import static java.util.concurrent.TimeUnit.SECONDS;
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.never;
@@ -11,6 +13,7 @@ import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import com.neovisionaries.i18n.LanguageCode;
+import de.caritas.cob.userservice.api.exception.httpresponses.ConflictException;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.ConsultantAgency;
 import de.caritas.cob.userservice.api.model.ConsultantAgencyStatus;
@@ -27,6 +30,9 @@ import de.caritas.cob.userservice.api.port.out.UserRepository;
 import de.caritas.cob.userservice.api.service.agency.AgencyMatrixCredentialClient;
 import de.caritas.cob.userservice.api.service.matrix.InquiryAcceptanceNoticeStore;
 import de.caritas.cob.userservice.api.service.matrix.OrisoRoomRegistry;
+import de.caritas.cob.userservice.api.tenant.TenantContext;
+import de.caritas.cob.userservice.api.workflow.scheduling.ScheduledTaskClaimService;
+import de.caritas.cob.userservice.api.workflow.scheduling.ScheduledTaskClaimWriter;
 import jakarta.persistence.EntityManager;
 import java.time.Clock;
 import java.time.Instant;
@@ -40,6 +46,8 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.EnumSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.data.jpa.test.autoconfigure.DataJpaTest;
 import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase;
@@ -59,14 +67,16 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionTemplate;
 
 @DataJpaTest
-@TestPropertySource(properties = {"spring.profiles.active=testing", "multitenancy.enabled=false"})
+@TestPropertySource(properties = {"spring.profiles.active=testing", "multitenancy.enabled=true"})
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
 @Import({
   AgencyEnquiryRevocations.class,
   AgencyEnquiryRoomDecisions.class,
   AgencyEnquiryRoomRetirements.class,
   OrisoRoomRegistry.class,
-  SessionOwnershipService.class
+  SessionOwnershipService.class,
+  ScheduledTaskClaimService.class,
+  ScheduledTaskClaimWriter.class
 })
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
 class AgencyEnquiryAcceptanceDepartureIT {
@@ -87,6 +97,7 @@ class AgencyEnquiryAcceptanceDepartureIT {
   @Autowired private SessionOwnershipService ownership;
   @Autowired private AgencyEnquiryRoomRetirements retirements;
   @Autowired private AgencyEnquiryRevocations revocations;
+  @Autowired private ScheduledTaskClaimService scheduledClaims;
   @MockitoBean private Clock clock;
   @MockitoBean private AgencyMatrixCredentialClient agencyCredentials;
   @MockitoBean private InquiryAcceptanceNoticeStore acceptanceNotices;
@@ -109,6 +120,7 @@ class AgencyEnquiryAcceptanceDepartureIT {
 
   @BeforeEach
   void seedOpenRegisteredEnquiry() {
+    TenantContext.setCurrentTenant(TENANT_ID);
     when(clock.instant()).thenReturn(SAME_INSTANT);
     when(clock.getZone()).thenReturn(ZoneOffset.UTC);
     readCommitted()
@@ -156,18 +168,22 @@ class AgencyEnquiryAcceptanceDepartureIT {
 
   @AfterEach
   void removeOnlyThisEnquiryAndItsRoster() {
-    if (sessionId != null) {
-      jdbc.update("DELETE FROM agency_enquiry_revocation_task WHERE session_id = ?", sessionId);
-      jdbc.update("DELETE FROM agency_enquiry_room_decision WHERE session_id = ?", sessionId);
-      jdbc.update("DELETE FROM agency_enquiry_room_retirement WHERE session_id = ?", sessionId);
-      sessions.deleteById(sessionId);
-      jdbc.update(
-          "DELETE FROM consultant_agency WHERE agency_id = ? AND tenant_id = ?",
-          agencyId,
-          TENANT_ID);
-      consultants.deleteById(departed.getId());
-      consultants.deleteById(owner.getId());
-      users.deleteById(askerId);
+    try {
+      if (sessionId != null) {
+        jdbc.update("DELETE FROM agency_enquiry_revocation_task WHERE session_id = ?", sessionId);
+        jdbc.update("DELETE FROM agency_enquiry_room_decision WHERE session_id = ?", sessionId);
+        jdbc.update("DELETE FROM agency_enquiry_room_retirement WHERE session_id = ?", sessionId);
+        sessions.deleteById(sessionId);
+        jdbc.update(
+            "DELETE FROM consultant_agency WHERE agency_id = ? AND tenant_id = ?",
+            agencyId,
+            TENANT_ID);
+        consultants.deleteById(departed.getId());
+        consultants.deleteById(owner.getId());
+        users.deleteById(askerId);
+      }
+    } finally {
+      TenantContext.clear();
     }
   }
 
@@ -200,23 +216,29 @@ class AgencyEnquiryAcceptanceDepartureIT {
       var accepting =
           threads.submit(
               () ->
-                  readCommitted()
-                      .executeWithoutResult(
-                          status -> {
-                            var accepted = sessions.lockFresh(sessionId).orElseThrow();
-                            var assignment =
-                                ownership.updateOwnerAndStatus(
-                                    accepted, owner, SessionStatus.IN_PROGRESS);
-                            acceptanceHoldingSession.countDown();
-                            await(departureOrderAllocated);
-                            retirements.replaceRoom(accepted, assignment, newRoom);
-                          }));
+                  TenantContext.runIn(
+                      TENANT_ID,
+                      () ->
+                          readCommitted()
+                              .executeWithoutResult(
+                                  status -> {
+                                    var accepted = sessions.lockFresh(sessionId).orElseThrow();
+                                    var assignment =
+                                        ownership.updateOwnerAndStatus(
+                                            accepted, owner, SessionStatus.IN_PROGRESS);
+                                    acceptanceHoldingSession.countDown();
+                                    await(departureOrderAllocated);
+                                    retirements.replaceRoom(accepted, assignment, newRoom);
+                                  })));
       var departing =
           threads.submit(
-              () -> {
-                await(acceptanceHoldingSession);
-                readCommitted().executeWithoutResult(status -> stageDeparture());
-              });
+              () ->
+                  TenantContext.runIn(
+                      TENANT_ID,
+                      () -> {
+                        await(acceptanceHoldingSession);
+                        readCommitted().executeWithoutResult(status -> stageDeparture());
+                      }));
       accepting.get(8, SECONDS);
       departing.get(8, SECONDS);
     }
@@ -336,6 +358,145 @@ class AgencyEnquiryAcceptanceDepartureIT {
     assertThat(reopened.getMatrixRoomId()).isEqualTo(oldRoom);
     assertThat(tasks.pendingSessionIds(relationId)).isEmpty();
     verify(matrix).isConfirmedOutOfRoom(oldRoom, departed.getMatrixUserId());
+  }
+
+  @ParameterizedTest
+  @EnumSource(
+      value = SessionStatus.class,
+      names = {"NEW", "INITIAL"})
+  void expiredPreparationReopensTheSameEnquiryAndUnparksItsDeparture(SessionStatus openingStatus) {
+    readCommitted()
+        .executeWithoutResult(
+            status -> {
+              var open = sessions.lockFresh(sessionId).orElseThrow();
+              open.setStatus(openingStatus);
+            });
+    var accepted = currentSession();
+    var assignment = ownership.updateOwnerAndStatus(accepted, owner, SessionStatus.IN_PROGRESS);
+    readCommitted().executeWithoutResult(status -> stageDeparture());
+
+    revocations.retryDue();
+    assertAssignedRoom(owner, oldRoom);
+    assertThat(tasks.dueIds(LocalDateTime.now(clock), PageRequest.of(0, 8))).isEmpty();
+
+    when(clock.instant()).thenReturn(SAME_INSTANT.plusSeconds(300));
+    revocations.retryDue();
+
+    var reopened = currentSession();
+    assertThat(reopened.getConsultant()).isNull();
+    assertThat(reopened.getStatus()).isEqualTo(openingStatus);
+    assertThat(reopened.getMatrixRoomId()).isEqualTo(oldRoom);
+    assertThat(reopened.getOwnershipRevision()).isGreaterThan(assignment.revision());
+    assertThat(tasks.dueIds(LocalDateTime.now(clock), PageRequest.of(0, 8))).hasSize(1);
+    verify(acceptanceNotices).cancelPreparation(sessionId, assignment.revision());
+    verifyNoInteractions(matrix);
+  }
+
+  @Test
+  void schedulerRecoversAnExpiredPreparationUnderTheTechnicalTenant() {
+    var accepted = currentSession();
+    var assignment = ownership.updateOwnerAndStatus(accepted, owner, SessionStatus.IN_PROGRESS);
+    readCommitted().executeWithoutResult(status -> stageDeparture());
+    when(clock.instant()).thenReturn(SAME_INSTANT.plusSeconds(300));
+
+    var scheduler =
+        new AgencyEnquiryRevocationScheduler(revocations, scheduledClaims, Runnable::run);
+    long unrelatedTenant = TENANT_ID + 1;
+    TenantContext.runIn(
+        unrelatedTenant,
+        () -> {
+          var visibleSession =
+              readCommitted().execute(status -> sessions.findByIdForUpdate(sessionId));
+          assertThat(visibleSession).isEmpty();
+          scheduler.retryPending();
+          assertThat(TenantContext.getCurrentTenant()).isEqualTo(unrelatedTenant);
+        });
+
+    assertThat(currentSession().getStatus()).isEqualTo(SessionStatus.NEW);
+    assertThat(currentSession().getConsultant()).isNull();
+    assertThat(tasks.dueIds(LocalDateTime.now(clock), PageRequest.of(0, 8))).hasSize(1);
+    verify(acceptanceNotices).cancelPreparation(sessionId, assignment.revision());
+    verifyNoInteractions(matrix);
+  }
+
+  @Test
+  void schedulerHoldsDeparturesForAnOlderPodDecisionWithoutAPreparation() {
+    var accepted = currentSession();
+    ownership.updateOwnerAndStatus(accepted, owner, SessionStatus.IN_PROGRESS);
+    jdbc.update(
+        """
+        UPDATE agency_enquiry_room_decision
+        SET opening_status = NULL, prepared_until = NULL
+        WHERE session_id = ?
+        """,
+        sessionId);
+    readCommitted().executeWithoutResult(status -> stageDeparture());
+    when(clock.instant()).thenReturn(SAME_INSTANT.plusSeconds(300));
+
+    new AgencyEnquiryRevocationScheduler(revocations, scheduledClaims, Runnable::run)
+        .retryPending();
+
+    assertAssignedRoom(owner, oldRoom);
+    assertThat(tasks.pendingSessionIds(relationId)).containsExactly(sessionId);
+    assertThat(tasks.dueIds(LocalDateTime.now(clock), PageRequest.of(0, 8))).isEmpty();
+    verify(acceptanceNotices, never()).cancelPreparation(eq(sessionId), anyLong());
+    verifyNoInteractions(matrix);
+  }
+
+  @Test
+  void completedStartFenceKeepsAmbiguousRoomWorkHeld() {
+    var accepted = currentSession();
+    var assignment = ownership.updateOwnerAndStatus(accepted, owner, SessionStatus.IN_PROGRESS);
+    retirements.startExternalWork(accepted, assignment);
+    readCommitted().executeWithoutResult(status -> stageDeparture());
+
+    when(clock.instant()).thenReturn(SAME_INSTANT.plusSeconds(300));
+    revocations.retryDue();
+
+    assertAssignedRoom(owner, oldRoom);
+    assertThat(tasks.pendingSessionIds(relationId)).containsExactly(sessionId);
+    assertThat(tasks.dueIds(LocalDateTime.now(clock), PageRequest.of(0, 8))).isEmpty();
+    verifyNoInteractions(matrix);
+  }
+
+  @Test
+  void expiredAndReopenedPreparationCannotStartExternalWork() {
+    var accepted = currentSession();
+    var assignment = ownership.updateOwnerAndStatus(accepted, owner, SessionStatus.IN_PROGRESS);
+    when(clock.instant()).thenReturn(SAME_INSTANT.plusSeconds(300));
+
+    assertThatThrownBy(() -> retirements.startExternalWork(accepted, assignment))
+        .isInstanceOf(ConflictException.class);
+    revocations.retryDue();
+    assertThatThrownBy(() -> retirements.startExternalWork(accepted, assignment))
+        .isInstanceOf(ConflictException.class);
+    assertThat(currentSession().getStatus()).isEqualTo(SessionStatus.NEW);
+    verifyNoInteractions(matrix);
+  }
+
+  @Test
+  void recoveryDoesNotReopenWhenANewerOwnershipRevisionWon() {
+    var accepted = currentSession();
+    var assignment = ownership.updateOwnerAndStatus(accepted, owner, SessionStatus.IN_PROGRESS);
+    readCommitted().executeWithoutResult(status -> stageDeparture());
+    var nextOwner = readCommitted().execute(status -> saveConsultant());
+    try {
+      var next =
+          ownership.updateOwnerAndStatus(currentSession(), nextOwner, SessionStatus.IN_PROGRESS);
+      assertThat(next.revision()).isGreaterThan(assignment.revision());
+      when(clock.instant()).thenReturn(SAME_INSTANT.plusSeconds(300));
+      revocations.retryDue();
+
+      assertAssignedRoom(nextOwner, oldRoom);
+      assertThat(tasks.pendingSessionIds(relationId)).containsExactly(sessionId);
+      assertThat(tasks.dueIds(LocalDateTime.now(clock), PageRequest.of(0, 8))).isEmpty();
+      verifyNoInteractions(matrix);
+    } finally {
+      readCommitted()
+          .executeWithoutResult(
+              status -> sessions.lockFresh(sessionId).orElseThrow().setConsultant(owner));
+      consultants.deleteById(nextOwner.getId());
+    }
   }
 
   private void assertReplacementKeepsOnlyTheRequiredCorrection() {
