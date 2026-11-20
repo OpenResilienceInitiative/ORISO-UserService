@@ -939,7 +939,7 @@ class UserControllerIT {
   @Test
   void acceptEnquiry_Should_ReturnInternalServerError_WhenNoConsultantInDbFound() throws Exception {
 
-    when(sessionService.getSessionForUpdate(SESSION_ID)).thenReturn(Optional.of(SESSION));
+    when(sessionService.getSession(SESSION_ID)).thenReturn(Optional.of(SESSION));
     when(authenticatedUser.getUserId()).thenReturn(CONSULTANT_ID);
     when(userAccountService.retrieveValidatedConsultant())
         .thenThrow(new InternalServerErrorException(""));
@@ -954,7 +954,7 @@ class UserControllerIT {
   @Test
   void acceptEnquiry_Should_ReturnInternalServerError_WhenSessionNotFoundInDb() throws Exception {
 
-    when(sessionService.getSessionForUpdate(SESSION_ID)).thenReturn(Optional.empty());
+    when(sessionService.getSession(SESSION_ID)).thenReturn(Optional.empty());
     when(authenticatedUser.getUserId()).thenReturn(CONSULTANT_ID);
     when(userAccountService.retrieveValidatedConsultant()).thenReturn(TEAM_CONSULTANT);
 
@@ -968,7 +968,7 @@ class UserControllerIT {
   @Test
   void acceptEnquiry_Should_ReturnSuccess_WhenSessionHasNoMatrixRoomId() throws Exception {
 
-    when(sessionService.getSessionForUpdate(SESSION_ID))
+    when(sessionService.getSession(SESSION_ID))
         .thenReturn(Optional.of(TEAM_SESSION_WITHOUT_GROUP_ID));
     when(authenticatedUser.getUserId()).thenReturn(CONSULTANT_ID);
     when(userAccountService.retrieveValidatedConsultant()).thenReturn(TEAM_CONSULTANT);
@@ -983,7 +983,7 @@ class UserControllerIT {
   @Test
   void acceptEnquiry_Should_ReturnSuccess_WhenAcceptEnquiryIsSuccessfull() throws Exception {
 
-    when(sessionService.getSessionForUpdate(SESSION_ID)).thenReturn(Optional.of(TEAM_SESSION));
+    when(sessionService.getSession(SESSION_ID)).thenReturn(Optional.of(TEAM_SESSION));
     when(authenticatedUser.getUserId()).thenReturn(CONSULTANT_ID);
     when(userAccountService.retrieveValidatedConsultant()).thenReturn(TEAM_CONSULTANT);
 
@@ -997,7 +997,7 @@ class UserControllerIT {
   @Test
   void acceptEnquiry_Should_ReturnConflict_WhenEnquiryIsAlreadyAssigned() throws Exception {
 
-    when(sessionService.getSessionForUpdate(SESSION_ID)).thenReturn(Optional.of(TEAM_SESSION));
+    when(sessionService.getSession(SESSION_ID)).thenReturn(Optional.of(TEAM_SESSION));
     when(authenticatedUser.getUserId()).thenReturn(CONSULTANT_ID);
     when(userAccountService.retrieveValidatedConsultant()).thenReturn(TEAM_CONSULTANT);
     doThrow(new ConflictException(""))
