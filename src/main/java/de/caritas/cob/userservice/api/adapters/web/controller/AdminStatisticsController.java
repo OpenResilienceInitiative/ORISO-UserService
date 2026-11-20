@@ -2,6 +2,7 @@ package de.caritas.cob.userservice.api.adapters.web.controller;
 
 import de.caritas.cob.userservice.api.service.statistics.AdminDashboardStatisticsService;
 import de.caritas.cob.userservice.api.service.statistics.AdminDashboardStatisticsService.DashboardStatistics;
+import de.caritas.cob.userservice.api.service.statistics.StatisticsReaderSecondFactorGate;
 import de.caritas.cob.userservice.api.service.tutorial.TutorialStatisticsService;
 import de.caritas.cob.userservice.api.service.tutorial.TutorialStatisticsService.TutorialStatistics;
 import io.swagger.annotations.Api;
@@ -25,9 +26,11 @@ public class AdminStatisticsController {
 
   private final @NonNull AdminDashboardStatisticsService adminDashboardStatisticsService;
   private final @NonNull TutorialStatisticsService tutorialStatisticsService;
+  private final @NonNull StatisticsReaderSecondFactorGate statisticsReaderSecondFactorGate;
 
   @GetMapping({"/useradmin/statistics/dashboard", "/service/useradmin/statistics/dashboard"})
   public ResponseEntity<DashboardStatistics> getDashboardStatistics() {
+    statisticsReaderSecondFactorGate.requireActiveSecondFactor();
     return ResponseEntity.ok(adminDashboardStatisticsService.buildDashboard());
   }
 
@@ -38,6 +41,7 @@ public class AdminStatisticsController {
    */
   @GetMapping({"/useradmin/statistics/tutorials", "/service/useradmin/statistics/tutorials"})
   public ResponseEntity<TutorialStatistics> getTutorialStatistics() {
+    statisticsReaderSecondFactorGate.requireActiveSecondFactor();
     return ResponseEntity.ok(tutorialStatisticsService.getStatistics());
   }
 }

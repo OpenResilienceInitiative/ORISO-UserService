@@ -1,13 +1,18 @@
 package de.caritas.cob.userservice.api.actions.chat;
 
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import de.caritas.cob.userservice.api.exception.httpresponses.ConflictException;
+import de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHttpStatusException;
 import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException;
+import de.caritas.cob.userservice.api.exception.httpresponses.customheader.HttpStatusExceptionReason;
 import de.caritas.cob.userservice.api.model.Chat;
 import de.caritas.cob.userservice.api.service.ChatService;
 import java.time.LocalDateTime;
@@ -16,6 +21,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.http.HttpStatus;
 
 @ExtendWith(MockitoExtension.class)
 class StopChatActionCommandTest {
@@ -63,8 +69,41 @@ class StopChatActionCommandTest {
 
     command.execute(chat);
 
-    verify(chatService).deleteChat(chat);
-    verify(matrixChatShutdownService).shutdownRoom(chat);
+    var order = inOrder(chatService, matrixChatShutdownService);
+    order.verify(chatService).deleteChat(chat);
+    order.verify(matrixChatShutdownService).shutdownRoomStrictly(chat);
+  }
+
+  @Test
+  void stopChatShouldFailWhenTheMatrixRoomCannotBeShutDownSoTheCallerRollsBack() {
+    Chat chat = activeMatrixChat();
+    var refused =
+        new CustomValidationHttpStatusException(
+            HttpStatusExceptionReason.INTERNAL_CHAT_MEMBERSHIP_FAILED, HttpStatus.BAD_GATEWAY);
+    doThrow(refused).when(matrixChatShutdownService).shutdownRoomStrictly(chat);
+
+    var thrown = assertThrows(refused.getClass(), () -> command.execute(chat));
+
+    // The exception reaches StopChatFacade's transaction, which rolls the deletion back.
+    assertSame(refused, thrown);
+  }
+
+  @Test
+  void stopChatShouldNotDeactivateTheFinalOccurrenceWhenTheMatrixRoomCannotBeShutDown() {
+    Chat chat = activeMatrixChat();
+    when(chat.isRepetitive()).thenReturn(true);
+    when(chat.getChatInterval()).thenReturn(Chat.ChatInterval.WEEKLY);
+    when(chat.nextStart()).thenReturn(null);
+    doThrow(
+            new CustomValidationHttpStatusException(
+                HttpStatusExceptionReason.INTERNAL_CHAT_MEMBERSHIP_FAILED, HttpStatus.BAD_GATEWAY))
+        .when(matrixChatShutdownService)
+        .shutdownRoomStrictly(chat);
+
+    assertThrows(CustomValidationHttpStatusException.class, () -> command.execute(chat));
+
+    verify(chat, never()).setActive(false);
+    verify(chatService, never()).saveChat(chat);
   }
 
   @Test
@@ -77,7 +116,7 @@ class StopChatActionCommandTest {
     // deleteChat purged it strictly in its own transaction; a second, redundant purge could fail
     // after everything is gone and report an error for a stop that succeeded.
     verify(chatService).deleteChat(chat);
-    verify(matrixChatShutdownService, never()).shutdownRoom(chat);
+    verify(matrixChatShutdownService, never()).shutdownRoomStrictly(chat);
   }
 
   @Test
@@ -103,7 +142,7 @@ class StopChatActionCommandTest {
 
     command.execute(chat);
 
-    verify(matrixChatShutdownService).shutdownRoom(chat);
+    verify(matrixChatShutdownService).shutdownRoomStrictly(chat);
     verify(chat).setActive(false);
     verify(chatService).saveChat(chat);
   }

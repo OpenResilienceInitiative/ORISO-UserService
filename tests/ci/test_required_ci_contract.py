@@ -29,13 +29,12 @@ class RequiredCiContractTest(unittest.TestCase):
                 "reports = Path('target/surefire-reports')\n"
                 "reports.mkdir(parents=True)\n"
                 "required = [\n"
-                "    'AppointmentControllerE2EIT',\n"
                 "    'ConversationControllerAuthorizationIT',\n"
                 "    'ConversationControllerIT',\n"
                 "    'UserAdminControllerE2EIT',\n"
                 "    'UserControllerE2EIT',\n"
                 "]\n"
-                "classes = required + [f'Integration{i}IT' for i in range(70)]\n"
+                "classes = required + [f'Integration{i}IT' for i in range(71)]\n"
                 "for index, name in enumerate(classes):\n"
                 "    tests = 756 if index == 0 else 1\n"
                 "    skipped = 4 if index == 0 else 0\n"
@@ -189,7 +188,6 @@ class RequiredCiContractTest(unittest.TestCase):
             "ProvisioningCompensationMariaDbIT",
             "ScheduledTaskClaimMariaDbIT",
             "TutorialProgressServiceMariaDbReplicaIT",
-            "OrganizerMariaDbReplicaIT",
             "DeactivateGroupChatSchedulerMariaDbReplicaIT",
             "DeleteUserAccountSchedulerMariaDbReplicaIT",
             "DeleteUsersRegisteredOnlySchedulerMariaDbReplicaIT",
@@ -312,7 +310,6 @@ class RequiredCiContractTest(unittest.TestCase):
         self.assertIn("ProvisioningCompensationMariaDbIT", reusable)
         self.assertIn("ScheduledTaskClaimMariaDbIT", reusable)
         self.assertIn("TutorialProgressServiceMariaDbReplicaIT", reusable)
-        self.assertIn("OrganizerMariaDbReplicaIT", reusable)
         self.assertIn("DeactivateGroupChatSchedulerMariaDbReplicaIT", reusable)
         self.assertIn("DeleteUserAccountSchedulerMariaDbReplicaIT", reusable)
         self.assertIn("DeleteUsersRegisteredOnlySchedulerMariaDbReplicaIT", reusable)
@@ -390,7 +387,6 @@ class RequiredCiContractTest(unittest.TestCase):
         self.assertIn("if skipped:", runner)
 
         for required_e2e in (
-            "AppointmentControllerE2EIT",
             "ConversationControllerAuthorizationIT",
             "ConversationControllerIT",
             "UserAdminControllerE2EIT",

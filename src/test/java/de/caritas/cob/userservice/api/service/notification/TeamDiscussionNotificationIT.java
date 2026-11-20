@@ -32,6 +32,8 @@ import de.caritas.cob.userservice.api.workflow.delete.service.IdentityTombstoneS
 import java.time.Clock;
 import java.time.Instant;
 import java.time.LocalDateTime;
+import java.util.List;
+import java.util.Optional;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -72,6 +74,7 @@ import org.springframework.transaction.support.TransactionTemplate;
   MatrixCaseReplyActorAuthorizer.class,
   de.caritas.cob.userservice.api.service.chat.MembersOnlyChatAccess.class,
   TeamDiscussionNotificationService.class,
+  MessageMentionNotificationService.class,
   EventNotificationService.class,
   EventNotificationDeduplicationWriter.class,
   ConsultantDisplayNameResolver.class
@@ -79,6 +82,7 @@ import org.springframework.transaction.support.TransactionTemplate;
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
 class TeamDiscussionNotificationIT {
   private static final String ROOM = "!team-qualification:synthetic.oriso.test";
+  private static final String CLIENT_ROOM = "!private-client:synthetic.oriso.test";
   private static final String SENDER = "team-sender";
   private static final String RECEIVER = "team-receiver";
   private static final String LEGACY = "team-legacy";
@@ -110,6 +114,8 @@ class TeamDiscussionNotificationIT {
   @Autowired private NotificationRoomLevelRepository levels;
   @Autowired private EventNotificationRepository events;
   @Autowired private EventNotificationController controller;
+  @Autowired private MessageMentionNotificationService mentions;
+  @Autowired private EventNotificationService eventNotifications;
   @MockitoBean private AuthenticatedUser authenticatedUser;
   @MockitoBean private IdentityTombstoneService tombstones;
   @MockitoBean private MatrixFeedUpdateSignalService feedSignals;
@@ -234,6 +240,55 @@ class TeamDiscussionNotificationIT {
           "SET QUERY_STATISTICS "
               + (previous.stream().anyMatch("TRUE"::equalsIgnoreCase) ? "TRUE" : "FALSE"));
     }
+  }
+
+  /** ORISO-UserService#1510: a colleague in the room, who is not the session's counsellor. */
+  @Test
+  void aChatMentionWritesOneMarkedRowForTheColleagueInTheRoom() {
+    var envelope = PrivacyEnvelope.builder().messageId("$mention-1").build();
+    when(matrix.getRoomMembers(CLIENT_ROOM))
+        .thenReturn(Optional.of(List.of("@" + RECEIVER + ":synthetic.oriso.test")));
+
+    mentions.notifyMentioned(
+        CLIENT_ROOM,
+        SENDER,
+        List.of("@" + RECEIVER + ":synthetic.oriso.test", "@" + LEGACY + ":synthetic.oriso.test"),
+        null,
+        envelope);
+
+    var rows = events.findAll();
+    assertThat(rows).hasSize(1);
+    assertThat(rows.get(0).getRecipientUserId()).isEqualTo(RECEIVER);
+    assertThat(rows.get(0).getEventType()).isEqualTo("message.new");
+    assertThat(rows.get(0).getParams()).contains("\"mentioned\":true");
+    assertThat(rows.get(0).getActionPath()).startsWith("/sessions/consultant/");
+  }
+
+  /** The Matrix listener wrote the row first: the same row gets marked, no second one appears. */
+  @Test
+  void aChatMentionMarksTheRowTheListenerAlreadyWrote() {
+    var envelope = PrivacyEnvelope.builder().messageId("$mention-2").build();
+    when(matrix.getRoomMembers(CLIENT_ROOM))
+        .thenReturn(Optional.of(List.of("@" + RECEIVER + ":synthetic.oriso.test")));
+    var session = sessions.findByMatrixRoomId(CLIENT_ROOM).orElseThrow();
+    eventNotifications.createEventOnce(
+        "message.new:$mention-2",
+        RECEIVER,
+        "message.new",
+        EventNotificationService.CATEGORY_MESSAGE,
+        "New message",
+        "text",
+        "{\"senderName\":\"Kim\"}",
+        "/sessions/consultant/sessionView/room/1",
+        session.getId(),
+        7L);
+
+    mentions.notifyMentioned(
+        CLIENT_ROOM, SENDER, List.of("@" + RECEIVER + ":synthetic.oriso.test"), null, envelope);
+
+    var rows = events.findAll();
+    assertThat(rows).hasSize(1);
+    assertThat(rows.get(0).getParams()).contains("Kim").contains("\"mentioned\":true");
   }
 
   private long lifecycleSelectCount(JdbcTemplate jdbc) {

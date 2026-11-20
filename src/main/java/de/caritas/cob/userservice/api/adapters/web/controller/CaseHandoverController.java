@@ -176,6 +176,15 @@ public class CaseHandoverController {
   }
 
   @PostMapping({
+    "/users/sessions/{sessionId}/case-handover/{requestId}/withdraw",
+    "/service/users/sessions/{sessionId}/case-handover/{requestId}/withdraw"
+  })
+  public ResponseEntity<CaseHandoverStatus> withdrawOffer(
+      @PathVariable Long sessionId, @PathVariable Long requestId) {
+    return ResponseEntity.ok(caseHandoverService.withdrawOffer(sessionId, requestId));
+  }
+
+  @PostMapping({
     "/users/sessions/{sessionId}/case-handover/{requestId}/client-consent",
     "/service/users/sessions/{sessionId}/case-handover/{requestId}/client-consent"
   })

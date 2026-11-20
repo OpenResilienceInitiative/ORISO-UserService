@@ -1,0 +1,473 @@
+openapi: 3.0.1
+info:
+  title: will be replaced
+  description: This information will be replaced by the SpringFox config information
+  version: 0.0.1
+paths:
+  /users/sessions/{sessionId}/appointments:
+    get:
+      tags:
+        - session-appointment-controller
+      summary: 'The newest appointments of one conversation, cancelled ones included, at most 100,
+        latest start first. [Authorization: the assigned counsellor or the asker of the session]'
+      operationId: getSessionAppointments
+      parameters:
+        - $ref: '#/components/parameters/SessionId'
+      responses:
+        200:
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/SessionAppointmentDTO'
+        401:
+          description: UNAUTHORIZED - no/invalid Keycloak token
+        403:
+          description: FORBIDDEN - no/invalid role/authorization or CSRF token
+        404:
+          description: NOT FOUND - no such session, or the caller is no participant of it
+      security:
+        - Bearer: [ ]
+    post:
+      tags:
+        - session-appointment-controller
+      summary: 'Schedules an appointment. [Authorization: the assigned counsellor of the session]'
+      operationId: createSessionAppointment
+      parameters:
+        - $ref: '#/components/parameters/SessionId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SessionAppointmentTimeDTO'
+      responses:
+        201:
+          description: CREATED
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SessionAppointmentDTO'
+        400:
+          description: BAD REQUEST - start not in the future, or end not after start
+        401:
+          description: UNAUTHORIZED - no/invalid Keycloak token
+        403:
+          description: FORBIDDEN - the asker of the session, or no/invalid role or CSRF token
+        404:
+          description: NOT FOUND - no such session, or the caller is no participant of it
+      security:
+        - Bearer: [ ]
+  /users/sessions/{sessionId}/appointments/{appointmentId}:
+    put:
+      tags:
+        - session-appointment-controller
+      summary: 'Moves an appointment to a new time. [Authorization: the assigned counsellor of the
+        session]'
+      operationId: rescheduleSessionAppointment
+      parameters:
+        - $ref: '#/components/parameters/SessionId'
+        - $ref: '#/components/parameters/AppointmentId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SessionAppointmentTimeDTO'
+      responses:
+        200:
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SessionAppointmentDTO'
+        400:
+          description: BAD REQUEST - start not in the future, or end not after start
+        401:
+          description: UNAUTHORIZED - no/invalid Keycloak token
+        403:
+          description: FORBIDDEN - the asker of the session, or no/invalid role or CSRF token
+        404:
+          description: NOT FOUND - no such session or appointment, or the caller is no participant
+        409:
+          description: CONFLICT - the appointment is cancelled, declined, or a request waiting for
+            confirmation (confirm or decline it first)
+      security:
+        - Bearer: [ ]
+  /users/sessions/{sessionId}/appointments/{appointmentId}/cancel:
+    post:
+      tags:
+        - session-appointment-controller
+      summary: 'Cancels an appointment; cancelling a cancelled one changes nothing. [Authorization:
+        the assigned counsellor or the asker of the session]'
+      operationId: cancelSessionAppointment
+      parameters:
+        - $ref: '#/components/parameters/SessionId'
+        - $ref: '#/components/parameters/AppointmentId'
+      responses:
+        200:
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SessionAppointmentDTO'
+        401:
+          description: UNAUTHORIZED - no/invalid Keycloak token
+        403:
+          description: FORBIDDEN - no/invalid role/authorization or CSRF token
+        404:
+          description: NOT FOUND - no such session or appointment, or the caller is no participant
+      security:
+        - Bearer: [ ]
+  /users/sessions/{sessionId}/appointment-slots:
+    get:
+      tags:
+        - session-appointment-controller
+      summary: 'The times the asker may book with the counsellor of the session (self-booking,
+        ORISO-Frontend#1050, #2287): slots of the counsellor''s slot length inside their
+        Sprechstunden (not their working hours; days off and the public holidays of their region
+        count) that no appointment, request, group date, blocker or imported busy time touches,
+        starting no earlier than the minimum lead time and less than 14 days ahead (the booking
+        horizon), earliest first, each INSTANT or REQUEST. A counsellor without Sprechstunden
+        offers none. [Authorization: the asker of the session]'
+      operationId: getSessionAppointmentSlots
+      parameters:
+        - $ref: '#/components/parameters/SessionId'
+        - name: from
+          in: query
+          required: true
+          schema:
+            type: string
+            format: date-time
+        - name: to
+          in: query
+          description: At most 14 days after from.
+          required: true
+          schema:
+            type: string
+            format: date-time
+        - name: medium
+          in: query
+          description: How the booked appointment would take place; both offer the same free time.
+          required: true
+          schema:
+            $ref: '#/components/schemas/SelfBookingMedium'
+      responses:
+        200:
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/AppointmentSlotDTO'
+        400:
+          description: BAD REQUEST - window not ordered, longer than 14 days, or unknown medium
+        401:
+          description: UNAUTHORIZED - no/invalid Keycloak token
+        403:
+          description: FORBIDDEN - a counsellor of the session, or no/invalid role
+        404:
+          description: NOT FOUND - no such session, or the caller is no participant of it
+        409:
+          description: CONFLICT - the conversation is not running or has no counsellor
+      security:
+        - Bearer: [ ]
+  /users/sessions/{sessionId}/appointment-slots/booking:
+    post:
+      tags:
+        - session-appointment-controller
+      summary: 'Books one of the offered slots as a video or phone appointment: SCHEDULED when the
+        slot is INSTANT, REQUESTED (waiting for the counsellor) when it is a REQUEST, as decided
+        again at booking time. The slot is checked again while the counsellor''s calendar is
+        locked, so two bookings never take the same time. [Authorization: the asker of the
+        session]'
+      operationId: bookSessionAppointmentSlot
+      parameters:
+        - $ref: '#/components/parameters/SessionId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SessionAppointmentTimeDTO'
+      responses:
+        201:
+          description: CREATED
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SessionAppointmentDTO'
+        400:
+          description: BAD REQUEST - kind not VIDEO or PHONE, or end not after start
+        401:
+          description: UNAUTHORIZED - no/invalid Keycloak token
+        403:
+          description: FORBIDDEN - a counsellor of the session, or no/invalid role or CSRF token
+        404:
+          description: NOT FOUND - no such session, or the caller is no participant of it
+        409:
+          description: 'CONFLICT - the time is no longer free, or the conversation is not running.
+            X-Reason SELF_BOOKING_LIMIT_REACHED: the conversation already has an upcoming
+            appointment or a request waiting (one at a time). X-Reason SLOT_OUTSIDE_BOOKING_WINDOW: the start lies
+            inside the lead time or 14 days or more ahead.'
+          headers:
+            X-Reason:
+              schema:
+                type: string
+                enum:
+                  - SELF_BOOKING_LIMIT_REACHED
+                  - SLOT_OUTSIDE_BOOKING_WINDOW
+      security:
+        - Bearer: [ ]
+  /users/sessions/{sessionId}/appointments/{appointmentId}/confirm:
+    post:
+      tags:
+        - session-appointment-controller
+      summary: 'Confirms an advice seeker''s request: REQUESTED becomes SCHEDULED. The time is
+        checked again while the counsellor''s calendar is locked; it must still start in the
+        future and nothing else may take it meanwhile. [Authorization: the assigned counsellor of
+        the session, or a counsellor with co-access]'
+      operationId: confirmSessionAppointment
+      parameters:
+        - $ref: '#/components/parameters/SessionId'
+        - $ref: '#/components/parameters/AppointmentId'
+      responses:
+        200:
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SessionAppointmentDTO'
+        401:
+          description: UNAUTHORIZED - no/invalid Keycloak token
+        403:
+          description: FORBIDDEN - the asker of the session, or no/invalid role or CSRF token
+        404:
+          description: NOT FOUND - no such session or appointment, or the caller is no participant
+        409:
+          description: 'CONFLICT - X-Reason APPOINTMENT_NOT_REQUESTED: the appointment is no
+            request (any more). X-Reason REQUESTED_TIME_TAKEN: the time has passed or something
+            else takes it now; decline the request instead.'
+          headers:
+            X-Reason:
+              schema:
+                type: string
+                enum:
+                  - APPOINTMENT_NOT_REQUESTED
+                  - REQUESTED_TIME_TAKEN
+      security:
+        - Bearer: [ ]
+  /users/sessions/{sessionId}/appointments/{appointmentId}/decline:
+    post:
+      tags:
+        - session-appointment-controller
+      summary: 'Declines an advice seeker''s request: REQUESTED becomes DECLINED and frees the
+        time. [Authorization: the assigned counsellor of the session, or a counsellor with
+        co-access]'
+      operationId: declineSessionAppointment
+      parameters:
+        - $ref: '#/components/parameters/SessionId'
+        - $ref: '#/components/parameters/AppointmentId'
+      responses:
+        200:
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SessionAppointmentDTO'
+        401:
+          description: UNAUTHORIZED - no/invalid Keycloak token
+        403:
+          description: FORBIDDEN - the asker of the session, or no/invalid role or CSRF token
+        404:
+          description: NOT FOUND - no such session or appointment, or the caller is no participant
+        409:
+          description: 'CONFLICT - X-Reason APPOINTMENT_NOT_REQUESTED: the appointment is no
+            request (any more).'
+          headers:
+            X-Reason:
+              schema:
+                type: string
+                enum:
+                  - APPOINTMENT_NOT_REQUESTED
+      security:
+        - Bearer: [ ]
+  /users/sessions/{sessionId}/appointments/{appointmentId}/expiry-notice:
+    post:
+      tags:
+        - session-appointment-controller
+      summary: 'Claims the conversation notice of a request declined automatically because nobody
+        answered it by its start (ORISO-Frontend#2287). The first participant''s client that claims
+        it posts the notice into the conversation, like after a counsellor''s decline; every later
+        claim gets 409. [Authorization: the asker of the session or a responsible counsellor]'
+      operationId: claimSessionAppointmentExpiryNotice
+      parameters:
+        - $ref: '#/components/parameters/SessionId'
+        - $ref: '#/components/parameters/AppointmentId'
+      responses:
+        204:
+          description: NO CONTENT - claimed; the caller posts the notice
+        401:
+          description: UNAUTHORIZED - no/invalid Keycloak token
+        403:
+          description: FORBIDDEN - no/invalid role or CSRF token
+        404:
+          description: NOT FOUND - no such session or appointment, or the caller is no participant
+        409:
+          description: CONFLICT - no notice pending (not expired, or already claimed)
+      security:
+        - Bearer: [ ]
+  /users/appointments/upcoming:
+    get:
+      tags:
+        - session-appointment-controller
+      summary: 'The caller''s next scheduled 1:1 appointments across their sessions, not yet ended,
+        at most 50, earliest first, with the advice seekers'' requests still waiting (status
+        REQUESTED, ORISO-Frontend#2287): a request is listed for the asker who made it and the
+        counsellor of its conversation only, not through co-access. Declined requests are left out.
+        [Authorization: counsellor or asker]'
+      operationId: getMyUpcomingSessionAppointments
+      responses:
+        200:
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/SessionAppointmentDTO'
+        401:
+          description: UNAUTHORIZED - no/invalid Keycloak token
+        403:
+          description: FORBIDDEN - no/invalid role/authorization
+      security:
+        - Bearer: [ ]
+components:
+  parameters:
+    SessionId:
+      name: sessionId
+      in: path
+      description: Session id
+      required: true
+      schema:
+        type: integer
+        format: int64
+    AppointmentId:
+      name: appointmentId
+      in: path
+      description: Appointment id
+      required: true
+      schema:
+        type: string
+        format: uuid
+  schemas:
+    SelfBookingMedium:
+      type: string
+      enum:
+        - VIDEO
+        - PHONE
+    AppointmentSlotDTO:
+      type: object
+      required:
+        - startTime
+        - endTime
+        - bookingMode
+      properties:
+        startTime:
+          type: string
+          format: date-time
+        endTime:
+          type: string
+          format: date-time
+        bookingMode:
+          $ref: '#/components/schemas/SlotBookingMode'
+    SlotBookingMode:
+      description: 'INSTANT: booking the slot schedules the appointment at once (the counsellor
+        accepts automatically and the start lies at least their notice period ahead). REQUEST:
+        booking it sends a request (status REQUESTED) the counsellor confirms or declines.'
+      type: string
+      enum:
+        - INSTANT
+        - REQUEST
+    SessionAppointmentTimeDTO:
+      type: object
+      required:
+        - startTime
+        - endTime
+      properties:
+        startTime:
+          type: string
+          format: date-time
+        endTime:
+          type: string
+          format: date-time
+        kind:
+          $ref: '#/components/schemas/AppointmentKind'
+    AppointmentKind:
+      description: How the appointment takes place. Absent on appointments made before the kind
+        existed; a reschedule without a kind keeps the stored one.
+      type: string
+      enum:
+        - ONSITE
+        - VIDEO
+        - PHONE
+        - CHAT
+    SessionAppointmentDTO:
+      type: object
+      required:
+        - id
+        - sessionId
+        - startTime
+        - endTime
+        - status
+      properties:
+        id:
+          type: string
+          format: uuid
+        sessionId:
+          type: integer
+          format: int64
+        startTime:
+          type: string
+          format: date-time
+        endTime:
+          type: string
+          format: date-time
+        status:
+          description: 'REQUESTED: an advice seeker''s booking waiting for the counsellor
+            (ORISO-Frontend#2287); it takes the time like a scheduled one. DECLINED: a request the
+            counsellor declined.'
+          type: string
+          enum:
+            - SCHEDULED
+            - CANCELLED
+            - REQUESTED
+            - DECLINED
+        kind:
+          $ref: '#/components/schemas/AppointmentKind'
+        expired:
+          description: A DECLINED request that nobody answered by its start, declined
+            automatically (ORISO-Frontend#2287). Absent otherwise.
+          type: boolean
+        noticePending:
+          description: The conversation notice of that automatic decline is still to be posted;
+            claim it with POST .../expiry-notice first. Absent otherwise.
+          type: boolean
+        counterpart:
+          $ref: '#/components/schemas/SessionAppointmentCounterpartDTO'
+    SessionAppointmentCounterpartDTO:
+      description: The other participant as seen by the caller; absent while a session has no counsellor.
+      type: object
+      properties:
+        username:
+          type: string
+        displayName:
+          type: string
+  securitySchemes:
+    Bearer:
+      type: apiKey
+      name: Authorization
+      in: header

@@ -28,7 +28,6 @@ import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantTopicRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.port.out.SessionSupervisorRepository;
-import de.caritas.cob.userservice.api.service.appointment.AppointmentService;
 import de.caritas.cob.userservice.api.service.consultingtype.TopicService;
 import de.caritas.cob.userservice.api.service.session.SessionOwnershipService;
 import de.caritas.cob.userservice.api.workflow.delete.service.DeletionLifecycleService;
@@ -59,8 +58,6 @@ public class ConsultantAdminServiceTest {
 
   @Mock private ConsultantPreDeletionService consultantPreDeletionService;
 
-  @Mock private AppointmentService appointmentService;
-
   @Mock private SessionRepository sessionRepository;
 
   @Mock
@@ -84,6 +81,14 @@ public class ConsultantAdminServiceTest {
   @Mock private ConsultantTopicRepository consultantTopicRepository;
 
   @Mock private TopicService topicService;
+
+  @Mock
+  private de.caritas.cob.userservice.api.workflow.delete.service.DeletionAuditService
+      deletionAuditService;
+
+  @Mock
+  private de.caritas.cob.userservice.api.service.lifecycle.LifecycleEventPublisher
+      lifecycleEventPublisher;
 
   @Test
   public void createNewConsultant_Should_enrichResponseWithTopicNames() {
@@ -188,7 +193,6 @@ public class ConsultantAdminServiceTest {
     var result = consultantAdminService.updateConsultant("c-1", dto);
 
     assertThat(result).isNotNull();
-    verify(appointmentService).updateConsultant(result);
   }
 
   // ---------------------------------------------------------------------------
@@ -340,6 +344,12 @@ public class ConsultantAdminServiceTest {
     var consultant = new Consultant();
     consultant.setId("c-1");
     var session = new de.caritas.cob.userservice.api.model.Session();
+    session.setId(77L);
+    session.setTenantId(3L);
+    session.setAgencyId(5L);
+    var asker = new de.caritas.cob.userservice.api.model.User();
+    asker.setUserId("asker-1");
+    session.setUser(asker);
     when(pictureStore.lockActiveConsultant("c-1")).thenReturn(consultant);
     when(sessionRepository.findByConsultantAndStatusIn(any(Consultant.class), any(List.class)))
         .thenReturn(List.of(session))
@@ -348,10 +358,19 @@ public class ConsultantAdminServiceTest {
     consultantAdminService.markConsultantForDeletion("c-1", true);
 
     var deletionOrder =
-        inOrder(caseHandoverRequestRepository, sessionSupervisorRepository, sessionRepository);
+        inOrder(
+            caseHandoverRequestRepository,
+            sessionSupervisorRepository,
+            sessionRepository,
+            lifecycleEventPublisher);
     deletionOrder.verify(caseHandoverRequestRepository).deleteAllBySessionId(session.getId());
     deletionOrder.verify(sessionSupervisorRepository).deleteAllBySessionId(session.getId());
     deletionOrder.verify(sessionRepository).delete(session);
+    deletionOrder
+        .verify(lifecycleEventPublisher)
+        .sessionDeleted(
+            new de.caritas.cob.userservice.api.service.lifecycle.LifecycleEventPublisher
+                .DeletedSession(3L, 77L, "asker-1", 5L));
     verify(sessionOwnershipService).clearOwnerFromSessions(any(), any());
     verify(deletionLifecycleService).beginConsultantDeletion(any(), any());
   }
@@ -373,6 +392,7 @@ public class ConsultantAdminServiceTest {
 
     verify(membersOnlyRevocation).keepCaseOnDeletionOf(session, consultant);
     verify(sessionRepository, org.mockito.Mockito.never()).delete(session);
+    verify(lifecycleEventPublisher, org.mockito.Mockito.never()).sessionDeleted(any());
     verify(sessionSupervisorRepository, org.mockito.Mockito.never())
         .deleteAllBySessionId(session.getId());
   }
@@ -389,6 +409,26 @@ public class ConsultantAdminServiceTest {
     var order = inOrder(membersOnlyRevocation, deletionLifecycleService);
     order.verify(membersOnlyRevocation).revokeAllAccessOf(consultant);
     order.verify(deletionLifecycleService).beginConsultantDeletion(any(), any());
+  }
+
+  @Test
+  void markConsultantForDeletion_Should_LeaveAScheduledDeletionLogEntry() {
+    var consultant = new Consultant();
+    consultant.setId("c-1");
+    consultant.setTenantId(5L);
+    when(pictureStore.lockActiveConsultant("c-1")).thenReturn(consultant);
+
+    consultantAdminService.markConsultantForDeletion("c-1", false);
+
+    var order = inOrder(consultantRepository, deletionAuditService);
+    order.verify(consultantRepository).save(consultant);
+    order
+        .verify(deletionAuditService)
+        .recordAsCurrentActor(
+            de.caritas.cob.userservice.api.workflow.delete.model.DeletionAuditTargetType.CONSULTANT,
+            "c-1",
+            5L,
+            de.caritas.cob.userservice.api.workflow.delete.model.DeletionAuditOutcome.SCHEDULED);
   }
 
   @Test
@@ -472,5 +512,80 @@ public class ConsultantAdminServiceTest {
     // Keycloak cannot be rolled back with the transaction: it is only changed once nothing can
     // fail.
     verify(consultantPreDeletionService, never()).deactivateIdentity(any());
+  }
+
+  // ---------------------------------------------------------------------------
+  // cancelConsultantDeletion (OBP 2.1 #123)
+  // ---------------------------------------------------------------------------
+
+  private Consultant consultantInDeletion() {
+    var consultant = new Consultant();
+    consultant.setId("c-1");
+    consultant.setDeleteDate(java.time.LocalDateTime.of(2026, 10, 1, 12, 0));
+    consultant.setStatus(ConsultantStatus.IN_DELETION);
+    return consultant;
+  }
+
+  @Test
+  void cancelConsultantDeletion_Should_ThrowNotFound_When_ConsultantNotFound() {
+    when(consultantRepository.findPictureOwnerForUpdate("c-1")).thenReturn(Optional.empty());
+
+    assertThrows(
+        NotFoundException.class, () -> consultantAdminService.cancelConsultantDeletion("c-1"));
+
+    verify(consultantPreDeletionService, never()).activateIdentity(any());
+  }
+
+  @Test
+  void cancelConsultantDeletion_Should_RestoreRelationsStatusAndLogin_InThisOrder() {
+    var consultant = consultantInDeletion();
+    var deletedAt = consultant.getDeleteDate();
+    when(consultantRepository.findPictureOwnerForUpdate("c-1")).thenReturn(Optional.of(consultant));
+
+    consultantAdminService.cancelConsultantDeletion("c-1");
+
+    assertThat(consultant.getStatus()).isEqualTo(ConsultantStatus.CREATED);
+    var order =
+        inOrder(consultantPreDeletionService, deletionLifecycleService, consultantRepository);
+    // Eligibility is decided first, so a refused cancel changes nothing.
+    order.verify(deletionLifecycleService).cancelConsultantDeletion(consultant);
+    order.verify(consultantPreDeletionService).restoreAgencyRelations(consultant, deletedAt);
+    order.verify(consultantRepository).save(consultant);
+    // Keycloak is not rolled back with the transaction, so the login comes back last.
+    order.verify(consultantPreDeletionService).activateIdentity(consultant);
+  }
+
+  @Test
+  void cancelConsultantDeletion_Should_LeaveACancelledDeletionLogEntry() {
+    var consultant = consultantInDeletion();
+    consultant.setTenantId(5L);
+    when(consultantRepository.findPictureOwnerForUpdate("c-1")).thenReturn(Optional.of(consultant));
+
+    consultantAdminService.cancelConsultantDeletion("c-1");
+
+    verify(deletionAuditService)
+        .recordAsCurrentActor(
+            de.caritas.cob.userservice.api.workflow.delete.model.DeletionAuditTargetType.CONSULTANT,
+            "c-1",
+            5L,
+            de.caritas.cob.userservice.api.workflow.delete.model.DeletionAuditOutcome.CANCELLED);
+  }
+
+  @Test
+  void cancelConsultantDeletion_Should_NotEnableTheLogin_When_DeletionCannotBeCancelled() {
+    var consultant = consultantInDeletion();
+    when(consultantRepository.findPictureOwnerForUpdate("c-1")).thenReturn(Optional.of(consultant));
+    org.mockito.Mockito.doThrow(
+            new de.caritas.cob.userservice.api.exception.httpresponses.ConflictException("past"))
+        .when(deletionLifecycleService)
+        .cancelConsultantDeletion(consultant);
+
+    assertThrows(
+        de.caritas.cob.userservice.api.exception.httpresponses.ConflictException.class,
+        () -> consultantAdminService.cancelConsultantDeletion("c-1"));
+
+    verify(consultantPreDeletionService, never()).activateIdentity(any());
+    verify(consultantRepository, never()).save(any());
+    verify(deletionAuditService, never()).recordAsCurrentActor(any(), any(), any(), any());
   }
 }

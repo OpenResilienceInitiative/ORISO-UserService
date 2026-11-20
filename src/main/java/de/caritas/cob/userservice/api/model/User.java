@@ -123,6 +123,13 @@ public class User implements TenantAware, NotificationsAware {
   @Column(name = "deletion_pause_created_at", columnDefinition = "datetime")
   private LocalDateTime deletionPauseCreatedAt;
 
+  /** Why the last nightly run kept this row: step and fixed reason, never content (#1521). */
+  @Column(name = "deletion_failure_reason", length = 512)
+  private String deletionFailureReason;
+
+  @Column(name = "deletion_failed_at", columnDefinition = "datetime")
+  private LocalDateTime deletionFailedAt;
+
   @Column(name = "reactivation_operation_id", length = 36)
   private String reactivationOperationId;
 
@@ -176,6 +183,22 @@ public class User implements TenantAware, NotificationsAware {
    */
   @Column(name = "temporary_account", nullable = false, columnDefinition = "bit default false")
   private boolean temporaryAccount;
+
+  /**
+   * Lifetimes and retention copied at creation for a temporary account from a direct link (ADR-029,
+   * #1476). Null for every other account, including self-help-group guests.
+   */
+  @jakarta.persistence.Embedded private TemporaryAccountSnapshot temporaryAccountSnapshot;
+
+  /**
+   * #1662: the guest account mode a temporary guest entered under (the link's or circle's mode as
+   * capped at registration). "Konto behalten" is judged by it, so a later switch of the link only
+   * affects new guests. Null for permanent accounts and for temporary accounts created before it
+   * was stored.
+   */
+  @Enumerated(EnumType.STRING)
+  @Column(name = "guest_account_mode_at_entry", length = 16)
+  private GuestAccountMode guestAccountModeAtEntry;
 
   /**
    * The animal the advice seeker chose in their profile (#1240), as its lower-case file stem. Null

@@ -8,6 +8,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.web.servlet.FilterRegistrationBean;
 import org.springframework.context.annotation.Bean;
 import org.springframework.core.Ordered;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.converter.HttpMessageConverter;
 import org.springframework.http.converter.json.JacksonJsonHttpMessageConverter;
 import org.springframework.stereotype.Component;
@@ -102,7 +103,7 @@ public class CustomWebMvcConfigurer implements WebMvcConfigurer {
     configuration.setAllowedOrigins(List.of(allowedOrigins));
     configuration.setAllowedMethods(List.of("OPTIONS", "GET", "POST", "PUT", "PATCH", "DELETE"));
     configuration.setAllowedHeaders(List.of("*"));
-    configuration.setExposedHeaders(List.of("X-Reason"));
+    configuration.setExposedHeaders(List.of("X-Reason", HttpHeaders.RETRY_AFTER));
 
     var source = new UrlBasedCorsConfigurationSource();
     allowedPaths.forEach(path -> source.registerCorsConfiguration(path, configuration));

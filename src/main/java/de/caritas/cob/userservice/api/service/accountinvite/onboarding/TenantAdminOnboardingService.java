@@ -9,6 +9,7 @@ import de.caritas.cob.userservice.api.admin.service.admin.create.CreateAdminServ
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
 import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException;
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
+import de.caritas.cob.userservice.api.helper.PasswordPolicy;
 import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
 import de.caritas.cob.userservice.api.identity.IdentityOtpCredential;
 import de.caritas.cob.userservice.api.model.AccountInvite;
@@ -65,7 +66,7 @@ import org.springframework.transaction.support.TransactionTemplate;
 @Service
 public class TenantAdminOnboardingService {
 
-  private static final int MIN_PASSWORD_LENGTH = 8;
+  private static final int MIN_PASSWORD_LENGTH = PasswordPolicy.MIN_LENGTH;
 
   /* TenantService's tenant.legal_name / contact_email / contact_phone column limits. */
   private static final int LEGAL_NAME_MAX_LENGTH = 255;

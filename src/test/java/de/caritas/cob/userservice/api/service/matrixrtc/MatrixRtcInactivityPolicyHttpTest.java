@@ -111,11 +111,19 @@ class MatrixRtcInactivityPolicyHttpTest {
               new TenantService(factory, new ConcurrentMapCacheManager()),
               matrix,
               hasher,
-              jdbc);
+              jdbc,
+              org.mockito.Mockito.mock(
+                  de.caritas.cob.userservice.api.service.matrix.MatrixCallGuestService.class),
+              de.caritas.cob.userservice.testutils.CallStartRules.everyCallRunsForACounsellor());
       var mvc =
           MockMvcBuilders.standaloneSetup(
                   new MatrixRtcCallPolicyController(
-                      service, new MatrixRtcPolicyTokenVerifier("test-only")))
+                      service,
+                      new MatrixRtcPolicyTokenVerifier("test-only"),
+                      new ConsultingTypeCallGate(
+                          new MatrixRtcPolicyContextResolver(
+                              sessions, chats, supervisors, discussions),
+                          consultingTypesAllowingCalls())))
               .build();
       for (String state :
           java.util.List.of("SUSPENDED", "DELETING", "SUSPENDING", "REACTIVATING", "DELETED")) {
@@ -194,6 +202,22 @@ class MatrixRtcInactivityPolicyHttpTest {
     } finally {
       remote.stop(0);
     }
+  }
+
+  /** This test is about the identity lifecycle: the form of counselling allows calls. */
+  private static de.caritas.cob.userservice.api.service.ConsultingTypeService
+      consultingTypesAllowingCalls() {
+    var consultingTypes =
+        org.mockito.Mockito.mock(
+            de.caritas.cob.userservice.api.service.ConsultingTypeService.class);
+    org.mockito.Mockito.when(
+            consultingTypes.getFreshExtendedConsultingTypeResponseDTO(
+                org.mockito.ArgumentMatchers.anyInt()))
+        .thenReturn(
+            new de.caritas.cob.userservice.consultingtypeservice.generated.web.model
+                    .ExtendedConsultingTypeResponseDTO()
+                .isVideoCallAllowed(true));
+    return consultingTypes;
   }
 
   @org.springframework.test.context.transaction.AfterTransaction

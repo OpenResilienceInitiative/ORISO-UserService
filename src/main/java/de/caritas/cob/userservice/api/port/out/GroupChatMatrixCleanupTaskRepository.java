@@ -8,6 +8,7 @@ import java.util.Optional;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Lock;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
@@ -16,6 +17,11 @@ public interface GroupChatMatrixCleanupTaskRepository
   @Lock(LockModeType.PESSIMISTIC_WRITE)
   @Query("SELECT task FROM GroupChatMatrixCleanupTask task WHERE task.id=:id")
   Optional<GroupChatMatrixCleanupTask> findByIdForUpdate(@Param("id") Long id);
+
+  /** Bulk delete: no entity load, and no error when a worker already removed the row. */
+  @Modifying
+  @Query("DELETE FROM GroupChatMatrixCleanupTask task WHERE task.id=:id")
+  void discard(@Param("id") Long id);
 
   // Least recently attempted first: repeatedly deferred old tasks must not starve newer cleanup.
   @Query(

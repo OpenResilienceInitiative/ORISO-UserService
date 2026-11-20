@@ -94,6 +94,9 @@ public class ConsultantAgencyRelationCreatorServiceTest {
         new CreateConsultantAgencyDTOInputAdapter(
             "consultant Id", new CreateConsultantAgencyDTO().agencyId(2L));
 
+    when(consultantAgencyRelationFinalizer.finalizeConsultantAgencyRelation(consultant, agencyDTO))
+        .thenReturn(true);
+
     consultantAgencyRelationCreatorService.completeConsultantAgencyAssigment(
         input, LogService::logInfo);
 
@@ -121,13 +124,17 @@ public class ConsultantAgencyRelationCreatorServiceTest {
     when(consultantAgencyService.saveConsultantAgency(any(ConsultantAgency.class)))
         .thenAnswer(invocation -> invocation.getArgument(0));
 
+    when(consultantAgencyRelationFinalizer.finalizeConsultantAgencyRelation(
+            eq(consultant), eq(agency), any(ConsultantAgency.class)))
+        .thenReturn(true);
+
     consultantAgencyRelationCreatorService.createNewConsultantAgency(
         "consultant Id", new CreateConsultantAgencyDTO().agencyId(280L));
 
     var inOrder = inOrder(consultantAgencyRelationFinalizer, eventPublisher);
     inOrder
         .verify(consultantAgencyRelationFinalizer)
-        .finalizeConsultantAgencyRelation(eq(consultant), any(ConsultantAgency.class));
+        .finalizeConsultantAgencyRelation(eq(consultant), eq(agency), any(ConsultantAgency.class));
     inOrder
         .verify(eventPublisher)
         .publishEvent(new ConsultantJoinedAgencyEvent("consultant Id", 280L));
@@ -228,12 +235,33 @@ public class ConsultantAgencyRelationCreatorServiceTest {
 
     verify(consultantAgencyRelationFinalizer)
         .finalizeConsultantAgencyRelation(consultant, agencyDTO);
-    assertThat(consultant.getStatus()).isEqualTo(ConsultantStatus.IN_PROGRESS);
-    verify(consultantRepository).save(consultant);
+    verify(consultantRepository, never()).save(consultant);
   }
 
   @Test
-  void createNewConsultantAgency_Should_finalizeThePersistedRelationWithoutRequeryingIt() {
+  void aStaleFinalizationDoesNotRestrictTheConsultantOrPublishAGrant() {
+    var consultant = new Consultant();
+    consultant.setId("consultant Id");
+    consultant.setStatus(ConsultantStatus.CREATED);
+    var agency = new AgencyDTO().id(2L).teamAgency(true);
+    when(consultantRepository.findByIdAndDeleteDateIsNull(consultant.getId()))
+        .thenReturn(Optional.of(consultant));
+    when(agencyService.getAgency(2L)).thenReturn(agency);
+
+    var input =
+        new CreateConsultantAgencyDTOInputAdapter(
+            consultant.getId(), new CreateConsultantAgencyDTO().agencyId(2L));
+    consultantAgencyRelationCreatorService.completeConsultantAgencyAssigment(
+        input, LogService::logInfo);
+
+    assertThat(consultant.getStatus()).isEqualTo(ConsultantStatus.CREATED);
+    assertThat(consultant.isTeamConsultant()).isFalse();
+    verify(consultantRepository, never()).save(any());
+    verifyNoInteractions(eventPublisher);
+  }
+
+  @Test
+  void createNewConsultantAgency_Should_passTheExactPersistedRelationToFinalization() {
     var consultant = new Consultant();
     consultant.setId("consultant Id");
     consultant.setTenantId(83L);
@@ -253,7 +281,7 @@ public class ConsultantAgencyRelationCreatorServiceTest {
     var persistedRelation = ArgumentCaptor.forClass(ConsultantAgency.class);
     verify(consultantAgencyService).saveConsultantAgency(persistedRelation.capture());
     verify(consultantAgencyRelationFinalizer)
-        .finalizeConsultantAgencyRelation(consultant, persistedRelation.getValue());
+        .finalizeConsultantAgencyRelation(consultant, agency, persistedRelation.getValue());
   }
 
   @Test
@@ -362,30 +390,6 @@ public class ConsultantAgencyRelationCreatorServiceTest {
   }
 
   @Test
-  public void
-      completeConsultantAgencyAssigment_Should_markTeamConsultant_When_teamAgencyAssigned() {
-    var consultant = new Consultant();
-    consultant.setId("consultant Id");
-    consultant.setStatus(ConsultantStatus.CREATED);
-    consultant.setTeamConsultant(false);
-    var agencyDTO = new AgencyDTO().id(2L).teamAgency(true);
-
-    when(consultantRepository.findByIdAndDeleteDateIsNull("consultant Id"))
-        .thenReturn(Optional.of(consultant));
-    when(agencyService.getAgency(2L)).thenReturn(agencyDTO);
-
-    var input =
-        new CreateConsultantAgencyDTOInputAdapter(
-            "consultant Id", new CreateConsultantAgencyDTO().agencyId(2L));
-
-    consultantAgencyRelationCreatorService.completeConsultantAgencyAssigment(
-        input, LogService::logInfo);
-
-    assertThat(consultant.isTeamConsultant()).isTrue();
-    verify(consultantRepository, org.mockito.Mockito.atLeastOnce()).save(consultant);
-  }
-
-  @Test
   public void createNewConsultantAgency_Should_assignKeycloakRoles_When_roleSetConfigured() {
     var consultant = new Consultant();
     consultant.setId("consultant Id");
@@ -409,6 +413,48 @@ public class ConsultantAgencyRelationCreatorServiceTest {
     verify(identityRoleUpdater)
         .ensureRoles("consultant Id", Set.of("consultant-role", "u25-consultant"));
     verify(consultantAgencyService).saveConsultantAgency(any(ConsultantAgency.class));
+  }
+
+  /** #1421: a caller that writes the roles itself, after its own last refusable step. */
+  @Test
+  public void
+      prepareConsultantAgencyRelation_Should_notTouchTheIdentityProvider_When_rolesAreDeferred() {
+    var consultant = new Consultant();
+    consultant.setId("consultant Id");
+    consultant.setTenantId(1L);
+    when(consultantRepository.findByIdAndDeleteDateIsNull("consultant Id"))
+        .thenReturn(Optional.of(consultant));
+    when(agencyService.getAgency(15L)).thenReturn(new AgencyDTO().consultingType(0).id(15L));
+    when(consultingTypeManager.getConsultingTypeSettings(0))
+        .thenReturn(givenConsultingTypeWithRoles("main", List.of("consultant-role")));
+    var input =
+        new CreateConsultantAgencyDTOInputAdapter(
+            "consultant Id", new CreateConsultantAgencyDTO().roleSetKey("main").agencyId(15L)) {
+          @Override
+          public boolean defersIdentityRoles() {
+            return true;
+          }
+        };
+
+    consultantAgencyRelationCreatorService.prepareConsultantAgencyRelation(input);
+
+    verifyNoInteractions(identityRoleUpdater);
+    verify(consultantAgencyService).saveConsultantAgency(any(ConsultantAgency.class));
+    assertThat(consultantAgencyRelationCreatorService.identityRolesOf(input))
+        .containsExactlyInAnyOrder("consultant-role");
+  }
+
+  @Test
+  public void identityRolesOf_Should_beEmpty_When_theConsultingTypeHasNoRoles() {
+    when(agencyService.getAgency(15L)).thenReturn(new AgencyDTO().consultingType(0).id(15L));
+    when(consultingTypeManager.getConsultingTypeSettings(0))
+        .thenReturn(new ExtendedConsultingTypeResponseDTO());
+
+    assertThat(
+            consultantAgencyRelationCreatorService.identityRolesOf(
+                new CreateConsultantAgencyDTOInputAdapter(
+                    "consultant Id", new CreateConsultantAgencyDTO().agencyId(15L))))
+        .isEmpty();
   }
 
   private ExtendedConsultingTypeResponseDTO givenConsultingTypeWithRoles(

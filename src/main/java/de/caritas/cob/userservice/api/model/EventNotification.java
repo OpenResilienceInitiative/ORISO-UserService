@@ -15,12 +15,18 @@ import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
 import lombok.ToString;
+import org.hibernate.annotations.DynamicUpdate;
 import org.hibernate.annotations.Filter;
 import org.hibernate.annotations.JdbcTypeCode;
 import org.hibernate.type.SqlTypes;
 
-/** Persistent in-app notification event for a concrete recipient user. */
+/**
+ * Persistent in-app notification event for a concrete recipient user. Dynamic updates: marking a
+ * row as read and marking it as a mention (ORISO-UserService#1510) can overlap, and each must write
+ * only its own column.
+ */
 @Entity
+@DynamicUpdate
 @Table(
     name = "event_notification",
     uniqueConstraints =

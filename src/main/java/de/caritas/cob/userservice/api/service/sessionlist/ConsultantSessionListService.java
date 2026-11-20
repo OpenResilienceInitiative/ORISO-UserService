@@ -217,8 +217,9 @@ public class ConsultantSessionListService {
       if (session.getSession() != null && session.getSession().getMatrixRoomId() != null) {
         var matchingChat = chatsByMatrixRoomId.get(session.getSession().getMatrixRoomId());
         if (matchingChat != null) {
-          // Merge: session already has session data, add chat data from matching chat
+          // The linked session retains its original assignment after group ownership transfers.
           session.setChat(matchingChat.getChat());
+          session.setConsultant(matchingChat.getConsultant());
           chatsByMatrixRoomId.remove(session.getSession().getMatrixRoomId());
         }
       }

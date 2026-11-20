@@ -68,8 +68,7 @@ class FiveActorTokenBoundaryTest {
         "NOTIFICATION_DISPATCH",
         "RUNTIME_POLICY",
         "MATRIX_AGENCY",
-        "APPOINTMENT_SYNC",
-        "APPOINTMENT_CLEANUP"
+        "DELETION_AUDIT_PULL"
       })
   void operationAliasesSelectTheirDeclaredActorAtTheTokenEndpoint(TaskPurpose purpose) {
     var token = broker.issue(purpose);

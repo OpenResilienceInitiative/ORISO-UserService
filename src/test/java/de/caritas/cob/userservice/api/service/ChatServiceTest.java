@@ -98,6 +98,10 @@ class ChatServiceTest {
 
   @Mock private ChatRepository chatRepository;
 
+  @Mock
+  private de.caritas.cob.userservice.api.service.matrixgroup.GroupMatrixLifecycleCleanup
+      participationHistory;
+
   @Mock private MatrixChatShutdownService shutdown;
 
   @Mock private ChatAgencyRepository chatAgencyRepository;
@@ -111,6 +115,10 @@ class ChatServiceTest {
   @Mock private GroupChatInviteTokenService groupChatInviteTokenService;
 
   @Mock private GroupChatParticipantRepository groupChatParticipantRepository;
+
+  @Mock
+  private de.caritas.cob.userservice.api.port.out.ChatOccurrenceExceptionRepository
+      chatOccurrenceExceptionRepository;
 
   @Mock private GroupChatParticipantReconciliationService participantReconciliationService;
 
@@ -269,6 +277,9 @@ class ChatServiceTest {
     assertEquals(ACTIVE_CHAT.getChatInterval(), resultList.get(0).getChat().getChatInterval());
     assertEquals(ACTIVE_CHAT.getChatModality(), resultList.get(0).getChat().getModality());
     assertEquals(ACTIVE_CHAT.getTimezone(), resultList.get(0).getChat().getTimezone());
+    assertEquals(
+        de.caritas.cob.userservice.api.model.GuestAccountMode.GUEST_CHOOSES,
+        resultList.get(0).getChat().getGuestAccountMode());
     assertNotNull(resultList.get(0).getChat().getModerators());
     assertEquals(1, resultList.get(0).getChat().getModerators().length);
     assertEquals(CONSULTANT.getMatrixUserId(), resultList.get(0).getChat().getModerators()[0]);
@@ -531,6 +542,38 @@ class ChatServiceTest {
     } catch (ConflictException conflictException) {
       assertTrue(true, "Excepted ConflictException thrown");
     }
+  }
+
+  /** #1662: an edit changes the circle's guest account mode only when it names one. */
+  @Test
+  void updateChat_Should_ChangeTheGuestAccountMode_OnlyWhenTheEditNamesOne() {
+    Chat inactiveChat = new Chat();
+    inactiveChat.setActive(false);
+    inactiveChat.setChatOwner(CONSULTANT);
+    // A non-default saved mode: an omitted field must keep it, not reset it to the default.
+    inactiveChat.setGuestAccountMode(
+        de.caritas.cob.userservice.api.model.GuestAccountMode.TEMPORARY);
+    when(chatRepository.findByIdWithPermissionRelations(Mockito.anyLong()))
+        .thenReturn(Optional.of(inactiveChat));
+
+    chatService.updateChat(CHAT_ID, CHAT_DTO, AUTHENTICATED_USER_CONSULTANT);
+    assertEquals(
+        de.caritas.cob.userservice.api.model.GuestAccountMode.TEMPORARY,
+        inactiveChat.getGuestAccountMode());
+
+    var edit =
+        de.caritas.cob.userservice.api.adapters.web.dto.ChatDTO.builder()
+            .topic(CHAT_DTO.getTopic())
+            .startDate(CHAT_DTO.getStartDate())
+            .startTime(CHAT_DTO.getStartTime())
+            .duration(CHAT_DTO.getDuration())
+            .repetitive(CHAT_DTO.getRepetitive())
+            .guestAccountMode(de.caritas.cob.userservice.api.model.GuestAccountMode.PERMANENT)
+            .build();
+    chatService.updateChat(CHAT_ID, edit, AUTHENTICATED_USER_CONSULTANT);
+    assertEquals(
+        de.caritas.cob.userservice.api.model.GuestAccountMode.PERMANENT,
+        inactiveChat.getGuestAccountMode());
   }
 
   @Test
@@ -835,6 +878,15 @@ class ChatServiceTest {
   }
 
   @Test
+  void savingARepetitiveLegacySeriesDoesNotTurnItIntoAnInternalChat() {
+    var chat = new Chat();
+    chat.setRepetitive(true);
+    chatService.saveChat(chat);
+    org.assertj.core.api.Assertions.assertThat(chat.getConversationType())
+        .isEqualTo(de.caritas.cob.userservice.api.model.ConversationType.SELF_HELP);
+  }
+
+  @Test
   void saveChatShouldPreserveExplicitSelfHelpModality() {
     Chat chat = new Chat();
     chat.setConversationType(de.caritas.cob.userservice.api.model.ConversationType.SELF_HELP);
@@ -927,5 +979,29 @@ class ChatServiceTest {
     assertThat(
         chatService.getChatSessionsForConsultantByRoomIds(Set.of(MATRIX_ROOM_ID), CONSULTANT),
         hasSize(0));
+  }
+
+  /**
+   * ORISO-Admin#1523: a recurring group chat's moved or skipped dates hold a restricting foreign
+   * key on the chat; they go before it, as its participants do.
+   */
+  @Test
+  void deleteChatRecords_Should_RemoveOccurrenceExceptionsAndParticipants_BeforeTheChat() {
+    var chat = new Chat();
+    chat.setId(77L);
+    var exceptions =
+        java.util.List.of(
+            de.caritas.cob.userservice.api.model.ChatOccurrenceException.skip(
+                chat, java.time.LocalDateTime.of(2026, 11, 20, 10, 0)));
+    when(chatOccurrenceExceptionRepository.findBySeries_Id(77L)).thenReturn(exceptions);
+
+    chatService.deleteChatRecords(chat);
+
+    var order =
+        org.mockito.Mockito.inOrder(
+            chatOccurrenceExceptionRepository, groupChatParticipantRepository, chatRepository);
+    order.verify(chatOccurrenceExceptionRepository).deleteAll(exceptions);
+    order.verify(groupChatParticipantRepository).deleteBySeriesId(77L);
+    order.verify(chatRepository).delete(chat);
   }
 }

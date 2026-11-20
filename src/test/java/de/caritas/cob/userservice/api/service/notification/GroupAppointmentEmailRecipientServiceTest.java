@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.when;
 
 import com.neovisionaries.i18n.LanguageCode;
+import de.caritas.cob.userservice.api.admin.service.tenant.TenantService;
 import de.caritas.cob.userservice.api.model.Chat;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.ConversationType;
@@ -18,6 +19,8 @@ import de.caritas.cob.userservice.api.port.out.UserRepository;
 import de.caritas.cob.userservice.api.service.email.OrisoEmailRenderer;
 import de.caritas.cob.userservice.api.workflow.accountinactivity.AccountInactivityEffects;
 import de.caritas.cob.userservice.api.workflow.accountinactivity.AccountInactivityService;
+import de.caritas.cob.userservice.tenantservice.generated.web.model.RestrictedTenantDTO;
+import de.caritas.cob.userservice.tenantservice.generated.web.model.Settings;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneOffset;
@@ -39,6 +42,7 @@ class GroupAppointmentEmailRecipientServiceTest {
   @Mock UserChatRepository userChats;
   @Mock GroupChatParticipantRepository counselors;
   @Mock AccountInactivityEffects accountEffects;
+  @Mock TenantService tenants;
 
   private JdbcTemplate lifecycleDatabase;
   private AccountInactivityService lifecycle;
@@ -49,6 +53,10 @@ class GroupAppointmentEmailRecipientServiceTest {
         new DriverManagerDataSource(
             "jdbc:h2:mem:group-mail-recipient-lifecycle;DB_CLOSE_DELAY=-1", "sa", "");
     lifecycleDatabase = new JdbcTemplate(dataSource);
+    lifecycleDatabase.execute(
+        "CREATE TABLE IF NOT EXISTS `user` (user_id VARCHAR(36) PRIMARY KEY)");
+    lifecycleDatabase.execute(
+        "CREATE TABLE IF NOT EXISTS live_chat_account_claim (user_id VARCHAR(36) PRIMARY KEY, lifecycle VARCHAR(32) NOT NULL)");
     lifecycleDatabase.execute(
         "CREATE TABLE account_inactivity(identity_id VARCHAR(36) PRIMARY KEY,tenant_id"
             + " BIGINT,assigned_months INT NOT NULL,revision BIGINT NOT NULL,last_activity"
@@ -73,7 +81,7 @@ class GroupAppointmentEmailRecipientServiceTest {
 
   private GroupAppointmentEmailRecipientService service() {
     return new GroupAppointmentEmailRecipientService(
-        users, consultants, userChats, counselors, lifecycle, ".invalid");
+        users, consultants, userChats, counselors, lifecycle, tenants, ".invalid");
   }
 
   private static Chat group() {
@@ -86,6 +94,7 @@ class GroupAppointmentEmailRecipientServiceTest {
   @Test
   void resolvesAnEligibleParticipantWithTheirOwnTone() {
     Chat group = group();
+    allowSingleTenancyPolicy();
     User user = new User();
     user.setUserId("seeker-1");
     user.setEmail("seeker@example.org");
@@ -103,6 +112,95 @@ class GroupAppointmentEmailRecipientServiceTest {
         .contains(
             new GroupAppointmentEmailRecipientService.Recipient(
                 "seeker-1", "seeker@example.org", OrisoEmailRenderer.Tone.DE_INFORMAL));
+  }
+
+  /** Group without an owner: single-tenancy policy, nothing switched off. */
+  private void allowSingleTenancyPolicy() {
+    when(tenants.getSingleTenancyTenantDataFresh()).thenReturn(new RestrictedTenantDTO());
+  }
+
+  private Chat groupOwnedByTenant(long tenantId) {
+    Chat chat = group();
+    Consultant owner = new Consultant();
+    owner.setTenantId(tenantId);
+    chat.setChatOwner(owner);
+    return chat;
+  }
+
+  private User eligibleParticipant(Chat group) {
+    User user = new User();
+    user.setUserId("seeker-1");
+    user.setEmail("seeker@example.org");
+    user.setLanguageCode(LanguageCode.de);
+    user.setNotificationsEnabled(true);
+    user.setNotificationsSettings("{\"appointmentNotificationEnabled\":true}");
+    when(users.findByUserIdAndDeleteDateIsNull("seeker-1")).thenReturn(Optional.of(user));
+    when(userChats.findByChatAndUser(group, user))
+        .thenReturn(Optional.of(UserChat.builder().chat(group).user(user).build()));
+    return user;
+  }
+
+  /** Frontend#1979: the Admin "Berechtigungen" decide whether advice seekers get e-mail. */
+  @Test
+  void suppressesAParticipantWhenTheTraegerSwitchedSelfHelpEmailOff() {
+    Chat group = groupOwnedByTenant(5L);
+    eligibleParticipant(group);
+    when(tenants.getRestrictedTenantDataFresh(5L))
+        .thenReturn(
+            new RestrictedTenantDTO()
+                .id(5L)
+                .settings(new Settings().featureAskerEmailSelfHelpEnabled(false)));
+
+    assertThat(
+            service()
+                .resolve(group, GroupAppointmentEmailRecipientService.Role.PARTICIPANT, "seeker-1"))
+        .isEmpty();
+  }
+
+  @Test
+  void suppressesAParticipantWhenTheTraegerSwitchedAdviceSeekerEmailOff() {
+    Chat group = groupOwnedByTenant(5L);
+    eligibleParticipant(group);
+    when(tenants.getRestrictedTenantDataFresh(5L))
+        .thenReturn(
+            new RestrictedTenantDTO()
+                .id(5L)
+                .settings(new Settings().featureAskerEmailEnabled(false)));
+
+    assertThat(
+            service()
+                .resolve(group, GroupAppointmentEmailRecipientService.Role.PARTICIPANT, "seeker-1"))
+        .isEmpty();
+  }
+
+  @Test
+  void keepsAParticipantWhileTheTraegerAllowsSelfHelpEmail() {
+    Chat group = groupOwnedByTenant(5L);
+    eligibleParticipant(group);
+    when(tenants.getRestrictedTenantDataFresh(5L))
+        .thenReturn(
+            new RestrictedTenantDTO()
+                .id(5L)
+                .settings(new Settings().featureAskerEmailSelfHelpEnabled(true)));
+
+    assertThat(
+            service()
+                .resolve(group, GroupAppointmentEmailRecipientService.Role.PARTICIPANT, "seeker-1"))
+        .isPresent();
+  }
+
+  @Test
+  void retriesLaterInsteadOfMailingWhenTheTraegerPolicyIsUnavailable() {
+    Chat group = groupOwnedByTenant(5L);
+    eligibleParticipant(group);
+    when(tenants.getRestrictedTenantDataFresh(5L)).thenReturn(null);
+
+    assertThatThrownBy(
+            () ->
+                service()
+                    .resolve(
+                        group, GroupAppointmentEmailRecipientService.Role.PARTICIPANT, "seeker-1"))
+        .isInstanceOf(IllegalStateException.class);
   }
 
   @Test
@@ -230,6 +328,7 @@ class GroupAppointmentEmailRecipientServiceTest {
   @Test
   void anUnknownLanguageDoesNotSilentlyChooseAnotherTemplate() {
     Chat group = group();
+    allowSingleTenancyPolicy();
     User user = new User();
     user.setUserId("seeker-1");
     user.setEmail("seeker@example.org");

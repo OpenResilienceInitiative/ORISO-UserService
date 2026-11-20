@@ -22,6 +22,11 @@ import de.caritas.cob.userservice.api.exception.keycloak.KeycloakException;
 import de.caritas.cob.userservice.api.picture.PictureDiagnostics;
 import de.caritas.cob.userservice.api.service.LogService;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteLinkException;
+import de.caritas.cob.userservice.api.service.agencyinvitelink.CallShareLinkEndedException;
+import de.caritas.cob.userservice.api.service.agencyinvitelink.DirectInvitationRefusedException;
+import de.caritas.cob.userservice.api.service.agencyinvitelink.DirectLinkExpiredException;
+import de.caritas.cob.userservice.api.service.agencyinvitelink.DirectLinkInactiveException;
+import de.caritas.cob.userservice.api.service.agencyinvitelink.InviteLinkPausedException;
 import jakarta.persistence.OptimisticLockException;
 import jakarta.validation.ConstraintViolationException;
 import java.net.UnknownHostException;
@@ -334,6 +339,65 @@ public class ApiResponseEntityExceptionHandler extends ResponseEntityExceptionHa
 
     return handleExceptionInternal(
         ex, reasonBody(ex.getReason().name()), new HttpHeaders(), HttpStatus.GONE, request);
+  }
+
+  /**
+   * 410 - Gone: the owner switched the direct link off (#1475).
+   *
+   * @param request the invoking request
+   * @param ex the thrown exception
+   */
+  @ExceptionHandler({DirectLinkInactiveException.class})
+  public ResponseEntity<Object> handleDirectLinkInactive(
+      final DirectLinkInactiveException ex, final WebRequest request) {
+    return handleExceptionInternal(
+        ex,
+        reasonBody(DirectLinkInactiveException.REASON),
+        new HttpHeaders(),
+        HttpStatus.GONE,
+        request);
+  }
+
+  /** 410 - Gone: the direct invitation expired or its token was replaced (ORISO-Frontend#2252). */
+  @ExceptionHandler({DirectLinkExpiredException.class})
+  public ResponseEntity<Object> handleDirectLinkExpired(
+      final DirectLinkExpiredException ex, final WebRequest request) {
+    return handleExceptionInternal(
+        ex,
+        reasonBody(DirectLinkExpiredException.REASON),
+        new HttpHeaders(),
+        HttpStatus.GONE,
+        request);
+  }
+
+  /** 403 or 409 with a reason the entry page shows (ORISO-Frontend#2252). */
+  @ExceptionHandler({DirectInvitationRefusedException.class})
+  public ResponseEntity<Object> handleDirectInvitationRefused(
+      final DirectInvitationRefusedException ex, final WebRequest request) {
+    return handleExceptionInternal(
+        ex, reasonBody(ex.getReason().name()), new HttpHeaders(), ex.getReason().status(), request);
+  }
+
+  @ExceptionHandler({InviteLinkPausedException.class})
+  public ResponseEntity<Object> handleInviteLinkPaused(
+      final InviteLinkPausedException ex, final WebRequest request) {
+    return handleExceptionInternal(
+        ex,
+        reasonBody(InviteLinkPausedException.REASON),
+        new HttpHeaders(),
+        HttpStatus.GONE,
+        request);
+  }
+
+  @ExceptionHandler({CallShareLinkEndedException.class})
+  public ResponseEntity<Object> handleCallShareLinkEnded(
+      final CallShareLinkEndedException ex, final WebRequest request) {
+    return handleExceptionInternal(
+        ex,
+        reasonBody(CallShareLinkEndedException.REASON),
+        new HttpHeaders(),
+        HttpStatus.GONE,
+        request);
   }
 
   /**

@@ -30,7 +30,9 @@ import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
 
 /**
  * Proves that the canonical changelog converges after a divergent hot-deploy removed {@code
- * support_room} but left changeset 0079 recorded as executed.
+ * support_room} but left changeset 0079 recorded as executed. The shared test schema must regain
+ * the later lifecycle columns and index too, so Hibernate validation can still run after this
+ * fixture.
  *
  * <p>Liquibase's {@code update} command keeps a JVM-wide "database is up to date" fast-check cache
  * (an instance field on the {@link AbstractUpdateCommandStep} singleton, keyed by
@@ -50,12 +52,13 @@ class SupportRoomMigrationConvergenceIT {
   private static final String REPAIR_CHANGESET_FILE =
       "db/changelog/changeset/0088_support_room_repair/0088_changeSet.xml";
 
-  /** The lookup indexes 0079 defines and the repair must restore, with their column order. */
+  /** The lookup indexes the full canonical changelog must restore, in column order. */
   private static final Map<String, List<String>> EXPECTED_INDEX_COLUMNS =
       Map.of(
           "idx_support_room_status_expiry", List.of("status", "expiry_date"),
           "idx_support_room_consultant", List.of("consultant_id", "status"),
-          "idx_support_room_support_admin", List.of("support_admin_id", "status"));
+          "idx_support_room_support_admin", List.of("support_admin_id", "status"),
+          "idx_support_room_status_retry", List.of("status", "retry_at"));
 
   private static final Map<AbstractUpdateCommandStep, Boolean> previousFastCheckState =
       new HashMap<>();
@@ -103,6 +106,7 @@ class SupportRoomMigrationConvergenceIT {
         Statement statement = connection.createStatement()) {
       statement.execute("DROP TABLE IF EXISTS userservice.support_room");
       deleteRepairChangelogRow(statement);
+      deleteLifecycleChangelogRows(statement);
     }
 
     assertThat(supportRoomExists()).as("drift fixture removed support_room").isFalse();
@@ -112,7 +116,8 @@ class SupportRoomMigrationConvergenceIT {
     assertThat(supportRoomExists())
         .as("canonical changelog must converge after support_room was removed")
         .isTrue();
-    assertSupportRoomIndexes("convergence must restore the lookup indexes, not only the table");
+    assertSupportRoomIndexes("convergence must restore the lookup indexes");
+    assertSupportRoomStatusColumn();
   }
 
   @Test
@@ -131,6 +136,7 @@ class SupportRoomMigrationConvergenceIT {
         .as("rerunning the repair over an existing schema must not fail or drop the table")
         .isTrue();
     assertSupportRoomIndexes("rerunning the repair must leave the lookup indexes intact");
+    assertSupportRoomStatusColumn();
   }
 
   private void deleteRepairChangelogRow(Statement statement) throws SQLException {
@@ -150,6 +156,44 @@ class SupportRoomMigrationConvergenceIT {
                 + " zero means the changeset identity in this test no longer matches"
                 + " the changelog and the reruns would silently test nothing")
         .isEqualTo(1);
+  }
+
+  private void deleteLifecycleChangelogRows(Statement statement) throws SQLException {
+    int deletedRows =
+        statement.executeUpdate(
+            """
+            DELETE FROM userservice.DATABASECHANGELOG
+            WHERE AUTHOR = 'oriso'
+              AND FILENAME = 'db/changelog/changeset/20261119_support_room_lifecycle_904/changeSet.xml'
+              AND ID IN (
+                '20261119-support-room-lifecycle-status-904',
+                '20261119-support-room-lifecycle-retry-904',
+                '20261119-support-room-lifecycle-retry-index-904'
+              )
+            """);
+    assertThat(deletedRows)
+        .as("all three changesets that affect the dropped support room must replay")
+        .isEqualTo(3);
+  }
+
+  private void assertSupportRoomStatusColumn() throws SQLException {
+    try (Connection connection = openConnection();
+        Statement statement = connection.createStatement();
+        ResultSet result =
+            statement.executeQuery(
+                """
+                SELECT character_maximum_length, is_nullable
+                FROM information_schema.columns
+                WHERE table_schema = 'userservice'
+                  AND table_name = 'support_room'
+                  AND column_name = 'status'
+                """)) {
+      assertThat(result.next()).as("support room status column exists").isTrue();
+      assertThat(result.getInt("character_maximum_length"))
+          .as("support room status can store REVOCATION_PENDING")
+          .isGreaterThanOrEqualTo("REVOCATION_PENDING".length());
+      assertThat(result.getString("is_nullable")).isEqualTo("NO");
+    }
   }
 
   private void assertSupportRoomIndexes(String description) throws SQLException {

@@ -86,6 +86,11 @@
 		     gate, so it would sit on dev unflagged — which is why this pin goes past it.
 		     Drop this override once the Boot BOM manages >= 5.36.0. -->
 		<rabbit-amqp-client.version>5.36.0</rabbit-amqp-client.version>
+		<!-- The code imports Guava directly, but it only arrived transitively via
+		     springfox-swagger2 2.9.2 as 20.0. Both 20.0 and the 33.5.0-jre copy shaded into
+		     plantuml trip the image CVE gate on CVE-2026-102554 (HIGH, DoS during
+		     deserialization), fixed in 33.7.2. -->
+		<guava.version>33.7.2-jre</guava.version>
 		<springfox-swagger-ui.version>2.10.0</springfox-swagger-ui.version>
 		<testcontainers.version>1.21.4</testcontainers.version>
 		<lombok.version>1.18.42</lombok.version>
@@ -253,6 +258,11 @@
 			<version>${springfox.version}</version>
 		</dependency>
 		<dependency>
+			<groupId>com.google.guava</groupId>
+			<artifactId>guava</artifactId>
+			<version>${guava.version}</version>
+		</dependency>
+		<dependency>
 			<groupId>org.springframework.plugin</groupId>
 			<artifactId>spring-plugin-core</artifactId>
 			<version>${spring-plugin-core.version}</version>
@@ -309,6 +319,18 @@
 		</dependency>
 
 		<!-- Commons Codec -->
+		<!-- Fetches the calendar busy import pinned to the validated address (ADR-032, #1645);
+		     version managed by Spring Boot -->
+		<dependency>
+			<groupId>org.apache.httpcomponents.client5</groupId>
+			<artifactId>httpclient5</artifactId>
+		</dependency>
+		<!-- iCalendar (RFC 5545) parsing for the calendar busy import (ADR-032, #1645); BSD-3 -->
+		<dependency>
+			<groupId>org.mnode.ical4j</groupId>
+			<artifactId>ical4j</artifactId>
+			<version>4.1.1</version>
+		</dependency>
 		<dependency>
 		    <groupId>commons-codec</groupId>
 		    <artifactId>commons-codec</artifactId>
@@ -498,13 +520,6 @@
 			<scope>test</scope>
 		</dependency>
 
-		<!-- Documentation dependencies -->
-		<dependency>
-			<groupId>net.sourceforge.plantuml</groupId>
-			<artifactId>plantuml</artifactId>
-			<version>1.2026.0</version>
-		</dependency>
-
 		<dependency>
 			<groupId>org.yaml</groupId>
 			<artifactId>snakeyaml</artifactId>
@@ -678,33 +693,6 @@
 						</configuration>
 					</execution>
 					<execution>
-						<id>appointment-service</id>
-						<goals>
-							<goal>generate</goal>
-						</goals>
-						<configuration>
-							<inputSpec>${project.basedir}/api/appointmentservice.yaml</inputSpec>
-							<generatorName>spring</generatorName>
-							<apiPackage>${adapters.web.generated.path}.controller</apiPackage>
-							<modelPackage>${adapters.web.dto.path}</modelPackage>
-							<generateSupportingFiles>true</generateSupportingFiles>
-								<configOptions>
-									<sourceFolder>/</sourceFolder>
-									<useJakartaEe>true</useJakartaEe>
-									<useSpringBoot3>true</useSpringBoot3>
-									<interfaceOnly>true</interfaceOnly>
-									<dateLibrary>java8</dateLibrary>
-								</configOptions>
-							<output>target/generated-sources</output>
-							<typeMappings>
-								<typeMapping>OffsetDateTime=Instant</typeMapping>
-							</typeMappings>
-							<importMappings>
-								<importMapping>java.time.OffsetDateTime=java.time.Instant</importMapping>
-							</importMappings>
-						</configuration>
-					</execution>
-					<execution>
 						<id>application-settings-service-client-model</id>
 						<phase>generate-sources</phase>
 						<goals>
@@ -775,6 +763,58 @@
 							<apiPackage>${project.groupId}.${project.artifactId}.generated.api.statistics.controller</apiPackage>
 							<modelPackage>${project.groupId}.${project.artifactId}.api.statistics.model
 							</modelPackage>
+							<generateSupportingFiles>true</generateSupportingFiles>
+							<output>target/generated-sources</output>
+						</configuration>
+					</execution>
+					<!-- Generate session appointments API (ORISO-Frontend#1960) -->
+					<execution>
+						<id>session-appointment-service</id>
+						<goals>
+							<goal>generate</goal>
+						</goals>
+						<configuration>
+								<configOptions>
+									<interfaceOnly>true</interfaceOnly>
+									<sourceFolder>/</sourceFolder>
+									<useJakartaEe>true</useJakartaEe>
+									<useSpringBoot3>true</useSpringBoot3>
+								</configOptions>
+							<inputSpec>${project.basedir}/api/sessionappointments.yaml</inputSpec>
+							<generatorName>spring</generatorName>
+							<apiPackage>
+								${project.groupId}.${project.artifactId}.generated.api.sessionappointment.controller
+							</apiPackage>
+							<modelPackage>${adapters.web.dto.path}</modelPackage>
+							<generateSupportingFiles>true</generateSupportingFiles>
+							<output>target/generated-sources</output>
+						</configuration>
+					</execution>
+					<!-- Generate calendar API (ADR-032, ORISO-UserService#1000, #1645) -->
+					<execution>
+						<id>calendar-service</id>
+						<goals>
+							<goal>generate</goal>
+						</goals>
+						<configuration>
+								<configOptions>
+									<interfaceOnly>true</interfaceOnly>
+									<sourceFolder>/</sourceFolder>
+									<useJakartaEe>true</useJakartaEe>
+									<useSpringBoot3>true</useSpringBoot3>
+									<!-- Optional fields are absent, not null: the colleague view must not even
+									     name the fields it withholds. -->
+									<additionalModelTypeAnnotations>@com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_NULL)</additionalModelTypeAnnotations>
+									<!-- holidayRegion is nullable; the MVC mapper has no JsonNullableModule, and
+									     absent and null both mean "no holidays off" (addendum v1.2). -->
+									<openApiNullable>false</openApiNullable>
+								</configOptions>
+							<inputSpec>${project.basedir}/api/calendar.yaml</inputSpec>
+							<generatorName>spring</generatorName>
+							<apiPackage>
+								${project.groupId}.${project.artifactId}.generated.api.calendar.controller
+							</apiPackage>
+							<modelPackage>${adapters.web.dto.path}</modelPackage>
 							<generateSupportingFiles>true</generateSupportingFiles>
 							<output>target/generated-sources</output>
 						</configuration>
@@ -1047,33 +1087,6 @@
 							</apiPackage>
 							<modelPackage>
 								${project.groupId}.${project.artifactId}.topicservice.generated.web.model
-							</modelPackage>
-						</configuration>
-					</execution>
-					<execution>
-						<id>appointment-service-client-model</id>
-						<phase>generate-sources</phase>
-						<goals>
-							<goal>generate</goal>
-						</goals>
-						<configuration>
-								<configOptions>
-									<sourceFolder>/</sourceFolder>
-									<useJakartaEe>true</useJakartaEe>
-									<useSpringBoot3>true</useSpringBoot3>
-									<library>resttemplate</library>
-									<dateLibrary>java8</dateLibrary>
-								</configOptions>
-							<inputSpec>${project.basedir}/services/appointmentService.yaml</inputSpec>
-							<generatorName>java</generatorName>
-							<generateApis>true</generateApis>
-							<generateApiTests>false</generateApiTests>
-							<generateModelTests>false</generateModelTests>
-							<apiPackage>
-								${project.groupId}.${project.artifactId}.appointmentservice.generated.web
-							</apiPackage>
-							<modelPackage>
-								${project.groupId}.${project.artifactId}.appointmentservice.generated.web.model
 							</modelPackage>
 						</configuration>
 					</execution>

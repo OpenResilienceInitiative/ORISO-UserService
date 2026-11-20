@@ -215,7 +215,6 @@ class ConsultantAgencyRelationCreatorServiceIT {
     consultant.setMatrixUserId("legacy-id");
     consultant.setDeleteDate(null);
     consultant.setLanguages(null);
-    consultant.setAppointments(null);
     return this.consultantRepository.save(consultant);
   }
 

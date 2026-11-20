@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+  xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-3.2.xsd">
+  <!-- ORISO-Admin#1534: a counsellor sees whom to contact at their counselling centre. An admin
+       can carry a contact e-mail that counsellors see instead of the login e-mail. -->
+  <changeSet id="20261116-admin-contact-email-1534" author="oriso">
+    <preConditions onFail="MARK_RAN">
+      <not>
+        <columnExists tableName="admin" columnName="contact_email"/>
+      </not>
+    </preConditions>
+    <addColumn tableName="admin">
+      <column name="contact_email" type="VARCHAR(255)"/>
+    </addColumn>
+    <rollback>
+      <dropColumn tableName="admin" columnName="contact_email"/>
+    </rollback>
+  </changeSet>
+  <!-- One contact person and an optional deputy per counselling centre. The admin ids are not
+       foreign keys: validity (still an admin of this centre or its Träger) is checked when read,
+       so a reference left behind never shows a wrong person. -->
+  <changeSet id="20261116-agency-contact-person-1534" author="oriso">
+    <preConditions onFail="MARK_RAN">
+      <not>
+        <tableExists tableName="agency_contact_person"/>
+      </not>
+    </preConditions>
+    <createTable tableName="agency_contact_person">
+      <column name="agency_id" type="BIGINT"><constraints primaryKey="true" nullable="false"/></column>
+      <column name="tenant_id" type="BIGINT"/>
+      <column name="contact_admin_id" type="VARCHAR(36)"/>
+      <column name="deputy_admin_id" type="VARCHAR(36)"/>
+      <column name="create_date" type="DATETIME"><constraints nullable="false"/></column>
+      <column name="update_date" type="DATETIME"/>
+    </createTable>
+    <rollback><dropTable tableName="agency_contact_person"/></rollback>
+  </changeSet>
+  <!-- The Träger default for every centre without its own contact person, plus a general contact
+       e-mail of the Träger. -->
+  <changeSet id="20261116-tenant-contact-person-1534" author="oriso">
+    <preConditions onFail="MARK_RAN">
+      <not>
+        <tableExists tableName="tenant_contact_person"/>
+      </not>
+    </preConditions>
+    <createTable tableName="tenant_contact_person">
+      <column name="tenant_id" type="BIGINT"><constraints primaryKey="true" nullable="false"/></column>
+      <column name="contact_admin_id" type="VARCHAR(36)"/>
+      <column name="deputy_admin_id" type="VARCHAR(36)"/>
+      <column name="general_contact_email" type="VARCHAR(255)"/>
+      <column name="create_date" type="DATETIME"><constraints nullable="false"/></column>
+      <column name="update_date" type="DATETIME"/>
+    </createTable>
+    <rollback><dropTable tableName="tenant_contact_person"/></rollback>
+  </changeSet>
+</databaseChangeLog>

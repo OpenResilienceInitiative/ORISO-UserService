@@ -101,8 +101,22 @@ public interface AdminRepository
   @Query(value = "SELECT a FROM Admin a WHERE id = ?1 AND type = ?2")
   Optional<Admin> findByIdAndType(String adminId, Admin.AdminType type);
 
+  boolean existsByIdAndTenantIdIsNullAndTypeAndManagedPausedFalse(String id, Admin.AdminType type);
+
   @Query(value = "SELECT a FROM Admin a WHERE tenantId = ?1 AND type = ?2")
   List<Admin> findByTenantIdAndType(Long tenantId, Admin.AdminType type);
+
+  interface LoginEmailByTenant {
+    Long getTenantId();
+
+    String getEmail();
+  }
+
+  @Query(
+      "SELECT a.tenantId AS tenantId, a.email AS email FROM Admin a"
+          + " WHERE a.tenantId IN :tenantIds AND a.type = :type")
+  List<LoginEmailByTenant> findLoginEmailsByTenantIdsAndType(
+      @Param("tenantIds") Collection<Long> tenantIds, @Param("type") Admin.AdminType type);
 
   List<Admin> findByType(Admin.AdminType type);
 
@@ -133,4 +147,6 @@ public interface AdminRepository
 
   @Query("SELECT a.id, a.type FROM Admin a WHERE a.id IN :ids")
   List<Object[]> findIdAndTypeByIdIn(@Param("ids") Collection<String> ids);
+
+  long countByTenantIdAndType(Long tenantId, Admin.AdminType type);
 }

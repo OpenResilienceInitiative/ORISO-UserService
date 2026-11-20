@@ -27,7 +27,7 @@ class EmailTemplateIntegrityTest {
     JsonNode manifest = new ObjectMapper().readTree(EMAILS.resolve("manifest.json").toFile());
     assertEquals(1, manifest.path("schemaVersion").asInt());
     assertEquals(
-        "b7d6272a57059f9616f525ff9fd120cc930a1e07", manifest.path("frontendCommit").asText());
+        "1a53234dc320143179dec002b8ff1b2ffe0e25ff", manifest.path("frontendCommit").asText());
 
     Map<String, String> expected = new TreeMap<>();
     manifest
@@ -39,6 +39,8 @@ class EmailTemplateIntegrityTest {
     for (var locale : new String[] {"de-sie", "de-du", "en", "fr", "ru", "tr", "ti"}) {
       assertTrue(expected.containsKey(locale + "/einsicht-angefragt.html"));
       assertTrue(expected.containsKey(locale + "/einsicht-angefragt.txt"));
+      assertTrue(expected.containsKey(locale + "/calendar-move-proposal.html"));
+      assertTrue(expected.containsKey(locale + "/calendar-move-proposal.txt"));
     }
     assertTrue(expected.keySet().stream().anyMatch(name -> name.endsWith("/willkommen.html")));
   }

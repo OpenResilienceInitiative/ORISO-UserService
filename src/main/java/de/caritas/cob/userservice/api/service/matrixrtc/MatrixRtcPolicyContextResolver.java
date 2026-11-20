@@ -31,7 +31,9 @@ class MatrixRtcPolicyContextResolver {
       return Optional.of(
           new MatrixRtcPolicyContext(
               supervision.get().getSession().getTenantId(),
-              MatrixRtcPolicyContext.ChatType.SUPERVISION));
+              MatrixRtcPolicyContext.ChatType.SUPERVISION,
+              null,
+              false));
     }
 
     var session = sessionRepository.findByMatrixRoomId(sourceRoomId);
@@ -47,16 +49,22 @@ class MatrixRtcPolicyContextResolver {
 
     return teamDiscussionRepository
         .findByMatrixRoomId(sourceRoomId)
-        .filter(
-            discussion ->
-                sessionRepository
-                    .findById(discussion.getSessionId())
-                    .map(parent -> parent.getStatus() != Session.SessionStatus.REJECTED)
-                    .orElse(true))
-        .map(
-            discussion ->
-                new MatrixRtcPolicyContext(
-                    discussion.getTenantId(), MatrixRtcPolicyContext.ChatType.GROUP));
+        .flatMap(
+            discussion -> {
+              var parent = sessionRepository.findById(discussion.getSessionId());
+              if (parent.map(p -> p.getStatus() == Session.SessionStatus.REJECTED).orElse(false)) {
+                return Optional.empty();
+              }
+              // Without its parent session there is no form of counselling to ask: the room stays
+              // as
+              // it was before the consulting type was consulted at all.
+              return Optional.of(
+                  new MatrixRtcPolicyContext(
+                      discussion.getTenantId(),
+                      MatrixRtcPolicyContext.ChatType.GROUP,
+                      parent.map(Session::getConsultingTypeId).orElse(null),
+                      parent.isPresent()));
+            });
   }
 
   private MatrixRtcPolicyContext contextForSession(Session session) {
@@ -72,11 +80,13 @@ class MatrixRtcPolicyContextResolver {
     } else {
       chatType = MatrixRtcPolicyContext.ChatType.ONE_ON_ONE;
     }
-    return new MatrixRtcPolicyContext(session.getTenantId(), chatType);
+    return new MatrixRtcPolicyContext(
+        session.getTenantId(), chatType, session.getConsultingTypeId(), true);
   }
 
   private MatrixRtcPolicyContext contextForChat(Chat chat) {
     Long tenantId = chat.getChatOwner() == null ? null : chat.getChatOwner().getTenantId();
-    return new MatrixRtcPolicyContext(tenantId, MatrixRtcPolicyContext.ChatType.GROUP);
+    return new MatrixRtcPolicyContext(
+        tenantId, MatrixRtcPolicyContext.ChatType.GROUP, chat.getConsultingTypeId(), true);
   }
 }

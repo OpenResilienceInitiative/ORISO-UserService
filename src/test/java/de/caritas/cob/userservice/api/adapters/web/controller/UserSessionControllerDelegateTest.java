@@ -37,6 +37,7 @@ import de.caritas.cob.userservice.api.port.in.Messaging;
 import de.caritas.cob.userservice.api.service.ConsultantAgencyService;
 import de.caritas.cob.userservice.api.service.ConsultantService;
 import de.caritas.cob.userservice.api.service.archive.SessionArchiveService;
+import de.caritas.cob.userservice.api.service.session.EnquiryOpenedService;
 import de.caritas.cob.userservice.api.service.session.SessionConsentService;
 import de.caritas.cob.userservice.api.service.session.SessionService;
 import de.caritas.cob.userservice.api.service.user.UserAccountService;
@@ -59,6 +60,7 @@ class UserSessionControllerDelegateTest {
 
   @Mock private UserAccountService userAccountProvider;
   @Mock private SessionService sessionService;
+  @Mock private EnquiryOpenedService enquiryOpenedService;
   @Mock private AuthenticatedUser authenticatedUser;
   @Mock private SessionListFacade sessionListFacade;
   @Mock private AssignEnquiryFacade assignEnquiryFacade;

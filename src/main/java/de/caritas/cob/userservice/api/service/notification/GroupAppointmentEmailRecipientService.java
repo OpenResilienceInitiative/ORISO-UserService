@@ -4,6 +4,7 @@ import static de.caritas.cob.userservice.api.helper.EmailNotificationUtils.deser
 import static org.apache.commons.lang3.StringUtils.isBlank;
 
 import com.neovisionaries.i18n.LanguageCode;
+import de.caritas.cob.userservice.api.admin.service.tenant.TenantService;
 import de.caritas.cob.userservice.api.facade.ChatConverter;
 import de.caritas.cob.userservice.api.model.Chat;
 import de.caritas.cob.userservice.api.model.ConversationType;
@@ -14,6 +15,7 @@ import de.caritas.cob.userservice.api.port.out.UserChatRepository;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
 import de.caritas.cob.userservice.api.service.email.OrisoEmailRenderer;
 import de.caritas.cob.userservice.api.workflow.accountinactivity.AccountInactivityService;
+import de.caritas.cob.userservice.tenantservice.generated.web.model.RestrictedTenantDTO;
 import java.util.Optional;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
@@ -33,6 +35,7 @@ public class GroupAppointmentEmailRecipientService {
   private final UserChatRepository userChats;
   private final GroupChatParticipantRepository counselors;
   private final AccountInactivityService lifecycle;
+  private final TenantService tenants;
   private final String emailDummySuffix;
 
   public GroupAppointmentEmailRecipientService(
@@ -41,12 +44,14 @@ public class GroupAppointmentEmailRecipientService {
       UserChatRepository userChats,
       GroupChatParticipantRepository counselors,
       AccountInactivityService lifecycle,
+      TenantService tenants,
       @Value("${identity.email-dummy-suffix:}") String emailDummySuffix) {
     this.users = users;
     this.consultants = consultants;
     this.userChats = userChats;
     this.counselors = counselors;
     this.lifecycle = lifecycle;
+    this.tenants = tenants;
     this.emailDummySuffix = emailDummySuffix;
   }
 
@@ -69,6 +74,7 @@ public class GroupAppointmentEmailRecipientService {
         .findByUserIdAndDeleteDateIsNull(userId)
         .filter(user -> userChats.findByChatAndUser(series, user).isPresent())
         .filter(user -> eligible(user, user.getEmail(), userId))
+        .filter(user -> traegerAllowsAdviceSeekerEmail(series))
         .map(
             user ->
                 new Recipient(
@@ -90,6 +96,24 @@ public class GroupAppointmentEmailRecipientService {
                     userId,
                     consultant.getEmail(),
                     tone(consultant.getLanguageCode(), consultant.isLanguageFormal())));
+  }
+
+  /**
+   * Frontend#1979: the Admin "Berechtigungen" (effective Träger settings from TenantService) decide
+   * whether advice seekers get e-mail at all. An unavailable policy throws, so the worker defers
+   * and retries instead of mailing against a decision it could not read.
+   */
+  private boolean traegerAllowsAdviceSeekerEmail(Chat series) {
+    Long tenantId = series.getChatOwner() == null ? null : series.getChatOwner().getTenantId();
+    RestrictedTenantDTO tenant =
+        tenantId == null
+            ? tenants.getSingleTenancyTenantDataFresh()
+            : tenants.getRestrictedTenantDataFresh(tenantId);
+    if (tenant == null) {
+      throw new IllegalStateException("Advice-seeker e-mail policy unavailable");
+    }
+    return AskerNotificationChannelPolicy.emailAllowed(
+        ConversationType.SELF_HELP, tenant.getSettings());
   }
 
   private boolean eligible(NotificationsAware person, String email, String userId) {

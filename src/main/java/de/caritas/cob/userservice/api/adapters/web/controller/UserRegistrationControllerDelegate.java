@@ -28,7 +28,6 @@ import de.caritas.cob.userservice.api.service.auth.MagicLinkLoginService;
 import de.caritas.cob.userservice.api.service.auth.PasswordResetService;
 import de.caritas.cob.userservice.api.service.session.SessionService;
 import de.caritas.cob.userservice.api.service.user.UserAccountService;
-import jakarta.transaction.Transactional;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -38,6 +37,8 @@ import org.springframework.http.CacheControl;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Component;
+import org.springframework.transaction.annotation.Isolation;
+import org.springframework.transaction.annotation.Transactional;
 
 @Slf4j
 @Component
@@ -159,7 +160,7 @@ class UserRegistrationControllerDelegate {
     return new ResponseEntity<>(response, response.getStatus());
   }
 
-  @Transactional
+  @Transactional(isolation = Isolation.READ_COMMITTED)
   ResponseEntity<Void> acceptEnquiry(Long sessionId) {
     var session = sessionService.getSessionForUpdate(sessionId);
 

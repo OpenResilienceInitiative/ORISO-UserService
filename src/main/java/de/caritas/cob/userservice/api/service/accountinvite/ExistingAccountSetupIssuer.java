@@ -416,7 +416,7 @@ public class ExistingAccountSetupIssuer {
       adminScope.assertMay(AdminScope.Target.counsellor(identityId));
     } else if (role == AccountInviteTargetRole.AGENCY_ADMIN
         || role == AccountInviteTargetRole.TENANT_ADMIN) {
-      adminScope.assertMay(AdminScope.Target.admin(identityId));
+      adminScope.assertMay(AdminScope.Target.managedAdmin(identityId));
     } else {
       throw new BadRequestException("Existing account role is not supported");
     }

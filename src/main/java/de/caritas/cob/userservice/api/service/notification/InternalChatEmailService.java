@@ -143,8 +143,7 @@ public class InternalChatEmailService {
         writer.finish(id, Status.REJECTED);
         return;
       }
-      for (String participantId : participantIds) {
-        Consultant recipient = consultants.findByIdAndDeleteDateIsNull(participantId).orElse(null);
+      for (Consultant recipient : consultants.findByIdInAndDeleteDateIsNull(participantIds)) {
         if (!eligibleRecipient(session, actor, recipient, participantIds)
             || !members.contains(recipient.getMatrixUserId())) continue;
         try {

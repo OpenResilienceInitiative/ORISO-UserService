@@ -31,4 +31,12 @@ public class SessionUserDTO {
 
   @ApiModelProperty("Stored animal id; null uses the default avatar")
   private String avatarId;
+
+  /**
+   * Set when the asker is a direct-link temporary account (ADR-029, #1476): the retention mode, the
+   * guest's answer and whether the account is already deleted ("Gast (gelöscht)").
+   */
+  @com.fasterxml.jackson.annotation.JsonInclude(
+      com.fasterxml.jackson.annotation.JsonInclude.Include.NON_NULL)
+  private TemporaryAccountDTO temporaryAccount;
 }

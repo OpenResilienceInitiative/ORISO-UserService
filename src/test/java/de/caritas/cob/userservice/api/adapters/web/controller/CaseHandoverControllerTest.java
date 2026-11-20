@@ -88,6 +88,57 @@ class CaseHandoverControllerTest {
   }
 
   @Test
+  void withdrawOffer_bothPrefixesReturnTheWithdrawnStatus() throws Exception {
+    when(caseHandoverService.withdrawOffer(13L, 501L))
+        .thenReturn(
+            CaseHandoverStatus.builder()
+                .sessionId(13L)
+                .requestId(501L)
+                .status("WITHDRAWN")
+                .direction("PUSH")
+                .build());
+
+    for (String prefix : List.of("", "/service")) {
+      mockMvc
+          .perform(post(prefix + "/users/sessions/13/case-handover/501/withdraw"))
+          .andExpect(status().isOk())
+          .andExpect(jsonPath("$.status").value("WITHDRAWN"))
+          .andExpect(jsonPath("$.requestId").value(501));
+    }
+  }
+
+  @Test
+  void withdrawOffer_byAnyoneButTheOfferingCounsellor_isForbidden() throws Exception {
+    when(caseHandoverService.withdrawOffer(13L, 501L))
+        .thenThrow(new ForbiddenException("Only the offering counsellor may withdraw this offer"));
+
+    mockMvc
+        .perform(post("/users/sessions/13/case-handover/501/withdraw"))
+        .andExpect(status().isForbidden());
+  }
+
+  @Test
+  void withdrawOffer_afterTheOfferWasDecided_isAConflict() throws Exception {
+    when(caseHandoverService.withdrawOffer(13L, 501L))
+        .thenThrow(new ConflictException("This offer was already decided"));
+
+    mockMvc
+        .perform(post("/users/sessions/13/case-handover/501/withdraw"))
+        .andExpect(status().isConflict());
+  }
+
+  @Test
+  void withdrawOffer_unknownRequest_isNotFound() throws Exception {
+    when(caseHandoverService.withdrawOffer(13L, 999L))
+        .thenThrow(
+            new de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException("x"));
+
+    mockMvc
+        .perform(post("/users/sessions/13/case-handover/999/withdraw"))
+        .andExpect(status().isNotFound());
+  }
+
+  @Test
   void listEligibleRecipients_returnsTheConsultantsTheOfferWouldAccept() throws Exception {
     when(caseHandoverService.listEligibleRecipients(123L))
         .thenReturn(

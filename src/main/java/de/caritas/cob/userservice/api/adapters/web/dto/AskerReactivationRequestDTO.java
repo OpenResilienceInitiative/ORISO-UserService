@@ -1,5 +1,6 @@
 package de.caritas.cob.userservice.api.adapters.web.dto;
 
+import de.caritas.cob.userservice.api.helper.PasswordPolicy;
 import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
@@ -23,5 +24,7 @@ public class AskerReactivationRequestDTO {
 
   @NotNull @PositiveOrZero private Long tenantId;
 
-  @NotBlank private String password;
+  @NotBlank
+  @Size(min = PasswordPolicy.MIN_LENGTH)
+  private String password;
 }

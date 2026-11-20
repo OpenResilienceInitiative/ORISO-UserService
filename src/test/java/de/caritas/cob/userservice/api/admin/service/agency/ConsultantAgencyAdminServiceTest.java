@@ -21,6 +21,7 @@ import de.caritas.cob.userservice.api.port.out.ConsultantAgencyRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
+import de.caritas.cob.userservice.api.service.session.AgencyEnquiryRevocations;
 import de.caritas.cob.userservice.api.service.session.ConsultantLeftAgencyEvent;
 import java.util.List;
 import java.util.Optional;
@@ -48,6 +49,7 @@ class ConsultantAgencyAdminServiceTest {
   @Mock private AgencyAdminService agencyAdminService;
   @Mock private ConsultantAgencyDeletionValidationService agencyDeletionValidationService;
   @Mock private ApplicationEventPublisher eventPublisher;
+  @Mock private AgencyEnquiryRevocations enquiryRevocations;
 
   @Mock
   private de.caritas.cob.userservice.api.port.out.ConsultantTopicRepository
@@ -276,8 +278,12 @@ class ConsultantAgencyAdminServiceTest {
 
     consultantAgencyAdminService.markConsultantAgencyForDeletion("c-1", 10L);
 
-    var inOrder = inOrder(consultantAgencyRepository, eventPublisher);
+    var inOrder =
+        inOrder(
+            consultantRepository, consultantAgencyRepository, enquiryRevocations, eventPublisher);
+    inOrder.verify(consultantRepository).lockConsultant("c-1");
     inOrder.verify(consultantAgencyRepository).save(relation);
+    inOrder.verify(enquiryRevocations).stage(relation);
     inOrder.verify(eventPublisher).publishEvent(new ConsultantLeftAgencyEvent("c-1", 10L));
   }
 
@@ -302,7 +308,7 @@ class ConsultantAgencyAdminServiceTest {
         CustomValidationHttpStatusException.class,
         () -> consultantAgencyAdminService.markConsultantAgencyForDeletion("c-1", 10L));
 
-    verifyNoInteractions(eventPublisher);
+    verifyNoInteractions(enquiryRevocations, eventPublisher);
   }
 
   @Test

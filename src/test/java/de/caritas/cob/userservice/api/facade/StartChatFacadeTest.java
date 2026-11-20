@@ -132,6 +132,31 @@ public class StartChatFacadeTest {
   }
 
   @Test
+  void startChatShouldNotTellTheModeratorWhoOpenedItThatItOpened() {
+    // FE#1211: Marge opened the group and got "Online-Termin geöffnet" about her own action.
+    when(chat.isActive()).thenReturn(false);
+    when(chat.getId()).thenReturn(42L);
+    when(chat.getMatrixRoomId()).thenReturn("!room:matrix.local");
+    when(chat.getCurrentOccurrenceIndex()).thenReturn(0);
+    when(chat.getStartDate()).thenReturn(java.time.LocalDateTime.parse("2026-08-03T18:00:00"));
+    when(chat.getChatModality()).thenReturn(Chat.ChatModality.TEXT);
+    when(notificationRecipientService.resolveRecipientIds(chat))
+        .thenReturn(java.util.List.of(CONSULTANT.getId(), "co-moderator-1", "asker-1"));
+
+    startChatFacade.startChat(chat, CONSULTANT);
+
+    verify(groupChatLifecycleNotificationService)
+        .createOpenedNotifications(
+            42L,
+            0,
+            java.time.LocalDateTime.parse("2026-08-03T18:00:00"),
+            "!room:matrix.local",
+            null,
+            false,
+            java.util.List.of("co-moderator-1", "asker-1"));
+  }
+
+  @Test
   void startChatShouldRemainSuccessfulWhenOpenedNotificationFails() {
     when(chat.isActive()).thenReturn(false);
     when(chat.getId()).thenReturn(42L);

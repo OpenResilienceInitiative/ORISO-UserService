@@ -14,7 +14,9 @@ Each actor needs all three explicit environment bindings: `IDENTITY_<ACTOR>_CLIE
 | ACCOUNT_CREATE | backend-account-create | ACCOUNT_PROVISIONING | Native audience contract remains open; no issuance |
 | ACCOUNT_ADMIN | backend-account-admin | ACCOUNT_MAINTENANCE, OTP, SESSION_EXCHANGE | Native audience contract remains open; no issuance |
 | MAIL | backend-mail | SMTP_SYNC, SYSTEM_EMAIL_DELIVERY, NOTIFICATION_DISPATCH | tenantservice, agencyservice, consultingtypeservice, userservice |
-| RUNTIME | backend-runtime | RUNTIME_POLICY, MATRIX_AGENCY, APPOINTMENT_SYNC, APPOINTMENT_CLEANUP | tenantservice, agencyservice, appointmentservice |
+| RUNTIME | backend-runtime | RUNTIME_POLICY, MATRIX_AGENCY, DELETION_AUDIT_PULL | tenantservice, agencyservice, appointmentservice |
+
+The cal.com AppointmentService purposes were removed with ADR-032. The RUNTIME role union and audience still name `appointment-sync`, `appointment-participant-cleanup` and `appointmentservice`, because they must match the Keycloak task identity exactly; they go together with the ORISO-Helm reconcile change.
 
 Purposes sharing an actor share its credential. They do not introduce additional service accounts. Role unions are the Scenario C contract in `TaskActor`; native account audiences are deliberately empty. The account actors refuse before any token endpoint request.
 
@@ -33,8 +35,6 @@ The broker uses the existing confidential `client_credentials` HTTP grant. It va
 | Agency contact facts, DPA signature read-back for notices | NOTIFICATION_DISPATCH |
 | Background tenant policy and DPA-gate reads | RUNTIME_POLICY |
 | Agency Matrix credentials | MATRIX_AGENCY |
-| Appointment consultant creation/update/patch, agency sync | APPOINTMENT_SYNC |
-| Appointment consultant/asker deletion | APPOINTMENT_CLEANUP |
 
 Existing caller-triggered policy reads/writes continue to use the human token. Reservation pairs, tenant and target checks, request bodies, context lifetimes and receiving proof formats remain in their existing paths. Allocation clients consume the explicitly offered reservation token; their human-triggered path is unchanged. A grouped queued-release authentication failure leaves the queue untouched instead of retrying without credentials.
 
@@ -42,7 +42,7 @@ Existing caller-triggered policy reads/writes continue to use the human token. R
 
 ## Verification and limits
 
-The public Spring startup tests exercise the real wiring adapter and mode gate. Token tests use a local synthetic RSA issuer over HTTP and serve its public JWKS to the real decoder. Caller tests send verified actor tokens to local HTTP endpoints and check the selected client, tenant/agency target, reservation body and absence of fallback. These are source-boundary proofs, not native Keycloak FGAP, deployed receiver, external mail/Matrix/AppointmentService or Dev acceptance.
+The public Spring startup tests exercise the real wiring adapter and mode gate. Token tests use a local synthetic RSA issuer over HTTP and serve its public JWKS to the real decoder. Caller tests send verified actor tokens to local HTTP endpoints and check the selected client, tenant/agency target, reservation body and absence of fallback. These are source-boundary proofs, not native Keycloak FGAP, deployed receiver, external mail/Matrix or Dev acceptance.
 
 Run the focused boundary tests with Java 21:
 

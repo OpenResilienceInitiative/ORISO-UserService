@@ -145,6 +145,21 @@
       "status": "blocker"
     },
     {
+      "id": "session-interaction-debounce",
+      "source": "src/main/java/de/caritas/cob/userservice/api/service/lifecycle/SessionInteractionService.java",
+      "kind": "local-state",
+      "owner": "sessions-matrix",
+      "risk": "duplicate-side-effect",
+      "components": [
+        "claimedUntil"
+      ],
+      "decision": "Retain locally: message interactions come from the single-leader Matrix sync loop, and a second replica can at most announce one extra session.interaction per session, counsellor and interval, which add-ons treat as a hint.",
+      "signals": [
+        "userservice.replica.local_state"
+      ],
+      "status": "bounded"
+    },
+    {
       "id": "notification-active-view-map",
       "source": "src/main/java/de/caritas/cob/userservice/api/service/notification/EventNotificationService.java",
       "kind": "local-state",
@@ -315,27 +330,6 @@
       "status": "bounded"
     },
     {
-      "id": "appointment-cleanup-scheduler",
-      "source": "src/main/java/de/caritas/cob/userservice/api/Organizer.java",
-      "kind": "scheduler",
-      "owner": "sessions-appointments",
-      "risk": "duplicate-side-effect",
-      "components": [
-        "deleteObsoleteAppointments"
-      ],
-      "decision": "One set-based native DELETE over a fixed clock cutoff with no external side effects: running it twice at once removes each row at most once (idempotent statement), so no lease is needed. OrganizerMariaDbReplicaIT proves two concurrent runs on MariaDB; see documentation/APPOINTMENT_CLEANUP_REPLICA_SAFETY.md.",
-      "signals": [
-        "userservice.scheduler.executions",
-        "userservice.scheduler.duration"
-      ],
-      "status": "bounded",
-      "claim": {
-        "mechanism": "idempotent-statement",
-        "source": "src/main/java/de/caritas/cob/userservice/api/port/out/AppointmentRepository.java",
-        "reference": "DELETE FROM appointment WHERE"
-      }
-    },
-    {
       "id": "account-invite-reservation-release-scheduler",
       "source": "src/main/java/de/caritas/cob/userservice/api/service/accountinvite/allocation/IdReservationReleaseScheduler.java",
       "kind": "scheduler",
@@ -364,6 +358,25 @@
         "expireElapsedInvites"
       ],
       "decision": "Lease each run via ScheduledTaskClaimService; expiry is a status transition and every number release is a durable release task, so a replayed batch cannot release a number twice.",
+      "signals": [
+        "userservice.scheduler.executions",
+        "userservice.scheduler.duration"
+      ],
+      "status": "safe",
+      "claim": {
+        "mechanism": "scheduled-task-claim"
+      }
+    },
+    {
+      "id": "account-invite-dpa-reconciliation-scheduler",
+      "source": "src/main/java/de/caritas/cob/userservice/api/service/accountinvite/DpaInviteReconciliation.java",
+      "kind": "scheduler",
+      "owner": "agency-tenant",
+      "risk": "correctness",
+      "components": [
+        "reconcile"
+      ],
+      "decision": "Lease each bounded batch with ScheduledTaskClaimService. A replica-local cursor only determines the next batch; restarting or replaying a batch cannot overwrite an existing milestone because the update rechecks the exact tenant, actor and missing timestamp.",
       "signals": [
         "userservice.scheduler.executions",
         "userservice.scheduler.duration"
@@ -453,6 +466,22 @@
       }
     },
     {
+      "id": "appointment-request-expiry-scheduler",
+      "source": "src/main/java/de/caritas/cob/userservice/api/workflow/appointmentrequestexpiry/scheduler/AppointmentRequestExpiryScheduler.java",
+      "kind": "scheduler",
+      "owner": "appointments",
+      "risk": "correctness",
+      "components": [
+        "declineUnansweredRequests"
+      ],
+      "decision": "One conditional UPDATE (REQUESTED and started -> DECLINED); concurrent runs decline each row once and have no external side effect.",
+      "signals": [
+        "userservice.scheduler.executions",
+        "userservice.scheduler.duration"
+      ],
+      "status": "safe"
+    },
+    {
       "id": "inactive-account-notification-scheduler",
       "source": "src/main/java/de/caritas/cob/userservice/api/workflow/inactiveaccountnotification/scheduler/InactiveAccountNotificationScheduler.java",
       "kind": "scheduler",
@@ -537,9 +566,10 @@
       "owner": "identity-profile",
       "risk": "duplicate-side-effect",
       "components": [
-        "performDeletionWorkflow"
+        "performDeletionWorkflow",
+        "performDirectLinkDeletionWorkflow"
       ],
-      "decision": "A shared lease is claimed per run and each account is deleted under the locked lease row (runIfHeld), so a second replica skips the run; the lease is released in finally. Each deletion runs in its own transaction and treats an already deleted user as done.",
+      "decision": "A shared lease is claimed per run and each account is deleted under the locked lease row (runIfHeld), so a second replica skips the run; the lease is released in finally. Each deletion runs in its own transaction and treats an already deleted user as done. The direct-link run (ADR-029) claims its own lease (direct-link-temporary-account-deletion) under the same rules, so it never blocks or overlaps the inactivity run.",
       "signals": [
         "userservice.scheduler.executions",
         "userservice.scheduler.duration"
@@ -578,14 +608,16 @@
       "components": [
         "sweepExpired"
       ],
-      "decision": "sweepExpired runs under a ScheduledTaskClaimService lease (support-room-expiry-sweep, default PT5M, released after each run) and commits inside the lease transaction, so only one instance leaves the Matrix room and audits each close. ReplicaSweepClaimMariaDbIT proves one close and one audit entry per expired room.",
+      "decision": "Each due room is closed through SupportRoomLifecycle.claimClosure, which takes a pessimistic row lock (lockById) and commits the next retry time before any Matrix call, so two overlapping instances never withdraw the same room in the same attempt. The sweep itself needs no global lease; it is bounded by batch size and a 20-second budget.",
       "signals": [
         "userservice.scheduler.executions",
         "userservice.scheduler.duration"
       ],
       "status": "bounded",
       "claim": {
-        "mechanism": "scheduled-task-claim"
+        "mechanism": "row-lock",
+        "source": "src/main/java/de/caritas/cob/userservice/api/port/out/SupportRoomRepository.java",
+        "reference": "PESSIMISTIC_WRITE"
       }
     },
     {
@@ -638,6 +670,22 @@
       }
     },
     {
+      "id": "live-chat-queue-policy-refresh",
+      "source": "src/main/java/de/caritas/cob/userservice/api/service/livechat/LiveChatQueuePolicyRefresher.java",
+      "kind": "scheduler",
+      "owner": "sessions-matrix",
+      "risk": "correctness",
+      "components": [
+        "refresh"
+      ],
+      "decision": "Each replica re-reads the platform live-chat free-choice switch into its own snapshot. The run is a read-only settings request with no side effect, so every replica runs it without a lease. Replicas can disagree for at most one refresh interval, and an unreadable setting falls back to the strict queue order (ORISO-Admin#1497).",
+      "signals": [
+        "userservice.scheduler.executions",
+        "userservice.scheduler.duration"
+      ],
+      "status": "safe"
+    },
+    {
       "id": "case-handover-co-access-expiry",
       "source": "src/main/java/de/caritas/cob/userservice/api/service/CaseHandoverService.java",
       "kind": "scheduler",
@@ -647,6 +695,25 @@
         "expireCoAccessSchedule"
       ],
       "decision": "The sweep uses a shared lease, technical tenant context and pessimistic row locks; database expiry is saved only after Matrix membership is reconciled.",
+      "signals": [
+        "userservice.scheduler.executions",
+        "userservice.scheduler.duration"
+      ],
+      "status": "bounded",
+      "claim": {
+        "mechanism": "scheduled-task-claim"
+      }
+    },
+    {
+      "id": "agency-enquiry-access-revocation",
+      "source": "src/main/java/de/caritas/cob/userservice/api/service/session/AgencyEnquiryRevocationScheduler.java",
+      "kind": "scheduler",
+      "owner": "sessions-matrix",
+      "risk": "correctness",
+      "components": [
+        "retryPending"
+      ],
+      "decision": "A dedicated one-worker executor runs short sweeps under a shared lease. Each pending task survives a restart and locks the counsellor and session before checking that an attempt still applies.",
       "signals": [
         "userservice.scheduler.executions",
         "userservice.scheduler.duration"
@@ -711,6 +778,21 @@
       }
     },
     {
+      "id": "reply-email-tenant-rotation",
+      "source": "src/main/java/de/caritas/cob/userservice/api/service/notification/ReplyEmailDeliveryWriter.java",
+      "kind": "local-state",
+      "owner": "notifications",
+      "risk": "performance",
+      "components": [
+        "resumeAfterTenant"
+      ],
+      "decision": "Retain locally: only the starting tenant of the next batch when more than 100 tenants are due. Another replica or a restart starts from the lowest tenant id, which delays but never skips or duplicates a mail; claims stay row-locked in the database.",
+      "signals": [
+        "userservice.replica.local_state"
+      ],
+      "status": "bounded"
+    },
+    {
       "id": "event-notification-retention-scheduler",
       "source": "src/main/java/de/caritas/cob/userservice/api/workflow/notificationretention/scheduler/EventNotificationRetentionScheduler.java",
       "kind": "scheduler",
@@ -720,6 +802,78 @@
         "purgeExpiredNotifications"
       ],
       "decision": "Leases the run through ScheduledTaskClaimService; the purge itself is an idempotent bulk delete of expired rows.",
+      "signals": [
+        "userservice.scheduler.executions",
+        "userservice.scheduler.duration"
+      ],
+      "status": "bounded",
+      "claim": {
+        "mechanism": "scheduled-task-claim"
+      }
+    },
+    {
+      "id": "statistics-feature-gate-cache",
+      "source": "src/main/java/de/caritas/cob/userservice/api/service/statistics/StatisticsFeatureGate.java",
+      "kind": "local-state",
+      "owner": "statistics",
+      "risk": "correctness",
+      "components": [
+        "isEnabledForTenant"
+      ],
+      "decision": "Retain locally per tenant for one minute the organisation's statistics switch that gates message counting on the notification worker; a miss re-reads it from TenantService. A replica with an older copy counts up to one minute after an organisation switched statistics off. A failed read is kept for thirty seconds and is always the narrowest answer (not counting), so an outage never switches counting on. Cardinality is the number of tenants.",
+      "signals": [
+        "userservice.replica.local_state"
+      ],
+      "status": "bounded"
+    },
+    {
+      "id": "statistics-retention-scheduler",
+      "source": "src/main/java/de/caritas/cob/userservice/api/workflow/statisticsretention/scheduler/StatisticsRetentionScheduler.java",
+      "kind": "scheduler",
+      "owner": "statistics",
+      "risk": "duplicate-side-effect",
+      "components": [
+        "purgeExpiredStatistics"
+      ],
+      "decision": "Leases the run through ScheduledTaskClaimService; the purge is an idempotent batched delete of expired message-count rows plus an idempotent blanking of the admin on old settings change lines, so a replayed run changes nothing.",
+      "signals": [
+        "userservice.scheduler.executions",
+        "userservice.scheduler.duration"
+      ],
+      "status": "bounded",
+      "claim": {
+        "mechanism": "scheduled-task-claim"
+      }
+    },
+    {
+      "id": "deleted-unit-invite-retry-scheduler",
+      "source": "src/main/java/de/caritas/cob/userservice/api/workflow/delete/scheduler/DeletedUnitInviteRetryScheduler.java",
+      "kind": "scheduler",
+      "owner": "account-invites",
+      "risk": "duplicate-side-effect",
+      "components": [
+        "retryUnfinishedRevocations"
+      ],
+      "decision": "Leases the run through ScheduledTaskClaimService; it revokes only the still open invitations and active links of units the deletion log reports as deleted, through the same idempotent conditional updates as the report-time revocation, so a replayed run changes nothing.",
+      "signals": [
+        "userservice.scheduler.executions",
+        "userservice.scheduler.duration"
+      ],
+      "status": "bounded",
+      "claim": {
+        "mechanism": "scheduled-task-claim"
+      }
+    },
+    {
+      "id": "account-invite-retention-scheduler",
+      "source": "src/main/java/de/caritas/cob/userservice/api/workflow/inviteretention/scheduler/InviteRetentionScheduler.java",
+      "kind": "scheduler",
+      "owner": "account-invites",
+      "risk": "duplicate-side-effect",
+      "components": [
+        "purgeSettledInvites"
+      ],
+      "decision": "Leases the run through ScheduledTaskClaimService; the purge deletes only invitations still REVOKED, EXPIRED or SUPERSEDED past the retention period, together with their mail-delivery rows, in batched transactions that re-check the status, so a replayed run deletes nothing twice and never touches an open or accepted invitation.",
       "signals": [
         "userservice.scheduler.executions",
         "userservice.scheduler.duration"
@@ -749,6 +903,25 @@
       }
     },
     {
+      "id": "agency-deletion-audit-pull-scheduler",
+      "source": "src/main/java/de/caritas/cob/userservice/api/workflow/delete/scheduler/AgencyDeletionAuditPullScheduler.java",
+      "kind": "scheduler",
+      "owner": "deletion",
+      "risk": "duplicate-side-effect",
+      "components": [
+        "pull"
+      ],
+      "decision": "Leases each run through ScheduledTaskClaimService. A pulled entry is recorded before it is acknowledged, and recording deduplicates on target type, id and outcome, so a replayed batch after a lost acknowledgement adds no second log row.",
+      "signals": [
+        "userservice.scheduler.executions",
+        "userservice.scheduler.duration"
+      ],
+      "status": "bounded",
+      "claim": {
+        "mechanism": "scheduled-task-claim"
+      }
+    },
+    {
       "id": "team-discussion-retention-scheduler",
       "source": "src/main/java/de/caritas/cob/userservice/api/workflow/teamdiscussionretention/scheduler/TeamDiscussionRetentionScheduler.java",
       "kind": "scheduler",
@@ -758,6 +931,25 @@
         "purgeExpiredDiscussions"
       ],
       "decision": "Leases the run through ScheduledTaskClaimService. Each expired discussion is purged from Synapse before its row and participants are deleted in one transaction, so a second replica or a retried run finds either the whole discussion or nothing; a room Synapse no longer knows is treated as already purged.",
+      "signals": [
+        "userservice.scheduler.executions",
+        "userservice.scheduler.duration"
+      ],
+      "status": "bounded",
+      "claim": {
+        "mechanism": "scheduled-task-claim"
+      }
+    },
+    {
+      "id": "call-observation-retention-scheduler",
+      "source": "src/main/java/de/caritas/cob/userservice/api/workflow/callobservationretention/scheduler/CallObservationRetentionScheduler.java",
+      "kind": "scheduler",
+      "owner": "sessions-matrix",
+      "risk": "duplicate-side-effect",
+      "components": [
+        "purgeExpiredObservations"
+      ],
+      "decision": "Leases the run through ScheduledTaskClaimService; the purge is one idempotent bulk delete of observation rows whose lease and end are older than the retention cutoff, so a second replica or a retried run deletes nothing more.",
       "signals": [
         "userservice.scheduler.executions",
         "userservice.scheduler.duration"
@@ -924,6 +1116,38 @@
       "status": "bounded"
     },
     {
+      "id": "call-share-link-sweep",
+      "kind": "scheduler",
+      "source": "src/main/java/de/caritas/cob/userservice/api/service/agencyinvitelink/CallShareLinkSweep.java",
+      "components": [
+        "sweep"
+      ],
+      "owner": "sessions-matrix",
+      "risk": "correctness",
+      "decision": "Database-only expiry of call share links whose call is over. Each link is closed in its own transaction under a pessimistic row lock and only from ACTIVE, so competing replicas close it once and a second run is a no-op; no Matrix call is made.",
+      "signals": [
+        "userservice.scheduler.executions",
+        "userservice.scheduler.duration"
+      ],
+      "status": "safe"
+    },
+    {
+      "id": "direct-invitation-expiry-sweep",
+      "kind": "scheduler",
+      "source": "src/main/java/de/caritas/cob/userservice/api/service/agencyinvitelink/DirectInvitationExpirySweep.java",
+      "components": [
+        "sweep"
+      ],
+      "owner": "sessions-matrix",
+      "risk": "correctness",
+      "decision": "Expiry of direct invitations with an appointment (ORISO-Frontend#2252). Each invitation is closed in its own transaction under a pessimistic row lock and only from ACTIVE, so competing replicas close it once; guest removal from the Matrix room is idempotent (a kick of a member who left is a no-op) and archiving an archived conversation changes nothing.",
+      "signals": [
+        "userservice.scheduler.executions",
+        "userservice.scheduler.duration"
+      ],
+      "status": "safe"
+    },
+    {
       "id": "matrix-feed-signal-coalescer",
       "source": "src/main/java/de/caritas/cob/userservice/api/service/matrix/FeedSignalCoalescer.java",
       "kind": "local-state",
@@ -950,6 +1174,60 @@
         "reading"
       ],
       "decision": "Retain locally per Traeger with a one-minute TTL on the hot path that decides who may open or join an internal group chat; a miss re-reads the setting from TenantService. A replica with an older copy applies a changed Traeger recipient scope up to one minute late (a widening and a narrowing alike). A failed read is kept for ten seconds only and is always the narrowest scope (counselling centre), so an outage never widens access. Cardinality is the number of Traeger that have a counsellor, and the per-Traeger read lock objects are bounded the same way.",
+      "signals": [
+        "userservice.replica.local_state"
+      ],
+      "status": "bounded"
+    },
+    {
+      "id": "statistics-dashboard-snapshot-scheduler",
+      "source": "src/main/java/de/caritas/cob/userservice/api/workflow/statistics/AdminDashboardSnapshotScheduler.java",
+      "kind": "scheduler",
+      "owner": "statistics",
+      "risk": "correctness",
+      "components": [
+        "refreshStands"
+      ],
+      "decision": "Leases each run through ScheduledTaskClaimService. The stand lives in the database, not in a replica: a per-target lease serializes the calculation and a unique key on scope, tenant, interval and cutoff keeps one stand per cutoff, so every replica serves the same numbers.",
+      "signals": [
+        "userservice.scheduler.executions",
+        "userservice.scheduler.duration"
+      ],
+      "status": "safe",
+      "claim": {
+        "mechanism": "scheduled-task-claim"
+      }
+    },
+    {
+      "id": "calendar-import-scheduler",
+      "source": "src/main/java/de/caritas/cob/userservice/api/workflow/calendarimport/scheduler/CalendarImportScheduler.java",
+      "kind": "scheduler",
+      "owner": "calendar",
+      "risk": "duplicate-side-effect",
+      "components": [
+        "importBusyTimes"
+      ],
+      "decision": "Leases each run through ScheduledTaskClaimService (calendar.import.claim.duration, default ten minutes), so one replica refreshes the counsellors' imported busy times per run and the others find the claim taken. The scheduled method only claims the run and hands it to the import's own bounded pool (calendarImportExecutor, calendar.import.threads), so the shared scheduler thread is not held. A run starts no import after its budget (calendar.import.budget, default four minutes), and one import is cut off after 30 seconds, so a run ends well inside the lease; the calendars it did not reach are the least recently synced and go first in the next run. Each counsellor's import replaces that counsellor's imported rows in one transaction, so a run that overlaps after a lease expiry rewrites the same rows instead of duplicating them.",
+      "signals": [
+        "userservice.scheduler.executions",
+        "userservice.scheduler.duration"
+      ],
+      "status": "safe",
+      "claim": {
+        "mechanism": "scheduled-task-claim"
+      }
+    },
+    {
+      "id": "calendar-visibility-policy-cache",
+      "source": "src/main/java/de/caritas/cob/userservice/api/service/calendar/CalendarPolicyResolver.java",
+      "kind": "local-state",
+      "owner": "calendar",
+      "risk": "correctness",
+      "components": [
+        "remembered",
+        "reading"
+      ],
+      "decision": "Retain locally per Traeger with a one-minute TTL on the hot path that decides how far a counsellor may look into colleagues' calendars (calendar.visibilityScope) and whether asker usernames are shown; a miss re-reads the policy from TenantService. A replica with an older copy applies a changed Traeger setting up to one minute late (a widening and a narrowing alike). A failed read is kept for ten seconds only and is always the narrowest reach (own counselling centre, no usernames), so an outage never widens access. Cardinality is the number of Traeger that have a counsellor, and the per-Traeger read lock objects are bounded the same way.",
       "signals": [
         "userservice.replica.local_state"
       ],

@@ -63,6 +63,7 @@ import de.caritas.cob.userservice.api.port.out.IdentityReactivator;
 import de.caritas.cob.userservice.api.port.out.IdentityRoleLookup;
 import de.caritas.cob.userservice.api.port.out.IdentityRoleUpdater;
 import de.caritas.cob.userservice.api.port.out.IdentitySecondFactor;
+import de.caritas.cob.userservice.api.port.out.IdentityTenantUpdater;
 import de.caritas.cob.userservice.api.port.out.IdentityUsernameAvailability;
 import de.caritas.cob.userservice.api.port.out.identity.CreatedIdentity;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInvitePurpose;
@@ -206,6 +207,7 @@ class UserAdminControllerE2EIT extends AccountInactivityPolicyHttpFixture {
         IdentityRoleLookup.class,
         IdentityRoleUpdater.class,
         IdentitySecondFactor.class,
+        IdentityTenantUpdater.class,
         IdentityUsernameAvailability.class
       })
   IdentityClient identityClient;
@@ -495,6 +497,7 @@ class UserAdminControllerE2EIT extends AccountInactivityPolicyHttpFixture {
   private String givenNewAgencyAdminIsCreated() throws Exception {
     // given
     CreateAdminDTO createAdminDTO = new EasyRandom().nextObject(CreateAdminDTO.class);
+    createAdminDTO.setContactEmail(null);
     createAdminDTO.setEmail("agencyadmin@email.com");
     createAdminDTO.setTenantId(95);
     givenCurrentSetupIdentity(
@@ -530,6 +533,7 @@ class UserAdminControllerE2EIT extends AccountInactivityPolicyHttpFixture {
   void createNewAgencyAdmin_Should_returnForbidden_When_calledNotAsUserAdmin() throws Exception {
     // given
     CreateAdminDTO createAdminDTO = new EasyRandom().nextObject(CreateAdminDTO.class);
+    createAdminDTO.setContactEmail(null);
     createAdminDTO.setEmail("agencyadmin@email.com");
 
     // when
@@ -551,6 +555,7 @@ class UserAdminControllerE2EIT extends AccountInactivityPolicyHttpFixture {
       throws Exception {
     // given
     CreateAdminDTO createAdminDTO = new EasyRandom().nextObject(CreateAdminDTO.class);
+    createAdminDTO.setContactEmail(null);
     createAdminDTO.setEmail("valid@email.com");
     createAdminDTO.setTenantId(1);
     givenCurrentSetupIdentity(
@@ -584,6 +589,7 @@ class UserAdminControllerE2EIT extends AccountInactivityPolicyHttpFixture {
     when(authenticatedUser.isPlatformAdmin()).thenReturn(true);
     when(authenticatedUser.getAccessToken()).thenReturn("platform-caller-token");
     var request = new EasyRandom().nextObject(CreateAdminDTO.class);
+    request.setContactEmail(null);
     request.setTenantId(0);
     request.setEmail("platform-admin@example.test");
     givenCurrentSetupIdentity(
@@ -611,6 +617,7 @@ class UserAdminControllerE2EIT extends AccountInactivityPolicyHttpFixture {
           throws Exception {
     // given
     CreateAdminDTO createAdminDTO = new EasyRandom().nextObject(CreateAdminDTO.class);
+    createAdminDTO.setContactEmail(null);
     createAdminDTO.setEmail("valid@email.com");
     createAdminDTO.setTenantId(null);
 
@@ -633,6 +640,7 @@ class UserAdminControllerE2EIT extends AccountInactivityPolicyHttpFixture {
           throws Exception {
     // given
     CreateAdminDTO createAdminDTO = new EasyRandom().nextObject(CreateAdminDTO.class);
+    createAdminDTO.setContactEmail(null);
     createAdminDTO.setEmail("valid@email.com");
 
     // when
@@ -659,6 +667,8 @@ class UserAdminControllerE2EIT extends AccountInactivityPolicyHttpFixture {
     String adminId = givenNewAgencyAdminIsCreated();
 
     UpdateAgencyAdminDTO updateAdminDTO = new EasyRandom().nextObject(UpdateAgencyAdminDTO.class);
+
+    updateAdminDTO.setContactEmail(null);
 
     updateAdminDTO.setFirstname("changedFirstname");
     updateAdminDTO.setLastname("changedLastname");
@@ -690,6 +700,8 @@ class UserAdminControllerE2EIT extends AccountInactivityPolicyHttpFixture {
     when(authenticatedUser.isSingleTenantAdmin()).thenReturn(false);
 
     PatchAdminDTO patchAdminDTO = new EasyRandom().nextObject(PatchAdminDTO.class);
+
+    patchAdminDTO.setContactEmail(null);
 
     patchAdminDTO.setFirstname("changedFirstname");
     patchAdminDTO.setLastname("changedLastname");
@@ -727,6 +739,8 @@ class UserAdminControllerE2EIT extends AccountInactivityPolicyHttpFixture {
 
     PatchAdminDTO patchAdminDTO = new EasyRandom().nextObject(PatchAdminDTO.class);
 
+    patchAdminDTO.setContactEmail(null);
+
     patchAdminDTO.setFirstname("changedFirstname");
     patchAdminDTO.setLastname("changedLastname");
     patchAdminDTO.setEmail("changed@email.com");
@@ -762,6 +776,8 @@ class UserAdminControllerE2EIT extends AccountInactivityPolicyHttpFixture {
 
     PatchAdminDTO patchAdminDTO = new EasyRandom().nextObject(PatchAdminDTO.class);
 
+    patchAdminDTO.setContactEmail(null);
+
     patchAdminDTO.setFirstname("changedFirstname");
     patchAdminDTO.setLastname("changedLastname");
     patchAdminDTO.setEmail("changed@email.com");
@@ -796,6 +812,8 @@ class UserAdminControllerE2EIT extends AccountInactivityPolicyHttpFixture {
     when(authenticatedUser.isSingleTenantAdmin()).thenReturn(false);
 
     PatchAdminDTO patchAdminDTO = new EasyRandom().nextObject(PatchAdminDTO.class);
+
+    patchAdminDTO.setContactEmail(null);
 
     patchAdminDTO.setFirstname("changedFirstname");
     patchAdminDTO.setLastname("changedLastname");
@@ -859,6 +877,8 @@ class UserAdminControllerE2EIT extends AccountInactivityPolicyHttpFixture {
 
     UpdateTenantAdminDTO updateAdminDTO = new EasyRandom().nextObject(UpdateTenantAdminDTO.class);
 
+    updateAdminDTO.setContactEmail(null);
+
     updateAdminDTO.setFirstname("changedFirstname");
     updateAdminDTO.setLastname("changedLastname");
     updateAdminDTO.setEmail("changed@email.com");
@@ -887,6 +907,7 @@ class UserAdminControllerE2EIT extends AccountInactivityPolicyHttpFixture {
           throws Exception {
     // given
     UpdateTenantAdminDTO updateAdminDTO = new EasyRandom().nextObject(UpdateTenantAdminDTO.class);
+    updateAdminDTO.setContactEmail(null);
     var existingAdminId = "6584f4a9-a7f0-42f0-b929-ab5c99c0802d";
     updateAdminDTO.setFirstname("changedFirstname");
     updateAdminDTO.setLastname("changedLastname");
@@ -1483,6 +1504,7 @@ class UserAdminControllerE2EIT extends AccountInactivityPolicyHttpFixture {
 
   private String givenNewTenantAdminIsCreated() throws Exception {
     CreateAdminDTO createAdminDTO = new EasyRandom().nextObject(CreateAdminDTO.class);
+    createAdminDTO.setContactEmail(null);
     createAdminDTO.setEmail("valid@email.com");
     createAdminDTO.setTenantId(1);
     givenCurrentSetupIdentity(

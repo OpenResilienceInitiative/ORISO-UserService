@@ -5,19 +5,22 @@ import de.caritas.cob.userservice.api.model.AccountInvite;
 import de.caritas.cob.userservice.api.model.InviteEmailDelivery;
 import de.caritas.cob.userservice.api.port.out.InviteEmailDeliveryRepository;
 import de.caritas.cob.userservice.api.service.accountinvite.InviteProgress.Phase;
-import de.caritas.cob.userservice.api.service.accountinvite.allocation.IdAllocationMode;
 import java.time.LocalDateTime;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.PageRequest;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.server.ResponseStatusException;
 
 /**
  * The Admin's invite list with each invite's progress, and the phase counts behind its status
@@ -44,23 +47,16 @@ public class InviteBoard {
 
   /** The Admin's two invite tabs. */
   public enum Tab {
-    /** Invites whose Träger admin founds a new Träger. */
+    /** Every invitation of a Träger admin, including an existing Träger. */
     TENANT,
-    /** Everyone joining a unit: counsellors, agency admins, admins of an existing Träger. */
+    /** Counsellors and agency admins joining a unit. */
     UNIT;
 
     boolean lists(AccountInvite invite) {
       AccountInviteTargetRole role = invite.getTargetRole();
-      boolean foundsTenant =
-          role == AccountInviteTargetRole.TENANT_ADMIN
-              && invite.getTenantIdAllocationMode() != IdAllocationMode.EXISTING;
-      if (this == TENANT) {
-        return foundsTenant;
-      }
-      return !foundsTenant
-          && (role == AccountInviteTargetRole.TENANT_ADMIN
-              || role == AccountInviteTargetRole.AGENCY_ADMIN
-              || role == AccountInviteTargetRole.COUNSELLOR);
+      if (this == TENANT) return role == AccountInviteTargetRole.TENANT_ADMIN;
+      return role == AccountInviteTargetRole.AGENCY_ADMIN
+          || role == AccountInviteTargetRole.COUNSELLOR;
     }
   }
 
@@ -77,6 +73,32 @@ public class InviteBoard {
       String query,
       int page,
       int size) {
+    return list(
+        tab,
+        targetRole,
+        status,
+        phase == null ? Set.of() : Set.of(phase),
+        tenantId,
+        query,
+        page,
+        size,
+        null,
+        null);
+  }
+
+  @Transactional(readOnly = true)
+  public Listing list(
+      Tab tab,
+      AccountInviteTargetRole targetRole,
+      AccountInviteStatus status,
+      Set<Phase> phases,
+      Long tenantId,
+      String query,
+      int page,
+      int size,
+      String sort,
+      String direction) {
+    Comparator<Row> ordering = ordering(sort, direction);
     PageRequest pageRequest = PageRequest.of(Math.max(page, 0), clampSize(size));
     List<AccountInvite> inScope =
         accountInviteService.listAllInvites(targetRole, tenantId, query).stream()
@@ -87,7 +109,10 @@ public class InviteBoard {
     List<Row> matching =
         rows.stream()
             .filter(row -> status == null || row.invite().getStatus() == status)
-            .filter(row -> phase == null || row.progress().phase() == phase)
+            .filter(
+                row ->
+                    phases == null || phases.isEmpty() || phases.contains(row.progress().phase()))
+            .sorted(ordering)
             .toList();
     int from = (int) Math.min(pageRequest.getOffset(), matching.size());
     int to = Math.min(from + pageRequest.getPageSize(), matching.size());
@@ -130,6 +155,35 @@ public class InviteBoard {
       LocalDateTime now) {
     return new Row(
         invite, latestDelivery, problem, InviteProgress.of(invite, latestDelivery, problem, now));
+  }
+
+  private static Comparator<Row> ordering(String sort, String direction) {
+    if (sort != null && !Set.of("recipient", "invitedAt").contains(sort))
+      throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Invalid sort");
+    if (direction != null && !Set.of("asc", "desc").contains(direction))
+      throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Invalid sort_direction");
+    Comparator<Row> comparator =
+        "recipient".equals(sort)
+            ? Comparator.comparing(row -> recipient(row.invite()), String.CASE_INSENSITIVE_ORDER)
+            : Comparator.comparing(
+                row -> row.invite().getCreateDate(),
+                Comparator.nullsFirst(Comparator.naturalOrder()));
+    comparator =
+        comparator.thenComparing(
+            row -> row.invite().getId(), Comparator.nullsFirst(Comparator.naturalOrder()));
+    return sort != null
+            && ("asc".equals(direction) || ("recipient".equals(sort) && direction == null))
+        ? comparator
+        : comparator.reversed();
+  }
+
+  private static String recipient(AccountInvite invite) {
+    String name =
+        (Objects.toString(invite.getFirstName(), "")
+                + " "
+                + Objects.toString(invite.getLastName(), ""))
+            .trim();
+    return name.isBlank() ? Objects.toString(invite.getRecipientEmail(), "") : name;
   }
 
   private static int clampSize(int size) {

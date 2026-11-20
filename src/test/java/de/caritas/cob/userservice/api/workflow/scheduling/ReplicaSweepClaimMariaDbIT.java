@@ -25,6 +25,7 @@ import de.caritas.cob.userservice.api.workflow.groupchatreminder.scheduler.Group
 import java.time.Duration;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
+import java.util.Optional;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
@@ -104,11 +105,7 @@ class ReplicaSweepClaimMariaDbIT {
     jdbcTemplate.update("DELETE FROM support_room WHERE id = ?", ROOM_ID);
     jdbcTemplate.update("DELETE FROM handshake_session WHERE id = ?", HANDSHAKE_ID);
     for (var task :
-        new String[] {
-          HandshakeService.SWEEP_TASK_NAME,
-          SupportRoomService.SWEEP_TASK_NAME,
-          GroupChatReminderScheduler.TASK_NAME
-        }) {
+        new String[] {HandshakeService.SWEEP_TASK_NAME, GroupChatReminderScheduler.TASK_NAME}) {
       claimRepository.findById(task).ifPresent(claimRepository::delete);
     }
   }
@@ -171,6 +168,8 @@ class ReplicaSweepClaimMariaDbIT {
             })
         .when(matrixSynapseService)
         .leaveRoom(MATRIX_ROOM_ID, "token");
+    when(matrixSynapseService.isOutOfRoom(MATRIX_ROOM_ID, ADMIN_MATRIX_ID))
+        .thenReturn(Optional.of(true));
 
     runConcurrently(
         () -> {
@@ -190,7 +189,6 @@ class ReplicaSweepClaimMariaDbIT {
                 Integer.class,
                 HANDSHAKE_ID))
         .isEqualTo(1);
-    assertThat(claimRepository.findById(SupportRoomService.SWEEP_TASK_NAME)).isEmpty();
   }
 
   @Test

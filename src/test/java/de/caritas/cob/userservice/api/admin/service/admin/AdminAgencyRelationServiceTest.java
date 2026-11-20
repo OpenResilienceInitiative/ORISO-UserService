@@ -53,6 +53,7 @@ class AdminAgencyRelationServiceTest {
 
     service.createAdminAgencyRelation("admin1", dto);
 
+    verify(adminScope).assertMay(AdminScope.Target.managedAdmin("admin1"));
     verify(createAdminAgencyRelationService).create("admin1", dto);
   }
 
@@ -87,6 +88,7 @@ class AdminAgencyRelationServiceTest {
 
     service.synchronizeAdminAgenciesRelation("admin1", dtos);
 
+    verify(adminScope).assertMay(AdminScope.Target.managedAdmin("admin1"));
     verify(synchronizeAdminAgencyRelation).synchronizeAdminAgenciesRelation("admin1", dtos);
   }
 
@@ -109,7 +111,7 @@ class AdminAgencyRelationServiceTest {
   void deleteAdminAgencyRelation_Should_NotDelete_When_ScopeDenies() {
     doThrow(new ForbiddenException("out of scope"))
         .when(adminScope)
-        .assertMay(AdminScope.Target.admin("admin1"));
+        .assertMay(AdminScope.Target.managedAdmin("admin1"));
 
     assertThatThrownBy(() -> service.deleteAdminAgencyRelation("admin1", 5L))
         .isInstanceOf(ForbiddenException.class);

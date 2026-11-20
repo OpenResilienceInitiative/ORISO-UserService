@@ -24,6 +24,7 @@ import de.caritas.cob.userservice.api.port.out.IdentityPasswordUpdater;
 import de.caritas.cob.userservice.api.port.out.identity.CreatedIdentity;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteTargetRole;
 import de.caritas.cob.userservice.api.service.accountinvite.ExistingAccountSetupIssuer;
+import de.caritas.cob.userservice.api.service.contactperson.ContactEmail;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
 import jakarta.ws.rs.NotFoundException;
 import java.util.ArrayList;
@@ -98,7 +99,21 @@ public class CreateAdminService {
         de.caritas.cob.userservice.api.service.AccountInactivityEnrollmentService.Group.OTHER);
   }
 
+  /**
+   * Read-only platform statistics account (ORISO-UserService#1666). Always on the platform tenant
+   * 0, whatever the request says, and with a random permanent password nobody sees: the person sets
+   * their own through the admin "set password" mail. No setup invitation exists for this type.
+   */
+  public Admin createNewStatisticsReader(CreateAdminDTO createAdminDTO) {
+    createAdminDTO.setTenantId(TenantContext.TECHNICAL_TENANT_ID.intValue());
+    createAdminDTO.setPassword(null);
+    return createNewAdmin(createAdminDTO, Admin.AdminType.STATISTICS, false);
+  }
+
   List<UserRole> getDefaultRoles(Admin.AdminType adminType) {
+    if (Admin.AdminType.STATISTICS.equals(adminType)) {
+      return Lists.newArrayList(UserRole.STATISTICS_READER);
+    }
     if (Admin.AdminType.AGENCY.equals(adminType)) {
       return Lists.newArrayList(UserRole.RESTRICTED_AGENCY_ADMIN, UserRole.USER_ADMIN);
     }
@@ -189,7 +204,7 @@ public class CreateAdminService {
     }
     // The identity and admin row exist before the setup link is issued. A mail failure is reported
     // to the caller and operator; it must never roll back only the Keycloak half of that account.
-    if (temporaryPassword) {
+    if (temporaryPassword && adminType != Admin.AdminType.STATISTICS) {
       accountSetupIssuer.issueAfterCreation(
           adminType == Admin.AdminType.TENANT
               ? AccountInviteTargetRole.TENANT_ADMIN
@@ -266,6 +281,7 @@ public class CreateAdminService {
         .firstName(createAgencyAdminDTO.getFirstname())
         .lastName(createAgencyAdminDTO.getLastname())
         .email(createAgencyAdminDTO.getEmail())
+        .contactEmail(ContactEmail.normalize(createAgencyAdminDTO.getContactEmail()))
         .createDate(nowInUtc())
         .updateDate(nowInUtc())
         .build();

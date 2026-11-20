@@ -1,6 +1,7 @@
 package de.caritas.cob.userservice.api.service.sessionlist;
 
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.CONSULTANT;
+import static de.caritas.cob.userservice.api.testHelper.TestConstants.CONSULTANT_ROLES;
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.CONSULTANT_SESSION_RESPONSE_DTO_LIST;
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.CONSULTANT_SESSION_RESPONSE_DTO_LIST_WITH_ENCRYPTED_CHAT_MESSAGE;
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.CONSULTANT_SESSION_RESPONSE_DTO_WITH_ENCRYPTED_CHAT_MESSAGE;
@@ -17,12 +18,17 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantSessionResponseDTO;
+import de.caritas.cob.userservice.api.adapters.web.dto.ConversationType;
+import de.caritas.cob.userservice.api.adapters.web.dto.SessionConsultantForConsultantDTO;
+import de.caritas.cob.userservice.api.adapters.web.dto.SessionDTO;
+import de.caritas.cob.userservice.api.adapters.web.dto.UserChatDTO;
 import de.caritas.cob.userservice.api.container.SessionListQueryParameter;
 import de.caritas.cob.userservice.api.service.ChatService;
 import de.caritas.cob.userservice.api.service.session.SessionFilter;
 import de.caritas.cob.userservice.api.service.session.SessionService;
 import de.caritas.cob.userservice.api.service.session.SessionSupervisionMarkerService;
 import java.util.List;
+import java.util.Set;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
@@ -39,6 +45,61 @@ class ConsultantSessionListServiceTest {
   @Mock private ConsultantSessionEnricher consultantSessionEnricher;
   @Mock private ConsultantChatEnricher consultantChatEnricher;
   @Mock private SessionSupervisionMarkerService supervisionMarkerService;
+
+  @Test
+  void roomLookupShouldExposeTransferredGroupOwnerAndPreserveIndividualConsultant() {
+    var groupRoom = "!group:matrix.example";
+    var individualRoom = "!individual:matrix.example";
+    var roomIds = Set.of(groupRoom, individualRoom);
+    var originalOwner = new SessionConsultantForConsultantDTO().id("original-owner");
+    var currentOwner = new SessionConsultantForConsultantDTO().id("current-owner");
+    var individualConsultant = new SessionConsultantForConsultantDTO().id("case-consultant");
+    var linkedSession =
+        new SessionDTO()
+            .id(11L)
+            .matrixRoomId(groupRoom)
+            .conversationType(ConversationType.SELF_HELP)
+            .postcode("00000")
+            .registrationType("REGISTERED");
+    var groupSession =
+        new ConsultantSessionResponseDTO().session(linkedSession).consultant(originalOwner);
+    var individualSession =
+        new ConsultantSessionResponseDTO()
+            .session(
+                new SessionDTO()
+                    .id(12L)
+                    .matrixRoomId(individualRoom)
+                    .conversationType(ConversationType.AGENCY_COUNSELLING)
+                    .postcode("13353")
+                    .registrationType("REGISTERED"))
+            .consultant(individualConsultant);
+    var chat = new UserChatDTO();
+    chat.setId(21L);
+    chat.setMatrixRoomId(groupRoom);
+    var groupChat = new ConsultantSessionResponseDTO().chat(chat).consultant(currentOwner);
+    var sessions = List.of(groupSession, individualSession);
+    var chats = List.of(groupChat);
+    when(sessionService.getAllowedSessionsByConsultantAndRoomIds(
+            CONSULTANT, roomIds, CONSULTANT_ROLES))
+        .thenReturn(sessions);
+    when(chatService.getChatSessionsForConsultantByRoomIds(roomIds, CONSULTANT)).thenReturn(chats);
+    when(consultantSessionEnricher.updateRequiredConsultantSessionValues(sessions))
+        .thenReturn(sessions);
+    when(consultantChatEnricher.updateRequiredConsultantChatValues(chats, CONSULTANT))
+        .thenReturn(chats);
+
+    var result =
+        consultantSessionListService.retrieveSessionsForConsultantAndRoomIds(
+            CONSULTANT, List.of(groupRoom, individualRoom), CONSULTANT_ROLES);
+
+    assertEquals(2, result.size());
+    assertSame(linkedSession, result.getFirst().getSession());
+    assertSame(chat, result.getFirst().getChat());
+    assertEquals(currentOwner, result.getFirst().getConsultant());
+    assertSame(individualSession, result.getLast());
+    assertEquals(individualConsultant, result.getLast().getConsultant());
+    assertNull(result.getLast().getChat());
+  }
 
   @Test
   void

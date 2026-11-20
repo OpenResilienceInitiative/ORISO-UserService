@@ -74,8 +74,11 @@ import de.caritas.cob.userservice.api.port.out.IdentityReactivator;
 import de.caritas.cob.userservice.api.port.out.IdentityRoleLookup;
 import de.caritas.cob.userservice.api.port.out.IdentityRoleUpdater;
 import de.caritas.cob.userservice.api.port.out.IdentitySecondFactor;
+import de.caritas.cob.userservice.api.port.out.IdentityTenantUpdater;
 import de.caritas.cob.userservice.api.port.out.IdentityUsernameAvailability;
 import de.caritas.cob.userservice.api.service.*;
+import de.caritas.cob.userservice.api.service.AgencyAdminContactService;
+import de.caritas.cob.userservice.api.service.AskerEmailCollectionPolicy;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteService;
 import de.caritas.cob.userservice.api.service.agency.EffectiveAgencySettingsLookup;
 import de.caritas.cob.userservice.api.service.archive.SessionArchiveService;
@@ -90,6 +93,7 @@ import de.caritas.cob.userservice.api.service.consultingtype.TopicService;
 import de.caritas.cob.userservice.api.service.enquiry.EnquiryRejectionService;
 import de.caritas.cob.userservice.api.service.notification.EventNotificationService;
 import de.caritas.cob.userservice.api.service.notification.RequestedContactSheetService;
+import de.caritas.cob.userservice.api.service.session.EnquiryOpenedService;
 import de.caritas.cob.userservice.api.service.session.SessionConsentService;
 import de.caritas.cob.userservice.api.service.session.SessionService;
 import de.caritas.cob.userservice.api.service.user.UserAccountService;
@@ -141,6 +145,9 @@ import org.springframework.test.web.servlet.MockMvc;
       "user.username.invalid.length=Please provide a username with at least 5 and at most 20 characters"
     })
 class UserControllerIT {
+  @MockitoBean
+  private de.caritas.cob.userservice.api.service.livechat.LiveChatAccountConversionService
+      liveChatAccountConversionService;
 
   /** The agencyId carried by PATH_GET_CONSULTANTS_FOR_AGENCY. */
   private static final long REQUESTED_AGENCY_ID = 10L;
@@ -289,9 +296,11 @@ class UserControllerIT {
 
   @MockitoBean private EnquiryRejectionService enquiryRejectionService;
   @MockitoBean private UserAccountService userAccountService;
+  @MockitoBean private AskerEmailCollectionPolicy askerEmailCollectionPolicy;
   @MockitoBean private PasswordResetService passwordResetService;
   @MockitoBean private AccountInviteService accountInviteService;
   @MockitoBean private TenantService tenantService;
+  @MockitoBean private AgencyAdminContactService agencyAdminContactService;
   @MockitoBean private EffectiveAgencySettingsLookup effectiveAgencySettingsLookup;
   @MockitoBean private ChatOccurrenceCommandService chatOccurrenceCommandService;
   @MockitoBean private ChatOccurrenceQueryService chatOccurrenceQueryService;
@@ -303,6 +312,7 @@ class UserControllerIT {
 
   @MockitoBean private GroupChatJoinRequestControllerDelegate groupChatJoinRequestDelegate;
   @MockitoBean private SessionService sessionService;
+  @MockitoBean private EnquiryOpenedService enquiryOpenedService;
   @MockitoBean private AuthenticatedUser authenticatedUser;
   @MockitoBean private CreateEnquiryMessageFacade createEnquiryMessageFacade;
 
@@ -337,6 +347,7 @@ class UserControllerIT {
         IdentityRoleLookup.class,
         IdentityRoleUpdater.class,
         IdentitySecondFactor.class,
+        IdentityTenantUpdater.class,
         IdentityUsernameAvailability.class
       })
   private IdentityClient identityClient;
@@ -352,6 +363,7 @@ class UserControllerIT {
   @MockitoBean private AssignChatFacade assignChatFacade;
   @MockitoBean private CreateChatFacade createChatFacade;
   @MockitoBean private InternalSubsetChatFacade internalSubsetChatFacade;
+  @MockitoBean private InternalChatInvitationFacade internalChatInvitationFacade;
   @MockitoBean private ChatPermissionVerifier chatPermissionVerifier;
   @MockitoBean private StopChatFacade stopChatFacade;
   @MockitoBean private GetChatMembersFacade getChatMembersFacade;
@@ -370,6 +382,11 @@ class UserControllerIT {
   @MockitoBean private ConsultantDataFacade consultantDataFacade;
   @MockitoBean private SessionDataService sessionDataService;
   @MockitoBean private SessionArchiveService sessionArchiveService;
+
+  @MockitoBean
+  private de.caritas.cob.userservice.api.service.furthercounselling
+          .FurtherCounsellingRecommendationService
+      furtherCounsellingRecommendationService;
 
   @MockitoBean
   @SuppressWarnings("unused")
@@ -434,6 +451,10 @@ class UserControllerIT {
   private de.caritas.cob.userservice.api.adapters.web.controller
           .IdentitySuggestionControllerDelegate
       identitySuggestionControllerDelegate;
+
+  @MockitoBean
+  @SuppressWarnings("unused")
+  private DirectLinkControllerDelegate directLinkControllerDelegate;
 
   @MockitoBean
   @SuppressWarnings("unused")
@@ -752,6 +773,58 @@ class UserControllerIT {
                 .contentType(MediaType.APPLICATION_JSON)
                 .accept(MediaType.APPLICATION_JSON))
         .andExpect(status().isConflict());
+  }
+
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.ValueSource(
+      strings = {
+        "",
+        "with space",
+        "slash/ref",
+        "umlaut-ä",
+        "0123456789012345678901234567890123456789012345678901234567890123x"
+      })
+  void registerUser_Should_ReturnBadRequest_When_RegistrationRefIsInvalid(String registrationRef)
+      throws Exception {
+    when(userHelper.isUsernameValid(anyString())).thenReturn(true);
+    when(mandatoryFieldsProvider.fetchMandatoryFieldsForConsultingType(anyString()))
+        .thenReturn(
+            MandatoryFields.convertMandatoryFieldsDTOtoMandatoryFields(
+                CONSULTING_TYPE_SETTINGS_WITHOUT_MANDATORY_FIELDS
+                    .getRegistration()
+                    .getMandatoryFields()));
+
+    mvc.perform(
+            post(PATH_REGISTER_USER)
+                .content(withRegistrationRef(registrationRef))
+                .contentType(MediaType.APPLICATION_JSON)
+                .accept(MediaType.APPLICATION_JSON))
+        .andExpect(status().isBadRequest());
+  }
+
+  @Test
+  void registerUser_Should_ReturnCreated_When_RegistrationRefIsValid() throws Exception {
+    when(userHelper.isUsernameValid(anyString())).thenReturn(true);
+    when(mandatoryFieldsProvider.fetchMandatoryFieldsForConsultingType(anyString()))
+        .thenReturn(
+            MandatoryFields.convertMandatoryFieldsDTOtoMandatoryFields(
+                CONSULTING_TYPE_SETTINGS_WITHOUT_MANDATORY_FIELDS
+                    .getRegistration()
+                    .getMandatoryFields()));
+
+    mvc.perform(
+            post(PATH_REGISTER_USER)
+                .content(withRegistrationRef("ref_42-A" + "b".repeat(56)))
+                .contentType(MediaType.APPLICATION_JSON)
+                .accept(MediaType.APPLICATION_JSON))
+        .andExpect(status().isCreated());
+  }
+
+  private static String withRegistrationRef(String registrationRef) {
+    return VALID_USER_REQUEST_BODY.substring(0, VALID_USER_REQUEST_BODY.length() - 1)
+        + ", \"registrationRef\": \""
+        + registrationRef
+        + "\"}";
   }
 
   @Test
@@ -1768,7 +1841,8 @@ class UserControllerIT {
       throws Exception {
 
     when(authenticatedUser.getUserId()).thenReturn(CONSULTANT_ID);
-    when(userAccountService.retrieveValidatedConsultant()).thenReturn(TEAM_CONSULTANT);
+    when(userAccountService.retrieveValidatedConsultant()).thenReturn(tenantTeamConsultant());
+    givenTenantGroupChatV2Enabled();
     when(createChatFacade.createChatV1(Mockito.any(), Mockito.any()))
         .thenThrow(new InternalServerErrorException(""));
 
@@ -1789,7 +1863,8 @@ class UserControllerIT {
   void createChat_Should_ReturnCreated_When_ChatWasCreated() throws Exception {
 
     when(authenticatedUser.getUserId()).thenReturn(CONSULTANT_ID);
-    when(userAccountService.retrieveValidatedConsultant()).thenReturn(TEAM_CONSULTANT);
+    when(userAccountService.retrieveValidatedConsultant()).thenReturn(tenantTeamConsultant());
+    givenTenantGroupChatV2Enabled();
     when(createChatFacade.createChatV1(Mockito.any(), Mockito.any()))
         .thenReturn(CREATE_CHAT_RESPONSE_DTO);
 
@@ -1860,7 +1935,7 @@ class UserControllerIT {
     when(authenticatedUser.getUserId()).thenReturn(CONSULTANT_ID);
     when(userAccountService.retrieveValidatedConsultant()).thenReturn(tenantTeamConsultant());
     givenTenantGroupChatV2Enabled();
-    when(effectiveAgencySettingsLookup.findEffectiveSettings(1L))
+    when(effectiveAgencySettingsLookup.findEffectiveSettings(1L, 7L))
         .thenReturn(
             Optional.of(
                 new de.caritas.cob.userservice.agencyserivce.generated.web.model.Settings()
@@ -1885,7 +1960,7 @@ class UserControllerIT {
     when(authenticatedUser.getUserId()).thenReturn(CONSULTANT_ID);
     when(userAccountService.retrieveValidatedConsultant()).thenReturn(tenantTeamConsultant());
     givenTenantGroupChatV2Enabled();
-    when(effectiveAgencySettingsLookup.findEffectiveSettings(1L))
+    when(effectiveAgencySettingsLookup.findEffectiveSettings(1L, 7L))
         .thenReturn(
             Optional.of(
                 new de.caritas.cob.userservice.agencyserivce.generated.web.model.Settings()
@@ -1902,6 +1977,58 @@ class UserControllerIT {
                 .contentType(MediaType.APPLICATION_JSON)
                 .accept(MediaType.APPLICATION_JSON))
         .andExpect(status().is(HttpStatus.CREATED.value()));
+  }
+
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.CsvSource({
+    "1,false,SUGGESTED,true,true", "2,false,SUGGESTED,true,true",
+    "1,false,ENFORCED,true,false", "2,false,ENFORCED,true,false",
+    "1,true,ENFORCED,false,true", "2,true,ENFORCED,false,true",
+    "1,true,SUGGESTED,false,false", "2,true,SUGGESTED,false,false"
+  })
+  void createChatVersionsApplyCanonicalPolicyBeforeAnyCreateEffects(
+      int version, boolean parentValue, String mode, boolean agencyValue, boolean allowed)
+      throws Exception {
+    when(authenticatedUser.getUserId()).thenReturn(CONSULTANT_ID);
+    when(userAccountService.retrieveValidatedConsultant()).thenReturn(tenantTeamConsultant());
+    var policy =
+        new de.caritas.cob.userservice.tenantservice.generated.web.model.BooleanPermissionPolicy()
+            .value(parentValue)
+            .mode(
+                de.caritas.cob.userservice.tenantservice.generated.web.model.PermissionPolicyMode
+                    .fromValue(mode));
+    when(tenantService.getRestrictedTenantDataFresh(7L))
+        .thenReturn(
+            new RestrictedTenantDTO(java.util.Map.of("featureSelfHelpGroupsEnabled", policy))
+                .id(7L)
+                .settings(
+                    new de.caritas.cob.userservice.tenantservice.generated.web.model.Settings()
+                        .featureGroupChatV2Enabled(false)));
+    when(effectiveAgencySettingsLookup.findEffectiveSettings(1L, 7L))
+        .thenReturn(
+            Optional.of(
+                new de.caritas.cob.userservice.agencyserivce.generated.web.model.Settings()
+                    .featureGroupChatV2Enabled(false)
+                    .featureSelfHelpGroupsEnabled(agencyValue)));
+    if (allowed) {
+      if (version == 1)
+        when(createChatFacade.createChatV1(Mockito.any(), Mockito.any()))
+            .thenReturn(CREATE_CHAT_RESPONSE_DTO);
+      else
+        when(createChatFacade.createChatV2(Mockito.any(), Mockito.any()))
+            .thenReturn(CREATE_CHAT_RESPONSE_DTO);
+    }
+    mvc.perform(
+            post(version == 1 ? PATH_POST_CHAT_NEW : PATH_POST_CHAT_NEW_V2)
+                .content(
+                    VALID_CREATE_CIRCLE_BODY_WITH_AGENCY_PLACEHOLDER.replace("${AGENCY_ID}", "1"))
+                .contentType(MediaType.APPLICATION_JSON)
+                .accept(MediaType.APPLICATION_JSON))
+        .andExpect(status().is(allowed ? 201 : 403));
+    if (!allowed) {
+      verify(createChatFacade, never()).createChatV1(Mockito.any(), Mockito.any());
+      verify(createChatFacade, never()).createChatV2(Mockito.any(), Mockito.any());
+    }
   }
 
   private Consultant tenantTeamConsultant() {
@@ -2010,7 +2137,7 @@ class UserControllerIT {
                 .accept(MediaType.APPLICATION_JSON))
         .andExpect(status().isOk());
 
-    verify(getChatFacade, times(1)).getChat(Mockito.any());
+    verify(getChatFacade, times(1)).getChat(CHAT_ID, null);
   }
 
   @Test

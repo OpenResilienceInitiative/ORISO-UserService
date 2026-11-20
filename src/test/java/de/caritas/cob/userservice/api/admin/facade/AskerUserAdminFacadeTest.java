@@ -19,6 +19,7 @@ import de.caritas.cob.userservice.api.admin.service.IdentityReactivationRepairSe
 import de.caritas.cob.userservice.api.admin.service.IdentityReactivationSagaStore;
 import de.caritas.cob.userservice.api.admin.service.IdentityReactivationUnmutatedException;
 import de.caritas.cob.userservice.api.admin.service.admin.AdminScope;
+import de.caritas.cob.userservice.api.admin.service.asker.AskerAdminSearchService;
 import de.caritas.cob.userservice.api.exception.httpresponses.ConflictException;
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
 import de.caritas.cob.userservice.api.exception.identity.IdentityReactivationCompensationException;
@@ -28,6 +29,7 @@ import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.out.IdentityDeactivator;
 import de.caritas.cob.userservice.api.service.user.UserService;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
+import de.caritas.cob.userservice.api.workflow.delete.service.AskerEnquiryCloser;
 import de.caritas.cob.userservice.api.workflow.delete.service.DeletionLifecycleService;
 import java.util.Optional;
 import org.junit.jupiter.api.AfterEach;
@@ -44,6 +46,11 @@ import org.springframework.security.access.AccessDeniedException;
 class AskerUserAdminFacadeTest {
 
   @InjectMocks private AskerUserAdminFacade askerUserAdminFacade;
+
+  @Mock
+  private de.caritas.cob.userservice.api.service.livechat.LiveChatAccountClaimService
+      liveChatClaims;
+
   @Mock private IdentityDeactivator identityDeactivator;
   @Mock private IdentityReactivationSagaStore identityReactivationSagaStore;
   @Mock private IdentityReactivationRepairService identityReactivationRepairService;
@@ -51,6 +58,8 @@ class AskerUserAdminFacadeTest {
   @Mock private UsernameTranscoder usernameTranscoder;
   @Mock private DeletionLifecycleService deletionLifecycleService;
   @Mock private AdminScope adminScope;
+  @Mock private AskerAdminSearchService askerAdminSearchService;
+  @Mock private AskerEnquiryCloser askerEnquiryCloser;
 
   @BeforeEach
   void setUp() {
@@ -79,8 +88,30 @@ class AskerUserAdminFacadeTest {
     user.setDeleteDate(nowInUtc());
     when(userService.getUser(any())).thenReturn(Optional.of(user));
 
+    var refused =
+        assertThrows(
+            de.caritas.cob.userservice.api.exception.httpresponses
+                .CustomValidationHttpStatusException.class,
+            () -> askerUserAdminFacade.markAskerForDeletion("user id"));
+    assertThat(
+        refused.getHttpStatus(),
+        org.hamcrest.Matchers.is(org.springframework.http.HttpStatus.CONFLICT));
+    assertThat(
+        refused.getCustomHttpHeaders().getFirst("X-Reason"),
+        org.hamcrest.Matchers.is("ASKER_ALREADY_MARKED_FOR_DELETION"));
+  }
+
+  @Test
+  void adminDeletionDoesNotDisableIdentityIfConversionClaimRefuses() {
+    var user = new User();
+    when(userService.getUser(any())).thenReturn(Optional.of(user));
+    org.mockito.Mockito.doThrow(new ConflictException("pending"))
+        .when(liveChatClaims)
+        .claimIntentionalDeletion("user id");
     assertThrows(
         ConflictException.class, () -> askerUserAdminFacade.markAskerForDeletion("user id"));
+    org.mockito.Mockito.verifyNoInteractions(identityDeactivator);
+    org.mockito.Mockito.verify(userService, org.mockito.Mockito.never()).saveUser(any());
   }
 
   @Test
@@ -101,6 +132,35 @@ class AskerUserAdminFacadeTest {
     ArgumentCaptor<User> saved = ArgumentCaptor.forClass(User.class);
     verify(userService).saveUser(saved.capture());
     assertThat(saved.getValue().getDeleteDate(), notNullValue());
+    var order = org.mockito.Mockito.inOrder(userService, askerEnquiryCloser);
+    order.verify(userService).saveUser(user);
+    order.verify(askerEnquiryCloser).closeOpenEnquiries(user);
+  }
+
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.ValueSource(
+      strings = {"group-chat-system-3", "group-chat-system-default", "group-chat-system"})
+  void markAskerForDeletion_Should_refuseTechnicalGroupChatAccounts(String userId) {
+    User system = new User();
+    system.setUserId(userId);
+    system.setTenantId(3L);
+    when(userService.getUser(userId)).thenReturn(Optional.of(system));
+
+    var refused =
+        assertThrows(
+            de.caritas.cob.userservice.api.exception.httpresponses
+                .CustomValidationHttpStatusException.class,
+            () -> askerUserAdminFacade.markAskerForDeletion(userId));
+
+    assertThat(
+        refused.getHttpStatus(),
+        org.hamcrest.Matchers.is(org.springframework.http.HttpStatus.CONFLICT));
+    assertThat(
+        refused.getCustomHttpHeaders().getFirst("X-Reason"),
+        org.hamcrest.Matchers.is("TECHNICAL_GROUP_CHAT_ACCOUNT"));
+    org.mockito.Mockito.verifyNoInteractions(
+        identityDeactivator, liveChatClaims, askerEnquiryCloser);
+    verify(userService, org.mockito.Mockito.never()).saveUser(any());
   }
 
   @Test

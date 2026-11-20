@@ -17,7 +17,6 @@ import de.caritas.cob.userservice.api.service.notification.TenantSystemEmailRout
 import de.caritas.cob.userservice.mailservice.generated.web.model.MailDTO;
 import de.caritas.cob.userservice.mailservice.generated.web.model.TemplateDataDTO;
 import java.util.List;
-import java.util.Map;
 import java.util.Optional;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -104,8 +103,8 @@ class NotificationMailSenderTest {
   @Test
   void newEnquiryHonorsTheFreshDisabledTenantPolicyWithoutResolvingSmtp() {
     var client = mock(TenantSystemEmailClient.class);
-    when(client.readTenant(7L))
-        .thenReturn(Map.of("settings", Map.of("featureSystemNotificationEmailsEnabled", false)));
+    when(client.readMailContext(7L))
+        .thenReturn(new TenantSystemEmailClient.MailContext(false, null, null, false, false));
     var tested =
         new NotificationMailSender(composer, new TenantSystemEmailRouteService(client), delivery);
 
@@ -117,8 +116,8 @@ class NotificationMailSenderTest {
   @Test
   void newEnquiryReportsMissingConfiguredRouteInsteadOfClaimingPolicySuppression() {
     var client = mock(TenantSystemEmailClient.class);
-    when(client.readTenant(7L))
-        .thenReturn(Map.of("settings", Map.of("featureSystemNotificationEmailsEnabled", true)));
+    when(client.readMailContext(7L))
+        .thenReturn(new TenantSystemEmailClient.MailContext(true, null, null, false, false));
     var tested =
         new NotificationMailSender(composer, new TenantSystemEmailRouteService(client), delivery);
 

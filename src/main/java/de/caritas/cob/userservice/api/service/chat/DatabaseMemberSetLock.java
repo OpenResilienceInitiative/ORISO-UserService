@@ -2,6 +2,7 @@ package de.caritas.cob.userservice.api.service.chat;
 
 import de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHttpStatusException;
 import de.caritas.cob.userservice.api.exception.httpresponses.customheader.HttpStatusExceptionReason;
+import de.caritas.cob.userservice.api.port.out.MariaDbNamedLock;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
@@ -81,7 +82,9 @@ public class DatabaseMemberSetLock implements MemberSetLock {
       if (usesAdvisoryLocks()) {
         placeTaken = takePlace();
         connection = dataSource.getConnection();
-        takeAdvisoryLock(connection, name);
+        if (!MariaDbNamedLock.tryAcquire(connection, name, waitSeconds)) {
+          throw busy();
+        }
       }
       var held = connection;
       return () -> {
@@ -147,38 +150,17 @@ public class DatabaseMemberSetLock implements MemberSetLock {
     return known;
   }
 
-  private void takeAdvisoryLock(Connection connection, String name) throws SQLException {
-    try (var statement = connection.prepareStatement("SELECT GET_LOCK(?, ?)")) {
-      statement.setString(1, name);
-      statement.setInt(2, waitSeconds);
-      try (var result = statement.executeQuery()) {
-        if (!result.next() || result.getInt(1) != 1) {
-          throw busy();
-        }
-      }
-    }
-  }
-
   private void releaseAdvisoryLock(Connection connection, String name) {
-    try (var statement = connection.prepareStatement("SELECT RELEASE_LOCK(?)")) {
-      statement.setString(1, name);
-      statement.executeQuery().close();
+    try {
+      MariaDbNamedLock.release(connection, name);
     } catch (SQLException failure) {
       log.warn("The lock for a members-only room could not be released: {}", failure.getMessage());
       // The lock belongs to this database session. If it is still held, handing the connection
       // back to the pool would keep it held (and other replicas waiting) until the pool retires
       // the connection. Ending the session releases it on the server.
-      abortQuietly(connection);
+      MariaDbNamedLock.abortQuietly(connection);
     } finally {
       closeQuietly(connection);
-    }
-  }
-
-  private static void abortQuietly(Connection connection) {
-    try {
-      connection.abort(Runnable::run);
-    } catch (SQLException | RuntimeException ignored) {
-      // the connection is unusable either way; closeQuietly discards it
     }
   }
 

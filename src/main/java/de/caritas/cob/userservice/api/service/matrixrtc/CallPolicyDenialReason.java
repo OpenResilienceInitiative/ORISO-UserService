@@ -15,5 +15,16 @@ public enum CallPolicyDenialReason {
   MATRIX_IDENTITY_NOT_FOUND,
   MATRIX_IDENTITY_AMBIGUOUS,
   INACTIVITY_STATE_UNAVAILABLE,
-  ACCOUNT_NOT_ACTIVE
+  ACCOUNT_NOT_ACTIVE,
+  /** The person knocked through a direct link and the counsellor has not let them in (#1475). */
+  KNOCK_NOT_ADMITTED,
+  /** The admin switched calls off for this form of counselling (#1564). */
+  CONSULTING_TYPE_CALLS_DISABLED,
+  /** The form of counselling is unknown or its setting cannot be read; calls stay closed. */
+  CONSULTING_TYPE_UNAVAILABLE,
+  /**
+   * Frank, 17 Nov 2026: an advice seeker or guest asked for a call room that holds no running call
+   * a counsellor of the Träger started. Only counsellors start calls.
+   */
+  CALL_START_REQUIRES_COUNSELLOR
 }

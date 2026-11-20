@@ -35,6 +35,73 @@ class FinishAnonymousConversationFacadeTest {
   @InjectMocks private FinishAnonymousConversationFacade finishAnonymousConversationFacade;
 
   @Mock private SessionService sessionService;
+  @Mock private de.caritas.cob.userservice.api.service.livechat.LiveChatAccountClaimService claims;
+
+  @Mock
+  private de.caritas.cob.userservice.api.service.livechat.LiveChatFinishExecutor finishExecutor;
+
+  @org.junit.jupiter.api.BeforeEach
+  void allowUnclaimedGuestDeactivation() {
+    org.mockito.Mockito.lenient().when(claims.claimIdentityDeactivation(any())).thenReturn(true);
+    org.mockito.Mockito.lenient()
+        .when(claims.claimNormalFinish(any()))
+        .thenReturn(
+            de.caritas.cob.userservice.api.service.livechat.LiveChatAccountClaimService.FinishMode
+                .CONVERTIBLE_FINISH);
+  }
+
+  @Test
+  void promotedGuestCanFinishWithoutLosingIdentity() {
+    var session = anonymousSession();
+    mockAskerOwnsSession(session);
+    when(sessionService.getSession(any())).thenReturn(Optional.of(session));
+    when(claims.claimNormalFinish(session.getUser().getUserId()))
+        .thenReturn(
+            de.caritas.cob.userservice.api.service.livechat.LiveChatAccountClaimService.FinishMode
+                .KEEP_IDENTITY);
+    when(actionsRegistry.buildContainerForType(Session.class))
+        .thenReturn(actionCommandMockProvider.getActionContainer(Session.class));
+    finishAnonymousConversationFacade.finishConversation(session.getId());
+    verify(actionsRegistry, org.mockito.Mockito.never()).buildContainerForType(User.class);
+    verify(finishExecutor, org.mockito.Mockito.never()).disableAndMarkFinished(any());
+    verify(actionCommandMockProvider.getActionMock(DeactivateSessionActionCommand.class))
+        .execute(session);
+  }
+
+  @Test
+  void legacyFinishDisablesIdentityAndStillFinishesSession() {
+    var session = anonymousSession();
+    mockAskerOwnsSession(session);
+    when(sessionService.getSession(any())).thenReturn(Optional.of(session));
+    when(claims.claimNormalFinish(session.getUser().getUserId()))
+        .thenReturn(
+            de.caritas.cob.userservice.api.service.livechat.LiveChatAccountClaimService.FinishMode
+                .LEGACY_DISABLE);
+    givenActionContainers();
+    finishAnonymousConversationFacade.finishConversation(session.getId());
+    verify(actionCommandMockProvider.getActionMock(DeactivateKeycloakUserActionCommand.class))
+        .execute(session.getUser());
+    verify(actionCommandMockProvider.getActionMock(DeactivateSessionActionCommand.class))
+        .execute(session);
+    verify(finishExecutor, org.mockito.Mockito.never()).disableAndMarkFinished(any());
+  }
+
+  @Test
+  void refusedLegacyStyleIdentityDisableStillFinishesSession() {
+    var session = anonymousSession();
+    session.setRegistrationType(Session.RegistrationType.REGISTERED);
+    session.setPostcode("00000");
+    mockAskerOwnsSession(session);
+    when(sessionService.getSession(any())).thenReturn(Optional.of(session));
+    when(sessionService.isAnonymousStyleRegistration(session)).thenReturn(true);
+    when(claims.claimIdentityDeactivation(session.getUser().getUserId())).thenReturn(false);
+    when(actionsRegistry.buildContainerForType(Session.class))
+        .thenReturn(actionCommandMockProvider.getActionContainer(Session.class));
+    finishAnonymousConversationFacade.finishConversation(session.getId());
+    verify(actionsRegistry, org.mockito.Mockito.never()).buildContainerForType(User.class);
+    verify(actionCommandMockProvider.getActionMock(DeactivateSessionActionCommand.class))
+        .execute(session);
+  }
 
   @Mock private ActionsRegistry actionsRegistry;
 
@@ -51,6 +118,7 @@ class FinishAnonymousConversationFacadeTest {
   private Session anonymousSession() {
     Session session = new EasyRandom().nextObject(Session.class);
     session.setRegistrationType(Session.RegistrationType.ANONYMOUS);
+    session.getUser().setTemporaryAccount(false);
     return session;
   }
 
@@ -76,9 +144,6 @@ class FinishAnonymousConversationFacadeTest {
     when(this.actionsRegistry.buildContainerForType(Session.class))
         .thenReturn(this.actionCommandMockProvider.getActionContainer(Session.class))
         .thenReturn(this.actionCommandMockProvider.getActionContainer(Session.class));
-    when(this.actionsRegistry.buildContainerForType(User.class))
-        .thenReturn(this.actionCommandMockProvider.getActionContainer(User.class));
-
     this.finishAnonymousConversationFacade.finishConversation(session.getId());
 
     verify(
@@ -90,10 +155,7 @@ class FinishAnonymousConversationFacadeTest {
             this.actionCommandMockProvider.getActionMock(DeactivateSessionActionCommand.class),
             times(1))
         .execute(session);
-    verify(
-            this.actionCommandMockProvider.getActionMock(DeactivateKeycloakUserActionCommand.class),
-            times(1))
-        .execute(session.getUser());
+    verify(finishExecutor).disableAndMarkFinished(session.getUser().getUserId());
     verify(this.matrixSessionSystemMessageService, times(1))
         .postUserLeftChatMessage(session, EndedBy.ADVICE_SEEKER);
   }
@@ -121,18 +183,11 @@ class FinishAnonymousConversationFacadeTest {
 
     this.finishAnonymousConversationFacade.finishConversation(session.getId());
 
-    var order =
-        inOrder(
-            this.matrixSessionSystemMessageService,
-            this.actionCommandMockProvider.getActionMock(
-                DeactivateKeycloakUserActionCommand.class));
+    var order = inOrder(this.matrixSessionSystemMessageService, finishExecutor);
     order
         .verify(this.matrixSessionSystemMessageService)
         .postUserLeftChatMessage(session, EndedBy.ADVICE_SEEKER);
-    order
-        .verify(
-            this.actionCommandMockProvider.getActionMock(DeactivateKeycloakUserActionCommand.class))
-        .execute(session.getUser());
+    order.verify(finishExecutor).disableAndMarkFinished(session.getUser().getUserId());
   }
 
   @Test
@@ -154,7 +209,8 @@ class FinishAnonymousConversationFacadeTest {
   private void givenActionContainers() {
     when(this.actionsRegistry.buildContainerForType(Session.class))
         .thenReturn(this.actionCommandMockProvider.getActionContainer(Session.class));
-    when(this.actionsRegistry.buildContainerForType(User.class))
+    org.mockito.Mockito.lenient()
+        .when(this.actionsRegistry.buildContainerForType(User.class))
         .thenReturn(this.actionCommandMockProvider.getActionContainer(User.class));
   }
 

@@ -174,6 +174,22 @@ paths:
           description: The sort parameter containing field and order the response should be sorted
           schema:
             $ref: '#/components/schemas/Sort'
+        - name: excludeDeleted
+          in: query
+          description: When true, soft-deleted agencies are left out. Default false.
+          required: false
+          schema:
+            type: boolean
+            default: false
+        - name: tenantId
+          in: query
+          description: >-
+            Only agencies of this tenant (Träger). Narrows the caller's role scope and never
+            widens it. Omitted = every tenant in scope.
+          required: false
+          schema:
+            type: integer
+            format: int64
       responses:
         '200':
           description: OK - successfull operation

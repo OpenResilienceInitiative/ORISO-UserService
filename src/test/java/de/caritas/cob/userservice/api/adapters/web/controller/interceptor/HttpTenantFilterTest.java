@@ -82,6 +82,19 @@ class HttpTenantFilterTest {
     Mockito.verify(filterChain).doFilter(request, response);
   }
 
+  @ParameterizedTest
+  @ValueSource(strings = {"/users/deletion-audit-logs", "/service/users/deletion-audit-logs"})
+  void deletionReportSkipsAdmission_SoADeletedTraegerCanStillBeLogged(String path)
+      throws ServletException, IOException {
+    // A Träger admin reports its own Träger after it is gone; admission would look it up and fail.
+    Mockito.when(request.getRequestURI()).thenReturn(path);
+
+    httpTenantFilter.doFilterInternal(request, response, filterChain);
+
+    Mockito.verifyNoInteractions(tenantResolverService, tenantService);
+    Mockito.verify(filterChain).doFilter(request, response);
+  }
+
   @Test
   void siblingTenantRouteStillRequiresTenantContext() throws ServletException, IOException {
     Mockito.when(request.getRequestURI()).thenReturn("/users/tenants/42/dpa-signed-notices/extra");

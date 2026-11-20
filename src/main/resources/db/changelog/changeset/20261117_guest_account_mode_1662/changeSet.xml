@@ -1,0 +1,65 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+  xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.3.xsd">
+  <!-- ORISO-UserService#1662: one guest account mode (TEMPORARY / GUEST_CHOOSES / PERMANENT) per
+       direct link, call share link and Gesprächskreis instead of a boolean. temporary_account and
+       access_mode stay and are written as mirrors of the mode for one release, so an older
+       application that still reads them behaves the same; a later cleanup drops them. -->
+  <!-- One step per changeSet, each with its own precondition: MariaDB commits every DDL statement
+       on its own, so a run that stopped half way finishes the rest on the next start. -->
+  <changeSet id="20261117-invite-link-guest-account-mode-1662" author="oriso">
+    <preConditions onFail="MARK_RAN">
+      <not>
+        <columnExists tableName="agency_invite_link" columnName="guest_account_mode"/>
+      </not>
+    </preConditions>
+    <addColumn tableName="agency_invite_link">
+      <column name="guest_account_mode" type="VARCHAR(16)"/>
+    </addColumn>
+    <!-- Additive and nullable: an older application ignores the column. -->
+    <rollback><sql>SELECT 1</sql></rollback>
+  </changeSet>
+
+  <!-- Today's behaviour, link by link. A direct link follows its access mode (#2252), or reads as
+       #2252 reads a link without one. A call share link required a temporary registration exactly
+       when its switch was on. Only rows without a mode are touched, so a rerun is harmless. -->
+  <changeSet id="20261117-invite-link-guest-account-mode-backfill-1662" author="oriso">
+    <update tableName="agency_invite_link">
+      <column name="guest_account_mode" value="TEMPORARY"/>
+      <where>guest_account_mode IS NULL AND link_kind = 'COUNSELLOR' AND access_mode = 'GUESTS_ONLY'</where>
+    </update>
+    <update tableName="agency_invite_link">
+      <column name="guest_account_mode" value="GUEST_CHOOSES"/>
+      <where>guest_account_mode IS NULL AND link_kind = 'COUNSELLOR' AND (access_mode = 'BOTH' OR (access_mode IS NULL AND temporary_account = TRUE))</where>
+    </update>
+    <update tableName="agency_invite_link">
+      <column name="guest_account_mode" value="PERMANENT"/>
+      <where>guest_account_mode IS NULL AND link_kind = 'COUNSELLOR' AND (access_mode = 'ACCOUNTS_ONLY' OR (access_mode IS NULL AND temporary_account = FALSE))</where>
+    </update>
+    <update tableName="agency_invite_link">
+      <column name="guest_account_mode" value="TEMPORARY"/>
+      <where>guest_account_mode IS NULL AND link_kind = 'CALL' AND temporary_account = TRUE</where>
+    </update>
+    <update tableName="agency_invite_link">
+      <column name="guest_account_mode" value="PERMANENT"/>
+      <where>guest_account_mode IS NULL AND link_kind = 'CALL' AND temporary_account = FALSE</where>
+    </update>
+    <rollback><sql>SELECT 1</sql></rollback>
+  </changeSet>
+
+  <!-- A Gesprächskreis lets the guest choose today ("Ohne Konto beitreten" or "Konto anlegen"). -->
+  <changeSet id="20261117-chat-guest-account-mode-1662" author="oriso">
+    <preConditions onFail="MARK_RAN">
+      <not>
+        <columnExists tableName="chat" columnName="guest_account_mode"/>
+      </not>
+    </preConditions>
+    <addColumn tableName="chat">
+      <column name="guest_account_mode" type="VARCHAR(16)" defaultValue="GUEST_CHOOSES">
+        <constraints nullable="false"/>
+      </column>
+    </addColumn>
+    <rollback><sql>SELECT 1</sql></rollback>
+  </changeSet>
+</databaseChangeLog>

@@ -13,6 +13,7 @@ import java.time.Duration;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
@@ -62,6 +63,34 @@ class MatrixBrowserDeviceConcurrencyTest {
         synapse.releaseInteractiveAuth.countDown();
         workers.shutdownNow();
       }
+    }
+  }
+
+  @Test
+  void aLaterLoginReusesTheIssuedCredentialWithoutRewritingThePassword() throws Exception {
+    // Each password write is a bcrypt hash on Synapse (0.75-2.9 s on Dev, ORISO-Frontend#2272).
+    // The credential is derived and never changes, so only the first login has to set it.
+    try (var synapse = new StatefulSynapse()) {
+      assertThat(synapse.newService().loginBrowserDevice(ALICE, "DEVICE_A")).isNotNull();
+      assertThat(synapse.passwordUpdateRequests.get())
+          .as("the first login sets the credential once")
+          .isEqualTo(1);
+
+      assertThat(synapse.newService().loginBrowserDevice(ALICE, "DEVICE_B")).isNotNull();
+      assertThat(synapse.passwordUpdateRequests.get())
+          .as("a later login, even on another instance, does not rewrite it")
+          .isEqualTo(1);
+    }
+  }
+
+  @Test
+  void aChangedAccountPasswordIsRepairedOnTheNextLogin() throws Exception {
+    try (var synapse = new StatefulSynapse()) {
+      assertThat(synapse.newService().loginBrowserDevice(ALICE, "DEVICE_A")).isNotNull();
+      synapse.passwords.put(ALICE, "changed-elsewhere");
+
+      assertThat(synapse.newService().loginBrowserDevice(ALICE, "DEVICE_B")).isNotNull();
+      assertThat(synapse.passwordUpdateRequests.get()).isEqualTo(2);
     }
   }
 
@@ -157,6 +186,38 @@ class MatrixBrowserDeviceConcurrencyTest {
     }
   }
 
+  @Test
+  void concurrentColdStartRepairsOnSeparateServiceInstancesBothComplete() throws Exception {
+    // Both instances meet the not yet set credential (403) before either writes it, so both
+    // repair it in parallel. The derived credential is the same, so neither repair breaks the
+    // other.
+    try (var synapse = new StatefulSynapse()) {
+      synapse.refusals = new CyclicBarrier(2);
+      var workers = Executors.newFixedThreadPool(2);
+      try {
+        var deviceA =
+            workers.submit(() -> synapse.newService().loginBrowserDevice(ALICE, "DEVICE_A"));
+        var deviceB =
+            workers.submit(() -> synapse.newService().loginBrowserDevice(ALICE, "DEVICE_B"));
+        var first = deviceA.get(10, TimeUnit.SECONDS);
+        var second = deviceB.get(10, TimeUnit.SECONDS);
+
+        assertThat(first).as("device A completes its cold-start repair").isNotNull();
+        assertThat(second).as("device B completes its cold-start repair").isNotNull();
+        assertThat(synapse.refusedBeforeRepair.get())
+            .as("both instances were refused before either repaired the credential")
+            .isEqualTo(2);
+        assertThat(synapse.passwordUpdateRequests.get()).isEqualTo(2);
+        synapse.releaseInteractiveAuth.countDown();
+        assertThat(synapse.authenticate(first, ALICE)).isEqualTo(200);
+        assertThat(synapse.authenticate(second, ALICE)).isEqualTo(200);
+      } finally {
+        synapse.releaseInteractiveAuth.countDown();
+        workers.shutdownNow();
+      }
+    }
+  }
+
   /**
    * Models Synapse's account-wide password and its password verification over HTTP. Issued browser
    * credentials are checked against current server state, never compared to a derived expectation.
@@ -170,6 +231,11 @@ class MatrixBrowserDeviceConcurrencyTest {
     private final CountDownLatch browserLoginStarted = new CountDownLatch(1);
     private final CountDownLatch releaseBrowserLogin = new CountDownLatch(1);
     private final boolean pauseFirstBrowserLogin;
+
+    /** When set, each first refusal waits until all parties were refused (cold-start overlap). */
+    private volatile CyclicBarrier refusals;
+
+    private final AtomicInteger refusedBeforeRepair = new AtomicInteger();
     private final HttpServer server;
     private final ExecutorService handlers = Executors.newCachedThreadPool();
 
@@ -266,6 +332,16 @@ class MatrixBrowserDeviceConcurrencyTest {
                     "device_id", device,
                     "user_id", user));
           } else {
+            var barrier = refusals;
+            if (barrier != null && passwordUpdateRequests.get() == 0) {
+              refusedBeforeRepair.incrementAndGet();
+              try {
+                barrier.await(5, TimeUnit.SECONDS);
+              } catch (Exception notAllRefused) {
+                respond(exchange, 503, Map.of("errcode", "M_UNKNOWN"));
+                return;
+              }
+            }
             respond(exchange, 403, Map.of("errcode", "M_FORBIDDEN"));
           }
         } else if (path.equals("/_matrix/client/v3/keys/device_signing/upload")) {

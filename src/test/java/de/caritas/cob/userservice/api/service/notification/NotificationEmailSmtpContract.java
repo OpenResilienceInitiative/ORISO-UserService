@@ -211,6 +211,15 @@ class NotificationEmailSmtpContract {
       when(consultants.findByMatrixUserIdAndDeleteDateIsNull(consultant.getMatrixUserId()))
           .thenReturn(Optional.of(consultant));
     }
+    // The fan-out loads its recipients in one query (#1725).
+    when(consultants.findByIdInAndDeleteDateIsNull(anyCollection()))
+        .thenAnswer(
+            invocation -> {
+              java.util.Collection<String> ids = invocation.getArgument(0);
+              return java.util.stream.Stream.of(actor, recipient)
+                  .filter(consultant -> ids.contains(consultant.getId()))
+                  .toList();
+            });
     when(identities.findEnabledById(anyString())).thenReturn(Optional.of(true));
     when(participants.findByChatId(4202L))
         .thenReturn(
@@ -245,11 +254,8 @@ class NotificationEmailSmtpContract {
     when(tenants.getRestrictedTenantDataFresh(7L)).thenReturn(tenant);
     when(tenants.getRestrictedTenantData(7L)).thenReturn(tenant);
     when(tenants.getRestrictedTenantData("fixture")).thenReturn(tenant);
-    when(tenantMail.readTenant(7L))
-        .thenReturn(
-            Map.of(
-                "settings",
-                Map.of("featureSystemNotificationEmailsEnabled", true, "smtpMode", "PLATFORM")));
+    when(tenantMail.readMailContext(7L))
+        .thenReturn(new TenantSystemEmailClient.MailContext(true, "PLATFORM", null, false, false));
     configureSmtp();
     when(toggles.isToggleEnabled(ReleaseToggle.NEW_EMAIL_NOTIFICATIONS)).thenReturn(true);
     var relation =

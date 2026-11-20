@@ -22,6 +22,9 @@ class AccountInactivityRoleChangeTest {
             "sa",
             "");
     var jdbc = new JdbcTemplate(ds);
+    jdbc.execute("CREATE TABLE IF NOT EXISTS `user` (user_id VARCHAR(36) PRIMARY KEY)");
+    jdbc.execute(
+        "CREATE TABLE IF NOT EXISTS live_chat_account_claim (user_id VARCHAR(36) PRIMARY KEY, lifecycle VARCHAR(32) NOT NULL)");
     jdbc.execute(
         "CREATE TABLE account_inactivity(identity_id VARCHAR(36) PRIMARY KEY,tenant_id"
             + " BIGINT,assigned_months INT NOT NULL,revision BIGINT NOT NULL,last_activity"
@@ -40,13 +43,32 @@ class AccountInactivityRoleChangeTest {
             new AccountInactivityEnrollmentTest.ExternalEffects());
     lifecycle.assignAtCreation("person", 1L, 24, 0, clock.instant());
     var remoteWrites = new AtomicInteger();
-    IdentityRoleUpdater remote = (id, roles) -> remoteWrites.incrementAndGet();
+    class ConcreteIdentityRoleUpdater implements IdentityRoleUpdater {
+      @Override
+      public void ensureRoles(String id, java.util.Collection<String> roles) {
+        remoteWrites.incrementAndGet();
+      }
+    }
+    IdentityRoleUpdater remote = new ConcreteIdentityRoleUpdater();
     var proxyFactory = new AspectJProxyFactory(remote);
     proxyFactory.addAspect(new AccountInactivityRoleMutationAspect(lifecycle));
     IdentityRoleUpdater gateway = proxyFactory.getProxy();
     gateway.ensureRoles("person", List.of("user-admin"));
     assertThat(remoteWrites.get()).isEqualTo(1);
+    jdbc.update("INSERT INTO `user` (user_id) VALUES (?)", "person");
+    jdbc.update(
+        "INSERT INTO live_chat_account_claim (user_id,lifecycle) VALUES (?,?)",
+        "person",
+        "PROMOTION_PENDING");
+    assertThatThrownBy(() -> gateway.ensureRoles("person", List.of("consultant")))
+        .isInstanceOf(org.springframework.web.server.ResponseStatusException.class);
+    assertThat(remoteWrites.get()).isEqualTo(1);
+    jdbc.update("DELETE FROM live_chat_account_claim WHERE user_id=?", "person");
     assertThat(lifecycle.suspend("person")).isTrue();
+    assertThat(lifecycle.snapshot("person").orElseThrow().status())
+        .isEqualTo(AccountInactivityService.Status.SUSPENDED);
+    assertThatThrownBy(() -> lifecycle.withRoleMutation("person", () -> {}))
+        .isInstanceOf(IllegalStateException.class);
     assertThatThrownBy(() -> gateway.ensureRoles("person", List.of("consultant")))
         .isInstanceOf(org.springframework.web.server.ResponseStatusException.class);
     assertThat(remoteWrites.get()).isEqualTo(1);

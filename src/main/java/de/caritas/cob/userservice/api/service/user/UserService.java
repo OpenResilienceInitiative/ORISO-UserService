@@ -121,6 +121,16 @@ public class UserService {
     return userRepository.findByUserIdAndDeleteDateIsNull(userId);
   }
 
+  /**
+   * The active user read under a row lock (PESSIMISTIC_WRITE), for a write that must not race the
+   * temporary-account keep (#1662). Call inside a transaction.
+   */
+  public Optional<User> getUserForUpdate(String userId) {
+    return userRepository
+        .findByUserIdForUpdate(userId)
+        .filter(user -> user.getDeleteDate() == null);
+  }
+
   public Optional<User> findDeletedById(String userId) {
     return userRepository.findById(userId).filter(user -> user.getDeleteDate() != null);
   }

@@ -23,9 +23,11 @@ public class StopChatActionCommand implements ActionCommand<Chat> {
 
   /**
    * Deletes the given active chat and recreates it if repetitive. Repetitive chats get a fresh
-   * Matrix room for their next occurrence and the old room is shut down (via {@link
-   * ChatReCreator}); for non-repetitive chats the Matrix room is shut down directly. Either way the
-   * shutdown is best-effort and removes all members so their clients can show the chat as stopped.
+   * Matrix room for their next occurrence and the old room is shut down (via {@link ChatReCreator},
+   * best-effort); for non-repetitive chats and the last occurrence of a series the Matrix room is
+   * shut down strictly: if that fails, the exception propagates (502) and the caller's transaction
+   * keeps the chat, so the stop can be repeated. A successful shutdown removes all members so their
+   * clients can show the chat as stopped.
    *
    * @param chat the {@link Chat} to be stopped
    */
@@ -48,16 +50,17 @@ public class StopChatActionCommand implements ActionCommand<Chat> {
         var matrixRoomId = chatReCreator.recreateMessengerChat(chat);
         chatReCreator.updateAsNextChat(chat, matrixRoomId);
       } else {
-        matrixChatShutdownService.shutdownRoom(chat);
+        matrixChatShutdownService.shutdownRoomStrictly(chat);
         chat.setActive(false);
         chatService.saveChat(chat);
       }
     } else {
       chatService.deleteChat(chat);
       if (!chat.isMembersOnly()) {
-        // A members-only room was purged strictly by deleteChat, in its transaction. A second purge
-        // here could fail after everything is gone and report an error for a stop that worked.
-        matrixChatShutdownService.shutdownRoom(chat);
+        // Last and strictly, inside the caller's transaction (StopChatFacade): a room that stays
+        // open rolls the deletion back, so the chat is kept and the stop can be repeated. A
+        // members-only room was already purged strictly by deleteChat itself.
+        matrixChatShutdownService.shutdownRoomStrictly(chat);
       }
     }
   }

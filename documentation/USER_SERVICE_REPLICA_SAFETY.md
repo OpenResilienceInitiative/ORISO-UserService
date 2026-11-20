@@ -66,13 +66,14 @@ because running the statement twice has the same effect as running it once:
   `runIfClaimed`: lease, work inside the lease transaction, release after
   commit. This covers the enquiry notification, anonymous and registered-only
   deactivation and deletion, account deletion, group-chat reminder, handshake
-  expiry and audit purge and support-room expiry jobs, among others.
+  expiry and audit purge jobs, among others.
 - `unique-claim-row`: a uniquely keyed row is inserted before the side effect
   (inactive-account notification fingerprint).
 - `row-lock`: a pessimistic row lock serializes the work (group-chat
-  deactivation, see `GROUP_CHAT_DEACTIVATION_REPLICA_SAFETY.md`).
-- `idempotent-statement`: one set-based statement that is safe to run twice
-  (appointment cleanup, see `APPOINTMENT_CLEANUP_REPLICA_SAFETY.md`).
+  deactivation, see `GROUP_CHAT_DEACTIVATION_REPLICA_SAFETY.md`; support-room
+  expiry, where `SupportRoomLifecycle.claimClosure` locks each room and commits
+  its next retry time before any Matrix call).
+- `idempotent-statement`: one set-based statement that is safe to run twice.
 
 A claim prevents overlap, not a later re-run, so the guarded work stays
 idempotent. Group-chat reminders are additionally deduplicated per recipient

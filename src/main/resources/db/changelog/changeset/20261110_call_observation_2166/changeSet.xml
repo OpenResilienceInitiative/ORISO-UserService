@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+  xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-3.2.xsd">
+  <!-- #2166/#1624: observation-only registrations of encrypted internal-group calls.
+       Deliberately NOT matrix_call_binding: no foreign key, no shared rows, no access grants. -->
+  <changeSet id="20261110-matrix-call-observation-2166" author="oriso">
+    <createTable tableName="matrix_call_observation">
+      <column name="id" type="BIGINT" autoIncrement="true"><constraints primaryKey="true" nullable="false"/></column>
+      <column name="origin" type="VARCHAR(40)"><constraints nullable="false"/></column>
+      <column name="source_room_id" type="VARCHAR(255)"><constraints nullable="false"/></column>
+      <column name="call_id" type="VARCHAR(191)"><constraints nullable="false"/></column>
+      <column name="media_room_id" type="VARCHAR(255)"><constraints nullable="false"/></column>
+      <column name="creator_matrix_id" type="VARCHAR(255)"><constraints nullable="false"/></column>
+      <column name="tenant_id" type="BIGINT"><constraints nullable="false"/></column>
+      <column name="chat_id" type="BIGINT"><constraints nullable="false"/></column>
+      <column name="video" type="BOOLEAN"><constraints nullable="false"/></column>
+      <column name="registered_at" type="BIGINT"><constraints nullable="false"/></column>
+      <column name="invited_at" type="BIGINT"/>
+      <column name="last_seen_at" type="BIGINT"><constraints nullable="false"/></column>
+      <column name="expires_at" type="BIGINT"><constraints nullable="false"/></column>
+      <column name="ended_at" type="BIGINT"/>
+    </createTable>
+    <addUniqueConstraint tableName="matrix_call_observation" columnNames="source_room_id, call_id"
+      constraintName="uk_call_observation_source_call"/>
+    <addUniqueConstraint tableName="matrix_call_observation" columnNames="media_room_id"
+      constraintName="uk_call_observation_media_room"/>
+    <rollback><dropTable tableName="matrix_call_observation"/></rollback>
+  </changeSet>
+</databaseChangeLog>

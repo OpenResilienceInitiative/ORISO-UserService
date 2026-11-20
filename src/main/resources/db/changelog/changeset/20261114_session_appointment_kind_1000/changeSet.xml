@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+  xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-3.2.xsd">
+  <!-- ORISO-UserService#1000 (ADR-032): how a 1:1 appointment takes place (ONSITE, VIDEO, PHONE,
+       CHAT). Nullable: appointments made before the kind existed keep none. -->
+  <changeSet id="20261114-session-appointment-kind-1000" author="oriso">
+    <preConditions onFail="MARK_RAN">
+      <not><columnExists tableName="session_appointment" columnName="kind"/></not>
+    </preConditions>
+    <addColumn tableName="session_appointment">
+      <column name="kind" type="VARCHAR(16)"/>
+    </addColumn>
+    <rollback><dropColumn tableName="session_appointment" columnName="kind"/></rollback>
+  </changeSet>
+</databaseChangeLog>

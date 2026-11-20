@@ -574,35 +574,12 @@ class CaseHandoverMailSenderTest {
   }
 
   @Test
-  void legacyAnonymousSessionUsesLiveChatDefaultsAndFreshExplicitOverride() {
-    var route =
-        new TenantSystemEmailRouteService.Route(TenantSystemEmailRouteService.Mode.PLATFORM, null);
-    var tenant = new RestrictedTenantDTO().id(40L);
-    var mail =
-        new CaseHandoverEmailNotification.Mail(
-            12L,
-            77L,
-            "!room",
-            CaseHandoverEmailNotification.Outcome.CONSENT_REQUESTED,
-            40L,
-            "asker@example.test",
-            LanguageCode.en,
-            null,
-            "asker-id",
-            CaseHandoverRequest.AccessType.CO_ACCESS);
+  void legacyAnonymousSessionsNeverSendCaseHandoverEmail() {
     session.setRegistrationType(Session.RegistrationType.ANONYMOUS);
-    when(routes.resolve(40L)).thenReturn(Optional.of(route));
-    when(tenants.getRestrictedTenantDataFresh(40L)).thenReturn(tenant);
-    sender.send(mail);
-    verifyNoInteractions(composer, delivery);
-    tenant.setSettings(new Settings().featureAskerEmailLiveChatEnabled(true));
-    when(urls.getTenantBaseUrl(tenant)).thenReturn("https://tenant.example.test");
-    sender.send(mail);
-    verify(composer).compose(mail, "https://tenant.example.test");
-    org.mockito.Mockito.clearInvocations(composer, delivery);
-    tenant.getSettings().setFeatureAskerEmailEnabled(false);
-    sender.send(mail);
-    verifyNoInteractions(composer, delivery);
+    sender.send(
+        mail(40L, CaseHandoverEmailNotification.Outcome.CONSENT_REQUESTED, "asker@example.test"));
+    sender.send(mail(40L, CaseHandoverEmailNotification.Outcome.GRANTED, "incoming@example.test"));
+    verifyNoInteractions(routes, composer, delivery);
   }
 
   private static CaseHandoverEmailNotification.Mail mail(

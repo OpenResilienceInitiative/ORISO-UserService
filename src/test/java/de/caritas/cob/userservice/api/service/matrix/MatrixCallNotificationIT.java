@@ -47,13 +47,18 @@ import org.springframework.transaction.annotation.Transactional;
     })
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
 @Import({
+  de.caritas.cob.userservice.api.service.matrix.SessionCallAuthority.class,
+  de.caritas.cob.userservice.api.service.matrix.SessionCallRevival.class,
   EventNotificationService.class,
   ConsultantDisplayNameResolver.class,
   EventNotificationDeduplicationWriter.class,
   MatrixCallBindingService.class,
   MatrixCallLifecycleService.class,
+  MatrixCallGuestService.class,
   MatrixCallConversationResolver.class,
   MatrixCallBindingWriter.class,
+  de.caritas.cob.userservice.api.service.matrix.DedicatedCallRoom.class,
+  de.caritas.cob.userservice.api.service.matrix.OrisoRoomRegistry.class,
   MatrixCallInviteNotificationService.class,
   MatrixCallNotificationIT.ActiveAccountFixture.class
 })
@@ -65,6 +70,11 @@ class MatrixCallNotificationIT {
   @Autowired private MatrixCallLifecycleService lifecycle;
   @Autowired private MatrixCallConversationResolver conversations;
   @Autowired private MatrixCallInviteNotificationService inviteService;
+
+  @MockitoBean
+  private de.caritas.cob.userservice.api.service.lifecycle.SessionInteractionService
+      sessionInteractions;
+
   @MockitoBean private MatrixSynapseService matrix;
   @MockitoBean private MatrixFeedUpdateSignalService feedUpdateSignals;
 
@@ -75,6 +85,41 @@ class MatrixCallNotificationIT {
   @MockitoBean private de.caritas.cob.userservice.api.port.out.ChatRepository chats;
   @MockitoBean private UserRepository users;
   @MockitoBean private ConsultantRepository consultants;
+
+  /**
+   * The case-writer rule needs agency, handover and supervisor tables this slice does not load;
+   * here a counsellor may write in the case when it is assigned to them.
+   */
+  @MockitoBean
+  private de.caritas.cob.userservice.api.service.notification.MatrixCaseReplyActorAuthorizer
+      caseWriterAuthorizer;
+
+  @org.junit.jupiter.api.BeforeEach
+  void caseWritersAreTheAssignedCounsellors() {
+    org.mockito.Mockito.lenient()
+        .when(
+            caseWriterAuthorizer.isCurrentAssignedOrTeamWriter(
+                org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any()))
+        .thenAnswer(
+            call ->
+                ((de.caritas.cob.userservice.api.model.Session) call.getArgument(0))
+                    .isAdvisedBy(
+                        (de.caritas.cob.userservice.api.model.Consultant) call.getArgument(1)));
+  }
+
+  /** Round 10: the call code reads every row of a Matrix id; the one-row stubs stay the fixture. */
+  @org.junit.jupiter.api.BeforeEach
+  void everyRowQueryAnswersFromTheOneRowStubs() {
+    org.mockito.Mockito.lenient()
+        .when(
+            consultants.findAllByMatrixUserIdAndDeleteDateIsNull(
+                org.mockito.ArgumentMatchers.anyString()))
+        .thenAnswer(
+            call ->
+                consultants.findByMatrixUserIdAndDeleteDateIsNull(call.getArgument(0)).stream()
+                    .toList());
+  }
+
   @MockitoBean private IdentityTombstoneService tombstones;
   @Autowired private AccountInactivityService accountLifecycle;
   @Autowired private javax.sql.DataSource accountDataSource;
@@ -99,6 +144,17 @@ class MatrixCallNotificationIT {
 
   @org.junit.jupiter.api.BeforeEach
   void initializeAccountLifecycleRows() {
+    // Security review 5901360577: the invite path checks the call room's origin as bind() does.
+    // The Frontend creates every call room with the caller as creator and binding sender.
+    org.mockito.Mockito.lenient()
+        .when(
+            matrix.getCallRoomOrigin(
+                org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.anyString()))
+        .thenAnswer(
+            call ->
+                java.util.Optional.of(
+                    new de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService
+                        .CallRoomOrigin(call.getArgument(1), call.getArgument(1))));
     initializeAccountLifecycleTable(accountDataSource);
     org.mockito.Mockito.lenient()
         .when(
@@ -166,6 +222,18 @@ class MatrixCallNotificationIT {
   @Test
   void currentInviteProducesAPersistedNotificationForTheOtherConversationMember() {
     assertInviteNotifications(System.currentTimeMillis(), 1, false);
+  }
+
+  /** Whether the invited counsellor may write in the case (assigned); false = silent colleague. */
+  private boolean recipientWritesInTheCase = true;
+
+  @Test
+  void aSilentAgencyColleagueInTheSessionRoomGetsNoCallInvitation() {
+    // ADR-002 §1: the agency's counsellors sit silently in a 1:1 session room. FE#2274: they got
+    // "invitation to an internal group call" for a case they cannot open.
+    recipientWritesInTheCase = false;
+
+    assertInviteNotifications(System.currentTimeMillis(), 0, false);
   }
 
   @org.junit.jupiter.params.ParameterizedTest
@@ -532,6 +600,9 @@ class MatrixCallNotificationIT {
                 consultants,
                 sessions,
                 mock(ConsultantMessageStatService.class),
+                mock(
+                    de.caritas.cob.userservice.api.service.statistics.CommunicationStatService
+                        .class),
                 inviteService,
                 mock(
                     de.caritas.cob.userservice.api.service.notification
@@ -843,6 +914,9 @@ class MatrixCallNotificationIT {
                 consultants,
                 sessions,
                 mock(ConsultantMessageStatService.class),
+                mock(
+                    de.caritas.cob.userservice.api.service.statistics.CommunicationStatService
+                        .class),
                 inviteService,
                 mock(
                     de.caritas.cob.userservice.api.service.notification
@@ -1474,6 +1548,7 @@ class MatrixCallNotificationIT {
         consultants,
         sessions,
         mock(ConsultantMessageStatService.class),
+        mock(de.caritas.cob.userservice.api.service.statistics.CommunicationStatService.class),
         inviteService,
         mock(
             de.caritas.cob.userservice.api.service.notification.AdviceSeekerReplyEmailService
@@ -1631,6 +1706,9 @@ class MatrixCallNotificationIT {
     when(session.getMatrixRoomId()).thenReturn(sourceRoom);
     when(session.getUser()).thenReturn(asker);
     when(session.getConsultant()).thenReturn(consultant);
+    // CodeRabbit on US#1661: reach the case-writer gate with the recipient's real identity.
+    when(consultants.findById("call-consultant")).thenReturn(Optional.of(consultant));
+    when(session.isAdvisedBy(consultant)).thenReturn(recipientWritesInTheCase);
     when(sessions.findByMatrixRoomId(sourceRoom))
         .thenReturn(sourceChat == null ? Optional.of(session) : Optional.empty());
     when(chats.findByMatrixRoomId(sourceRoom)).thenReturn(Optional.ofNullable(sourceChat));
@@ -1712,6 +1790,9 @@ class MatrixCallNotificationIT {
                 consultants,
                 sessions,
                 mock(ConsultantMessageStatService.class),
+                mock(
+                    de.caritas.cob.userservice.api.service.statistics.CommunicationStatService
+                        .class),
                 inviteService,
                 mock(
                     de.caritas.cob.userservice.api.service.notification

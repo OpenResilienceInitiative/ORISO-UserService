@@ -5,7 +5,6 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-import java.util.Map;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
@@ -17,11 +16,7 @@ class TenantSystemEmailRouteServiceTest {
 
   @Test
   void platformModeNeedsNoTenantSmtpCredentials() {
-    when(client.readTenant(40L))
-        .thenReturn(
-            Map.of(
-                "settings",
-                Map.of("featureSystemNotificationEmailsEnabled", true, "smtpMode", "PLATFORM")));
+    when(client.readMailContext(40L)).thenReturn(context(true, "PLATFORM", false));
 
     var route = new TenantSystemEmailRouteService(client).resolve(40L);
 
@@ -29,36 +24,12 @@ class TenantSystemEmailRouteServiceTest {
         .hasValueSatisfying(
             value ->
                 assertThat(value.mode()).isEqualTo(TenantSystemEmailRouteService.Mode.PLATFORM));
-    verify(client).readTenant(40L);
+    verify(client).readMailContext(40L);
   }
 
   @Test
   void ownModeRequiresCompleteRedactedSettingsWithoutReadingPassword() {
-    when(client.readTenant(40L))
-        .thenReturn(
-            Map.of(
-                "settings",
-                Map.of(
-                    "featureSystemNotificationEmailsEnabled",
-                    true,
-                    "smtpMode",
-                    "OWN",
-                    "smtp",
-                    Map.of(
-                        "enabled",
-                        true,
-                        "host",
-                        "smtp.tenant.example",
-                        "port",
-                        587,
-                        "secure",
-                        false,
-                        "username",
-                        "sender",
-                        "from",
-                        "sender@tenant.example",
-                        "passwordSet",
-                        true))));
+    when(client.readMailContext(40L)).thenReturn(context(true, "OWN", true));
 
     var route = new TenantSystemEmailRouteService(client).resolve(40L);
 
@@ -68,48 +39,17 @@ class TenantSystemEmailRouteServiceTest {
   }
 
   @Test
-  void incompleteOwnAndLegacyAreErrorsInsteadOfPlatformFallback() {
-    when(client.readTenant(40L))
-        .thenReturn(
-            Map.of(
-                "settings",
-                Map.of(
-                    "featureSystemNotificationEmailsEnabled",
-                    true,
-                    "smtpMode",
-                    "OWN",
-                    "smtp",
-                    Map.of("enabled", true, "passwordSet", false))));
-    var service = new TenantSystemEmailRouteService(client);
-    assertThatThrownBy(() -> service.resolve(40L))
-        .isInstanceOf(TenantSystemEmailRouteService.ConfigurationException.class)
-        .hasMessageContaining("OWN");
+  void incompleteOwnModeIsAnErrorInsteadOfPlatformFallback() {
+    when(client.readMailContext(40L)).thenReturn(context(true, "OWN", false));
 
-    when(client.readTenant(40L))
-        .thenReturn(Map.of("settings", Map.of("featureSystemNotificationEmailsEnabled", true)));
-    assertThatThrownBy(() -> service.resolve(40L))
-        .isInstanceOf(TenantSystemEmailRouteService.ConfigurationException.class)
-        .hasMessageContaining("smtpMode");
-
-    when(client.readTenant(40L))
-        .thenReturn(
-            Map.of(
-                "settings",
-                Map.of(
-                    "featureSystemNotificationEmailsEnabled",
-                    true,
-                    "smtpMode",
-                    "OWN",
-                    "smtp",
-                    Map.of("enabled", false))));
-    assertThatThrownBy(() -> service.resolve(40L))
+    assertThatThrownBy(() -> new TenantSystemEmailRouteService(client).resolve(40L))
         .isInstanceOf(TenantSystemEmailRouteService.ConfigurationException.class)
         .hasMessageContaining("OWN");
   }
 
   @Test
   void missingNotificationPolicyIsASetupErrorRatherThanIntentionalSuppression() {
-    when(client.readTenant(40L)).thenReturn(Map.of("settings", Map.of("smtpMode", "PLATFORM")));
+    when(client.readMailContext(40L)).thenReturn(context(null, "PLATFORM", false));
 
     assertThatThrownBy(() -> new TenantSystemEmailRouteService(client).resolve(40L))
         .isInstanceOf(TenantSystemEmailRouteService.ConfigurationException.class)
@@ -118,38 +58,14 @@ class TenantSystemEmailRouteServiceTest {
 
   @Test
   void disabledSystemMailSendsNothing() {
-    when(client.readTenant(40L))
-        .thenReturn(Map.of("settings", Map.of("featureSystemNotificationEmailsEnabled", false)));
+    when(client.readMailContext(40L)).thenReturn(context(false, "PLATFORM", false));
+
     assertThat(new TenantSystemEmailRouteService(client).resolve(40L)).isEmpty();
   }
 
   @Test
   void transportForAlwaysSentMailsIgnoresTheNotificationSwitch() {
-    when(client.readTenant(40L))
-        .thenReturn(
-            Map.of(
-                "settings",
-                Map.of(
-                    "featureSystemNotificationEmailsEnabled",
-                    false,
-                    "smtpMode",
-                    "OWN",
-                    "smtp",
-                    Map.of(
-                        "enabled",
-                        true,
-                        "host",
-                        "smtp.tenant.example",
-                        "port",
-                        587,
-                        "secure",
-                        false,
-                        "username",
-                        "sender",
-                        "from",
-                        "sender@tenant.example",
-                        "passwordSet",
-                        true))));
+    when(client.readMailContext(40L)).thenReturn(context(false, "OWN", true));
     var routes = new TenantSystemEmailRouteService(client);
 
     assertThat(routes.resolveTransport(40L).mode())
@@ -158,48 +74,9 @@ class TenantSystemEmailRouteServiceTest {
   }
 
   @Test
-  void transportForPartialLegacySmtpRequiresAnExplicitModeInsteadOfPlatformFallback() {
-    when(client.readTenant(40L))
-        .thenReturn(Map.of("settings", Map.of("smtp", Map.of("host", "smtp.tenant.example"))));
-
-    assertThatThrownBy(() -> new TenantSystemEmailRouteService(client).resolveTransport(40L))
-        .isInstanceOf(TenantSystemEmailRouteService.ConfigurationException.class)
-        .hasMessageContaining("smtpMode")
-        .hasMessageNotContaining("smtp.tenant.example");
-  }
-
-  @Test
-  void transportForUnclassifiedTenantStaysOnThePlatform() {
-    var routes = new TenantSystemEmailRouteService(client);
-    var withoutMode = new java.util.HashMap<String, Object>();
-    withoutMode.put("smtpMode", null);
-    withoutMode.put("smtp", Map.of());
-
-    when(client.readTenant(40L)).thenReturn(Map.of("settings", withoutMode));
-    assertThat(routes.resolveTransport(40L).mode())
-        .isEqualTo(TenantSystemEmailRouteService.Mode.PLATFORM);
-
-    when(client.readTenant(41L)).thenReturn(Map.of("id", 41L));
-    assertThat(routes.resolveTransport(41L).mode())
-        .isEqualTo(TenantSystemEmailRouteService.Mode.PLATFORM);
-  }
-
-  @Test
-  void unconfiguredLegacySmtpWithBrandingDoesNotChangeThePlatformCompatibilityRoute() {
-    when(client.readTenant(40L))
-        .thenReturn(
-            Map.of(
-                "settings",
-                Map.of(
-                    "smtp",
-                    Map.of(
-                        "enabled", false,
-                        "secure", false,
-                        "passwordSet", false,
-                        "host", " ",
-                        "username", "",
-                        "from", "",
-                        "emailThemeColor", "#005500"))));
+  void transportForUnclassifiedLegacyTenantStaysOnThePlatform() {
+    when(client.readMailContext(40L))
+        .thenReturn(new TenantSystemEmailClient.MailContext(null, null, null, false, false));
 
     assertThat(new TenantSystemEmailRouteService(client).resolveTransport(40L).mode())
         .isEqualTo(TenantSystemEmailRouteService.Mode.PLATFORM);
@@ -207,7 +84,7 @@ class TenantSystemEmailRouteServiceTest {
 
   @Test
   void transportRejectsAnUnknownExplicitMode() {
-    when(client.readTenant(40L)).thenReturn(Map.of("settings", Map.of("smtpMode", "RELAY")));
+    when(client.readMailContext(40L)).thenReturn(context(true, "RELAY", false));
 
     assertThatThrownBy(() -> new TenantSystemEmailRouteService(client).resolveTransport(40L))
         .isInstanceOf(TenantSystemEmailRouteService.ConfigurationException.class);
@@ -220,5 +97,11 @@ class TenantSystemEmailRouteServiceTest {
     assertThat(routes.resolveTransport(null).mode())
         .isEqualTo(TenantSystemEmailRouteService.Mode.PLATFORM);
     org.mockito.Mockito.verifyNoInteractions(client);
+  }
+
+  private static TenantSystemEmailClient.MailContext context(
+      Boolean notificationsEnabled, String smtpMode, boolean smtpConfigured) {
+    return new TenantSystemEmailClient.MailContext(
+        notificationsEnabled, smtpMode, "#005500", smtpConfigured, smtpConfigured);
   }
 }

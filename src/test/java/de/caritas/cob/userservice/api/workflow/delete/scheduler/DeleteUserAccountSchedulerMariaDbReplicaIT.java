@@ -12,6 +12,7 @@ import de.caritas.cob.userservice.api.admin.service.IdentityReactivationRepairSe
 import de.caritas.cob.userservice.api.model.ScheduledTaskClaim;
 import de.caritas.cob.userservice.api.port.out.ScheduledTaskClaimRepository;
 import de.caritas.cob.userservice.api.tenant.TenantContextProvider;
+import de.caritas.cob.userservice.api.workflow.delete.service.ConsultantHardDeleteClaimService;
 import de.caritas.cob.userservice.api.workflow.delete.service.DeleteUserAccountService;
 import de.caritas.cob.userservice.api.workflow.delete.service.UserHardDeleteClaimService;
 import de.caritas.cob.userservice.api.workflow.scheduling.ScheduledTaskClaimService;
@@ -207,6 +208,7 @@ class DeleteUserAccountSchedulerMariaDbReplicaIT {
             tenantContextProvider,
             taskClaimService,
             userHardDeleteClaimService,
+            mock(ConsultantHardDeleteClaimService.class),
             identityReactivationRepairService);
     ReflectionTestUtils.setField(scheduler, "claimDuration", Duration.ofHours(12));
     return scheduler;

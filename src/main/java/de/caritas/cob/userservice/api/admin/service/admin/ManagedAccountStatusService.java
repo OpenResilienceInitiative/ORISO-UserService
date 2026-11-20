@@ -134,7 +134,7 @@ public class ManagedAccountStatusService {
             case AGENCY -> authorities.contains(USER_ADMIN);
             default -> false;
           };
-      scope.assertMay(AdminScope.Target.admin(id));
+      scope.assertMay(write ? AdminScope.Target.managedAdmin(id) : AdminScope.Target.admin(id));
     } else {
       permitted =
           write ? authorities.contains(CONSULTANT_UPDATE) : authorities.contains(USER_ADMIN);
@@ -212,7 +212,8 @@ public class ManagedAccountStatusService {
     Boolean required =
         target.admin() != null
                 && (target.admin().getType() == Admin.AdminType.TENANT
-                    || target.admin().getType() == Admin.AdminType.AGENCY)
+                    || target.admin().getType() == Admin.AdminType.AGENCY
+                    || target.admin().getType() == Admin.AdminType.STATISTICS)
             ? Boolean.TRUE
             : consultant != null ? consultant.getTwoFactorRequired() : null;
     Boolean configured = null, factorActive = null;

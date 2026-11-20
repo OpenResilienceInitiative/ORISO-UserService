@@ -54,6 +54,8 @@ public class DeleteUserAccountServiceTest {
 
   @Mock private UserHardDeleteClaimService userHardDeleteClaimService;
 
+  @Mock private ConsultantHardDeleteClaimService consultantHardDeleteClaimService;
+
   private final ActionCommandMockProvider commandMockProvider = new ActionCommandMockProvider();
 
   @BeforeEach
@@ -98,6 +100,7 @@ public class DeleteUserAccountServiceTest {
     verify(this.actionsRegistry, times(1)).buildContainerForType(AskerDeletionWorkflowDTO.class);
     verify(userHardDeleteClaimService).claim(user.getUserId());
     verify(userHardDeleteClaimService).release(user.getUserId());
+    verify(userHardDeleteClaimService, org.mockito.Mockito.never()).recordFailure(any(), any());
     verify(this.commandMockProvider.getActionMock(DeleteMatrixAskerAction.class), times(1))
         .execute(new AskerDeletionWorkflowDTO(user, emptyList()));
     verify(this.commandMockProvider.getActionMock(DeleteDatabaseAskerAction.class), times(1))
@@ -131,11 +134,11 @@ public class DeleteUserAccountServiceTest {
   public void
       deleteUserAccounts_Should_performConsultantDeletion_When_consultantIsMarkedAsDeleted() {
     Consultant consultant = new Consultant();
+    consultant.setId("deleted-consultant");
     when(this.consultantRepository.findAllByDeleteDateNotNull())
         .thenReturn(singletonList(consultant));
-    when(this.deletionLifecycleService.normalizeConsultantLifecycle(consultant))
-        .thenReturn(consultant);
-    when(this.deletionLifecycleService.isReadyForHardDelete(consultant)).thenReturn(true);
+    when(consultantHardDeleteClaimService.claim("deleted-consultant"))
+        .thenReturn(Optional.of(consultant));
     when(this.actionsRegistry.buildContainerForType(ConsultantDeletionWorkflowDTO.class))
         .thenReturn(
             this.commandMockProvider.getActionContainer(ConsultantDeletionWorkflowDTO.class));
@@ -156,7 +159,24 @@ public class DeleteUserAccountServiceTest {
             this.commandMockProvider.getActionMock(DeleteConsultantEventNotificationsAction.class),
             times(1))
         .execute(new ConsultantDeletionWorkflowDTO(consultant, emptyList()));
+    verify(consultantHardDeleteClaimService).release("deleted-consultant");
     verifyNoMoreInteractions(this.workflowErrorMailService);
+  }
+
+  @Test
+  void deleteUserAccounts_Should_skipConsultantDeletion_When_hardDeleteClaimIsLost() {
+    // #123: an admin cancel committed first, or the window is not over yet. The stale row from
+    // the list must not reach Keycloak, Matrix or the database.
+    Consultant consultant = new Consultant();
+    consultant.setId("cancelled-consultant");
+    when(consultantRepository.findAllByDeleteDateNotNull()).thenReturn(singletonList(consultant));
+    when(consultantHardDeleteClaimService.claim("cancelled-consultant"))
+        .thenReturn(Optional.empty());
+
+    deleteUserAccountService.deleteUserAccounts();
+
+    verify(consultantHardDeleteClaimService).claim("cancelled-consultant");
+    verifyNoMoreInteractions(actionsRegistry, consultantHardDeleteClaimService);
   }
 
   @Test
@@ -170,7 +190,15 @@ public class DeleteUserAccountServiceTest {
     doAnswer(
             invocation -> {
               AskerDeletionWorkflowDTO workflow = invocation.getArgument(0);
-              workflow.getDeletionWorkflowErrors().add(DeletionWorkflowError.builder().build());
+              workflow
+                  .getDeletionWorkflowErrors()
+                  .add(
+                      DeletionWorkflowError.builder()
+                          .deletionTargetType(
+                              de.caritas.cob.userservice.api.workflow.delete.model
+                                  .DeletionTargetType.MATRIX)
+                          .reason("Unable to delete Matrix user account")
+                          .build());
               return null;
             })
         .when(this.commandMockProvider.getActionMock(DeleteMatrixAskerAction.class))
@@ -179,5 +207,10 @@ public class DeleteUserAccountServiceTest {
     this.deleteUserAccountService.deleteUserAccounts();
 
     verify(this.workflowErrorMailService, times(1)).buildAndSendErrorMail(anyList());
+    var order = org.mockito.Mockito.inOrder(userHardDeleteClaimService);
+    order
+        .verify(userHardDeleteClaimService)
+        .recordFailure("user-id", "MATRIX: Unable to delete Matrix user account");
+    order.verify(userHardDeleteClaimService).release("user-id");
   }
 }

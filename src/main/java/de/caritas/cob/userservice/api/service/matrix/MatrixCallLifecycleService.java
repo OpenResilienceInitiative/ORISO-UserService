@@ -5,8 +5,10 @@ import de.caritas.cob.userservice.api.model.MatrixCallDevice;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.MatrixCallBindingRepository;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
+import de.caritas.cob.userservice.api.service.lifecycle.SessionInteractionService;
 import de.caritas.cob.userservice.api.service.notification.EventNotificationService;
 import de.caritas.cob.userservice.api.workflow.accountinactivity.AccountInactivityService;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -28,9 +30,35 @@ public class MatrixCallLifecycleService {
   private final ConsultantRepository consultants;
   private final EventNotificationService notifications;
   private final AccountInactivityService accountLifecycle;
+  private final MatrixCallGuestService callGuests;
+  private final SessionInteractionService sessionInteractions;
 
   @org.springframework.beans.factory.annotation.Value("${matrix.calls.observation-retry-ms:30000}")
   private long observationRetryMillis = 30000;
+
+  /**
+   * How long after the invite ran out a never-observed session call is given up (FE#2209 review).
+   */
+  public static final long NEVER_OBSERVED_MARGIN_MILLIS = 10 * 60 * 1000L;
+
+  /**
+   * FE#2209 review: a session call whose call room was never observed and in which nobody was ever
+   * seen ends once its invite ran out by {@link #NEVER_OBSERVED_MARGIN_MILLIS}. Without this, share
+   * links and guest seats would outlive it. Rechecked under the row lock.
+   */
+  @Transactional
+  public boolean finishNeverObserved(String room, long now) {
+    var binding = bindings.lockByMediaRoomId(room).orElse(null);
+    if (binding == null
+        || binding.getEndedAt() != null
+        || binding.getSessionId() == null
+        || binding.getStartedAt() != null
+        || binding.getMediaObservedAt() != null
+        || binding.getInviteExpiresAt() + NEVER_OBSERVED_MARGIN_MILLIS > now) return false;
+    binding.finishByLifecycle(now);
+    callGuests.revokeOutstanding(binding);
+    return true;
+  }
 
   @Transactional
   public void loseObservation(String room) {
@@ -38,6 +66,26 @@ public class MatrixCallLifecycleService {
         .lockByMediaRoomId(room)
         .filter(binding -> binding.getEndedAt() == null)
         .ifPresent(binding -> binding.loseMediaObservation());
+  }
+
+  /**
+   * FE#2209 round 11 (F1): a live room whose sync batch is dropped. Besides the unobserved marker,
+   * every device's membership is capped at the loss time: the next incremental batch re-observes
+   * the room, but it cannot carry a departure the dropped batch held, so a stale membership must
+   * not count again once the room is observed. Presence then needs a new membership event. A leave
+   * keeps {@link #loseObservation}: the rejoin delivers the room's full current state.
+   */
+  @Transactional
+  public void loseBatch(String room) {
+    long now = System.currentTimeMillis();
+    bindings
+        .lockByMediaRoomId(room)
+        .filter(binding -> binding.getEndedAt() == null)
+        .ifPresent(
+            binding -> {
+              binding.loseMediaObservation();
+              binding.losePresence(now);
+            });
   }
 
   @Transactional
@@ -73,19 +121,74 @@ public class MatrixCallLifecycleService {
   public boolean handleRoom(String room, Map<String, Object> roomData) {
     var binding = bindings.lockByMediaRoomId(room).orElse(null);
     if (binding == null) return false;
-    if (binding.getEndedAt() != null) return true;
+    handleLockedRoom(binding, roomData);
+    return true;
+  }
+
+  /**
+   * FE#2209 round 9 (F2): stamps a sweep candidate as swept, in a transaction of its own that
+   * commits before the pass, so the next sweep takes other candidates first even when the pass
+   * fails. Locks only the binding and commits, so the pass that follows takes the locks again in
+   * the usual order (binding, then session).
+   */
+  @Transactional(propagation = org.springframework.transaction.annotation.Propagation.REQUIRES_NEW)
+  public boolean recordSweep(String room, long now) {
+    var binding = bindings.lockByMediaRoomId(room).orElse(null);
+    if (binding == null) return false;
+    binding.recordSweep(now);
+    return true;
+  }
+
+  /**
+   * FE#2209 round 8 (F2): the reconcile sweep's pass of a running session call whose rule may have
+   * lapsed: the same pass as an event-less {@link #handleRoom}. The sweep stamp is written before,
+   * by {@link #recordSweep}. Lock order unchanged: binding, then session.
+   */
+  @Transactional
+  public boolean sweepRunningSessionCall(String room, long now) {
+    var binding = bindings.lockByMediaRoomId(room).orElse(null);
+    if (binding == null) return false;
+    handleLockedRoom(binding, Map.of());
+    return true;
+  }
+
+  private void handleLockedRoom(
+      de.caritas.cob.userservice.api.model.MatrixCallBinding binding,
+      Map<String, Object> roomData) {
+    handleBoundRoom(binding, roomData);
+    // US#1477: a guest's call-room seat ends with the call; a failed removal retries on the
+    // next event for this room.
+    callGuests.revokeOutstanding(binding);
+    // Security review 5901360577: a running 1:1 session call loses its seats once its rule stops
+    // holding (authority lost: at once; no counsellor in the call: after the absence grace), with
+    // the memberships of this batch applied and the binding still locked.
+    callGuests.revokeOnceTheSessionCallRuleLapsed(binding, System.currentTimeMillis());
+  }
+
+  private void handleBoundRoom(
+      de.caritas.cob.userservice.api.model.MatrixCallBinding binding,
+      Map<String, Object> roomData) {
+    if (binding.getEndedAt() != null) return;
     var session = conversations.resolve(binding.getSourceRoomId()).orElse(null);
     if (session == null
         || !Objects.equals(session.getSessionId(), binding.getSessionId())
         || !Objects.equals(session.getChatId(), binding.getChatId())
-        || !Objects.equals(session.getTenantId(), binding.getTenantId())) return true;
+        || !Objects.equals(session.getTenantId(), binding.getTenantId())) return;
     var members = matrix.getCallRoomMembers(binding.getSourceRoomId()).orElse(null);
-    if (members == null) return true;
+    if (members == null) {
+      // CodeRabbit 4585785745: a lookup that answers "unknown" (a definitive Synapse error; the
+      // transient ones throw already) must not count as a handled batch, or the departures in it
+      // are dropped and a stale membership keeps the call open. The live pass fails, so the batch
+      // is replayed and, within the replay bound, the room is marked unobserved (fail closed).
+      // An event-less pass (reconcile sweeps) has nothing to drop and returns as before.
+      if (!memberships(roomData).isEmpty()) throw new CallRoomMembersUnknown();
+      return;
+    }
     boolean retainedClosure = !conversations.lockCurrentForWriting(session);
     if (retainedClosure && !startedBeforeRejection(binding)) {
       // No call history is retained here; close silently so expiry stops reselecting the row.
-      binding.finish(System.currentTimeMillis());
-      return true;
+      binding.finishByLifecycle(System.currentTimeMillis());
+      return;
     }
     long now = System.currentTimeMillis();
     if (roomData.get("state") instanceof Map<?, ?>
@@ -94,10 +197,18 @@ public class MatrixCallLifecycleService {
     }
     for (var event : memberships(roomData)) {
       if (retainedClosure && !event.departed()) continue;
-      if (event.eventTimestamp() > now
-          || !members.contains(event.sender())
-          || identity(event.sender(), binding.getTenantId()).isEmpty()) continue;
       var previous = binding.getDevices().get(event.stateKey());
+      // Round 11 (F2): a departure or a shorter membership of a device row the same sender holds
+      // only removes presence, so it applies whatever the room membership and the identity lookup
+      // say (an ambiguous Matrix id resolves to nobody). Fail closed.
+      boolean known =
+          members.contains(event.sender())
+              && identity(event.sender(), binding.getTenantId()).isPresent();
+      boolean shortens =
+          previous != null
+              && previous.getSenderMatrixId().equals(event.sender())
+              && (event.departed() || event.expiresAt() < previous.getExpiresAt());
+      if (event.eventTimestamp() > now || (!known && !shortens)) continue;
       if (previous != null
           && (!previous.getSenderMatrixId().equals(event.sender())
               || previous.getEventId().equals(event.eventId())
@@ -105,7 +216,7 @@ public class MatrixCallLifecycleService {
               || (previous.getEventTimestamp() == event.eventTimestamp()
                   && !previous.getEventId().equals(event.replacesEventId())))) continue;
       boolean attended = previous != null && previous.isAttended();
-      if (!event.departed() && event.expiresAt() > now) {
+      if (known && !event.departed() && event.expiresAt() > now) {
         attended = true;
         binding.recordAttendance(event.eventTimestamp());
       }
@@ -116,7 +227,7 @@ public class MatrixCallLifecycleService {
               new MatrixCallDevice(
                   event.sender(),
                   event.eventTimestamp(),
-                  event.expiresAt(),
+                  known ? event.expiresAt() : Math.min(event.expiresAt(), previous.getExpiresAt()),
                   attended,
                   event.eventId()));
     }
@@ -152,16 +263,11 @@ public class MatrixCallLifecycleService {
                   .mapToLong(MatrixCallDevice::getExpiresAt)
                   .max()
                   .orElse(now);
-      binding.finish(lastPresenceEnd);
-      if (retainedClosure) return true;
-      binding.getDevices().values().stream()
-          .filter(MatrixCallDevice::isAttended)
-          .map(MatrixCallDevice::getSenderMatrixId)
-          .distinct()
-          .filter(members::contains)
-          .map(sender -> identity(sender, binding.getTenantId()))
-          .flatMap(Optional::stream)
-          .distinct()
+      binding.finishByLifecycle(lastPresenceEnd);
+      if (retainedClosure) return;
+      var attended = attendedRecipients(binding, members);
+      announceSessionCall(binding, attended);
+      attended.stream()
           .filter(recipient -> isActiveRecipient(recipient.id()))
           .forEach(
               recipient ->
@@ -196,7 +302,55 @@ public class MatrixCallLifecycleService {
                       binding.getMediaRoomId(),
                       binding.isVideo()));
     }
-    return true;
+  }
+
+  /**
+   * An explicit end closes the binding before any lifecycle pass sees the last departure, so the
+   * attendance recorded until then is announced from here, after the end committed.
+   */
+  @Transactional
+  public void announceExplicitEnd(String room) {
+    var binding = bindings.lockByMediaRoomId(room).orElse(null);
+    if (binding == null
+        || binding.getEndedAt() == null
+        || binding.getSessionId() == null
+        || binding.getChatId() != null) return;
+    var session = conversations.resolve(binding.getSourceRoomId()).orElse(null);
+    if (session == null
+        || !Objects.equals(session.getSessionId(), binding.getSessionId())
+        || session.getChatId() != null
+        || !Objects.equals(session.getTenantId(), binding.getTenantId())) return;
+    var members = matrix.getCallRoomMembers(binding.getSourceRoomId()).orElse(null);
+    if (members == null || !conversations.lockCurrentForWriting(session)) return;
+    announceSessionCall(binding, attendedRecipients(binding, members));
+  }
+
+  private List<Recipient> attendedRecipients(
+      de.caritas.cob.userservice.api.model.MatrixCallBinding binding, List<String> members) {
+    return binding.getDevices().values().stream()
+        .filter(MatrixCallDevice::isAttended)
+        .map(MatrixCallDevice::getSenderMatrixId)
+        .distinct()
+        .filter(members::contains)
+        .map(sender -> identity(sender, binding.getTenantId()))
+        .flatMap(Optional::stream)
+        .distinct()
+        .toList();
+  }
+
+  private void announceSessionCall(
+      de.caritas.cob.userservice.api.model.MatrixCallBinding binding, List<Recipient> attended) {
+    if (binding.getSessionId() == null || binding.getChatId() != null) return;
+    attended.stream()
+        .filter(Recipient::consultant)
+        .forEach(
+            counsellor ->
+                sessionInteractions.callEnded(
+                    binding.getSessionId(),
+                    counsellor.id(),
+                    binding.getCallId(),
+                    binding.isVideo(),
+                    Instant.ofEpochMilli(binding.getEndedAt())));
   }
 
   private boolean startedBeforeRejection(
@@ -214,6 +368,13 @@ public class MatrixCallLifecycleService {
                             .toInstant(java.time.ZoneOffset.UTC)
                             .toEpochMilli())
         .isPresent();
+  }
+
+  /** A call-room pass with membership events whose conversation members are unknown. No ids. */
+  static final class CallRoomMembersUnknown extends RuntimeException {
+    CallRoomMembersUnknown() {
+      super("Call room members unknown; the membership events are not applied", null, false, false);
+    }
   }
 
   private List<MatrixRtcMembershipEvent> memberships(Map<String, Object> room) {
@@ -249,11 +410,10 @@ public class MatrixCallLifecycleService {
         .filter(user -> Objects.equals(user.getTenantId(), tenant) && user.getUserId() != null)
         .map(user -> new Recipient(user.getUserId(), false))
         .or(
+            // Round 10 (F1): duplicate-tolerant; an id two accounts of the Träger share is nobody.
             () ->
-                consultants
-                    .findByMatrixUserIdAndDeleteDateIsNull(matrixId)
-                    .filter(
-                        user -> Objects.equals(user.getTenantId(), tenant) && user.getId() != null)
+                SoleCounsellor.of(consultants, matrixId, tenant)
+                    .filter(user -> user.getId() != null)
                     .map(user -> new Recipient(user.getId(), true)));
   }
 

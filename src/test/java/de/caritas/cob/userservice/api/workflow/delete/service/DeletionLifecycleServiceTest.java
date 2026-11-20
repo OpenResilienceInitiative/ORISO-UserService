@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
+import de.caritas.cob.userservice.api.exception.httpresponses.ConflictException;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.workflow.delete.model.DeletionLifecycleState;
@@ -12,6 +13,8 @@ import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.EnumSource;
 import org.springframework.test.util.ReflectionTestUtils;
 
 class DeletionLifecycleServiceTest {
@@ -118,6 +121,96 @@ class DeletionLifecycleServiceTest {
   @Test
   void cancelUserDeletion_ShouldDoNothing_WhenUserIsNull() {
     assertThatCode(() -> service.cancelUserDeletion(null)).doesNotThrowAnyException();
+  }
+
+  // ---------------------------------------------------------------------------
+  // cancelConsultantDeletion
+  // ---------------------------------------------------------------------------
+
+  private Consultant consultantInWindow(DeletionLifecycleState state) {
+    Consultant consultant = newConsultant();
+    LocalDateTime now = LocalDateTime.now(ZoneOffset.UTC);
+    consultant.setDeleteDate(now);
+    consultant.setDeletionLifecycleState(state);
+    consultant.setDeletionReadOnlyUntil(now.plusHours(48));
+    consultant.setDeletionPausedUntil(now.plusMonths(3));
+    consultant.setDeletionPauseReason("legal hold");
+    consultant.setDeletionPausedBy("admin-1");
+    consultant.setDeletionPauseCreatedAt(now);
+    return consultant;
+  }
+
+  @Test
+  void cancelConsultantDeletion_Should_clearEveryDeletionLifecycleField() {
+    Consultant consultant = consultantInWindow(DeletionLifecycleState.READ_ONLY_SAFEGUARD);
+
+    service.cancelConsultantDeletion(consultant);
+
+    assertThat(consultant.getDeleteDate()).isNull();
+    assertThat(consultant.getDeletionLifecycleState()).isEqualTo(DeletionLifecycleState.ACTIVE);
+    assertThat(consultant.getDeletionReadOnlyUntil()).isNull();
+    assertThat(consultant.getDeletionPausedUntil()).isNull();
+    assertThat(consultant.getDeletionPauseReason()).isNull();
+    assertThat(consultant.getDeletionPausedBy()).isNull();
+    assertThat(consultant.getDeletionPauseCreatedAt()).isNull();
+  }
+
+  @Test
+  void cancelConsultantDeletion_Should_beAllowed_When_stateIsPendingOrALegacyRecord() {
+    Consultant pending = consultantInWindow(DeletionLifecycleState.PENDING_DELETION);
+    Consultant legacy = consultantInWindow(null);
+    Consultant active = consultantInWindow(DeletionLifecycleState.ACTIVE);
+
+    service.cancelConsultantDeletion(pending);
+    service.cancelConsultantDeletion(legacy);
+    service.cancelConsultantDeletion(active);
+
+    assertThat(pending.getDeleteDate()).isNull();
+    assertThat(legacy.getDeleteDate()).isNull();
+    assertThat(active.getDeleteDate()).isNull();
+  }
+
+  @Test
+  void cancelConsultantDeletion_Should_beAllowed_When_theWindowHasElapsedButNothingIsDeletedYet() {
+    Consultant consultant = consultantInWindow(DeletionLifecycleState.READ_ONLY_SAFEGUARD);
+    consultant.setDeletionReadOnlyUntil(LocalDateTime.now(ZoneOffset.UTC).minusHours(1));
+
+    service.cancelConsultantDeletion(consultant);
+
+    assertThat(consultant.getDeleteDate()).isNull();
+  }
+
+  @ParameterizedTest
+  @EnumSource(
+      value = DeletionLifecycleState.class,
+      names = {
+        "REACTIVATION_IN_PROGRESS",
+        "REACTIVATION_REPAIR_REQUIRED",
+        "HARD_DELETE_IN_PROGRESS",
+        "HARD_DELETE_PARTIAL_FAILURE",
+        "HARD_DELETED"
+      })
+  void cancelConsultantDeletion_Should_refuseAndKeepState_When_deletionIsPastTheSafeguard(
+      DeletionLifecycleState state) {
+    Consultant consultant = consultantInWindow(state);
+    LocalDateTime deleteDate = consultant.getDeleteDate();
+
+    assertThrows(ConflictException.class, () -> service.cancelConsultantDeletion(consultant));
+
+    assertThat(consultant.getDeleteDate()).isEqualTo(deleteDate);
+    assertThat(consultant.getDeletionLifecycleState()).isEqualTo(state);
+  }
+
+  @Test
+  void cancelConsultantDeletion_Should_refuse_When_consultantIsNotMarkedForDeletion() {
+    Consultant consultant = newConsultant();
+
+    assertThrows(ConflictException.class, () -> service.cancelConsultantDeletion(consultant));
+  }
+
+  @Test
+  void cancelConsultantDeletion_Should_doNothing_When_consultantIsNull() {
+    assertThatCode(() -> service.cancelConsultantDeletion(null)).doesNotThrowAnyException();
   }
 
   // ---------------------------------------------------------------------------

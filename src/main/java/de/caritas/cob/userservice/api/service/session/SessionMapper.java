@@ -19,6 +19,7 @@ import de.caritas.cob.userservice.api.helper.SessionDataKeyRegistration;
 import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.Session;
+import de.caritas.cob.userservice.api.model.SessionData;
 import de.caritas.cob.userservice.api.port.out.SessionSupervisorMarkerRow;
 import java.sql.Date;
 import java.time.LocalDateTime;
@@ -87,11 +88,29 @@ public class SessionMapper {
         /* ADR-022 decision 2, read path. The pointer itself travels so a client that already
         holds the currently published legal-text version can tell a stale consent from a
         current one; consentRequired answers the part the server can decide on its own —
-        Gate 2 applies to this room and nothing has been recorded yet. */
+        Gate 2 applies to this room and nothing has been recorded yet. This is the owner's
+        answer: only the owner (or their counsellor) reads this DTO. A joiner of a shared
+        appointment conversation (FE#2252) gets their own answer from
+        SessionConsentService#consentRequired on the join response. */
         .consentedLegalVersionId(session.getConsentedLegalVersionId())
         .consentRequired(
             session.isConsentGateApplicable() && isNull(session.getConsentedLegalVersionId()))
-        .topic(new SessionTopicDTO().id(session.getMainTopicId()));
+        .topic(new SessionTopicDTO().id(session.getMainTopicId()))
+        .directLinkMedium(directLinkMediumOf(session))
+        .directLinkName(session.getDirectLinkName());
+  }
+
+  /** FE#1952: an unknown stored value is left out rather than failing the whole list. */
+  private static SessionDTO.DirectLinkMediumEnum directLinkMediumOf(Session session) {
+    var medium = session.getDirectLinkMedium();
+    if (medium == null) {
+      return null;
+    }
+    try {
+      return SessionDTO.DirectLinkMediumEnum.fromValue(medium);
+    } catch (IllegalArgumentException unknown) {
+      return null;
+    }
   }
 
   /**
@@ -223,7 +242,14 @@ public class SessionMapper {
     sessionUserDto.setAvatarId(session.getUser().getAvatarId());
     sessionUserDto.setUsername(
         new UsernameTranscoder().decodeUsername(session.getUser().getUsername()));
-    sessionUserDto.setDeleted(session.getUser().getDeleteDate() != null);
+    var temporaryAccount =
+        de.caritas.cob.userservice.api.service.temporaryaccount.TemporaryAccountService.toDtoOrNull(
+            session.getUser());
+    sessionUserDto.setTemporaryAccount(temporaryAccount);
+    // A deleted direct-link guest shows as "Gast (gelöscht)" (ADR-029 §5, #1476).
+    sessionUserDto.setDeleted(
+        session.getUser().getDeleteDate() != null
+            || (temporaryAccount != null && Boolean.TRUE.equals(temporaryAccount.getDeleted())));
     if (nonNull(session.getSessionData())) {
       var sessionData = buildSessionDataMapFromSession(session);
       sessionUserDto.setSessionData(sessionData);
@@ -257,11 +283,34 @@ public class SessionMapper {
     return sessionDataMap;
   }
 
+  /**
+   * The asker's own view of themself in a session: only the alias a counsellor sees (#2175). Other
+   * registration data is not repeated in the asker's list.
+   */
+  public SessionUserDTO toOwnSessionAlias(Session session) {
+    if (session.getUser() == null) {
+      return null;
+    }
+    var user = new SessionUserDTO();
+    user.setId(session.getUser().getUserId());
+    user.setUsername(new UsernameTranscoder().decodeUsername(session.getUser().getUsername()));
+    if (nonNull(session.getSessionData())) {
+      session.getSessionData().stream()
+          .filter(data -> SessionDataKeyRegistration.DISPLAY_NAME.getValue().equals(data.getKey()))
+          .map(SessionData::getValue)
+          .filter(value -> value != null && !value.isBlank())
+          .findFirst()
+          .ifPresent(user::setDisplayName);
+    }
+    return user;
+  }
+
   public GroupSessionResponseDTO toGroupSessionResponse(
       UserSessionResponseDTO userSessionResponse) {
     var response =
         new GroupSessionResponseDTO()
             .session(userSessionResponse.getSession())
+            .user(userSessionResponse.getUser())
             .agency(userSessionResponse.getAgency())
             .chat(userSessionResponse.getChat())
             .latestMessage(userSessionResponse.getLatestMessage());

@@ -13,29 +13,37 @@ import static de.caritas.cob.userservice.api.adapters.web.controller.UserAdminCo
 import static de.caritas.cob.userservice.api.adapters.web.controller.UserAdminControllerIT.PER_PAGE_PARAM;
 import static de.caritas.cob.userservice.api.adapters.web.controller.UserAdminControllerIT.REPORT_PATH;
 import static de.caritas.cob.userservice.api.adapters.web.controller.UserAdminControllerIT.SESSION_PATH;
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import de.caritas.cob.userservice.api.adapters.web.dto.AskerFilter;
 import de.caritas.cob.userservice.api.adapters.web.dto.AskerReactivationRequestDTO;
+import de.caritas.cob.userservice.api.adapters.web.dto.AskerSearchResultDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantAdminResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateConsultantAgencyDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateConsultantDTO;
+import de.caritas.cob.userservice.api.adapters.web.dto.TenantDeletionBlockersDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.UpdateAdminConsultantDTO;
 import de.caritas.cob.userservice.api.admin.facade.AskerUserAdminFacade;
 import de.caritas.cob.userservice.api.admin.facade.ConsultantAdminFacade;
 import de.caritas.cob.userservice.api.admin.report.service.ViolationReportGenerator;
 import de.caritas.cob.userservice.api.admin.service.session.SessionAdminService;
+import de.caritas.cob.userservice.api.admin.service.tenant.TenantDeletionBlockerService;
 import de.caritas.cob.userservice.api.admin.service.tenant.TenantService;
 import de.caritas.cob.userservice.api.config.auth.Authority.AuthorityValue;
+import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
 import de.caritas.cob.userservice.api.service.accountinvite.ExistingAccountSetupIssuer;
 import de.caritas.cob.userservice.api.service.session.SessionTopicEnrichmentService;
 import de.caritas.cob.userservice.api.tenant.TenantResolverService;
@@ -45,6 +53,7 @@ import java.util.List;
 import java.util.UUID;
 import org.jeasy.random.EasyRandom;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase;
 import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase.Replace;
@@ -70,6 +79,7 @@ class UserAdminControllerAuthorizationIT {
   private static final String REACTIVATE_ASKER_PATH =
       "/service/useradmin/askers/deletion/reactivate";
   private static final String REACTIVATE_ASKER_ALIAS_PATH = "/useradmin/askers/deletion/reactivate";
+  private static final String ASKERS_PATH = "/useradmin/askers";
 
   private static final ObjectMapper objectMapper = new ObjectMapper();
 
@@ -93,6 +103,95 @@ class UserAdminControllerAuthorizationIT {
   @MockitoBean private AskerUserAdminFacade askerUserAdminFacade;
 
   @MockitoBean private SessionTopicEnrichmentService sessionTopicEnrichmentService;
+
+  @MockitoBean private TenantDeletionBlockerService tenantDeletionBlockerService;
+
+  private static final String TENANT_DELETION_BLOCKERS_PATH =
+      "/useradmin/tenants/121/deletion-blockers";
+
+  @Test
+  void getTenantDeletionBlockers_Should_ReturnUnauthorized_When_noKeycloakAuthorizationIsPresent()
+      throws Exception {
+    mvc.perform(
+            get(TENANT_DELETION_BLOCKERS_PATH).cookie(CSRF_COOKIE).header(CSRF_HEADER, CSRF_VALUE))
+        .andExpect(status().isUnauthorized());
+
+    verifyNoMoreInteractions(tenantDeletionBlockerService);
+  }
+
+  @Test
+  @WithMockUser(authorities = {AuthorityValue.CONSULTANT_DEFAULT, AuthorityValue.CONSULTANT_CREATE})
+  void getTenantDeletionBlockers_Should_ReturnForbidden_When_callerIsNoAdmin() throws Exception {
+    mvc.perform(
+            get(TENANT_DELETION_BLOCKERS_PATH).cookie(CSRF_COOKIE).header(CSRF_HEADER, CSRF_VALUE))
+        .andExpect(status().isForbidden());
+
+    verifyNoMoreInteractions(tenantDeletionBlockerService);
+  }
+
+  @Test
+  @WithMockUser(authorities = {AuthorityValue.SINGLE_TENANT_ADMIN})
+  void getTenantDeletionBlockers_Should_ReturnTheBlockers_When_callerIsATraegerAdmin()
+      throws Exception {
+    when(tenantDeletionBlockerService.findBlockers(121L))
+        .thenReturn(
+            new TenantDeletionBlockersDTO()
+                .deletable(false)
+                .agencies(2L)
+                .consultants(0L)
+                .adviceSeekers(0L)
+                .agencyAdmins(0L)
+                .tenantAdmins(1L)
+                .openInvites(0L));
+
+    mvc.perform(
+            get(TENANT_DELETION_BLOCKERS_PATH).cookie(CSRF_COOKIE).header(CSRF_HEADER, CSRF_VALUE))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.deletable").value(false))
+        .andExpect(jsonPath("$.agencies").value(2))
+        .andExpect(jsonPath("$.tenantAdmins").value(1));
+  }
+
+  @Test
+  @WithMockUser(authorities = {AuthorityValue.TENANT_ADMIN})
+  void getTenantDeletionBlockers_Should_ReturnOk_When_callerHasTenantAdminAuthority()
+      throws Exception {
+    when(tenantDeletionBlockerService.findBlockers(121L))
+        .thenReturn(new TenantDeletionBlockersDTO().deletable(true));
+
+    mvc.perform(
+            get(TENANT_DELETION_BLOCKERS_PATH).cookie(CSRF_COOKIE).header(CSRF_HEADER, CSRF_VALUE))
+        .andExpect(status().isOk());
+
+    verify(tenantDeletionBlockerService).findBlockers(121L);
+  }
+
+  @Test
+  @WithMockUser(authorities = {AuthorityValue.USER_ADMIN})
+  void getTenantDeletionBlockers_Should_ReturnOk_When_callerHasUserAdminAuthority()
+      throws Exception {
+    when(tenantDeletionBlockerService.findBlockers(121L))
+        .thenReturn(new TenantDeletionBlockersDTO().deletable(true));
+
+    mvc.perform(
+            get(TENANT_DELETION_BLOCKERS_PATH).cookie(CSRF_COOKIE).header(CSRF_HEADER, CSRF_VALUE))
+        .andExpect(status().isOk());
+
+    verify(tenantDeletionBlockerService).findBlockers(121L);
+  }
+
+  /** {@code AdminScope} refuses a Träger outside the caller's reach with ForbiddenException. */
+  @Test
+  @WithMockUser(authorities = {AuthorityValue.SINGLE_TENANT_ADMIN})
+  void getTenantDeletionBlockers_Should_ReturnForbidden_When_theTraegerIsOutsideTheCallersReach()
+      throws Exception {
+    when(tenantDeletionBlockerService.findBlockers(121L))
+        .thenThrow(new ForbiddenException("out of scope"));
+
+    mvc.perform(
+            get(TENANT_DELETION_BLOCKERS_PATH).cookie(CSRF_COOKIE).header(CSRF_HEADER, CSRF_VALUE))
+        .andExpect(status().isForbidden());
+  }
 
   @Test
   void reactivateAsker_Should_ReturnUnauthorized_When_noKeycloakAuthorizationIsPresent()
@@ -214,7 +313,7 @@ class UserAdminControllerAuthorizationIT {
     request.setUsername("marge.simpson@dreambau.de");
     request.setEmail("marge.simpson@dreambau.de");
     request.setTenantId(40L);
-    request.setPassword("NewPassw0rd!");
+    request.setPassword("NewPassw0rd!12345!");
     return request;
   }
 
@@ -358,6 +457,54 @@ class UserAdminControllerAuthorizationIT {
   }
 
   @Test
+  void getAskers_Should_ReturnUnauthorizedAndCallNoMethods_When_noKeycloakAuthorizationIsPresent()
+      throws Exception {
+
+    mvc.perform(get(ASKERS_PATH).cookie(CSRF_COOKIE).header(CSRF_HEADER, CSRF_VALUE))
+        .andExpect(status().isUnauthorized());
+
+    verifyNoMoreInteractions(askerUserAdminFacade);
+  }
+
+  @Test
+  @WithMockUser(authorities = {AuthorityValue.CONSULTANT_DEFAULT, AuthorityValue.CONSULTANT_CREATE})
+  void getAskers_Should_ReturnForbiddenAndCallNoMethods_When_noUserAdminAuthority()
+      throws Exception {
+
+    mvc.perform(
+            get(ASKERS_PATH)
+                .param(PAGE_PARAM, "1")
+                .param(PER_PAGE_PARAM, "20")
+                .cookie(CSRF_COOKIE)
+                .header(CSRF_HEADER, CSRF_VALUE))
+        .andExpect(status().isForbidden());
+
+    verifyNoMoreInteractions(askerUserAdminFacade);
+  }
+
+  @Test
+  @WithMockUser(authorities = {AuthorityValue.USER_ADMIN})
+  void getAskers_Should_ReturnOkAndPassFilter_When_userAdminAuthority() throws Exception {
+    when(askerUserAdminFacade.findAskers(any(), any(), any()))
+        .thenReturn(new AskerSearchResultDTO().total(0L));
+
+    mvc.perform(
+            get(ASKERS_PATH)
+                .param(PAGE_PARAM, "2")
+                .param(PER_PAGE_PARAM, "20")
+                .param("username", "anna")
+                .param("agencyId", "5,6")
+                .cookie(CSRF_COOKIE)
+                .header(CSRF_HEADER, CSRF_VALUE))
+        .andExpect(status().isOk());
+
+    var filter = ArgumentCaptor.forClass(AskerFilter.class);
+    verify(askerUserAdminFacade).findAskers(eq(2), eq(20), filter.capture());
+    assertThat(filter.getValue().getUsername()).isEqualTo("anna");
+    assertThat(filter.getValue().getAgencyId()).containsExactly(5L, 6L);
+  }
+
+  @Test
   void
       getConsultant_Should_ReturnUnauthorizedAndCallNoMethods_When_noKeycloakAuthorizationIsPresent()
           throws Exception {
@@ -492,7 +639,7 @@ class UserAdminControllerAuthorizationIT {
     // fixed default seed, so adding fields to any DTO shifts the deterministic string stream —
     // which can hand `password` a value shorter than its @Size(min = 8) and turn this into a
     // seed-dependent 400. Pin the only min-length-constrained field to a valid value.
-    createConsultantDTO.setPassword("SecurePass123!");
+    createConsultantDTO.setPassword("SecurePass123!ok16");
     when(consultantAdminFacade.createNewConsultant(any()))
         .thenReturn(
             new ConsultantAdminResponseDTO().embedded(new ConsultantDTO().id("consultant-1")));

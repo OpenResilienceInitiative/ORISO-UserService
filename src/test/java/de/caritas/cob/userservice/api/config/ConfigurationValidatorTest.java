@@ -6,6 +6,9 @@ import static org.springframework.test.util.ReflectionTestUtils.setField;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.NullAndEmptySource;
+import org.junit.jupiter.params.provider.ValueSource;
 
 class ConfigurationValidatorTest {
 
@@ -75,6 +78,59 @@ class ConfigurationValidatorTest {
         .hasMessageContaining("agency.service.api.url")
         .hasMessageContaining("agency.admin.service.api.url")
         .hasMessageContaining("tenant.service.api.url");
+  }
+
+  @ParameterizedTest
+  @NullAndEmptySource
+  @ValueSource(strings = {" "})
+  void validateConfigurationShouldAllowAbsentScopedTopicServiceApiUrl(String value) {
+    setField(validator, "scopedTopicServiceApiUrl", value);
+
+    assertThatCode(validator::validateConfiguration).doesNotThrowAnyException();
+  }
+
+  @ParameterizedTest
+  @ValueSource(
+      strings = {
+        "http://consultingtypeservice:8080",
+        "https://catalogue-service:8443/prefix",
+        "http://localhost:8083"
+      })
+  void validateConfigurationShouldAllowInternalScopedTopicServiceApiUrl(String value) {
+    setField(validator, "scopedTopicServiceApiUrl", value);
+
+    assertThatCode(validator::validateConfiguration).doesNotThrowAnyException();
+  }
+
+  @ParameterizedTest
+  @ValueSource(
+      strings = {
+        "http://consultingtypeservice.dev:8080",
+        "https://topics.example.org",
+        "http://consultingtypeservice.:8080",
+        "http://127.0.0.1:8083",
+        "http://[::1]:8083",
+        "http://2130706433",
+        "ftp://catalogue-service",
+        "/topic/public",
+        "http:/catalogue-service",
+        "http://invalid_host",
+        "http://catalogue-service:65536",
+        "http://catalogue-service:",
+        "http://catalogue-service?q=on",
+        "http://catalogue-service#fragment",
+        "http://fake-credential@catalogue-service",
+        "http://catalogue-service/bad path",
+        " http://catalogue-service"
+      })
+  void validateConfigurationShouldRejectInvalidScopedTopicServiceApiUrl(String value) {
+    setField(validator, "scopedTopicServiceApiUrl", value);
+
+    assertThatThrownBy(validator::validateConfiguration)
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining(
+            "consulting.type.service.scoped.api.url (CONSULTING_TYPE_SERVICE_SCOPED_API_URL)")
+        .hasMessageNotContaining(value);
   }
 
   private void givenAllRequiredConfigurationValues() {

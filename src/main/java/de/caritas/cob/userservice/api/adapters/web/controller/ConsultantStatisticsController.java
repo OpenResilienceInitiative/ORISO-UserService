@@ -25,7 +25,10 @@ public class ConsultantStatisticsController {
 
   @GetMapping({"/users/statistics/consultant", "/service/users/statistics/consultant"})
   public ResponseEntity<ConsultantStatistics> getConsultantStatistics(
-      @RequestParam String startDate, @RequestParam String endDate) {
-    return ResponseEntity.ok(consultantStatisticsService.buildStatistics(startDate, endDate));
+      @RequestParam String startDate,
+      @RequestParam String endDate,
+      @RequestParam(required = false) String breakdown) {
+    return ResponseEntity.ok(
+        consultantStatisticsService.buildStatistics(startDate, endDate, breakdown));
   }
 }

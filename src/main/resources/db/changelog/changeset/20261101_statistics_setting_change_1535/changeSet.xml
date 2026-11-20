@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+  xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-3.2.xsd">
+  <!-- Global statistics settings and their protocol (OBP #93, UserService#1535). Append-only:
+       the latest line per setting is its current value, older lines show which rule applied
+       when. One introduction line per setting records today's behaviour, so each setting has a
+       "valid since" date from the start. changed_by_id NULL = recorded by the system. -->
+  <changeSet id="20261101-statistics-setting-change" author="oriso">
+    <createTable tableName="statistics_setting_change">
+      <column name="id" type="BIGINT" autoIncrement="true">
+        <constraints primaryKey="true" nullable="false"/>
+      </column>
+      <column name="setting_key" type="VARCHAR(64)">
+        <constraints nullable="false"/>
+      </column>
+      <column name="old_value" type="VARCHAR(64)"/>
+      <column name="new_value" type="VARCHAR(64)">
+        <constraints nullable="false"/>
+      </column>
+      <column name="changed_by_id" type="VARCHAR(64)"/>
+      <column name="changed_by_name" type="VARCHAR(255)"/>
+      <column name="effective_from" type="DATETIME">
+        <constraints nullable="false"/>
+      </column>
+    </createTable>
+    <createIndex tableName="statistics_setting_change" indexName="idx_statistics_setting_change_key">
+      <column name="setting_key"/>
+      <column name="id"/>
+    </createIndex>
+    <insert tableName="statistics_setting_change">
+      <column name="setting_key" value="agencyMinimumCounsellors"/>
+      <column name="new_value" value="5"/>
+      <column name="effective_from" valueComputed="CURRENT_TIMESTAMP"/>
+    </insert>
+    <insert tableName="statistics_setting_change">
+      <column name="setting_key" value="tenantMinimumCounsellors"/>
+      <column name="new_value" value="5"/>
+      <column name="effective_from" valueComputed="CURRENT_TIMESTAMP"/>
+    </insert>
+    <insert tableName="statistics_setting_change">
+      <column name="setting_key" value="platformMinimumCounsellors"/>
+      <column name="new_value" value="5"/>
+      <column name="effective_from" valueComputed="CURRENT_TIMESTAMP"/>
+    </insert>
+    <insert tableName="statistics_setting_change">
+      <column name="setting_key" value="messageCountTracking"/>
+      <column name="new_value" value="ENABLED"/>
+      <column name="effective_from" valueComputed="CURRENT_TIMESTAMP"/>
+    </insert>
+    <rollback>
+      <dropTable tableName="statistics_setting_change"/>
+    </rollback>
+  </changeSet>
+</databaseChangeLog>

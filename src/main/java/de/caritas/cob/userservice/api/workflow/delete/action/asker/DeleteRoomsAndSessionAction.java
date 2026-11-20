@@ -119,9 +119,10 @@ abstract class DeleteRoomsAndSessionAction {
     }
   }
 
-  protected void deleteSession(Session session, List<DeletionWorkflowError> workflowErrors) {
+  protected boolean deleteSession(Session session, List<DeletionWorkflowError> workflowErrors) {
     try {
       this.sessionRepository.delete(session);
+      return true;
     } catch (Exception e) {
       log.error("UserService delete workflow error: ", e);
       workflowErrors.add(
@@ -132,16 +133,17 @@ abstract class DeleteRoomsAndSessionAction {
               .reason("Unable to delete session")
               .timestamp(nowInUtc())
               .build());
+      return false;
     }
   }
 
-  void performSessionDeletion(Session session, List<DeletionWorkflowError> workflowErrors) {
+  boolean performSessionDeletion(Session session, List<DeletionWorkflowError> workflowErrors) {
 
     deleteSessionData(session, workflowErrors);
     deleteSessionSupervisors(session, workflowErrors);
     deleteSessionTopics(session, workflowErrors);
     deleteCaseHandoverRequests(session, workflowErrors);
     deleteTeamDiscussion(session, workflowErrors);
-    deleteSession(session, workflowErrors);
+    return deleteSession(session, workflowErrors);
   }
 }

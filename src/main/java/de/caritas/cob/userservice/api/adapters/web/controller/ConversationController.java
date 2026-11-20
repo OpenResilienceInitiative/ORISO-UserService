@@ -172,7 +172,8 @@ public class ConversationController implements ConversationsApi {
             mapper.agencyIdOf(sessionMap),
             consultingTypeId,
             mainTopicId,
-            mapper.createDateOf(sessionMap));
+            mapper.createDateOf(sessionMap),
+            sessionId);
     var anonymousEnquiry =
         mapper.anonymousEnquiryOf(sessionMap, numAvailableConsultants, peopleAhead);
 

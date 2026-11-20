@@ -19,6 +19,8 @@ import de.caritas.cob.userservice.api.port.out.SessionSupervisorRepository;
 import de.caritas.cob.userservice.api.service.CaseHandoverMatrixRepairService;
 import de.caritas.cob.userservice.api.service.chat.MembersOnlyChatAccess;
 import de.caritas.cob.userservice.api.service.consultant.ConsultantChatIdentityService;
+import de.caritas.cob.userservice.api.service.conversationfeature.ConversationFeature;
+import de.caritas.cob.userservice.api.service.conversationfeature.ConversationFeatureGate;
 import de.caritas.cob.userservice.api.service.session.AnonymousSessionRegistration;
 import de.caritas.cob.userservice.api.service.user.UserAccountService;
 import de.caritas.cob.userservice.api.supervision.SupervisionConsent;
@@ -54,6 +56,7 @@ public class SessionSupervisorFacade {
   private final @NonNull IdentityClient identityClient;
   private final @NonNull MembersOnlyChatAccess membersOnlyChatAccess;
   private final @NonNull CaseHandoverMatrixRepairService matrixRepairService;
+  private final @NonNull ConversationFeatureGate conversationFeatureGate;
 
   /**
    * ADR-008 item 4: the current request's authenticated user, used to check the Berater-Admin
@@ -168,6 +171,11 @@ public class SessionSupervisorFacade {
         "Permission granted for consultant {} to add supervisor to session {}",
         addedByConsultant.getId(),
         sessionId);
+
+    // An admin who switched supervision off for the Träger or Beratungsstelle (#1564): the app
+    // hides the button, this is the server refusing it. After the permission check, so a person
+    // without access learns nothing about the settings.
+    conversationFeatureGate.require(ConversationFeature.SUPERVISION, session);
 
     // Get supervisor consultant
     Consultant supervisorConsultant =

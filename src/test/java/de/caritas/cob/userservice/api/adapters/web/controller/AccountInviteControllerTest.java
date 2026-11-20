@@ -501,6 +501,26 @@ class AccountInviteControllerTest {
   }
 
   @Test
+  void listInvites_Should_keepEveryScalarPhaseAndRejectAmbiguousParameters() {
+    when(accountInviteService.listAllInvites(null, null, null)).thenReturn(List.of());
+    for (var phase :
+        de.caritas.cob.userservice.api.service.accountinvite.InviteProgress.Phase.values())
+      assertEquals(
+          HttpStatus.OK,
+          controller
+              .listInvites(null, null, null, phase.name(), null, null, null, null)
+              .getStatusCode());
+    assertThrows(
+        BadRequestException.class,
+        () ->
+            controller.listInvites(
+                null, null, null, "CLOSED", null, null, null, null, null, null, "NEEDS_ACTION"));
+    assertThrows(
+        BadRequestException.class,
+        () -> controller.listInvites(null, null, null, "", null, null, null, null, null, null, ""));
+  }
+
+  @Test
   void listInvites_Should_throwBadRequest_When_unknownEnum() {
     assertThrows(
         BadRequestException.class,
@@ -570,6 +590,16 @@ class AccountInviteControllerTest {
 
     assertEquals(HttpStatus.OK, response.getStatusCode());
     verify(accountInviteService).revokeInvite(10L);
+  }
+
+  @Test
+  void deleteInvite_Should_returnNoContent() throws Exception {
+    MockMvcBuilders.standaloneSetup(controller)
+        .build()
+        .perform(delete("/useradmin/account-invites/10"))
+        .andExpect(status().isNoContent());
+
+    verify(accountInviteService).deleteInvite(10L);
   }
 
   @Test
@@ -774,10 +804,36 @@ class AccountInviteControllerTest {
         Integer.class,
         Integer.class);
     assertHasPreAuthorize(
+        "listInvites",
+        String.class,
+        String.class,
+        String.class,
+        String.class,
+        Long.class,
+        String.class,
+        Integer.class,
+        Integer.class,
+        String.class,
+        String.class);
+    assertHasPreAuthorize(
+        "listInvites",
+        String.class,
+        String.class,
+        String.class,
+        String.class,
+        Long.class,
+        String.class,
+        Integer.class,
+        Integer.class,
+        String.class,
+        String.class,
+        String.class);
+    assertHasPreAuthorize(
         "sendInvite", Long.class, AccountInviteController.SendInviteRequestDTO.class);
     assertHasPreAuthorize(
         "resendInvite", Long.class, AccountInviteController.SendInviteRequestDTO.class);
     assertHasPreAuthorize("revokeInvite", Long.class);
+    assertHasPreAuthorize("deleteInvite", Long.class);
     assertHasPreAuthorize(
         "changeRole", Long.class, AccountInviteController.ChangeRoleRequestDTO.class);
     assertHasPreAuthorize("createTemplate", AccountInviteController.TemplateRequestDTO.class);
@@ -811,6 +867,46 @@ class AccountInviteControllerTest {
     assertEquals(LocalDateTime.parse("2026-08-20T10:00:00"), dto.dpaForwardedAt);
     assertEquals(2, dto.dpaForwardCount);
     assertEquals(LocalDateTime.parse("2026-08-21T09:30:00"), dto.dpaSignedAt);
+  }
+
+  /**
+   * ORISO-Admin#1522 / ORISO-UserService#1617: between two expiry sweeps a lapsed invite must not
+   * be listed as open. The stored row is left alone; only the view says EXPIRED.
+   */
+  @Test
+  void responseDto_Should_ReportAnElapsedOpenInviteAsExpired() {
+    var invite = sampleInvite();
+    invite.setStatus(AccountInviteStatus.EMAIL_SENT);
+    invite.setExpiresAt(LocalDateTime.now().minusMinutes(1));
+
+    var dto = AccountInviteController.AccountInviteResponseDTO.from(invite, null, null);
+
+    assertEquals("EXPIRED", dto.inviteStatus);
+    assertEquals(AccountInviteStatus.EMAIL_SENT, invite.getStatus());
+  }
+
+  @Test
+  void responseDto_Should_KeepTheStatusOfAStillValidOrSettledInvite() {
+    var valid = sampleInvite();
+    valid.setStatus(AccountInviteStatus.EMAIL_SENT);
+    valid.setExpiresAt(LocalDateTime.now().plusDays(1));
+    var accepted = sampleInvite();
+    accepted.setStatus(AccountInviteStatus.ACCEPTED);
+    accepted.setExpiresAt(LocalDateTime.now().minusDays(1));
+    // Sending a draft re-arms its expiry, so a lapsed draft is still a draft.
+    var draft = sampleInvite();
+    draft.setStatus(AccountInviteStatus.DRAFT);
+    draft.setExpiresAt(LocalDateTime.now().minusDays(1));
+
+    assertEquals(
+        "DRAFT",
+        AccountInviteController.AccountInviteResponseDTO.from(draft, null, null).inviteStatus);
+    assertEquals(
+        "EMAIL_SENT",
+        AccountInviteController.AccountInviteResponseDTO.from(valid, null, null).inviteStatus);
+    assertEquals(
+        "ACCEPTED",
+        AccountInviteController.AccountInviteResponseDTO.from(accepted, null, null).inviteStatus);
   }
 
   private static AccountInvite sampleInviteWithDpaState() {

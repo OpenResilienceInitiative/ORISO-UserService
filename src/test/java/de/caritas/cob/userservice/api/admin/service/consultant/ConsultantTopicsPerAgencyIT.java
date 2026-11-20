@@ -22,7 +22,6 @@ import de.caritas.cob.userservice.api.port.out.ConsultantAgencyRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantTopicRepository;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
-import de.caritas.cob.userservice.api.service.appointment.AppointmentService;
 import de.caritas.cob.userservice.api.service.consultingtype.TopicService;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -72,7 +71,6 @@ class ConsultantTopicsPerAgencyIT {
   @MockitoBean private AgencyService agencyService;
   @MockitoBean private TopicService topicService;
   @MockitoBean private AccountManager accountManager;
-  @MockitoBean private AppointmentService appointmentService;
 
   @BeforeEach
   void stubAgencyCoverage() {

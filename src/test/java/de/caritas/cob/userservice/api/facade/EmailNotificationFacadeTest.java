@@ -40,6 +40,7 @@ import de.caritas.cob.userservice.api.helper.json.JsonSerializationUtils;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.ConsultantAgency;
 import de.caritas.cob.userservice.api.model.ConsultantStatus;
+import de.caritas.cob.userservice.api.model.ConversationType;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.Session.SessionStatus;
 import de.caritas.cob.userservice.api.model.User;
@@ -643,6 +644,8 @@ class EmailNotificationFacadeTest {
   @Test
   void sendReassignRequestNotification_Should_SendEmail_When_askerHasValidMailAddress() {
     var session = new EasyRandom().nextObject(Session.class);
+    session.setConversationType(ConversationType.AGENCY_COUNSELLING);
+    session.getUser().setTenantId(1L);
     when(sessionService.getSessionByMatrixRoomId(any())).thenReturn(session);
     session.getUser().setEmail("mail@valid.de");
     session
@@ -653,6 +656,49 @@ class EmailNotificationFacadeTest {
     emailNotificationFacade.sendReassignRequestNotification("id", null);
 
     verify(mailService).sendEmailNotification(Mockito.any());
+  }
+
+  /** Frontend#1979: the Admin "Berechtigungen" switch advice-seeker e-mail off server-side. */
+  @Test
+  void sendReassignRequestNotification_ShouldNot_SendEmail_When_tenantForbidsAskerEmail() {
+    var session = new EasyRandom().nextObject(Session.class);
+    session.setConversationType(ConversationType.AGENCY_COUNSELLING);
+    session.getUser().setTenantId(7L);
+    when(sessionService.getSessionByMatrixRoomId(any())).thenReturn(session);
+    session.getUser().setEmail("mail@valid.de");
+    session
+        .getUser()
+        .setNotificationsSettings(
+            JsonSerializationUtils.serializeToJsonString(new NotificationsSettingsDTO()));
+    when(tenants.getRestrictedTenantDataFresh(7L))
+        .thenReturn(
+            new de.caritas.cob.userservice.tenantservice.generated.web.model.RestrictedTenantDTO()
+                .id(7L)
+                .settings(
+                    new de.caritas.cob.userservice.tenantservice.generated.web.model.Settings()
+                        .featureAskerEmailEnabled(false)));
+
+    emailNotificationFacade.sendReassignRequestNotification("id", null);
+
+    verifyNoInteractions(mailService);
+  }
+
+  @Test
+  void sendReassignRequestNotification_ShouldNot_SendEmail_When_tenantPolicyIsUnreadable() {
+    var session = new EasyRandom().nextObject(Session.class);
+    session.setConversationType(ConversationType.AGENCY_COUNSELLING);
+    session.getUser().setTenantId(7L);
+    when(sessionService.getSessionByMatrixRoomId(any())).thenReturn(session);
+    session.getUser().setEmail("mail@valid.de");
+    session
+        .getUser()
+        .setNotificationsSettings(
+            JsonSerializationUtils.serializeToJsonString(new NotificationsSettingsDTO()));
+    when(tenants.getRestrictedTenantDataFresh(7L)).thenReturn(null);
+
+    emailNotificationFacade.sendReassignRequestNotification("id", null);
+
+    verifyNoInteractions(mailService);
   }
 
   @Test

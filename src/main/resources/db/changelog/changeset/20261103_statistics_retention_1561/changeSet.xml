@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+  xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-3.2.xsd">
+  <!-- Retention of message counts (UserService#1561). The only existing index starts with
+       consultant_hmac, so the daily purge of rows older than the cutoff would scan the whole
+       table. Idempotent (IF NOT EXISTS). Note for the change log of the statistics settings: since
+       UserService#1561 a NULL changed_by_id on an older line can also mean "removed by retention",
+       not only "recorded by the system" as the older changesets define it. -->
+  <changeSet id="20261103-consultant-message-stat-sent-date-index" author="oriso">
+    <sql>CREATE INDEX IF NOT EXISTS idx_consultant_message_stat_sent_date ON consultant_message_stat (sent_date)</sql>
+    <rollback>
+      <sql>DROP INDEX IF EXISTS idx_consultant_message_stat_sent_date ON consultant_message_stat</sql>
+    </rollback>
+  </changeSet>
+</databaseChangeLog>

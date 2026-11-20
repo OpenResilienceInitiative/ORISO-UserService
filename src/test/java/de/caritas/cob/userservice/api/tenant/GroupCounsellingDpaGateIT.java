@@ -196,8 +196,10 @@ class GroupCounsellingDpaGateIT extends GroupCounsellingDpaHttpFixture {
               consultant.getId()));
     } else if (route == Route.FIRST_START) {
       assertTrue(chats.findById(addressedChat.getId()).orElseThrow().isActive());
+      // FE#1211: the opener is the only participant here and gets no notice of their own start;
+      // StartChatFacadeTest pins that everybody else is told.
       assertEquals(
-          1,
+          0,
           database.queryForObject(
               "SELECT COUNT(*) FROM event_notification WHERE deduplication_key LIKE ?",
               Integer.class,
@@ -346,10 +348,12 @@ class GroupCounsellingDpaGateIT extends GroupCounsellingDpaHttpFixture {
       strings = {"/users/chat/new", "/users/chat/v2/new"})
   void foreignAgencyWithSignedOwnerCannotCreateAWrongOwnedExternalGroup(String path)
       throws Exception {
+    firstAgencyProjectionIsScopedPolicy = true;
     agencyTenant = 42L;
     var response = create(true, path);
     assertEquals(502, response.statusCode(), response.body());
     assertEquals("DPA_POLICY_UNAVAILABLE", response.headers().firstValue("X-Reason").orElse(""));
+    assertEquals(2, agencyProjectionReads.get());
     assertEquals(0, ownerReads.get());
     assertEquals(0, recipientOwnerReads.get());
     assertNoFirstEntryWrites();

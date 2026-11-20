@@ -61,6 +61,11 @@ class ChatStartTimeContractTest {
 
   @Mock private de.caritas.cob.userservice.api.actions.chat.MatrixChatShutdownService shutdown;
   @Mock private ChatRepository chatRepository;
+
+  @Mock
+  private de.caritas.cob.userservice.api.service.matrixgroup.GroupMatrixLifecycleCleanup
+      participationHistory;
+
   @Mock private ChatAgencyRepository chatAgencyRepository;
   @Mock private UserChatRepository chatUserRepository;
   @Mock private ConsultantService consultantService;
@@ -70,6 +75,10 @@ class ChatStartTimeContractTest {
   @Mock private GroupChatConsultantAccess groupChatConsultantAccess;
   @Mock private GroupChatInviteTokenService groupChatInviteTokenService;
   @Mock private AgencyService agencyService;
+
+  @Mock
+  private de.caritas.cob.userservice.api.port.out.ChatOccurrenceExceptionRepository
+      chatOccurrenceExceptionRepository;
 
   private final ChatConverter chatConverter = new ChatConverter();
 

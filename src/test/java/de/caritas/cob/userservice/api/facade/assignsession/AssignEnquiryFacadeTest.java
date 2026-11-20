@@ -42,6 +42,7 @@ import de.caritas.cob.userservice.api.port.out.UserRepository;
 import de.caritas.cob.userservice.api.service.agency.AgencyMatrixCredentialClient;
 import de.caritas.cob.userservice.api.service.agency.dto.AgencyMatrixCredentialsDTO;
 import de.caritas.cob.userservice.api.service.notification.EventNotificationService;
+import de.caritas.cob.userservice.api.service.session.AgencyEnquiryRoomRetirements;
 import de.caritas.cob.userservice.api.service.session.SessionOwnershipService.OwnershipChange;
 import de.caritas.cob.userservice.api.service.session.SessionService;
 import de.caritas.cob.userservice.api.service.statistics.StatisticsService;
@@ -77,18 +78,24 @@ class AssignEnquiryFacadeTest {
   @Mock UserHelper userHelper;
   @Mock UsernameTranscoder usernameTranscoder;
   @Mock AgencyMatrixCredentialClient agencyMatrixCredentialClient;
+  @Mock AgencyEnquiryRoomRetirements roomRetirements;
   @Mock EventNotificationService eventNotificationService;
   @Mock de.caritas.cob.userservice.api.facade.SessionSupervisorFacade sessionSupervisorFacade;
   @Mock de.caritas.cob.userservice.api.facade.TeamDiscussionFacade teamDiscussionFacade;
 
   @Mock private ConsultantDisplayNameResolver consultantDisplayNameResolver;
   @Mock AnonymousEnquiryDepartmentResolver anonymousEnquiryDepartmentResolver;
+  @Mock de.caritas.cob.userservice.api.port.in.Messaging messaging;
 
   @Mock
   de.caritas.cob.userservice.api.service.matrix.InquiryAcceptanceNoticeStore acceptanceNotices;
 
   @Mock
   de.caritas.cob.userservice.api.service.matrix.InquiryAcceptanceNoticeDelivery acceptanceDelivery;
+
+  @Mock
+  de.caritas.cob.userservice.api.service.furthercounselling.TopicDuplicateService
+      topicDuplicateService;
 
   private static final String USER_MATRIX_ID = "@user:matrix.example.com";
   private static final String CONSULTANT_MATRIX_ID = "@consultant:matrix.example.com";
@@ -117,12 +124,15 @@ class AssignEnquiryFacadeTest {
             usernameTranscoder,
             consultantDisplayNameResolver,
             agencyMatrixCredentialClient,
+            roomRetirements,
             eventNotificationService,
             anonymousEnquiryDepartmentResolver,
             sessionSupervisorFacade,
             teamDiscussionFacade,
             acceptanceNotices,
-            acceptanceDelivery);
+            acceptanceDelivery,
+            topicDuplicateService,
+            messaging);
     CONSULTANT_WITH_AGENCY.setTenantId(41L);
     // ADR-002 §2: the display name comes from the resolver, never from the real name.
     lenient()
@@ -202,6 +212,28 @@ class AssignEnquiryFacadeTest {
   }
 
   @Test
+  void assignRegisteredEnquiry_Should_NoticeSameTopicConversations_OnInitialAcceptance() {
+    TenantContext.setCurrentTenant(CURRENT_TENANT_ID);
+
+    assignEnquiryFacade.assignRegisteredEnquiry(SESSION_WITHOUT_CONSULTANT, CONSULTANT_WITH_AGENCY);
+
+    verify(topicDuplicateService).notifyDuplicateStarted(SESSION_WITHOUT_CONSULTANT.getId());
+  }
+
+  @Test
+  void assignRegisteredEnquiry_Should_StillAccept_WhenTheSameTopicNoticeFails() {
+    TenantContext.setCurrentTenant(CURRENT_TENANT_ID);
+    Mockito.doThrow(new IllegalStateException("matrix down"))
+        .when(topicDuplicateService)
+        .notifyDuplicateStarted(any());
+
+    assignEnquiryFacade.assignRegisteredEnquiry(SESSION_WITHOUT_CONSULTANT, CONSULTANT_WITH_AGENCY);
+
+    verify(eventNotificationService)
+        .createInquiryAcceptedNotification(SESSION_WITHOUT_CONSULTANT, CONSULTANT_WITH_AGENCY);
+  }
+
+  @Test
   void assignEnquiry_Should_EnsureAdminMembershipInNewMatrixRoom() {
     // The notification listener syncs as the technical admin; the freshly created
     // session room must contain the admin or message notifications never fire.
@@ -266,11 +298,33 @@ class AssignEnquiryFacadeTest {
     verify(eventNotificationService)
         .createInquiryAcceptedNotification(
             ANONYMOUS_ENQUIRY_WITHOUT_CONSULTANT, CONSULTANT_WITH_AGENCY);
+    verify(eventNotificationService)
+        .retireOpenEnquiryNotifications(
+            ANONYMOUS_ENQUIRY_WITHOUT_CONSULTANT, CONSULTANT_WITH_AGENCY.getId());
   }
 
   // ---------------------------------------------------------------------------
   // assignAnonymousEnquiry — department binding (ADR-022 decision 1, ADR-003)
   // ---------------------------------------------------------------------------
+
+  @Test
+  void anonymousQueueRefusalDoesNotAssignOrCreateAMatrixRoom() {
+    var session = unboundTopicBasedAnonymousEnquiry();
+    var blocked =
+        new de.caritas.cob.userservice.api.exception.httpresponses
+            .CustomValidationHttpStatusException(
+            de.caritas.cob.userservice.api.exception.httpresponses.customheader
+                .HttpStatusExceptionReason.LIVE_CHAT_QUEUE_NOT_FIRST,
+            org.springframework.http.HttpStatus.CONFLICT);
+    org.mockito.Mockito.doThrow(blocked).when(messaging).requireFirstLiveChatEnquiry(session);
+
+    org.assertj.core.api.Assertions.assertThatThrownBy(
+            () -> assignEnquiryFacade.assignAnonymousEnquiry(session, CONSULTANT_WITH_AGENCY))
+        .isSameAs(blocked);
+    verify(sessionService, never()).updateConsultantAndStatusForSession(any(), any(), any());
+    org.mockito.Mockito.verifyNoInteractions(
+        sessionRoomGateway, anonymousEnquiryDepartmentResolver);
+  }
 
   @Test
   void assignAnonymousEnquiry_Should_bindTheAcceptingConsultantsDepartment_inTheSameSave() {
@@ -346,6 +400,7 @@ class AssignEnquiryFacadeTest {
     // Nothing is saved: the enquiry stays NEW and the counsellor can accept it again.
     verify(sessionService, never()).updateConsultantAndStatusForSession(any(), any(), any());
     verify(eventNotificationService, never()).createInquiryAcceptedNotification(any(), any());
+    verify(eventNotificationService, never()).retireOpenEnquiryNotifications(any(), any());
   }
 
   @Test
@@ -430,6 +485,53 @@ class AssignEnquiryFacadeTest {
             SESSION_WITHOUT_CONSULTANT.getId(), CONSULTANT_WITH_AGENCY);
     verify(eventNotificationService)
         .createInquiryAcceptedNotification(SESSION_WITHOUT_CONSULTANT, CONSULTANT_WITH_AGENCY);
+  }
+
+  @Test
+  void assignRegisteredEnquiry_Should_retireTheOtherConsultantsNewRequestEntries() {
+    assignEnquiryFacade.assignRegisteredEnquiry(SESSION_WITHOUT_CONSULTANT, CONSULTANT_WITH_AGENCY);
+
+    // ORISO-Frontend#1472: colleagues must not keep a "New client request" entry for a case that
+    // is no longer open to them.
+    verify(eventNotificationService)
+        .retireOpenEnquiryNotifications(SESSION_WITHOUT_CONSULTANT, CONSULTANT_WITH_AGENCY.getId());
+  }
+
+  @Test
+  void assignRegisteredEnquiry_Should_stillSucceed_When_retiringTheEntriesFails() {
+    org.mockito.Mockito.doThrow(
+            new org.springframework.transaction.UnexpectedRollbackException("cleanup failed"))
+        .when(eventNotificationService)
+        .retireOpenEnquiryNotifications(any(), any());
+
+    org.junit.jupiter.api.Assertions.assertDoesNotThrow(
+        () ->
+            assignEnquiryFacade.assignRegisteredEnquiry(
+                SESSION_WITHOUT_CONSULTANT, CONSULTANT_WITH_AGENCY));
+    verify(eventNotificationService)
+        .createInquiryAcceptedNotification(SESSION_WITHOUT_CONSULTANT, CONSULTANT_WITH_AGENCY);
+  }
+
+  @Test
+  void assignRegisteredEnquiry_Should_retireTheEntriesOnlyAfterTheAcceptanceCommitted() {
+    org.springframework.transaction.support.TransactionSynchronizationManager.initSynchronization();
+    try {
+      assignEnquiryFacade.assignRegisteredEnquiry(
+          SESSION_WITHOUT_CONSULTANT, CONSULTANT_WITH_AGENCY);
+
+      verify(eventNotificationService, never()).retireOpenEnquiryNotifications(any(), any());
+
+      org.springframework.transaction.support.TransactionSynchronizationManager
+          .getSynchronizations()
+          .forEach(org.springframework.transaction.support.TransactionSynchronization::afterCommit);
+
+      verify(eventNotificationService)
+          .retireOpenEnquiryNotifications(
+              SESSION_WITHOUT_CONSULTANT, CONSULTANT_WITH_AGENCY.getId());
+    } finally {
+      org.springframework.transaction.support.TransactionSynchronizationManager
+          .clearSynchronization();
+    }
   }
 
   // ---------------------------------------------------------------------------
@@ -632,8 +734,13 @@ class AssignEnquiryFacadeTest {
   }
 
   @Test
-  void assignEnquiry_Should_FallBackToNewRoom_When_AgencyCredentialsAbsent() throws Exception {
+  void assignEnquiry_Should_RetireItsFormerHoldingRoom_When_AgencyCredentialsAbsent()
+      throws Exception {
     Session session = sessionWithUser(USER_MATRIX_ID, "!existing-room:matrix.example.com");
+    session.setAgencyId(21L);
+    session.setTenantId(41L);
+    session.setIsConsultantDirectlySet(false);
+    session.setConversationType(null);
     Consultant consultant = consultantWithMatrixId(CONSULTANT_MATRIX_ID);
 
     when(agencyMatrixCredentialClient.fetchMatrixCredentials(any())).thenReturn(Optional.empty());
@@ -641,6 +748,9 @@ class AssignEnquiryFacadeTest {
     assignEnquiryFacade.assignRegisteredEnquiry(session, consultant);
 
     verify(sessionRoomGateway).createRoomAsUser(any(), any(), any());
+    verify(roomRetirements)
+        .replaceRoom(eq(session), any(OwnershipChange.class), eq(MATRIX_ROOM_ID));
+    verify(sessionService, never()).saveSession(session);
   }
 
   @Test
@@ -771,13 +881,16 @@ class AssignEnquiryFacadeTest {
       var callbacks =
           org.springframework.transaction.support.TransactionSynchronizationManager
               .getSynchronizations();
-      assertThat(callbacks).hasSize(1);
+      // The acceptance notice, the FE#1876 same-topic notice and the timeline cleanup (#1472) all
+      // wait for the commit.
+      assertThat(callbacks).hasSize(3);
       callbacks.forEach(
           cb ->
               cb.afterCompletion(
                   org.springframework.transaction.support.TransactionSynchronization
                       .STATUS_ROLLED_BACK));
-      org.mockito.Mockito.verifyNoInteractions(acceptanceDelivery);
+      org.mockito.Mockito.verifyNoInteractions(acceptanceDelivery, topicDuplicateService);
+      verify(eventNotificationService, never()).retireOpenEnquiryNotifications(any(), any());
     } finally {
       org.springframework.transaction.support.TransactionSynchronizationManager
           .clearSynchronization();

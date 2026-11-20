@@ -31,6 +31,29 @@ class ChatConverterTest {
     assertThat(chat.getConversationType()).isEqualTo(ConversationType.SELF_HELP);
   }
 
+  /** #1662: a Gesprächskreis lets guests choose unless the counsellor sets another mode. */
+  @Test
+  void convertToEntityStoresTheGuestAccountModeOfACircle() {
+    var byDefault = ChatDTO.builder().topic("Kreis").repeatCount(4).build();
+    var temporary =
+        ChatDTO.builder()
+            .topic("Kreis")
+            .repeatCount(4)
+            .guestAccountMode(de.caritas.cob.userservice.api.model.GuestAccountMode.TEMPORARY)
+            .build();
+
+    assertThat(
+            new ChatConverter()
+                .convertToEntity(byDefault, givenConsultant(), givenAgencyDTO())
+                .getGuestAccountMode())
+        .isEqualTo(de.caritas.cob.userservice.api.model.GuestAccountMode.GUEST_CHOOSES);
+    assertThat(
+            new ChatConverter()
+                .convertToEntity(temporary, givenConsultant(), givenAgencyDTO())
+                .getGuestAccountMode())
+        .isEqualTo(de.caritas.cob.userservice.api.model.GuestAccountMode.TEMPORARY);
+  }
+
   @Test
   void convertToEntityPreservesMultilingualGroupChatAuthorContent() {
     var request =

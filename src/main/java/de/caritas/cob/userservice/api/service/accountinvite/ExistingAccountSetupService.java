@@ -6,6 +6,7 @@ import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestExceptio
 import de.caritas.cob.userservice.api.exception.httpresponses.ConflictException;
 import de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHttpStatusException;
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
+import de.caritas.cob.userservice.api.helper.PasswordPolicy;
 import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
 import de.caritas.cob.userservice.api.model.AccountInvite;
 import de.caritas.cob.userservice.api.model.Admin;
@@ -84,6 +85,10 @@ public class ExistingAccountSetupService {
   public void confirm(String rawToken, String chosenPassword) {
     if (isBlank(rawToken) || isBlank(chosenPassword)) {
       throw new BadRequestException("Setup link and chosen password are required");
+    }
+    if (!PasswordPolicy.isLongEnough(chosenPassword)) {
+      throw new BadRequestException(
+          "Chosen password must be at least " + PasswordPolicy.MIN_LENGTH + " characters long");
     }
     SetupTarget target = inTransaction(() -> claim(rawToken));
     try {
