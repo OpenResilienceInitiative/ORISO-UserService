@@ -4,7 +4,6 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
@@ -19,6 +18,7 @@ import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.out.SessionRoomGateway;
 import de.caritas.cob.userservice.api.service.agency.AgencyMatrixCredentialClient;
 import de.caritas.cob.userservice.api.service.agency.dto.AgencyMatrixCredentialsDTO;
+import de.caritas.cob.userservice.api.service.session.AgencySilentMembershipService.InitialRoomContact;
 import java.util.List;
 import java.util.Optional;
 import org.junit.jupiter.api.BeforeEach;
@@ -83,9 +83,6 @@ class AgencyPreAssignmentRoomServiceTest {
     session.setId(SESSION_ID);
     session.setAgencyId(AGENCY_ID);
     session.setMatrixRoomId(null);
-    org.mockito.Mockito.lenient()
-        .when(publication.publish(eq(session), eq(NEW_ROOM_ID), anyList()))
-        .thenReturn(Optional.of(NEW_ROOM_ID));
   }
 
   private AgencyMatrixCredentialsDTO validCredentials() {
@@ -102,6 +99,10 @@ class AgencyPreAssignmentRoomServiceTest {
         .thenReturn(NEW_ROOM_ID);
   }
 
+  private void stubPublishedRoom(List<InitialRoomContact> contacts) {
+    when(publication.publish(session, NEW_ROOM_ID, contacts)).thenReturn(Optional.of(NEW_ROOM_ID));
+  }
+
   @Test
   void ensureHoldingRoomSupportsIdentityOnlyAgencyResponse() throws Exception {
     var identity = new AgencyMatrixCredentialsDTO();
@@ -114,10 +115,12 @@ class AgencyPreAssignmentRoomServiceTest {
     when(sessionRoomGateway.loginAsUser(USER_MATRIX_ID)).thenReturn(USER_TOKEN);
     when(sessionRoomGateway.joinRoom(NEW_ROOM_ID, USER_TOKEN)).thenReturn(true);
 
+    stubPublishedRoom(List.of());
+
     underTest.ensureHoldingRoom(session, user);
 
     assertEquals(NEW_ROOM_ID, session.getMatrixRoomId());
-    verify(publication).publish(eq(session), eq(NEW_ROOM_ID), anyList());
+    verify(publication).publish(session, NEW_ROOM_ID, List.of());
     verify(sessionRoomGateway, never()).loginUser(anyString(), anyString());
   }
 
@@ -128,6 +131,8 @@ class AgencyPreAssignmentRoomServiceTest {
     stubHappyPathUntilRoomCreation();
     when(sessionRoomGateway.loginAsUser(USER_MATRIX_ID)).thenReturn(USER_TOKEN);
     when(sessionRoomGateway.joinRoom(NEW_ROOM_ID, USER_TOKEN)).thenReturn(true);
+
+    stubPublishedRoom(List.of());
 
     underTest.ensureHoldingRoom(session, user);
 
@@ -150,7 +155,7 @@ class AgencyPreAssignmentRoomServiceTest {
     verify(sessionRoomGateway).joinRoom(NEW_ROOM_ID, USER_TOKEN);
 
     // room id persisted on the session
-    verify(publication).publish(eq(session), eq(NEW_ROOM_ID), anyList());
+    verify(publication).publish(session, NEW_ROOM_ID, List.of());
     assertEquals(NEW_ROOM_ID, session.getMatrixRoomId());
   }
 
@@ -220,7 +225,7 @@ class AgencyPreAssignmentRoomServiceTest {
 
     underTest.ensureHoldingRoom(session, user);
 
-    verify(publication, never()).publish(any(), anyString(), anyList());
+    verifyNoInteractions(publication);
     assertNull(session.getMatrixRoomId());
   }
 
@@ -236,7 +241,7 @@ class AgencyPreAssignmentRoomServiceTest {
     underTest.ensureHoldingRoom(session, user);
 
     verify(sessionRoomGateway, never()).inviteUser(anyString(), anyString(), anyString());
-    verify(publication, never()).publish(any(), anyString(), anyList());
+    verifyNoInteractions(publication);
     assertNull(session.getMatrixRoomId());
   }
 
@@ -251,7 +256,7 @@ class AgencyPreAssignmentRoomServiceTest {
 
     underTest.ensureHoldingRoom(session, user);
 
-    verify(publication, never()).publish(any(), anyString(), anyList());
+    verifyNoInteractions(publication);
     assertNull(session.getMatrixRoomId());
   }
 
@@ -269,6 +274,8 @@ class AgencyPreAssignmentRoomServiceTest {
                 1, java.util.List.of(), 0L, contacts));
     when(sessionRoomGateway.loginAsUser(USER_MATRIX_ID)).thenReturn(USER_TOKEN);
     when(sessionRoomGateway.joinRoom(NEW_ROOM_ID, USER_TOKEN)).thenReturn(true);
+
+    stubPublishedRoom(contacts);
 
     underTest.ensureHoldingRoom(session, user);
 
@@ -299,11 +306,13 @@ class AgencyPreAssignmentRoomServiceTest {
     when(sessionRoomGateway.loginAsUser(USER_MATRIX_ID)).thenReturn(USER_TOKEN);
     when(sessionRoomGateway.joinRoom(NEW_ROOM_ID, USER_TOKEN)).thenReturn(true);
 
+    stubPublishedRoom(List.of());
+
     underTest.ensureHoldingRoom(session, user);
 
     verify(sessionRoomGateway).inviteUser(NEW_ROOM_ID, USER_MATRIX_ID, AGENCY_TOKEN);
     verify(sessionRoomGateway).joinRoom(NEW_ROOM_ID, USER_TOKEN);
-    verify(publication).publish(eq(session), eq(NEW_ROOM_ID), anyList());
+    verify(publication).publish(session, NEW_ROOM_ID, List.of());
     assertEquals(NEW_ROOM_ID, session.getMatrixRoomId());
   }
 
@@ -319,11 +328,13 @@ class AgencyPreAssignmentRoomServiceTest {
     when(sessionRoomGateway.loginAsUser(USER_MATRIX_ID)).thenReturn(USER_TOKEN);
     when(sessionRoomGateway.joinRoom(NEW_ROOM_ID, USER_TOKEN)).thenReturn(true);
 
+    stubPublishedRoom(List.of());
+
     underTest.ensureHoldingRoom(session, user);
 
     verify(sessionRoomGateway).inviteUser(NEW_ROOM_ID, USER_MATRIX_ID, AGENCY_TOKEN);
     verify(sessionRoomGateway).joinRoom(NEW_ROOM_ID, USER_TOKEN);
-    verify(publication).publish(eq(session), eq(NEW_ROOM_ID), anyList());
+    verify(publication).publish(session, NEW_ROOM_ID, List.of());
     assertEquals(NEW_ROOM_ID, session.getMatrixRoomId());
   }
 
@@ -337,7 +348,7 @@ class AgencyPreAssignmentRoomServiceTest {
 
     underTest.ensureHoldingRoom(session, user);
 
-    verify(publication, never()).publish(any(), anyString(), anyList());
+    verifyNoInteractions(publication);
     assertNull(session.getMatrixRoomId());
   }
 
@@ -350,7 +361,7 @@ class AgencyPreAssignmentRoomServiceTest {
 
     underTest.ensureHoldingRoom(session, user);
 
-    verify(publication, never()).publish(any(), anyString(), anyList());
+    verifyNoInteractions(publication);
     assertNull(session.getMatrixRoomId());
   }
 
@@ -361,6 +372,8 @@ class AgencyPreAssignmentRoomServiceTest {
     session.setIsConsultantDirectlySet(true);
     when(sessionRoomGateway.loginAsUser(USER_MATRIX_ID)).thenReturn(USER_TOKEN);
     when(sessionRoomGateway.joinRoom(NEW_ROOM_ID, USER_TOKEN)).thenReturn(true);
+
+    stubPublishedRoom(List.of());
 
     underTest.ensureHoldingRoom(session, user);
 
@@ -405,6 +418,8 @@ class AgencyPreAssignmentRoomServiceTest {
     when(sessionRoomGateway.loginAsUser(USER_MATRIX_ID)).thenReturn(USER_TOKEN);
     when(sessionRoomGateway.joinRoom(NEW_ROOM_ID, USER_TOKEN)).thenReturn(true);
 
+    stubPublishedRoom(contacts);
+
     underTest.ensureHoldingRoom(session, user);
 
     // The request waits once, bounded, so the asker's invite is not refused by the same limit — and
@@ -427,12 +442,16 @@ class AgencyPreAssignmentRoomServiceTest {
   void recordsUnboundRoomWithoutSchedulingMembershipBackfill(
       String confirmedRoomId, CapturedOutput output) throws Exception {
     stubHappyPathUntilRoomCreation();
+    when(sessionRoomGateway.loginAsUser(USER_MATRIX_ID)).thenReturn(USER_TOKEN);
+    when(sessionRoomGateway.joinRoom(NEW_ROOM_ID, USER_TOKEN)).thenReturn(true);
     when(publication.publish(session, NEW_ROOM_ID, List.of()))
         .thenReturn(Optional.ofNullable(confirmedRoomId));
 
     underTest.ensureHoldingRoom(session, user);
 
     assertEquals(confirmedRoomId, session.getMatrixRoomId());
+    verify(sessionRoomGateway).inviteUser(NEW_ROOM_ID, USER_MATRIX_ID, AGENCY_TOKEN);
+    verify(sessionRoomGateway).joinRoom(NEW_ROOM_ID, USER_TOKEN);
     verify(publication).publish(session, NEW_ROOM_ID, List.of());
     verifyNoInteractions(departmentMembershipBackfill);
     assertThat(output)
@@ -457,6 +476,8 @@ class AgencyPreAssignmentRoomServiceTest {
                 java.util.List.of()));
     when(sessionRoomGateway.loginAsUser(USER_MATRIX_ID)).thenReturn(USER_TOKEN);
     when(sessionRoomGateway.joinRoom(NEW_ROOM_ID, USER_TOKEN)).thenReturn(true);
+
+    stubPublishedRoom(List.of());
 
     underTest.ensureHoldingRoom(session, user);
 

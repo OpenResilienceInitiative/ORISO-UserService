@@ -3,6 +3,7 @@ package de.caritas.cob.userservice.api.facade;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.same;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.util.ReflectionTestUtils.setField;
@@ -116,6 +117,7 @@ class CreateEnquiryMessageFacadeMatrixRoomProvisioningTest {
   @Mock private de.caritas.cob.userservice.api.helper.UsernameTranscoder usernameTranscoder;
 
   private Session session;
+  private Session persistedSession;
   private User user;
 
   @BeforeEach
@@ -149,7 +151,6 @@ class CreateEnquiryMessageFacadeMatrixRoomProvisioningTest {
     var pause = new de.caritas.cob.userservice.api.service.session.MatrixRateLimitPause();
     var publicationSessions =
         org.mockito.Mockito.mock(de.caritas.cob.userservice.api.port.out.SessionRepository.class);
-    when(publicationSessions.lockFresh(SESSION_ID)).thenAnswer(ignored -> Optional.of(session));
     var realRoomService =
         new AgencyPreAssignmentRoomService(
             matrixCredentialClient,
@@ -180,15 +181,9 @@ class CreateEnquiryMessageFacadeMatrixRoomProvisioningTest {
     user.setUserId(USER_ID);
     user.setMatrixUserId(USER_MATRIX_ID);
 
-    session = new Session();
-    session.setId(SESSION_ID);
-    session.setAgencyId(AGENCY_ID);
-    session.setRegistrationType(RegistrationType.REGISTERED);
-    session.setUser(user);
-    session.setConsultingTypeId(0);
-    session.setConsultant(null);
-    session.setIsConsultantDirectlySet(false);
-    session.setMatrixRoomId(null); // no room yet -> provisioning must run
+    session = unboundSession();
+    persistedSession = unboundSession();
+    when(publicationSessions.lockFresh(SESSION_ID)).thenReturn(Optional.of(persistedSession));
     when(sessionService.finalizeEnquiry(session, null, NEW_ROOM_ID))
         .thenAnswer(
             invocation -> {
@@ -199,6 +194,17 @@ class CreateEnquiryMessageFacadeMatrixRoomProvisioningTest {
 
     RequestContextHolder.setRequestAttributes(
         new ServletRequestAttributes(Mockito.mock(HttpServletRequest.class)));
+  }
+
+  private Session unboundSession() {
+    var unbound = new Session();
+    unbound.setId(SESSION_ID);
+    unbound.setAgencyId(AGENCY_ID);
+    unbound.setRegistrationType(RegistrationType.REGISTERED);
+    unbound.setUser(user);
+    unbound.setConsultingTypeId(0);
+    unbound.setIsConsultantDirectlySet(false);
+    return unbound;
   }
 
   private AgencyMatrixCredentialsDTO validCredentials() {
@@ -254,7 +260,8 @@ class CreateEnquiryMessageFacadeMatrixRoomProvisioningTest {
     verify(matrixSynapseService).getRoomEvent(NEW_ROOM_ID, MATRIX_EVENT_ID, USER_TOKEN);
 
     // The room service persists the provisioned room; the facade then uses locked finalization.
-    verify(sessionService, Mockito.atLeastOnce()).saveSession(session);
+    verify(sessionService).saveSession(same(persistedSession));
+    assertEquals(NEW_ROOM_ID, persistedSession.getMatrixRoomId());
     assertEquals(NEW_ROOM_ID, session.getMatrixRoomId());
     assertEquals(SessionStatus.NEW, session.getStatus());
 
