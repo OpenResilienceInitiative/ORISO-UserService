@@ -3,6 +3,7 @@ package de.caritas.cob.userservice.api.port.out;
 import de.caritas.cob.userservice.api.model.CaseHandoverRequest;
 import jakarta.persistence.LockModeType;
 import java.time.LocalDateTime;
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -16,8 +17,50 @@ import org.springframework.data.repository.query.Param;
 
 public interface CaseHandoverRequestRepository extends JpaRepository<CaseHandoverRequest, Long> {
 
+  @Query(
+      """
+      select request from CaseHandoverRequest request
+      where request.session.id = :sessionId
+        and request.requesterConsultant.id = :requesterConsultantId
+      order by request.createdAt desc, request.id desc
+      """)
   List<CaseHandoverRequest> findBySessionIdAndRequesterConsultantIdOrderByCreatedAtDesc(
-      Long sessionId, String requesterConsultantId);
+      @Param("sessionId") Long sessionId,
+      @Param("requesterConsultantId") String requesterConsultantId);
+
+  interface CandidateStatusRequest {
+    Long getSessionId();
+
+    CaseHandoverRequest.Status getStatus();
+
+    CaseHandoverRequest.AccessType getAccessType();
+
+    String getReasonCode();
+
+    LocalDateTime getExpiresAt();
+  }
+
+  // At most one request per authorized page ID. Project scalars to avoid hydrating request
+  // relations.
+  @Query(
+      """
+      select request.session.id as sessionId, request.status as status,
+        request.accessType as accessType, request.reasonCode as reasonCode,
+        request.expiresAt as expiresAt
+      from CaseHandoverRequest request
+      where request.session.id in :sessionIds
+        and request.requesterConsultant.id = :requesterConsultantId
+        and not exists (
+          select newer.id from CaseHandoverRequest newer
+          where newer.session.id = request.session.id
+            and newer.requesterConsultant.id = :requesterConsultantId
+            and (newer.createdAt > request.createdAt
+              or (newer.createdAt = request.createdAt and newer.id > request.id))
+        )
+      """)
+  List<CandidateStatusRequest> findLatestCandidateStatusRequests(
+      @Param("sessionIds") Collection<Long> sessionIds,
+      @Param("requesterConsultantId") String requesterConsultantId);
 
   @Query(
       "SELECT request FROM CaseHandoverRequest request"
