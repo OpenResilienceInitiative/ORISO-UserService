@@ -9,6 +9,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
+import static org.mockito.ArgumentMatchers.anyCollection;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
@@ -47,6 +48,7 @@ import de.caritas.cob.userservice.api.model.CaseHandoverRequest;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.ConsultantAgency;
 import de.caritas.cob.userservice.api.model.ConsultantTopic;
+import de.caritas.cob.userservice.api.model.HandoverCandidate;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.Session.SessionStatus;
 import de.caritas.cob.userservice.api.model.SessionTopic;
@@ -71,6 +73,7 @@ import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
@@ -3727,9 +3730,7 @@ class CaseHandoverServiceTest {
 
   @Test
   void searchCandidates_returnsMetadataOnlySameAgencyMatches() {
-    when(sessionRepository.findByAgencyIdInAndConsultantNotAndStatusInOrderByUpdateDateDesc(
-            List.of(10L), requester, List.of(SessionStatus.IN_PROGRESS, SessionStatus.DONE)))
-        .thenReturn(List.of(session));
+    givenCandidates(session);
 
     session.getUser().setAvatarId("fox");
     session
@@ -3786,9 +3787,7 @@ class CaseHandoverServiceTest {
     // display name stays a valid search term as well.
     previous.setDisplayName("Anna B.");
     previous.setInternalDisplayName("Standort Nord Team 7");
-    when(sessionRepository.findByAgencyIdInAndConsultantNotAndStatusInOrderByUpdateDateDesc(
-            List.of(10L), requester, List.of(SessionStatus.IN_PROGRESS, SessionStatus.DONE)))
-        .thenReturn(List.of(session));
+    givenCandidates(session);
 
     var internalNameResponse = caseHandoverService.searchCandidates("standort nord", 0, 15, false);
     var publicNameResponse = caseHandoverService.searchCandidates("anna b", 0, 15, false);
@@ -3853,9 +3852,7 @@ class CaseHandoverServiceTest {
     asker.setUsername(usernameTranscoder.encodeUsername("codexasker1782348153159"));
     previous.setUsername(usernameTranscoder.encodeUsername("codexcounselor20260625023940"));
     previous.setDisplayName(usernameTranscoder.encodeUsername("Codex Counselor"));
-    when(sessionRepository.findByAgencyIdInAndConsultantNotAndStatusInOrderByUpdateDateDesc(
-            List.of(10L), requester, List.of(SessionStatus.IN_PROGRESS, SessionStatus.DONE)))
-        .thenReturn(List.of(session));
+    givenCandidates(session);
 
     var askerResponse = caseHandoverService.searchCandidates("codexasker", 0, 15, false);
     var consultantResponse = caseHandoverService.searchCandidates("codexcounselor", 0, 15, false);
@@ -4344,9 +4341,38 @@ class CaseHandoverServiceTest {
   }
 
   private void givenCandidates(Session... candidates) {
-    when(sessionRepository.findByAgencyIdInAndConsultantNotAndStatusInOrderByUpdateDateDesc(
-            List.of(10L), requester, List.of(SessionStatus.IN_PROGRESS, SessionStatus.DONE)))
-        .thenReturn(List.of(candidates));
+    givenCandidateScan(List.of(candidates), List.of(SessionStatus.IN_PROGRESS, SessionStatus.DONE));
+  }
+
+  private List<HandoverCandidate> givenCandidateScan(
+      List<Session> sessions, List<SessionStatus> statuses) {
+    List<HandoverCandidate> candidates =
+        sessions.stream()
+            .map(
+                candidate ->
+                    new HandoverCandidate(
+                        candidate.getId(),
+                        candidate.getAgencyId(),
+                        candidate.getMainTopicId(),
+                        candidate.getPostcode(),
+                        candidate.getMatrixRoomId(),
+                        candidate.getConversationType(),
+                        candidate.isTeamSession(),
+                        candidate.getUser(),
+                        candidate.getConsultant()))
+            .toList();
+    when(sessionRepository.findHandoverCandidates(any(), eq(requester), eq(statuses), anyBoolean()))
+        .thenReturn(candidates);
+    lenient()
+        .when(sessionRepository.findHandoverCandidatePage(anyCollection()))
+        .thenAnswer(
+            invocation -> {
+              Collection<Long> ids = invocation.getArgument(0);
+              return sessions.reversed().stream()
+                  .filter(candidate -> ids.contains(candidate.getId()))
+                  .toList();
+            });
+    return candidates;
   }
 
   @Test
@@ -4455,10 +4481,9 @@ class CaseHandoverServiceTest {
     rows.add(candidateSession(502L, 10L, null, false));
     rows.add(candidateSession(503L, 10L, 99L, false));
     rows.add(candidateSession(504L, 20L, 6L, false));
-    when(sessionRepository.findByAgencyIdInAndConsultantNotAndStatusInOrderByUpdateDateDesc(
-            any(), eq(requester), eq(List.of(SessionStatus.IN_PROGRESS, SessionStatus.DONE))))
-        .thenReturn(rows);
-    when(membersOnlyChatAccess.membersOnlySessionIds(rows)).thenReturn(Set.of(503L));
+    var candidates =
+        givenCandidateScan(rows, List.of(SessionStatus.IN_PROGRESS, SessionStatus.DONE));
+    when(membersOnlyChatAccess.membersOnlySessionIds(candidates)).thenReturn(Set.of(503L));
     when(sessionRepository.findSessionIdsWithAnyAdditionalTopic(firstBatch, Set.of(5L)))
         .thenReturn(Set.of(450L, 3L));
     when(sessionRepository.findSessionIdsWithAnyAdditionalTopic(List.of(502L), Set.of(5L)))
@@ -4519,13 +4544,10 @@ class CaseHandoverServiceTest {
     secondAgency.setConsultant(requester);
     requester.setConsultantAgencies(Set.of(firstAgency, secondAgency));
     givenRequesterTopics(5L, 6L);
-    when(sessionRepository.findByAgencyIdInAndConsultantNotAndStatusInOrderByUpdateDateDesc(
-            any(), eq(requester), eq(List.of(SessionStatus.IN_PROGRESS, SessionStatus.DONE))))
-        .thenReturn(
-            List.of(
-                candidateSession(213L, 10L, 5L, false),
-                candidateSession(214L, 20L, 6L, true),
-                candidateSession(215L, 20L, 99L, false)));
+    givenCandidates(
+        candidateSession(213L, 10L, 5L, false),
+        candidateSession(214L, 20L, 6L, true),
+        candidateSession(215L, 20L, 99L, false));
 
     var response = caseHandoverService.searchCandidates("asker", 0, 15, false);
 
@@ -4575,10 +4597,8 @@ class CaseHandoverServiceTest {
     if (archived) {
       repositoryRows.forEach(candidate -> candidate.setStatus(SessionStatus.IN_ARCHIVE));
     }
-    when(sessionRepository.findByAgencyIdInAndConsultantNotAndStatusInOrderByUpdateDateDesc(
-            any(), eq(requester), eq(statuses)))
-        .thenReturn(repositoryRows);
-    when(membersOnlyChatAccess.membersOnlySessionIds(repositoryRows)).thenReturn(membersOnly);
+    var candidateRows = givenCandidateScan(repositoryRows, statuses);
+    when(membersOnlyChatAccess.membersOnlySessionIds(candidateRows)).thenReturn(membersOnly);
 
     String query = archived ? "  AsKeR  " : "asker";
     List<Long> observed = new ArrayList<>();
@@ -4602,11 +4622,15 @@ class CaseHandoverServiceTest {
     assertTrue(empty.getSessions().isEmpty());
     int requests = pages + 1;
     verify(sessionRepository, times(requests))
-        .findByAgencyIdInAndConsultantNotAndStatusInOrderByUpdateDateDesc(
+        .findHandoverCandidates(
             argThat(ids -> ids.size() == 2 && ids.containsAll(List.of(10L, 20L))),
             eq(requester),
-            eq(statuses));
-    verify(membersOnlyChatAccess, times(requests)).membersOnlySessionIds(repositoryRows);
+            eq(statuses),
+            eq(true));
+    verify(membersOnlyChatAccess, times(requests)).membersOnlySessionIds(candidateRows);
+    verify(sessionRepository, times(pages))
+        .findHandoverCandidatePage(
+            argThat(ids -> ids.size() <= pageSize && expected.containsAll(ids)));
     verify(agencyService, times(pages)).getAgencies(any());
     verify(consultantAgencyRepository, times(requests))
         .findByConsultantIdAndDeleteDateIsNull(requester.getId());
@@ -4624,6 +4648,10 @@ class CaseHandoverServiceTest {
     assertEquals(0, response.getCount());
     assertTrue(response.getSessions().isEmpty());
     verify(agencyService, never()).getAgencies(any());
+    verify(sessionRepository, never()).findHandoverCandidatePage(any());
+    verify(sessionRepository)
+        .findHandoverCandidates(
+            List.of(10L), requester, List.of(SessionStatus.IN_PROGRESS, SessionStatus.DONE), false);
   }
 
   @Test
@@ -4633,15 +4661,12 @@ class CaseHandoverServiceTest {
     givenTwoRequesterCentres();
     requester.setConsultantTopics(
         Set.of(requesterTopic(10L, 5L), requesterTopic(null, 6L), requesterTopic(20L, 7L)));
-    when(sessionRepository.findByAgencyIdInAndConsultantNotAndStatusInOrderByUpdateDateDesc(
-            any(), eq(requester), eq(List.of(SessionStatus.IN_PROGRESS, SessionStatus.DONE))))
-        .thenReturn(
-            List.of(
-                candidateSession(221L, 10L, 5L, false),
-                candidateSession(222L, 20L, 5L, false),
-                candidateSession(223L, 20L, 6L, false),
-                candidateSession(224L, 20L, 7L, false),
-                candidateSession(225L, 10L, 7L, false)));
+    givenCandidates(
+        candidateSession(221L, 10L, 5L, false),
+        candidateSession(222L, 20L, 5L, false),
+        candidateSession(223L, 20L, 6L, false),
+        candidateSession(224L, 20L, 7L, false),
+        candidateSession(225L, 10L, 7L, false));
 
     var response = caseHandoverService.searchCandidates("asker", 0, 15, false);
 

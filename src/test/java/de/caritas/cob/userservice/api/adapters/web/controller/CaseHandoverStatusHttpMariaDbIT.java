@@ -161,7 +161,7 @@ class CaseHandoverStatusHttpMariaDbIT {
                   .updateDate(now)
                   .build());
 
-          Session secondaryMatch = proofSession(user, owner, now.plusSeconds(2));
+          Session secondaryMatch = proofSession(user, owner, now);
           secondaryMatch.setMainTopicId(99L);
           candidateSessionIds.add(sessionRepository.save(secondaryMatch).getId());
           sessionTopicRepository.save(
@@ -172,7 +172,7 @@ class CaseHandoverStatusHttpMariaDbIT {
                   .updateDate(now)
                   .build());
 
-          Session primaryMatch = proofSession(user, owner, now.plusSeconds(1));
+          Session primaryMatch = proofSession(user, owner, now);
           primaryMatch.setMainTopicId(5L);
           candidateSessionIds.add(sessionRepository.save(primaryMatch).getId());
 
@@ -189,17 +189,20 @@ class CaseHandoverStatusHttpMariaDbIT {
                   .build());
         });
 
-    for (int offset = 0; offset < 2; offset++) {
-      mvc.perform(
-              get("/service/users/case-handover/candidates")
-                  .header("Authorization", "Bearer " + OWNER_B_ID)
-                  .param("count", "1")
-                  .param("offset", Integer.toString(offset)))
-          .andExpect(status().isOk())
-          .andExpect(jsonPath("$.total").value(2))
-          .andExpect(jsonPath("$.offset").value(offset))
-          .andExpect(jsonPath("$.count").value(1))
-          .andExpect(jsonPath("$.sessions[0].session.id").value(candidateSessionIds.get(offset)));
+    for (String term : List.of("", "  STATUS-HTTP-USER  ")) {
+      for (int offset = 0; offset < 2; offset++) {
+        mvc.perform(
+                get("/service/users/case-handover/candidates")
+                    .header("Authorization", "Bearer " + OWNER_B_ID)
+                    .param("query", term)
+                    .param("count", "1")
+                    .param("offset", Integer.toString(offset)))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.total").value(2))
+            .andExpect(jsonPath("$.offset").value(offset))
+            .andExpect(jsonPath("$.count").value(1))
+            .andExpect(jsonPath("$.sessions[0].session.id").value(candidateSessionIds.get(offset)));
+      }
     }
   }
 

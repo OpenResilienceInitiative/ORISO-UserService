@@ -2,6 +2,7 @@ package de.caritas.cob.userservice.api.port.out;
 
 import de.caritas.cob.userservice.api.model.CaseHandoverRequest;
 import de.caritas.cob.userservice.api.model.Consultant;
+import de.caritas.cob.userservice.api.model.HandoverCandidate;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.Session.RegistrationType;
 import de.caritas.cob.userservice.api.model.Session.SessionStatus;
@@ -219,8 +220,25 @@ public interface SessionRepository extends CrudRepository<Session, Long>, Sessio
    * half of the scope — {@code CaseHandoverService} narrows the result to the requester's
    * departments (agency × topic) before anything is returned.
    */
-  List<Session> findByAgencyIdInAndConsultantNotAndStatusInOrderByUpdateDateDesc(
-      List<Long> agencyIds, Consultant consultant, List<SessionStatus> statuses);
+  @Query(
+      """
+      select new de.caritas.cob.userservice.api.model.HandoverCandidate(
+          s.id, s.agencyId, s.mainTopicId, s.postcode, s.matrixRoomId, s.conversationType,
+          s.teamSession, asker, owner)
+      from Session s
+      left join s.user asker on :includeNames = true
+      left join s.consultant owner on :includeNames = true
+      where s.agencyId in :agencyIds and s.consultant <> :requester and s.status in :statuses
+      order by s.updateDate desc, s.id asc
+      """)
+  List<HandoverCandidate> findHandoverCandidates(
+      @Param("agencyIds") List<Long> agencyIds,
+      @Param("requester") Consultant requester,
+      @Param("statuses") List<SessionStatus> statuses,
+      @Param("includeNames") boolean includeNames);
+
+  @Query("select s from Session s where s.id in :ids")
+  List<Session> findHandoverCandidatePage(@Param("ids") Collection<Long> ids);
 
   @Query(
       """
