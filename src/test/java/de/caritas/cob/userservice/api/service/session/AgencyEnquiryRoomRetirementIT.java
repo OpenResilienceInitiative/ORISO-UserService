@@ -49,6 +49,7 @@ import org.springframework.transaction.support.TransactionTemplate;
 @Import({
   JpaAuditingConfiguration.class,
   AgencyEnquiryRoomRetirements.class,
+  AgencyEnquiryRoomDecisions.class,
   AgencyEnquiryRevocations.class,
   OrisoRoomRegistry.class
 })

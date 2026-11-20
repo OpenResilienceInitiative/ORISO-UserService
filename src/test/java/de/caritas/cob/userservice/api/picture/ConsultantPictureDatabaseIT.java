@@ -57,6 +57,9 @@ import org.springframework.transaction.support.TransactionTemplate;
   DeleteDatabaseConsultantAction.class
 })
 class ConsultantPictureDatabaseIT {
+  @MockitoBean
+  private de.caritas.cob.userservice.api.service.session.AgencyEnquiryRoomDecisions roomDecisions;
+
   @DynamicPropertySource
   static void properties(DynamicPropertyRegistry r) {
     r.add("spring.datasource.url", () -> System.getenv("LIQUIBASE_IT_DB_URL"));
