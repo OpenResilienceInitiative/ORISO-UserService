@@ -7,6 +7,7 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.withSettings;
 
 import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
 import de.caritas.cob.userservice.api.model.HandshakeSession;
@@ -30,10 +31,12 @@ import java.util.concurrent.Callable;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
+import org.mockito.AdditionalAnswers;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase;
 import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase.Replace;
@@ -43,6 +46,8 @@ import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
+import org.springframework.test.util.AopTestUtils;
 import org.springframework.test.util.ReflectionTestUtils;
 
 /**
@@ -94,7 +99,7 @@ class ReplicaSweepClaimMariaDbIT {
   @Autowired private HandshakeSessionRepository handshakeSessionRepository;
   @Autowired private SupportRoomRepository supportRoomRepository;
   @Autowired private ScheduledTaskClaimRepository claimRepository;
-  @Autowired private ScheduledTaskClaimService claimService;
+  @MockitoSpyBean private ScheduledTaskClaimService claimService;
   @Autowired private JdbcTemplate jdbcTemplate;
   @MockitoBean private MatrixSynapseService matrixSynapseService;
 
@@ -124,11 +129,77 @@ class ReplicaSweepClaimMariaDbIT {
             .expiryDate(now.minusMinutes(5))
             .build());
 
-    runConcurrently(
-        () -> {
-          handshakeService.sweepExpired();
-          return null;
-        });
+    // Pause the first instance after it has read the lapsed session and before it writes it, and
+    // release it only once the second instance has moved: either it started its claim attempt
+    // (claim present) or it read the same pending session (claim missing). Without the claim both
+    // instances hold the PENDING row, so the second write fails or a second audit entry appears.
+    var firstReadPending = new CountDownLatch(1);
+    var secondInstanceMoved = new CountDownLatch(1);
+    var claimAttempts = new AtomicInteger();
+    var reads = new AtomicInteger();
+    var saves = new AtomicInteger();
+    doAnswer(
+            invocation -> {
+              if (HandshakeService.SWEEP_TASK_NAME.equals(invocation.getArgument(0))
+                  && claimAttempts.incrementAndGet() == 2) {
+                secondInstanceMoved.countDown();
+              }
+              return invocation.callRealMethod();
+            })
+        .when(claimService)
+        .runIfClaimed(any(), any(), any());
+    HandshakeSessionRepository pausing =
+        mock(
+            HandshakeSessionRepository.class,
+            withSettings()
+                .defaultAnswer(AdditionalAnswers.delegatesTo(handshakeSessionRepository)));
+    doAnswer(
+            invocation -> {
+              var pending =
+                  handshakeSessionRepository.findAllByStatusAndExpiryDateBefore(
+                      invocation.getArgument(0),
+                      invocation.getArgument(1),
+                      invocation.getArgument(2));
+              if (reads.incrementAndGet() == 2) {
+                secondInstanceMoved.countDown();
+              }
+              return pending;
+            })
+        .when(pausing)
+        .findAllByStatusAndExpiryDateBefore(any(), any(), any());
+    doAnswer(
+            invocation -> {
+              if (saves.incrementAndGet() == 1) {
+                firstReadPending.countDown();
+                awaitOrFail(secondInstanceMoved);
+              }
+              return handshakeSessionRepository.save(invocation.<HandshakeSession>getArgument(0));
+            })
+        .when(pausing)
+        .save(any(HandshakeSession.class));
+
+    var target = AopTestUtils.<HandshakeService>getUltimateTargetObject(handshakeService);
+    ReflectionTestUtils.setField(target, "handshakeSessionRepository", pausing);
+    var executor = Executors.newFixedThreadPool(2);
+    try {
+      var first = executor.submit(() -> handshakeService.sweepExpired());
+      var firstReachedWrite = firstReadPending.await(10, TimeUnit.SECONDS);
+      if (!firstReachedWrite && first.isDone()) {
+        first.get(); // surface why the first instance stopped before writing
+      }
+      assertThat(firstReachedWrite)
+          .as("the first instance read the lapsed session and is about to write it")
+          .isTrue();
+      var second = executor.submit(() -> handshakeService.sweepExpired());
+      first.get(20, TimeUnit.SECONDS);
+      second.get(20, TimeUnit.SECONDS);
+    } finally {
+      secondInstanceMoved.countDown();
+      executor.shutdownNow();
+      ReflectionTestUtils.setField(
+          target, "handshakeSessionRepository", handshakeSessionRepository);
+    }
+    assertThat(saves).as("the session is written exactly once").hasValue(1);
 
     assertThat(handshakeSessionRepository.findById(HANDSHAKE_ID))
         .get()
@@ -230,6 +301,17 @@ class ReplicaSweepClaimMariaDbIT {
     ReflectionTestUtils.setField(scheduler, "enabled", true);
     ReflectionTestUtils.setField(scheduler, "claimDuration", Duration.ofMinutes(4));
     return scheduler;
+  }
+
+  private static void awaitOrFail(CountDownLatch latch) {
+    try {
+      assertThat(latch.await(10, TimeUnit.SECONDS))
+          .as("the second instance moved while the first held its read")
+          .isTrue();
+    } catch (InterruptedException interrupted) {
+      Thread.currentThread().interrupt();
+      throw new IllegalStateException(interrupted);
+    }
   }
 
   private void runConcurrently(Callable<Void> sweep) throws Exception {

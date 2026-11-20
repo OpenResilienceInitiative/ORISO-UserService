@@ -415,7 +415,7 @@
       "components": [
         "performDeactivationWorkflow"
       ],
-      "decision": "ChatRepository.findAllByActiveIsTrue() takes a pessimistic row lock (PESSIMISTIC_WRITE), so concurrent instances serialize each active chat while its database transition and Matrix purge run; the second instance then reads the committed state. No coarse claim by design, proven by DeactivateGroupChatSchedulerMariaDbReplicaIT (documentation/GROUP_CHAT_DEACTIVATION_REPLICA_SAFETY.md). Not crash-safe exactly-once: a stop between the Matrix purge and the commit can replay the purge.",
+      "decision": "DeactivateGroupChatService.deactivateStaleGroupChats() discovers candidates with the unlocked findActiveDeactivationCandidates(), then re-reads each chat with ChatRepository.findByIdForUpdate() (PESSIMISTIC_WRITE) inside a per-chat transaction, revalidates it and runs StopChatActionCommand in that transaction, so concurrent instances serialize each chat's stop; the second instance then reads the committed state. No coarse claim by design, proven by DeactivateGroupChatSchedulerMariaDbReplicaIT (documentation/GROUP_CHAT_DEACTIVATION_REPLICA_SAFETY.md). Not crash-safe exactly-once: a stop between the Matrix purge and the commit can replay the purge.",
       "signals": [
         "userservice.scheduler.executions",
         "userservice.scheduler.duration"

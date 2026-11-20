@@ -55,8 +55,12 @@ correctness or duplicate-side-effect entry is marked `blocker`.
 
 Every scheduled workflow must stay correct when two instances overlap (a
 rolling update or restart overlap). That does not mean every run is exclusive.
-Entries with a `claim` object name their mechanism, and the CI contract checks
-that the named source really contains it. The first three mechanisms below make
+Entries with a `claim` object name their mechanism. The CI contract checks that
+the named source contains the declared reference: a `ScheduledTaskClaimService`
+claim call for `scheduled-task-claim`, or the catalog `reference` string for the
+other mechanisms. For those it does not prove that the row lock, unique row or
+idempotent statement is implemented correctly; the named integration tests do
+that. The first three mechanisms below make
 a run exclusive; `idempotent-statement` deliberately allows concurrent runs
 because running the statement twice has the same effect as running it once:
 
