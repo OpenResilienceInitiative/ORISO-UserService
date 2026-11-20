@@ -19,6 +19,8 @@ import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErro
 import de.caritas.cob.userservice.api.exception.httpresponses.NoContentException;
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
 import de.caritas.cob.userservice.api.exception.httpresponses.customheader.HttpStatusExceptionReason;
+import de.caritas.cob.userservice.api.exception.identity.IdentityReactivationCompensationException;
+import de.caritas.cob.userservice.api.exception.identity.IdentityReactivationUpstreamException;
 import jakarta.persistence.OptimisticLockException;
 import java.io.IOException;
 import java.util.Arrays;
@@ -31,6 +33,7 @@ import org.springframework.dao.OptimisticLockingFailureException;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpInputMessage;
 import org.springframework.http.HttpStatus;
+import org.springframework.security.access.AccessDeniedException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.context.request.WebRequest;
@@ -237,12 +240,45 @@ class ApiResponseEntityExceptionHandlerTest {
   }
 
   @Test
+  void handleIdentityReactivationUpstreamFailure_returnsBadGateway() {
+    var response =
+        handler.handleIdentityReactivationUpstreamFailure(
+            new IdentityReactivationUpstreamException("Keycloak failed", new RuntimeException()),
+            request);
+
+    assertEquals(HttpStatus.BAD_GATEWAY, response.getStatusCode());
+    var body = assertInstanceOf(Map.class, response.getBody());
+    assertEquals("IDENTITY_REACTIVATION_UPSTREAM_FAILED", body.get("reason"));
+  }
+
+  @Test
+  void handleIdentityReactivationCompensationFailure_returnsFailedDependency() {
+    var response =
+        handler.handleIdentityReactivationCompensationFailure(
+            new IdentityReactivationCompensationException(
+                "disable failed", new RuntimeException(), new RuntimeException()),
+            request);
+
+    assertEquals(HttpStatus.FAILED_DEPENDENCY, response.getStatusCode());
+    var body = assertInstanceOf(Map.class, response.getBody());
+    assertEquals("IDENTITY_REACTIVATION_COMPENSATION_FAILED", body.get("reason"));
+  }
+
+  @Test
   void handleCreateEnquiryMessageException_returnsBadRequest() {
     // Business reason: broken enquiry payloads should map to client-fixable 400 responses.
     var response =
         handler.handleCreateEnquiryMessageException(
             new CreateEnquiryMessageException("bad"), request);
     assertEquals(HttpStatus.BAD_REQUEST, response.getStatusCode());
+  }
+
+  @Test
+  void handleAccessDenied_returnsForbidden() {
+    var response =
+        handler.handleAccessDenied(new AccessDeniedException("cross-tenant request"), request);
+
+    assertEquals(HttpStatus.FORBIDDEN, response.getStatusCode());
   }
 
   @Test
@@ -300,6 +336,32 @@ class ApiResponseEntityExceptionHandlerTest {
           assertEquals(java.util.Map.of("reason", error.getMessage()), result.getBody());
         });
     // Business reason: each domain exception type must map to the documented status code.
+    var expired =
+        handler.handleDirectLinkExpired(
+            new de.caritas.cob.userservice.api.service.agencyinvitelink
+                .DirectLinkExpiredException(),
+            request);
+    assertEquals(HttpStatus.GONE, expired.getStatusCode());
+    assertEquals(java.util.Map.of("reason", "DIRECT_LINK_EXPIRED"), expired.getBody());
+    // The API contract (ORISO-Frontend#2252), written out so a swapped mapping fails here.
+    var refusalStatuses =
+        java.util.Map.of(
+            "DIRECT_INVITATION_GUESTS_ONLY", HttpStatus.FORBIDDEN,
+            "DIRECT_INVITATION_ACCOUNTS_ONLY", HttpStatus.FORBIDDEN,
+            "DIRECT_INVITATION_ROOM_NOT_ENCRYPTED", HttpStatus.CONFLICT);
+    var reasons =
+        de.caritas.cob.userservice.api.service.agencyinvitelink.DirectInvitationRefusedException
+            .Reason.values();
+    assertEquals(refusalStatuses.size(), reasons.length);
+    for (var reason : reasons) {
+      var refused =
+          handler.handleDirectInvitationRefused(
+              new de.caritas.cob.userservice.api.service.agencyinvitelink
+                  .DirectInvitationRefusedException(reason),
+              request);
+      assertEquals(refusalStatuses.get(reason.name()), refused.getStatusCode(), reason.name());
+      assertEquals(java.util.Map.of("reason", reason.name()), refused.getBody());
+    }
     assertEquals(
         HttpStatus.CONFLICT,
         handler

@@ -20,6 +20,7 @@ import de.caritas.cob.userservice.api.port.out.*;
 import de.caritas.cob.userservice.api.service.mobilepushmessage.MobilePushNotificationService;
 import de.caritas.cob.userservice.api.service.notification.EventNotificationDeduplicationWriter;
 import de.caritas.cob.userservice.api.service.notification.EventNotificationService;
+import de.caritas.cob.userservice.api.service.notification.InternalChatEmailService;
 import de.caritas.cob.userservice.api.service.session.SessionService;
 import de.caritas.cob.userservice.api.service.statistics.ConsultantMessageStatService;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
@@ -50,19 +51,29 @@ import org.springframework.transaction.support.TransactionTemplate;
  * sync loop.
  */
 @DataJpaTest
-@TestPropertySource(properties = {"spring.profiles.active=testing", "multitenancy.enabled=true"})
+@TestPropertySource(
+    properties = {
+      "spring.profiles.active=testing,call-notification-account-fixture",
+      "multitenancy.enabled=true"
+    })
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
 @Import({
+  de.caritas.cob.userservice.api.service.matrix.SessionCallAuthority.class,
+  de.caritas.cob.userservice.api.service.matrix.SessionCallRevival.class,
   MatrixCallTenantIT.AopConfiguration.class,
   EventNotificationService.class,
   ConsultantDisplayNameResolver.class,
   EventNotificationDeduplicationWriter.class,
   MatrixCallBindingService.class,
   MatrixCallBindingWriter.class,
+  MatrixCallNotificationIT.ActiveAccountFixture.class,
   MatrixCallLifecycleService.class,
+  MatrixCallGuestService.class,
   MatrixCallConversationResolver.class,
   MatrixCallStateService.class,
-  MatrixCallInviteNotificationService.class
+  de.caritas.cob.userservice.api.service.matrix.DedicatedCallRoom.class,
+  MatrixCallInviteNotificationService.class,
+  OrisoRoomRegistry.class
 })
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
 class MatrixCallTenantIT {
@@ -72,22 +83,112 @@ class MatrixCallTenantIT {
 
   @Autowired private UserRepository users;
   @Autowired private ConsultantRepository consultants;
+
+  /**
+   * The case-writer rule needs agency, handover and supervisor tables this slice does not load;
+   * here a counsellor may write in the case when it is assigned to them.
+   */
+  @MockitoBean
+  private de.caritas.cob.userservice.api.service.lifecycle.SessionInteractionService
+      sessionInteractions;
+
+  @MockitoBean
+  private de.caritas.cob.userservice.api.service.notification.MatrixCaseReplyActorAuthorizer
+      caseWriterAuthorizer;
+
+  @org.junit.jupiter.api.BeforeEach
+  void caseWritersAreTheAssignedCounsellors() {
+    org.mockito.Mockito.lenient()
+        .when(
+            caseWriterAuthorizer.isCurrentAssignedOrTeamWriter(
+                org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any()))
+        .thenAnswer(
+            call ->
+                ((de.caritas.cob.userservice.api.model.Session) call.getArgument(0))
+                    .isAdvisedBy(
+                        (de.caritas.cob.userservice.api.model.Consultant) call.getArgument(1)));
+  }
+
   @Autowired private SessionRepository sessions;
   @Autowired private EventNotificationRepository notifications;
+  @Autowired private javax.sql.DataSource accountDataSource;
+
+  @org.junit.jupiter.api.BeforeEach
+  void initializeAccountLifecycleRows() {
+    // Security review 5901360577: the invite path checks the call room's origin as bind() does.
+    // The Frontend creates every call room with the caller as creator and binding sender.
+    org.mockito.Mockito.lenient()
+        .when(
+            matrix.getCallRoomOrigin(
+                org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.anyString()))
+        .thenAnswer(
+            call ->
+                java.util.Optional.of(
+                    new de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService
+                        .CallRoomOrigin(call.getArgument(1), call.getArgument(1))));
+    MatrixCallNotificationIT.initializeAccountLifecycleTable(accountDataSource);
+  }
+
   @Autowired private MatrixCallBindingRepository bindings;
   @Autowired private MatrixCallInviteNotificationService invites;
   @Autowired private MatrixCallStateService callStates;
+  @Autowired private MatrixCallGuestService callGuests;
   @Autowired private EventNotificationService notificationService;
   @Autowired private PlatformTransactionManager transactionManager;
+  @Autowired private OrisoRoomRegistry roomRegistry;
+  @Autowired private TeamDiscussionRepository discussions;
   @MockitoBean private MatrixSynapseService matrix;
-  @MockitoBean private IdentityTombstoneService tombstones;
+
+  @MockitoBean
+  private de.caritas.cob.userservice.api.service.matrix.MatrixCallObservationService observations;
+
   @MockitoBean private MatrixFeedUpdateSignalService feedUpdateSignals;
+  @MockitoBean private IdentityTombstoneService tombstones;
 
   private MatrixEmailSyncCursorStore freshEmailCursor() {
     var cursor = mock(MatrixEmailSyncCursorStore.class);
     when(cursor.readOrCreateActivation())
         .thenReturn(new MatrixEmailSyncCursorStore.Start(null, 0L));
     return cursor;
+  }
+
+  @org.junit.jupiter.api.Test
+  void aConversationRoomOfAnotherTenantIsStillKnownAsAConversationRoom() {
+    // CodeRabbit review on FE#2209: the room rule must not depend on the tenant filter.
+    var transaction = new TransactionTemplate(transactionManager);
+    String sessionRoom = "!registry-session:example";
+    String discussionRoom = "!registry-discussion:example";
+    TenantContext.setCurrentTenant(0L);
+    try {
+      transaction.executeWithoutResult(
+          status -> {
+            var owner = users.save(user("registry-owner", "@registry-owner:example"));
+            var conversation =
+                new Session(owner, 1, "12345", 1L, Session.SessionStatus.IN_PROGRESS, false);
+            conversation.setTenantId(7L);
+            conversation.setMatrixRoomId(sessionRoom);
+            conversation.setLanguageCode(LanguageCode.de);
+            conversation.setIsConsultantDirectlySet(false);
+            var saved = sessions.save(conversation);
+            discussions.save(
+                de.caritas.cob.userservice.api.model.TeamDiscussion.builder()
+                    .sessionId(saved.getId())
+                    .matrixRoomId(discussionRoom)
+                    .status(de.caritas.cob.userservice.api.model.TeamDiscussion.Status.OPEN)
+                    .createDate(java.time.LocalDateTime.now())
+                    .tenantId(7L)
+                    .build());
+          });
+      for (Long tenant : new Long[] {8L, null}) {
+        if (tenant == null) TenantContext.clear();
+        else TenantContext.setCurrentTenant(tenant);
+        assertThat(roomRegistry.isKnownConversationRoom(sessionRoom)).isTrue();
+        assertThat(roomRegistry.isKnownConversationRoom(discussionRoom)).isTrue();
+        assertThat(roomRegistry.isKnownConversationRoom("!dedicated-call-room:example")).isFalse();
+      }
+    } finally {
+      TenantContext.setCurrentTenant(0L);
+    }
   }
 
   @ParameterizedTest
@@ -116,6 +217,7 @@ class MatrixCallTenantIT {
               conversation.setIsConsultantDirectlySet(false);
               return sessions.save(conversation);
             });
+    var cursor = freshEmailCursor();
     var listener =
         new MatrixEventListenerService(
             matrix,
@@ -127,11 +229,13 @@ class MatrixCallTenantIT {
             consultants,
             sessions,
             mock(ConsultantMessageStatService.class),
+            mock(de.caritas.cob.userservice.api.service.statistics.CommunicationStatService.class),
             invites,
             mock(
                 de.caritas.cob.userservice.api.service.notification.AdviceSeekerReplyEmailService
                     .class),
-            freshEmailCursor());
+            cursor,
+            mock(InternalChatEmailService.class));
     try {
       // Control: this fixture must really enforce tenant isolation before testing the worker.
       TenantContext.setCurrentTenant(7L);
@@ -214,15 +318,27 @@ class MatrixCallTenantIT {
       // Poll on the test thread so repository assertions retain technical tenant 0 and
       // inspect all persisted recipients, including any incorrectly notified tenant 8 user.
       listener.initialize();
-      if (!invitationAlreadyExpired)
-        await()
-            .pollInSameThread()
-            .atMost(Duration.ofSeconds(5))
-            .untilAsserted(
-                () ->
-                    assertThat(notifications.findAll())
-                        .anySatisfy(
-                            event -> assertThat(event.getEventType()).isEqualTo("call.invited")));
+      if (invitationAlreadyExpired) {
+        // FE#2209 round 3: an already expired invite of the asker (the session's owner sends it
+        // here) creates no binding of the 1:1 session call and notifies nobody. Late-sync
+        // recovery stays for the assigned counsellor's own invite and for group chats.
+        // CodeRabbit 4563094732: the listener acknowledges the cursor only after the cycle
+        // processed the invite and reconciled successfully, so a cycle that failed (and retries
+        // later) is never taken for a rejection.
+        org.mockito.Mockito.verify(cursor, org.mockito.Mockito.timeout(5000)).write("joined");
+        assertThat(bindings.findBySourceRoomIdAndCallId(source, "tenant-call")).isEmpty();
+        assertThat(notifications.findAll()).isEmpty();
+        listener.shutdown();
+        return;
+      }
+      await()
+          .pollInSameThread()
+          .atMost(Duration.ofSeconds(5))
+          .untilAsserted(
+              () ->
+                  assertThat(notifications.findAll())
+                      .anySatisfy(
+                          event -> assertThat(event.getEventType()).isEqualTo("call.invited")));
       await()
           .pollInSameThread()
           .atMost(Duration.ofSeconds(10))
@@ -234,7 +350,27 @@ class MatrixCallTenantIT {
                               .map(binding -> binding.getStartedAt())
                               .orElse(null))
                       .isNotNull());
-      if (invitationAlreadyExpired) assertThat(notifications.findAll()).isEmpty();
+      await()
+          .pollInSameThread()
+          .atMost(Duration.ofSeconds(5))
+          .untilAsserted(
+              () -> {
+                var started =
+                    notifications.findAll().stream()
+                        .filter(event -> "call.started".equals(event.getEventType()))
+                        .toList();
+                assertThat(started).hasSize(invitationAlreadyExpired ? 0 : 1);
+                assertThat(started)
+                    .allSatisfy(
+                        event -> {
+                          assertThat(event.getRecipientUserId()).isEqualTo("tenant-receiver");
+                          assertThat(event.getTenantId()).isEqualTo(7L);
+                          assertThat(event.getSourceSessionId()).isEqualTo(session.getId());
+                          assertThat(event.getParams())
+                              .contains(
+                                  "\"callId\":\"tenant-call\"", "\"callRoomId\":\"" + media + "\"");
+                        });
+              });
       response.set(
           Map.of(
               "next_batch",
@@ -282,7 +418,20 @@ class MatrixCallTenantIT {
       actor.setTenantId(7L);
       for (int reload = 0; reload < 2; reload++) {
         var mvc =
-            MockMvcBuilders.standaloneSetup(new MatrixCallStateController(callStates, actor))
+            MockMvcBuilders.standaloneSetup(
+                    new MatrixCallStateController(
+                        callStates,
+                        callGuests,
+                        org.mockito.Mockito.mock(
+                            de.caritas.cob.userservice.api.service.matrix
+                                .MatrixCallObservationService.class),
+                        org.mockito.Mockito.mock(
+                            de.caritas.cob.userservice.api.service.matrix
+                                .MatrixSessionCallBindingService.class),
+                        org.mockito.Mockito.mock(
+                            de.caritas.cob.userservice.api.service.matrix
+                                .MatrixGroupCallBindingService.class),
+                        actor))
                 .build();
         mvc.perform(
                 get("/matrix/calls/state")
@@ -302,7 +451,20 @@ class MatrixCallTenantIT {
       TenantContext.setCurrentTenant(8L);
       actor.setUserId("tenant-outsider");
       actor.setTenantId(8L);
-      MockMvcBuilders.standaloneSetup(new MatrixCallStateController(callStates, actor))
+      MockMvcBuilders.standaloneSetup(
+              new MatrixCallStateController(
+                  callStates,
+                  callGuests,
+                  org.mockito.Mockito.mock(
+                      de.caritas.cob.userservice.api.service.matrix.MatrixCallObservationService
+                          .class),
+                  org.mockito.Mockito.mock(
+                      de.caritas.cob.userservice.api.service.matrix.MatrixSessionCallBindingService
+                          .class),
+                  org.mockito.Mockito.mock(
+                      de.caritas.cob.userservice.api.service.matrix.MatrixGroupCallBindingService
+                          .class),
+                  actor))
           .build()
           .perform(
               get("/matrix/calls/state")

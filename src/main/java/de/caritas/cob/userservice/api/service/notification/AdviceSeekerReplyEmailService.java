@@ -1,6 +1,7 @@
 package de.caritas.cob.userservice.api.service.notification;
 
 import static de.caritas.cob.userservice.api.helper.EmailNotificationUtils.deserializeNotificationSettingsDTOOrDefaultIfNull;
+import static de.caritas.cob.userservice.api.service.notification.NotificationEmailDiagnostics.*;
 import static org.apache.commons.lang3.StringUtils.isBlank;
 
 import de.caritas.cob.userservice.api.admin.service.tenant.TenantService;
@@ -49,6 +50,8 @@ public class AdviceSeekerReplyEmailService {
   private final @NonNull ReplyEmailDeliveryWriter writer;
   private final @NonNull DoNotDisturbService doNotDisturb;
   private final @NonNull MatrixCaseReplyActorAuthorizer replyActors;
+  private final @NonNull de.caritas.cob.userservice.api.port.out.ConsultantRepository consultants;
+  private final @NonNull NotificationAccountEligibility accountEligibility;
 
   @Value("${identity.email-dummy-suffix:}")
   private String emailDummySuffix;
@@ -67,7 +70,9 @@ public class AdviceSeekerReplyEmailService {
       return;
     }
     Session session = sessions.findByMatrixRoomId(roomId).orElse(null);
-    if (!isReplySession(session, roomId) || session.getUser() == null) {
+    if (!isReplySession(session, roomId)
+        || AskerNotificationChannelPolicy.isLiveChat(session)
+        || session.getUser() == null) {
       return;
     }
     User user = session.getUser();
@@ -105,6 +110,7 @@ public class AdviceSeekerReplyEmailService {
     }
     Session session = sessions.findByMatrixRoomId(roomId).orElse(null);
     if (!isConsultationMessage(session, roomId)
+        || AskerNotificationChannelPolicy.isLiveChat(session)
         || session.getUser() == null
         || session.getUser().getDeleteDate() != null
         || !Objects.equals(session.getUser().getTenantId(), session.getTenantId())
@@ -144,6 +150,7 @@ public class AdviceSeekerReplyEmailService {
     }
     boolean consultantMail = claim.getRecipientKind() == RecipientKind.CONSULTANT;
     if (session == null
+        || AskerNotificationChannelPolicy.isLiveChat(session)
         || isBlank(claim.getSourceRoomId())
         || isBlank(claim.getSourceMatrixUserId())
         || !Objects.equals(claim.getSourceRoomId(), session.getMatrixRoomId())) {
@@ -237,17 +244,34 @@ public class AdviceSeekerReplyEmailService {
       actionPath = "/sessions/user/view/session/" + session.getId();
     }
 
+    try {
+      if (!accountsStillEligible(session, claim)) {
+        writer.finish(deliveryId, Status.REJECTED);
+        return;
+      }
+    } catch (RuntimeException unavailable) {
+      retryUnavailablePreflight(deliveryId, unavailable);
+      return;
+    }
+
     TenantSystemEmailRouteService.Route route;
     OrisoEmailRenderer.RenderedEmail email;
+    Stage setupStage = Stage.TENANT_POLICY;
     try {
-      route =
-          routes
-              .resolve(claim.getTenantId())
-              .orElseThrow(() -> new IllegalStateException("Reply email SMTP route is missing"));
+      var configuredRoute = routes.resolve(claim.getTenantId());
+      if (configuredRoute.isEmpty()) {
+        // The Träger switched notification mails off: a decision, not an outage to retry.
+        writer.finish(deliveryId, Status.REJECTED);
+        log.info("Reply email delivery {} suppressed by tenant notification policy", deliveryId);
+        return;
+      }
+      route = configuredRoute.get();
+      setupStage = Stage.TENANT_SMTP;
       delivery.requireConfigured(route);
+      setupStage = Stage.TENANT_CONTEXT;
       RestrictedTenantDTO tenant = tenants.getRestrictedTenantDataFresh(claim.getTenantId());
       if (tenant == null || !Objects.equals(tenant.getId(), claim.getTenantId())) {
-        throw new IllegalStateException("Reply email tenant is unavailable");
+        throw failure(Stage.TENANT_CONTEXT, Reason.TENANT_UNAVAILABLE);
       }
       if (!consultantMail
           && !AskerNotificationChannelPolicy.emailAllowed(session, tenant.getSettings())) {
@@ -255,11 +279,12 @@ public class AdviceSeekerReplyEmailService {
         return;
       }
       if (multitenancyEnabled && !singleDomainMultitenancy && isBlank(tenant.getSubdomain())) {
-        throw new IllegalStateException("Reply email tenant subdomain is missing");
+        throw failure(Stage.TENANT_CONTEXT, Reason.TENANT_SUBDOMAIN_MISSING);
       }
       String baseUrl =
           requireBaseUrl(
               multitenancyEnabled ? tenantTemplates.getTenantBaseUrl(tenant) : applicationBaseUrl);
+      setupStage = Stage.TEMPLATE;
       var recipientBrand = branding.resolveNotification(claim.getTenantId(), baseUrl);
       var values = emailBrand.valuesForResolvedBrand(baseUrl, recipientBrand);
       values.put("platformName", values.get("offeringName"));
@@ -271,11 +296,7 @@ public class AdviceSeekerReplyEmailService {
       values.put("messageUrl", baseUrl + actionPath);
       email = renderer.render(template, tone, values);
     } catch (RuntimeException setupFailure) {
-      writer.retryLater(deliveryId);
-      log.warn(
-          "Reply email setup unavailable for delivery {} ({})",
-          deliveryId,
-          setupFailure.getClass().getSimpleName());
+      retryUnavailablePreflight(deliveryId, setupStage, setupFailure);
       return;
     }
 
@@ -289,13 +310,26 @@ public class AdviceSeekerReplyEmailService {
       writer.finish(deliveryId, Status.SENT);
     } catch (TenantSystemEmailRouteService.ConfigurationException configurationFailure) {
       // TenantService rejected the route before any SMTP attempt.
-      writer.retryLater(deliveryId);
-      log.warn("Reply email route unavailable for delivery {}", deliveryId);
+      retryUnavailablePreflight(deliveryId, Stage.SMTP_HANDOFF, configurationFailure);
     } catch (RuntimeException sendFailure) {
       // SMTP may have accepted the message before its acknowledgement was lost.
       writer.finish(deliveryId, Status.UNCERTAIN);
       throw sendFailure;
     }
+  }
+
+  private boolean accountsStillEligible(Session session, ReplyEmailDelivery claim) {
+    if (!accountEligibility.allows(session.getUser().getUserId())) return false;
+    // The incoming writer may be a current team colleague, rather than the assigned counsellor.
+    var consultant =
+        claim.getRecipientKind() == RecipientKind.CONSULTANT
+            ? session.getConsultant()
+            : consultants
+                .findByMatrixUserIdAndDeleteDateIsNull(claim.getSourceMatrixUserId())
+                .orElse(null);
+    return consultant != null
+        && Objects.equals(consultant.getTenantId(), claim.getTenantId())
+        && accountEligibility.allows(consultant);
   }
 
   private boolean hasUsableAddress(User user) {
@@ -352,12 +386,13 @@ public class AdviceSeekerReplyEmailService {
         : tone;
   }
 
-  private void retryUnavailablePreflight(long deliveryId, RuntimeException unavailable) {
-    writer.retryLater(deliveryId);
-    log.warn(
-        "Reply email preflight unavailable for delivery {} ({})",
-        deliveryId,
-        unavailable.getClass().getSimpleName());
+  private void retryUnavailablePreflight(long id, RuntimeException unavailable) {
+    retryUnavailablePreflight(id, Stage.ELIGIBILITY, unavailable);
+  }
+
+  private void retryUnavailablePreflight(long id, Stage stage, RuntimeException unavailable) {
+    writer.retryLater(id);
+    NotificationEmailDiagnostics.retry(log, "reply", id, stage, unavailable);
   }
 
   private static boolean wantsReplyEmail(User user) {
@@ -378,7 +413,7 @@ public class AdviceSeekerReplyEmailService {
 
   static String requireBaseUrl(String value) {
     if (isBlank(value)) {
-      throw new IllegalStateException("Reply email app URL is missing");
+      throw failure(Stage.TENANT_CONTEXT, Reason.BASE_URL_INVALID);
     }
     try {
       URI url = URI.create(value);
@@ -391,7 +426,7 @@ public class AdviceSeekerReplyEmailService {
       }
       return value.endsWith("/") ? value.substring(0, value.length() - 1) : value;
     } catch (IllegalArgumentException invalid) {
-      throw new IllegalStateException("Reply email app URL is invalid", invalid);
+      throw failure(Stage.TENANT_CONTEXT, Reason.BASE_URL_INVALID);
     }
   }
 }

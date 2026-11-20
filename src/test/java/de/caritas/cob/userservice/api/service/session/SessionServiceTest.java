@@ -55,6 +55,7 @@ import de.caritas.cob.userservice.api.adapters.web.dto.SessionSupervisionDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.UserDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.UserSessionResponseDTO;
 import de.caritas.cob.userservice.api.config.auth.UserRole;
+import de.caritas.cob.userservice.api.exception.httpresponses.ConflictException;
 import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
 import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException;
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
@@ -178,6 +179,7 @@ class SessionServiceTest {
           POSTCODE,
           AGENCY_ID,
           "XXX",
+          null,
           "x@y.de",
           null,
           null,
@@ -186,6 +188,8 @@ class SessionServiceTest {
           "",
           true,
           false,
+          null,
+          null,
           null,
           null,
           null,
@@ -206,6 +210,11 @@ class SessionServiceTest {
   @Mock private GroupChatParticipantRepository groupChatParticipantRepository;
   @Mock private SessionSupervisorRepository sessionSupervisorRepository;
   @Mock private SessionSupervisionMarkerService supervisionMarkerService;
+
+  @Mock
+  private de.caritas.cob.userservice.api.service.enquiry.EnquiryRejectionPendingReadAccess
+      rejectionReadAccess;
+
   @Mock private SessionOwnershipService sessionOwnershipService;
   @Mock private AgencyService agencyService;
   @Mock private ConsultantService consultantService;
@@ -942,6 +951,73 @@ class SessionServiceTest {
   }
 
   @Test
+  void getSessionsForUser_Should_ReturnTheAskersOwnSessionAlias_When_sessionHasDisplayName() {
+    // #2175: the asker must be able to see the name a counsellor sees in this conversation.
+    Session session = easyRandom.nextObject(Session.class);
+    session.setSessionData(
+        new ArrayList<>(
+            List.of(
+                new de.caritas.cob.userservice.api.model.SessionData(
+                    session,
+                    de.caritas.cob.userservice.api.model.SessionData.SessionDataType.REGISTRATION,
+                    "displayName",
+                    "Blauer Falke"),
+                new de.caritas.cob.userservice.api.model.SessionData(
+                    session,
+                    de.caritas.cob.userservice.api.model.SessionData.SessionDataType.REGISTRATION,
+                    "age",
+                    "17"))));
+    when(sessionRepository.findByUserUserId(USER_ID)).thenReturn(singletonList(session));
+
+    var user = sessionService.getSessionsForUserId(USER_ID).get(0).getUser();
+
+    assertEquals("Blauer Falke", user.getDisplayName());
+    assertEquals(session.getUser().getUserId(), user.getId());
+    assertEquals(
+        new de.caritas.cob.userservice.api.helper.UsernameTranscoder()
+            .decodeUsername(session.getUser().getUsername()),
+        user.getUsername());
+    // Only the alias is added; registration data stays out of the asker list.
+    assertNull(user.getSessionData());
+  }
+
+  static java.util.stream.Stream<org.junit.jupiter.params.provider.Arguments>
+      sessionsWithoutAlias() {
+    return java.util.stream.Stream.of(
+        org.junit.jupiter.params.provider.Arguments.of("no session data", null, false),
+        org.junit.jupiter.params.provider.Arguments.of("empty session data", null, true),
+        org.junit.jupiter.params.provider.Arguments.of("null alias value", null, null),
+        org.junit.jupiter.params.provider.Arguments.of("blank alias value", "   ", null));
+  }
+
+  @org.junit.jupiter.params.ParameterizedTest(name = "{0}")
+  @org.junit.jupiter.params.provider.MethodSource("sessionsWithoutAlias")
+  void getSessionsForUser_Should_ReturnNoAlias_When_sessionHasNoUsableDisplayName(
+      String caseName, String aliasValue, Boolean emptyList) {
+    Session session = easyRandom.nextObject(Session.class);
+    if (Boolean.FALSE.equals(emptyList)) {
+      session.setSessionData(null);
+    } else if (Boolean.TRUE.equals(emptyList)) {
+      session.setSessionData(new ArrayList<>());
+    } else {
+      session.setSessionData(
+          new ArrayList<>(
+              List.of(
+                  new de.caritas.cob.userservice.api.model.SessionData(
+                      session,
+                      de.caritas.cob.userservice.api.model.SessionData.SessionDataType.REGISTRATION,
+                      "displayName",
+                      aliasValue))));
+    }
+    when(sessionRepository.findByUserUserId(USER_ID)).thenReturn(singletonList(session));
+
+    var user = sessionService.getSessionsForUserId(USER_ID).get(0).getUser();
+
+    assertNull(user.getDisplayName());
+    assertEquals(session.getUser().getUserId(), user.getId());
+  }
+
+  @Test
   void
       getActiveAndDoneSessionsForConsultant_Should_ReturnListOfActiveAndDoneSessions_When_statusInProgress() {
     Session session = easyRandom.nextObject(Session.class);
@@ -1598,5 +1674,88 @@ class SessionServiceTest {
 
     assertThat(session.getConversationType())
         .isEqualTo(de.caritas.cob.userservice.api.model.ConversationType.SELF_HELP);
+  }
+
+  private static Session enquiry(Long tenantId, Consultant consultant) {
+    var user = new User();
+    user.setUserId("asker");
+    var session = new Session();
+    session.setId(7L);
+    session.setTenantId(tenantId);
+    session.setAgencyId(3L);
+    session.setUser(user);
+    session.setMatrixRoomId("!room:example");
+    session.setConsultant(consultant);
+    session.setStatus(SessionStatus.INITIAL);
+    return session;
+  }
+
+  @Test
+  void finalizeEnquiryRefusesASessionThatNoLongerExists() {
+    when(sessionRepository.findByIdForUpdate(7L)).thenReturn(Optional.empty());
+
+    assertThrows(
+        NotFoundException.class,
+        () -> sessionService.finalizeEnquiry(enquiry(1L, null), "de", "!room:example"));
+    verify(sessionRepository, never()).save(any());
+  }
+
+  @Test
+  void finalizeEnquiryRefusesARejectedSession() {
+    var current = enquiry(1L, null);
+    current.setStatus(SessionStatus.REJECTED);
+    when(sessionRepository.findByIdForUpdate(7L)).thenReturn(Optional.of(current));
+
+    assertThrows(
+        ConflictException.class,
+        () -> sessionService.finalizeEnquiry(enquiry(1L, null), "de", "!room:example"));
+    verify(sessionRepository, never()).save(any());
+  }
+
+  @Test
+  void finalizeEnquiryRefusesAnEnquiryThatWasAlreadySent() {
+    var current = enquiry(1L, null);
+    current.setEnquiryMessageDate(java.time.LocalDateTime.now());
+    when(sessionRepository.findByIdForUpdate(7L)).thenReturn(Optional.of(current));
+
+    assertThrows(
+        ConflictException.class,
+        () -> sessionService.finalizeEnquiry(enquiry(1L, null), "de", "!room:example"));
+    verify(sessionRepository, never()).save(any());
+  }
+
+  @Test
+  void finalizeEnquiryRefusesASessionOfAnotherTenant() {
+    when(sessionRepository.findByIdForUpdate(7L)).thenReturn(Optional.of(enquiry(2L, null)));
+
+    assertThrows(
+        ConflictException.class,
+        () -> sessionService.finalizeEnquiry(enquiry(1L, null), "de", "!room:example"));
+    verify(sessionRepository, never()).save(any());
+  }
+
+  @Test
+  void finalizeEnquiryMakesAnUnassignedEnquiryNew() {
+    var current = enquiry(1L, null);
+    when(sessionRepository.findByIdForUpdate(7L)).thenReturn(Optional.of(current));
+    when(sessionRepository.save(current)).thenReturn(current);
+
+    var saved = sessionService.finalizeEnquiry(enquiry(1L, null), "de", "!room:example");
+
+    assertThat(saved.getStatus()).isEqualTo(SessionStatus.NEW);
+    assertThat(saved.getEnquiryMessageDate()).isNotNull();
+  }
+
+  @Test
+  void finalizeEnquiryPutsAnAssignedEnquiryInProgress() {
+    var consultant = new Consultant();
+    var current = enquiry(1L, consultant);
+    when(sessionRepository.findByIdForUpdate(7L)).thenReturn(Optional.of(current));
+    when(sessionRepository.save(current)).thenReturn(current);
+
+    var saved = sessionService.finalizeEnquiry(enquiry(1L, consultant), "de", "!room:example");
+
+    assertThat(saved.getStatus()).isEqualTo(SessionStatus.IN_PROGRESS);
+    assertThat(saved.getEnquiryMessageDate()).isNotNull();
   }
 }

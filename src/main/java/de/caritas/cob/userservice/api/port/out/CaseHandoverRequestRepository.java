@@ -70,6 +70,19 @@ public interface CaseHandoverRequestRepository extends JpaRepository<CaseHandove
 
   List<CaseHandoverRequest> findByRequesterConsultantId(String requesterConsultantId);
 
+  /** Rows without an access type are legacy rows; the caller resolves them by reason code. */
+  @Query(
+      "select request from CaseHandoverRequest request join fetch request.session "
+          + "where request.requesterConsultant.id = :consultantId "
+          + "and request.status in :statuses "
+          + "and (request.accessType is null or request.accessType = :accessType) "
+          + "and (request.expiresAt is null or request.expiresAt > :now)")
+  List<CaseHandoverRequest> findLiveCoAccessCandidates(
+      @Param("consultantId") String consultantId,
+      @Param("statuses") List<CaseHandoverRequest.Status> statuses,
+      @Param("accessType") CaseHandoverRequest.AccessType accessType,
+      @Param("now") LocalDateTime now);
+
   List<CaseHandoverRequest> findByPreviousConsultantId(String previousConsultantId);
 
   List<CaseHandoverRequest> findByInitiatorConsultantId(String initiatorConsultantId);

@@ -26,7 +26,7 @@ import org.springframework.http.ResponseEntity;
 class CreateChatMatrixMembershipTest {
   @ParameterizedTest
   @CsvSource({"SELF_HELP,false", "INTERNAL_GROUP,false", "SELF_HELP,true", "INTERNAL_GROUP,true"})
-  void selectedColleagueWithoutMatrixMappingIsProvisionedAndJoined(
+  void selectedColleagueWaitsForCommitInSelfHelpAndStillJoinsInternalGroups(
       ConversationType type, boolean newOwner) throws Exception {
     var chats = mock(ChatService.class);
     var sessions = mock(SessionService.class);
@@ -57,7 +57,8 @@ class CreateChatMatrixMembershipTest {
             users,
             membership,
             mock(de.caritas.cob.userservice.api.service.chat.GroupCounsellingDpaPolicy.class),
-            mock(de.caritas.cob.userservice.api.service.chat.GroupChatMatrixCleanupService.class));
+            mock(de.caritas.cob.userservice.api.service.chat.GroupChatMatrixCleanupService.class),
+            mock(org.springframework.transaction.PlatformTransactionManager.class));
     var owner = new Consultant();
     owner.setId("owner");
     owner.setTenantId(40L);
@@ -100,15 +101,34 @@ class CreateChatMatrixMembershipTest {
     when(gateway.loginAsUser("@colleague:matrix.org")).thenReturn("colleague-test-token");
     when(gateway.joinRoom("!group:matrix.org", "colleague-test-token")).thenReturn(true);
 
-    facade.createChatV2(dto, owner);
+    boolean selfHelp = type == ConversationType.SELF_HELP;
+    if (selfHelp)
+      org.springframework.transaction.support.TransactionSynchronizationManager
+          .initSynchronization();
+    try {
+      facade.createChatV2(dto, owner);
+    } finally {
+      if (selfHelp)
+        org.springframework.transaction.support.TransactionSynchronizationManager
+            .clearSynchronization();
+    }
 
-    assertThat(colleague.getMatrixUserId()).isEqualTo("@colleague:matrix.org");
-    verify(consultants).save(colleague);
+    if (selfHelp) {
+      assertThat(colleague.getMatrixUserId()).isEqualTo("@colleague:matrix.org");
+      verify(consultants).save(colleague);
+      verify(gateway, never()).inviteUser(any(), any(), any());
+      verify(gateway, never()).joinRoom(any(), any());
+    } else {
+      assertThat(colleague.getMatrixUserId()).isEqualTo("@colleague:matrix.org");
+      verify(consultants).save(colleague);
+    }
     assertThat(owner.getMatrixUserId()).isEqualTo("@owner:matrix.org");
     if (newOwner) verify(consultants).save(owner);
     else verify(consultants, never()).save(owner);
-    verify(gateway).inviteUser("!group:matrix.org", "@colleague:matrix.org", "owner-test-token");
-    verify(gateway).joinRoom("!group:matrix.org", "colleague-test-token");
+    if (!selfHelp) {
+      verify(gateway).inviteUser("!group:matrix.org", "@colleague:matrix.org", "owner-test-token");
+      verify(gateway).joinRoom("!group:matrix.org", "colleague-test-token");
+    }
     verify(participants)
         .save(
             argThat(

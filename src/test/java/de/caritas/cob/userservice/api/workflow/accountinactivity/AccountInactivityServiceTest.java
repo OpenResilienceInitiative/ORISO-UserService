@@ -11,6 +11,97 @@ import org.springframework.jdbc.datasource.DriverManagerDataSource;
 
 class AccountInactivityServiceTest {
   @Test
+  void boundedAudienceLookupPreservesLegacyRowsAndExcludesOnlyRequestedInactiveIdentities() {
+    var service = createService(new Effects());
+    var ids = java.util.stream.IntStream.range(0, 257).mapToObj(i -> "batch-" + i).toList();
+    service.assignAtCreation("batch-0", 1L, 12, 0, Instant.now());
+    service.suspend("batch-0");
+    service.assignAtCreation("outside-audience", 2L, 12, 0, Instant.now());
+    service.suspend("outside-audience");
+    var jdbc =
+        new JdbcTemplate(
+            new DriverManagerDataSource("jdbc:h2:mem:lifecycle;DB_CLOSE_DELAY=-1", "sa", ""));
+    jdbc.execute("SET QUERY_STATISTICS TRUE");
+    try {
+      long before = lifecycleSelectCount(jdbc);
+      assertThat(service.inactiveAmong(ids)).containsExactly("batch-0");
+      assertThat(lifecycleSelectCount(jdbc) - before).isEqualTo(2);
+      before = lifecycleSelectCount(jdbc);
+      assertThat(
+              service.inactiveAmong(java.util.Arrays.asList(null, "", " ", "batch-0", "batch-0")))
+          .containsExactly("batch-0");
+      assertThat(lifecycleSelectCount(jdbc) - before).isEqualTo(1);
+      before = lifecycleSelectCount(jdbc);
+      assertThat(service.inactiveAmong(java.util.List.of())).isEmpty();
+      assertThat(lifecycleSelectCount(jdbc)).isEqualTo(before);
+    } finally {
+      jdbc.execute("SET QUERY_STATISTICS FALSE");
+    }
+  }
+
+  private long lifecycleSelectCount(JdbcTemplate jdbc) {
+    return jdbc.queryForObject(
+        "SELECT COALESCE(SUM(EXECUTION_COUNT),0) FROM INFORMATION_SCHEMA.QUERY_STATISTICS "
+            + "WHERE UPPER(SQL_STATEMENT) LIKE 'SELECT%FROM ACCOUNT_INACTIVITY%' "
+            + "AND UPPER(SQL_STATEMENT) NOT LIKE '%QUERY_STATISTICS%'",
+        Long.class);
+  }
+
+  @Test
+  void inactivitySuspensionRefusesPendingGuestConversion() {
+    var service = createService(new Effects());
+    var jdbc =
+        new JdbcTemplate(
+            new DriverManagerDataSource("jdbc:h2:mem:lifecycle;DB_CLOSE_DELAY=-1", "sa", ""));
+    service.assignAtCreation("guest", 1L, 12, 0, Instant.now());
+    jdbc.update("INSERT INTO `user`(user_id) VALUES (?)", "guest");
+    jdbc.update(
+        "INSERT INTO live_chat_account_claim(user_id,lifecycle) VALUES (?,?)",
+        "guest",
+        "PROMOTION_PENDING");
+    org.assertj.core.api.Assertions.assertThatThrownBy(() -> service.suspend("guest"))
+        .isInstanceOf(IllegalStateException.class);
+    assertThat(service.snapshot("guest").orElseThrow().status())
+        .isEqualTo(AccountInactivityService.Status.ACTIVE);
+  }
+
+  @Test
+  void inactivitySuspensionRefusesCommittedGuestCleanup() {
+    var service = createService(new Effects());
+    var jdbc =
+        new JdbcTemplate(
+            new DriverManagerDataSource("jdbc:h2:mem:lifecycle;DB_CLOSE_DELAY=-1", "sa", ""));
+    service.assignAtCreation("guest", 1L, 12, 0, Instant.now());
+    jdbc.update("INSERT INTO `user`(user_id) VALUES (?)", "guest");
+    jdbc.update(
+        "INSERT INTO live_chat_account_claim(user_id,lifecycle) VALUES (?,?)",
+        "guest",
+        "CLEANUP_STARTED");
+    org.assertj.core.api.Assertions.assertThatThrownBy(() -> service.suspend("guest"))
+        .isInstanceOf(IllegalStateException.class);
+    assertThat(service.snapshot("guest").orElseThrow().status())
+        .isEqualTo(AccountInactivityService.Status.ACTIVE);
+  }
+
+  @Test
+  void inactivitySuspensionRefusesPendingGuestFinish() {
+    var service = createService(new Effects());
+    var jdbc =
+        new JdbcTemplate(
+            new DriverManagerDataSource("jdbc:h2:mem:lifecycle;DB_CLOSE_DELAY=-1", "sa", ""));
+    service.assignAtCreation("guest", 1L, 12, 0, Instant.now());
+    jdbc.update("INSERT INTO `user`(user_id) VALUES (?)", "guest");
+    jdbc.update(
+        "INSERT INTO live_chat_account_claim(user_id,lifecycle) VALUES (?,?)",
+        "guest",
+        "FINISH_PENDING");
+    org.assertj.core.api.Assertions.assertThatThrownBy(() -> service.suspend("guest"))
+        .isInstanceOf(IllegalStateException.class);
+    assertThat(service.snapshot("guest").orElseThrow().status())
+        .isEqualTo(AccountInactivityService.Status.ACTIVE);
+  }
+
+  @Test
   void disappearingCandidateDoesNotAbortOtherTenants() {
     var captured = Instant.parse("2023-01-01T00:00:00Z");
     var owner = new java.util.concurrent.atomic.AtomicReference<AccountInactivityService>();
@@ -57,6 +148,11 @@ class AccountInactivityServiceTest {
   void creationSnapshotSurvivesChangedDefaultsAndUsesCalendarMonths() {
     var ds = new DriverManagerDataSource("jdbc:h2:mem:inactivity;DB_CLOSE_DELAY=-1", "sa", "");
     var jdbc = new JdbcTemplate(ds);
+    jdbc.execute("CREATE TABLE IF NOT EXISTS `user` (user_id VARCHAR(36) PRIMARY KEY)");
+    jdbc.execute(
+        "CREATE TABLE IF NOT EXISTS live_chat_account_claim (user_id VARCHAR(36) PRIMARY KEY, lifecycle VARCHAR(32) NOT NULL)");
+    jdbc.execute("DELETE FROM live_chat_account_claim");
+    jdbc.execute("DELETE FROM `user`");
     jdbc.execute("DROP TABLE IF EXISTS account_inactivity");
     jdbc.execute("DROP TABLE IF EXISTS account_inactivity_journal");
     jdbc.execute(
@@ -431,6 +527,11 @@ class AccountInactivityServiceTest {
     var jdbc =
         new JdbcTemplate(
             new DriverManagerDataSource("jdbc:h2:mem:lifecycle;DB_CLOSE_DELAY=-1", "sa", ""));
+    jdbc.execute("CREATE TABLE IF NOT EXISTS `user` (user_id VARCHAR(36) PRIMARY KEY)");
+    jdbc.execute(
+        "CREATE TABLE IF NOT EXISTS live_chat_account_claim (user_id VARCHAR(36) PRIMARY KEY, lifecycle VARCHAR(32) NOT NULL)");
+    jdbc.execute("DELETE FROM live_chat_account_claim");
+    jdbc.execute("DELETE FROM `user`");
     jdbc.execute("DROP TABLE IF EXISTS account_inactivity");
     jdbc.execute("DROP TABLE IF EXISTS account_inactivity_journal");
     jdbc.execute(

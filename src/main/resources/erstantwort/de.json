@@ -3,8 +3,7 @@
     "body": "Schön, dass Sie sich gemeldet haben. Ihre Nachricht ist bei uns angekommen."
   },
   "whoReadsAlong": {
-    "headline": "Wer Ihre Nachricht liest",
-    "body": "Ihre Nachricht lesen ausschließlich die Fachkräfte der zuständigen Beratungsstelle. Alle sind zur Verschwiegenheit verpflichtet."
+    "headline": "Wer Ihre Nachricht liest"
   },
   "responseDeadline": {
     "headline": "Wann Sie eine Antwort erhalten",
@@ -20,6 +19,9 @@
   "emergencyNumbers": {
     "headline": "Wenn es nicht warten kann",
     "body": "Bei einer akuten Notlage erreichen Sie rund um die Uhr die Telefonseelsorge unter 0800 111 0 111 oder 0800 111 0 222 und den Rettungsdienst unter 112."
+  },
+  "emergencyAddition": {
+    "headline": "Weitere Notfallkontakte"
   },
   "dataProtection": {
     "body": "Wie wir mit Ihren Daten umgehen, steht in der Datenschutzerklärung."

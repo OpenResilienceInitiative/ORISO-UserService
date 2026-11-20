@@ -131,6 +131,7 @@ public class EmailNotificationFacade {
   }
 
   private void sendMailTasksToMailService(EmailSupplier mailsToSend, Session session) {
+    if (AskerNotificationChannelPolicy.isLiveChat(session)) return;
     List<MailDTO> generatedMails = mailsToSend.generateEmails();
     if (isNotEmpty(generatedMails)) {
       if (session != null) {
@@ -195,6 +196,12 @@ public class EmailNotificationFacade {
         return;
       }
 
+      if (!traegerAllowsAdviceSeekerEmail(session, user)) {
+        log.info(
+            "Reassignment request mail suppressed by the Träger's advice-seeker e-mail policy.");
+        return;
+      }
+
       if (hasUserValidEmailAddress(user)) {
         var reassignmentRequestEmailSupplier =
             ReassignmentRequestEmailSupplier.builder()
@@ -219,6 +226,18 @@ public class EmailNotificationFacade {
     }
   }
 
+  /** Frontend#1979: effective Admin "Berechtigungen" for advice-seeker e-mail. */
+  private boolean traegerAllowsAdviceSeekerEmail(Session session, User user) {
+    Long tenantId = user == null ? null : user.getTenantId();
+    var tenant =
+        tenantId == null || tenantId <= 0
+            ? tenants.getSingleTenancyTenantDataFresh()
+            : tenants.getRestrictedTenantDataFresh(tenantId);
+    // Unreadable policy: no mail rather than one the Träger may have forbidden.
+    return tenant != null
+        && AskerNotificationChannelPolicy.emailAllowed(session, tenant.getSettings());
+  }
+
   private boolean shouldSendReassignmentNotificationForAdviceSeeker(User user) {
     if (releaseToggleService.isToggleEnabled(ReleaseToggle.NEW_EMAIL_NOTIFICATIONS)) {
       return wantsToReceiveNotificationsAboutReassignment(user);
@@ -238,6 +257,9 @@ public class EmailNotificationFacade {
       ReassignmentNotificationDTO reassignmentNotification, TenantData tenantData) {
     TenantContext.setCurrentTenantData(tenantData);
     try {
+      var session =
+          sessionService.getSessionByMatrixRoomId(reassignmentNotification.getMatrixRoomId());
+      if (AskerNotificationChannelPolicy.isLiveChat(session)) return;
       Consultant existingConsultantById =
           findExistingConsultantById(reassignmentNotification.getToConsultantId().toString());
 

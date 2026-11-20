@@ -1,6 +1,7 @@
 package de.caritas.cob.userservice.api.adapters.web.controller;
 
 import de.caritas.cob.userservice.api.adapters.web.dto.AbsenceDTO;
+import de.caritas.cob.userservice.api.adapters.web.dto.AgencyAdminContactDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.ChatDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.ChatInfoResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.ChatMembersResponseDTO;
@@ -12,13 +13,14 @@ import de.caritas.cob.userservice.api.adapters.web.dto.CreateChatResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateEnquiryMessageResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.DeleteUserAccountDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.EmailDTO;
-import de.caritas.cob.userservice.api.adapters.web.dto.EmailNotificationsDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.EnquiryMessageDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.GetChatSeriesOccurrences200ResponseInner;
 import de.caritas.cob.userservice.api.adapters.web.dto.GroupChatJoinRequestAdmitDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.GroupChatJoinRequestDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.GroupChatJoinRequestStatusDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.GroupSessionListResponseDTO;
+import de.caritas.cob.userservice.api.adapters.web.dto.InternalChatInvitationDTO;
+import de.caritas.cob.userservice.api.adapters.web.dto.InternalChatRecipientDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.InternalSubsetChatDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.InternalSubsetChatResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.LanguageResponseDTO;
@@ -65,6 +67,7 @@ import de.caritas.cob.userservice.api.port.in.AccountManaging;
 import de.caritas.cob.userservice.api.port.in.IdentityManaging;
 import de.caritas.cob.userservice.api.port.in.Messaging;
 import de.caritas.cob.userservice.api.port.out.SearchFilter;
+import de.caritas.cob.userservice.api.service.AgencyAdminContactService;
 import de.caritas.cob.userservice.api.service.ConsultantAgencyService;
 import de.caritas.cob.userservice.api.service.ConsultantPublicSlugService;
 import de.caritas.cob.userservice.api.service.ConsultantService;
@@ -107,6 +110,79 @@ import org.springframework.web.bind.annotation.RestController;
 @RequiredArgsConstructor
 @Api(tags = "user-controller")
 public class UserController implements UsersApi {
+  private final @NonNull de.caritas.cob.userservice.api.service.livechat
+          .LiveChatAccountConversionService
+      liveChatConversionService;
+  private final @NonNull de.caritas.cob.userservice.api.service.enquiry.EnquiryRejectionService
+      enquiryRejectionService;
+
+  @Override
+  public ResponseEntity<
+          de.caritas.cob.userservice.api.adapters.web.dto.GetOwnLiveChatConversion200Response>
+      getOwnLiveChatConversion() {
+    var status = liveChatConversionService.status();
+    var body =
+        new de.caritas.cob.userservice.api.adapters.web.dto.GetOwnLiveChatConversion200Response(
+            status.userId(),
+            authenticatedUser.getUsername(),
+            de.caritas.cob.userservice.api.adapters.web.dto.GetOwnLiveChatConversion200Response
+                .StateEnum.fromValue(status.state()));
+    body.intentId(status.intentId());
+    body.setFinishedOrigin(status.finishedOrigin());
+    body.setUserId(status.userId());
+    return ResponseEntity.ok()
+        .cacheControl(org.springframework.http.CacheControl.noStore())
+        .body(body);
+  }
+
+  @Override
+  public ResponseEntity<
+          de.caritas.cob.userservice.api.adapters.web.dto.ConvertOwnLiveChatAccount200Response>
+      convertOwnLiveChatAccount(
+          de.caritas.cob.userservice.api.adapters.web.dto.ConvertOwnLiveChatAccountRequest
+              request) {
+    if (!Boolean.TRUE.equals(request.getRecoveryKeySaved())) {
+      throw new de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException(
+          "Recovery key confirmation is required");
+    }
+    liveChatConversionService.convert(
+        request.getExpectedUserId(), request.getIntentId().toString(), request.getPassword());
+    return ResponseEntity.ok()
+        .cacheControl(org.springframework.http.CacheControl.noStore())
+        .body(
+            new de.caritas.cob.userservice.api.adapters.web.dto
+                .ConvertOwnLiveChatAccount200Response(authenticatedUser.getUsername()));
+  }
+
+  @Override
+  public ResponseEntity<Void> rejectEnquiry(@PathVariable Long sessionId) {
+    return enquiryRejectionService.rejectEnquiry(sessionId)
+        ? ResponseEntity.noContent().build()
+        : ResponseEntity.status(503).build();
+  }
+
+  private final @NonNull de.caritas.cob.userservice.api.service.furthercounselling
+          .FurtherCounsellingRecommendationService
+      furtherCounsellingRecommendationService;
+
+  /** FE#1876 S2: the assigned counsellor recommends further counselling on a topic. */
+  @Override
+  public ResponseEntity<Void> recommendFurtherCounselling(
+      @PathVariable Long sessionId,
+      @RequestBody
+          de.caritas.cob.userservice.api.adapters.web.dto.FurtherCounsellingRecommendationDTO
+              recommendation) {
+    furtherCounsellingRecommendationService.recommend(
+        sessionId, recommendation.getTopicId(), recommendation.getNote());
+    return ResponseEntity.noContent().build();
+  }
+
+  /** FE#1876 S6: the asker ends the newer of two accepted same-topic conversations. */
+  @Override
+  public ResponseEntity<Void> endTopicDuplicate(@PathVariable Long sessionId) {
+    sessionArchiveService.endTopicDuplicate(sessionId);
+    return ResponseEntity.noContent().build();
+  }
 
   private final @NotNull UserAccountService userAccountProvider;
   private final @NotNull UserRegistrationControllerDelegate userRegistrationControllerDelegate;
@@ -149,8 +225,128 @@ public class UserController implements UsersApi {
   private final @NotNull GroupChatRoleService groupChatRoleService;
   private final @NotNull GroupChatJoinRequestControllerDelegate groupChatJoinRequestDelegate;
   private final @NotNull AuthenticatedUser authenticatedUser;
+  private final @NonNull AgencyAdminContactService agencyAdminContactService;
   private final @NonNull RequestedContactSheetService requestedContactSheetService;
   private final @NotNull IdentitySuggestionControllerDelegate identitySuggestionControllerDelegate;
+  private final @NonNull DirectLinkControllerDelegate directLinkControllerDelegate;
+
+  @Override
+  public ResponseEntity<de.caritas.cob.userservice.api.adapters.web.dto.TemporaryAccountDTO>
+      getOwnTemporaryAccount() {
+    return directLinkControllerDelegate.getOwnTemporaryAccount();
+  }
+
+  @Override
+  public ResponseEntity<de.caritas.cob.userservice.api.adapters.web.dto.TemporaryAccountDTO>
+      decideTemporaryAccountMessageRetention(
+          de.caritas.cob.userservice.api.adapters.web.dto.TemporaryAccountRetentionDecisionDTO
+              decision) {
+    return directLinkControllerDelegate.decideTemporaryAccountMessageRetention(decision);
+  }
+
+  @Override
+  public ResponseEntity<
+          java.util.List<de.caritas.cob.userservice.api.adapters.web.dto.DirectLinkDTO>>
+      getOwnDirectLinks() {
+    return directLinkControllerDelegate.getOwnDirectLinks();
+  }
+
+  @Override
+  public ResponseEntity<de.caritas.cob.userservice.api.adapters.web.dto.DirectLinkDTO>
+      createDirectLink(
+          de.caritas.cob.userservice.api.adapters.web.dto.CreateDirectLinkDTO createDirectLinkDTO) {
+    return directLinkControllerDelegate.createDirectLink(createDirectLinkDTO);
+  }
+
+  @Override
+  public ResponseEntity<de.caritas.cob.userservice.api.adapters.web.dto.DirectLinkDTO>
+      updateDirectLink(
+          Long linkId,
+          de.caritas.cob.userservice.api.adapters.web.dto.UpdateDirectLinkDTO updateDirectLinkDTO) {
+    return directLinkControllerDelegate.updateDirectLink(linkId, updateDirectLinkDTO);
+  }
+
+  @Override
+  public ResponseEntity<Void> deleteDirectLink(Long linkId) {
+    return directLinkControllerDelegate.deleteDirectLink(linkId);
+  }
+
+  @Override
+  public ResponseEntity<de.caritas.cob.userservice.api.adapters.web.dto.DirectLinkDTO>
+      renewDirectInvitation(
+          Long linkId,
+          de.caritas.cob.userservice.api.adapters.web.dto.RenewDirectInvitationDTO body) {
+    return directLinkControllerDelegate.renewDirectInvitation(linkId, body);
+  }
+
+  @Override
+  public ResponseEntity<Void> requestDirectInvitationRenewal(String token) {
+    return directLinkControllerDelegate.requestDirectInvitationRenewal(token);
+  }
+
+  @Override
+  public ResponseEntity<de.caritas.cob.userservice.api.adapters.web.dto.DirectLinkDTO>
+      createSessionDirectInvitation(
+          Long sessionId,
+          de.caritas.cob.userservice.api.adapters.web.dto.CreateSessionDirectInvitationDTO body) {
+    return directLinkControllerDelegate.createSessionDirectInvitation(sessionId, body);
+  }
+
+  @Override
+  public ResponseEntity<de.caritas.cob.userservice.api.adapters.web.dto.DirectLinkConversationDTO>
+      startDirectLinkConversation(String token) {
+    return directLinkControllerDelegate.startDirectLinkConversation(token);
+  }
+
+  @Override
+  public ResponseEntity<
+          java.util.List<de.caritas.cob.userservice.api.adapters.web.dto.CallKnockDTO>>
+      getPendingCallKnocks(Long sessionId, String matrixRoomId) {
+    return directLinkControllerDelegate.getPendingCallKnocks(sessionId, matrixRoomId);
+  }
+
+  @Override
+  public ResponseEntity<
+          java.util.List<de.caritas.cob.userservice.api.adapters.web.dto.CallKnockDTO>>
+      admitAllCallKnocks(Long sessionId, String matrixRoomId) {
+    return directLinkControllerDelegate.admitAllCallKnocks(sessionId, matrixRoomId);
+  }
+
+  @Override
+  public ResponseEntity<de.caritas.cob.userservice.api.adapters.web.dto.CallKnockDTO>
+      admitCallKnock(Long knockId) {
+    return directLinkControllerDelegate.admitCallKnock(knockId);
+  }
+
+  @Override
+  public ResponseEntity<de.caritas.cob.userservice.api.adapters.web.dto.CallKnockDTO>
+      declineCallKnock(Long knockId) {
+    return directLinkControllerDelegate.declineCallKnock(knockId);
+  }
+
+  @Override
+  public ResponseEntity<de.caritas.cob.userservice.api.adapters.web.dto.CallKnockDTO>
+      waitInGroupChat(Long chatId) {
+    return directLinkControllerDelegate.waitInGroupChat(chatId);
+  }
+
+  @Override
+  public ResponseEntity<de.caritas.cob.userservice.api.adapters.web.dto.CallKnockDTO>
+      getOwnCallKnock(Long knockId) {
+    return directLinkControllerDelegate.getOwnCallKnock(knockId);
+  }
+
+  @Override
+  public ResponseEntity<de.caritas.cob.userservice.api.adapters.web.dto.CallKnockDTO>
+      getOwnCallKnockForSession(Long sessionId) {
+    return directLinkControllerDelegate.getOwnCallKnockForSession(sessionId);
+  }
+
+  @Override
+  public ResponseEntity<de.caritas.cob.userservice.api.adapters.web.dto.CallKnockDTO>
+      cancelOwnCallKnock(Long knockId) {
+    return directLinkControllerDelegate.cancelOwnCallKnock(knockId);
+  }
 
   @Override
   public ResponseEntity<Void> sendContactSheetEmail(Long sessionId) {
@@ -333,11 +529,6 @@ public class UserController implements UsersApi {
   @Override
   public ResponseEntity<Void> updateAbsence(@RequestBody AbsenceDTO absence) {
     return userAccountControllerDelegate.updateAbsence(absence);
-  }
-
-  @Override
-  public ResponseEntity<EmailNotificationsDTO> getUserEmailNotifications(String email) {
-    return userAccountControllerDelegate.getUserEmailNotifications(email);
   }
 
   /**
@@ -540,9 +731,43 @@ public class UserController implements UsersApi {
    * @return {@link ResponseEntity} containing {@link InternalSubsetChatResponseDTO}
    */
   @Override
+  public ResponseEntity<List<InternalChatRecipientDTO>> listInternalSubsetChatRecipients(
+      Long agencyId) {
+    return userChatControllerDelegate.listInternalSubsetChatRecipients(agencyId);
+  }
+
+  @Override
   public ResponseEntity<InternalSubsetChatResponseDTO> openInternalSubsetChat(
       @RequestBody InternalSubsetChatDTO request) {
     return userChatControllerDelegate.openInternalSubsetChat(request);
+  }
+
+  /** Colleagues who can join a running members-only chat (ORISO-UserService#1580). */
+  @Override
+  public ResponseEntity<List<InternalChatRecipientDTO>> listInternalChatInvitationRecipients(
+      Long chatId) {
+    return userChatControllerDelegate.listInternalChatInvitationRecipients(chatId);
+  }
+
+  /** Invites a colleague into a running members-only chat (ORISO-UserService#1580). */
+  @Override
+  public ResponseEntity<Void> inviteInternalChatParticipant(
+      Long chatId, @RequestBody InternalChatInvitationDTO request) {
+    return userChatControllerDelegate.inviteInternalChatParticipant(chatId, request);
+  }
+
+  @Override
+  public ResponseEntity<List<AgencyAdminContactDTO>> getAgencyAdminContacts(Long agencyId) {
+    return ResponseEntity.ok(
+        agencyAdminContactService.contactsFor(authenticatedUser.getUserId(), agencyId));
+  }
+
+  /** The contact person of one of the caller's counselling centres (ORISO-Admin#1534). */
+  @Override
+  public ResponseEntity<de.caritas.cob.userservice.api.adapters.web.dto.ConsultantAgencyContactDTO>
+      getConsultantAgencyContactPerson(Long agencyId) {
+    return ResponseEntity.ok(
+        agencyAdminContactService.contactPersonFor(authenticatedUser.getUserId(), agencyId));
   }
 
   @Override
@@ -676,8 +901,8 @@ public class UserController implements UsersApi {
    * @return {@link ResponseEntity} containing {@link ChatInfoResponseDTO}
    */
   @Override
-  public ResponseEntity<ChatInfoResponseDTO> getChat(Long chatId) {
-    return userChatControllerDelegate.getChat(chatId);
+  public ResponseEntity<ChatInfoResponseDTO> getChat(Long chatId, Boolean includeCallerBan) {
+    return userChatControllerDelegate.getChat(chatId, includeCallerBan);
   }
 
   /**
@@ -769,6 +994,17 @@ public class UserController implements UsersApi {
   public ResponseEntity<ConsultantSessionDTO> fetchSessionForConsultant(
       @PathVariable Long sessionId) {
     return userSessionControllerDelegate.fetchSessionForConsultant(sessionId);
+  }
+
+  /**
+   * Remembers that the calling consultant has opened the given waiting enquiry.
+   *
+   * @param sessionId Session id (required)
+   * @return {@link ResponseEntity} without content
+   */
+  @Override
+  public ResponseEntity<Void> markEnquiryOpened(@PathVariable Long sessionId) {
+    return userSessionControllerDelegate.markEnquiryOpened(sessionId);
   }
 
   /**

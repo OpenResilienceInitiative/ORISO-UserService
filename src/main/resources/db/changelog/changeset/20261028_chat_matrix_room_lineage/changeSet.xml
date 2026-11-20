@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+  xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-3.2.xsd">
+  <changeSet id="20261028-chat-matrix-room-lineage" author="oriso">
+    <createTable tableName="chat_matrix_room">
+      <column name="room_id" type="VARCHAR(512)"><constraints primaryKey="true" nullable="false"/></column>
+      <column name="series_id" type="BIGINT"><constraints nullable="false"/></column>
+      <column name="occurrence_index" type="INT"><constraints nullable="false"/></column>
+      <column name="owner_tenant_id" type="BIGINT"><constraints nullable="false"/></column>
+    </createTable>
+    <addUniqueConstraint tableName="chat_matrix_room" columnNames="series_id,occurrence_index" constraintName="uq_chat_matrix_room_occurrence"/>
+    <addForeignKeyConstraint baseTableName="chat_matrix_room" baseColumnNames="series_id" referencedTableName="chat" referencedColumnNames="id" constraintName="fk_chat_matrix_room_series" onDelete="CASCADE"/>
+    <!-- Only unique current canonical mappings are known. Never reconstruct past rooms from names or invitations. -->
+    <sql>
+      INSERT INTO chat_matrix_room (room_id, series_id, occurrence_index, owner_tenant_id)
+      SELECT c.matrix_room_id, c.id, c.current_occurrence_index, o.tenant_id
+      FROM chat c JOIN consultant o ON o.consultant_id = c.consultant_id_owner
+      WHERE c.matrix_room_id LIKE '!%' AND o.tenant_id &gt; 0 AND c.current_occurrence_index &gt;= 0
+        AND (SELECT COUNT(*) FROM chat other WHERE other.matrix_room_id = c.matrix_room_id) = 1;
+    </sql>
+    <rollback><dropTable tableName="chat_matrix_room"/></rollback>
+    <modifySql dbms="mariadb,mysql">
+      <replace replace="series_id BIGINT" with="series_id BIGINT UNSIGNED"/>
+      <replace replace="VARCHAR(512)" with="VARCHAR(512) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin"/>
+      <replace replace="other.matrix_room_id = c.matrix_room_id" with="BINARY other.matrix_room_id = BINARY c.matrix_room_id"/>
+      <replace replace="o.consultant_id = c.consultant_id_owner" with="BINARY o.consultant_id = BINARY c.consultant_id_owner"/>
+    </modifySql>
+  </changeSet>
+</databaseChangeLog>

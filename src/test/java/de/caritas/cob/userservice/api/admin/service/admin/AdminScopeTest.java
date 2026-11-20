@@ -414,6 +414,58 @@ class AdminScopeTest {
     assertThatCode(() -> adminScope.assertMay(Target.admin("unknown"))).doesNotThrowAnyException();
   }
 
+  /** #1407: a BST admin reads a colleague agency admin but changes or removes none. */
+  @Test
+  void assertMay_Should_DenyManagingColleagueAdmin_When_AgencyAdminSharesTheAgency() {
+    actAs(4L, UserRole.RESTRICTED_AGENCY_ADMIN, UserRole.USER_ADMIN);
+    givenOwnAgencies(7L);
+    when(adminRepository.findById("colleague")).thenReturn(Optional.of(admin("colleague", 4L)));
+    when(adminAgencyRepository.findByAdminId("colleague"))
+        .thenReturn(List.of(AdminAgency.builder().agencyId(7L).build()));
+
+    assertThatCode(() -> adminScope.assertMay(Target.admin("colleague")))
+        .doesNotThrowAnyException();
+    assertThatThrownBy(() -> adminScope.assertMay(Target.managedAdmin("colleague")))
+        .isInstanceOf(ForbiddenException.class);
+  }
+
+  /** #1407: Frank decided a BST admin does not manage their own admin record either. */
+  @Test
+  void assertMay_Should_DenyManagingOwnAdminRecord_When_AgencyAdmin() {
+    actAs(4L, UserRole.RESTRICTED_AGENCY_ADMIN, UserRole.USER_ADMIN);
+    givenOwnAgencies(7L);
+
+    assertThatThrownBy(() -> adminScope.assertMay(Target.managedAdmin(CALLER)))
+        .isInstanceOf(ForbiddenException.class);
+  }
+
+  @Test
+  void assertMay_Should_AllowManagingAgencyAdmin_When_TenantAdminOfTheSameTenant() {
+    actAs(4L, UserRole.TENANT_ADMIN, UserRole.AGENCY_ADMIN, UserRole.USER_ADMIN);
+    when(adminRepository.findById("agency-admin"))
+        .thenReturn(Optional.of(admin("agency-admin", 4L)));
+
+    assertThatCode(() -> adminScope.assertMay(Target.managedAdmin("agency-admin")))
+        .doesNotThrowAnyException();
+  }
+
+  @Test
+  void assertMay_Should_DenyManagingAgencyAdmin_When_TenantAdminOfAnotherTenant() {
+    actAs(4L, UserRole.TENANT_ADMIN, UserRole.AGENCY_ADMIN, UserRole.USER_ADMIN);
+    when(adminRepository.findById("foreign")).thenReturn(Optional.of(admin("foreign", 5L)));
+
+    assertThatThrownBy(() -> adminScope.assertMay(Target.managedAdmin("foreign")))
+        .isInstanceOf(ForbiddenException.class);
+  }
+
+  @Test
+  void assertMay_Should_AllowManagingAnyAdmin_When_PlatformAdmin() {
+    actAs(0L, UserRole.TENANT_ADMIN, UserRole.AGENCY_ADMIN, UserRole.USER_ADMIN);
+
+    assertThatCode(() -> adminScope.assertMay(Target.managedAdmin("agency-admin")))
+        .doesNotThrowAnyException();
+  }
+
   @Test
   void assertMay_Should_DenyUnknownAccount() {
     actAs(4L, UserRole.TENANT_ADMIN, UserRole.AGENCY_ADMIN, UserRole.USER_ADMIN);

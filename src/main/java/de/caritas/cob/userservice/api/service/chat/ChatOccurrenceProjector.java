@@ -24,6 +24,31 @@ public class ChatOccurrenceProjector {
       throw new IllegalArgumentException("Occurrence projection window must be positive");
     }
 
+    return project(series, exceptions, windowStart, windowEnd, 0, limit);
+  }
+
+  /** Projects due occurrences that have not been consumed, including the window's last instant. */
+  public List<ChatOccurrence> projectForReminder(
+      Chat series,
+      List<ChatOccurrenceException> exceptions,
+      LocalDateTime windowStart,
+      LocalDateTime windowEndInclusive) {
+    return project(
+        series,
+        exceptions,
+        windowStart,
+        windowEndInclusive.plusNanos(1),
+        series.getCurrentOccurrenceIndex(),
+        series.getRepeatCount());
+  }
+
+  private List<ChatOccurrence> project(
+      Chat series,
+      List<ChatOccurrenceException> exceptions,
+      LocalDateTime windowStart,
+      LocalDateTime windowEnd,
+      int firstOccurrenceIndex,
+      int limit) {
     Map<LocalDateTime, ChatOccurrenceException> exceptionsByStart =
         exceptions.stream()
             .collect(
@@ -31,7 +56,9 @@ public class ChatOccurrenceProjector {
                     ChatOccurrenceException::getOriginalOccurrenceStartUtc, Function.identity()));
 
     var result = new java.util.ArrayList<ChatOccurrence>();
-    for (int index = 0; index < series.getRepeatCount() && result.size() < limit; index++) {
+    for (int index = firstOccurrenceIndex;
+        index < series.getRepeatCount() && result.size() < limit;
+        index++) {
       var originalStart = series.occurrenceStart(index);
       var exception = exceptionsByStart.get(originalStart);
       if (exception != null && exception.getExceptionType() == ExceptionType.SKIP) {

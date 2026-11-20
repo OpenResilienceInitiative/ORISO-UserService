@@ -2,6 +2,8 @@ package de.caritas.cob.userservice.api.port.out;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import de.caritas.cob.userservice.api.model.CommunicationStat;
+import de.caritas.cob.userservice.api.model.CommunicationStat.Kind;
 import jakarta.persistence.EntityManager;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -47,6 +49,7 @@ import org.springframework.test.context.DynamicPropertySource;
 class AdminStatisticsRepositoryMariaDbIT {
 
   private static final long TENANT_ID = 4242L;
+  private static final long AGENCY_ID = 777L;
 
   @DynamicPropertySource
   private static void databaseProperties(DynamicPropertyRegistry registry) {
@@ -66,6 +69,58 @@ class AdminStatisticsRepositoryMariaDbIT {
 
   @Autowired private AdminStatisticsRepository underTest;
   @Autowired private EntityManager entityManager;
+  @Autowired private CommunicationStatRepository communicationStats;
+
+  @Test
+  void communicationCountsShouldRunOnTheLiquibaseSchemaAndRejectASecondRowPerCall() {
+    var now = LocalDateTime.now().withNano(0);
+    communicationStats.save(communicationRow(Kind.ADVICE_SEEKER_MESSAGE, now, null));
+    communicationStats.save(communicationRow(Kind.AUDIO_CALL, now, "mariadb-call"));
+    entityManager
+        .createNativeQuery(
+            "INSERT INTO consultant_message_stat (consultant_hmac, tenant_id, agency_id, "
+                + "sent_date) VALUES ('h', :tenantId, :agencyId, :sentDate)")
+        .setParameter("tenantId", TENANT_ID)
+        .setParameter("agencyId", AGENCY_ID)
+        .setParameter("sentDate", now)
+        .executeUpdate();
+    entityManager.flush();
+
+    var from = now.minusDays(1);
+    var to = now.plusDays(1);
+    assertThat(underTest.countCommunicationByAgency(TENANT_ID, from, to))
+        .extracting(r -> r.getGroupId() + ":" + r.getKind() + ":" + r.getTotal())
+        .containsExactlyInAnyOrder(
+            AGENCY_ID + ":ADVICE_SEEKER_MESSAGE:1", AGENCY_ID + ":AUDIO_CALL:1");
+    assertThat(underTest.countCommunicationByTenant(from, to))
+        .extracting(r -> r.getGroupId() + ":" + r.getKind() + ":" + r.getTotal())
+        .contains(TENANT_ID + ":AUDIO_CALL:1");
+    assertThat(underTest.countCounsellorMessagesByAgency(TENANT_ID, from, to))
+        .extracting(r -> r.getGroupId() + ":" + r.getTotal())
+        .containsExactly(AGENCY_ID + ":1");
+    assertThat(underTest.countCounsellorMessagesByTenant(from, to))
+        .extracting(r -> r.getGroupId() + ":" + r.getTotal())
+        .contains(TENANT_ID + ":1");
+    org.assertj.core.api.Assertions.assertThatThrownBy(
+            () -> {
+              communicationStats.save(communicationRow(Kind.AUDIO_CALL, now, "mariadb-call"));
+              entityManager.flush();
+            })
+        .as("the unique call key counts one call once")
+        .isInstanceOf(Exception.class);
+  }
+
+  private static CommunicationStat communicationRow(
+      Kind kind, LocalDateTime occurredAt, String eventKey) {
+    return CommunicationStat.builder()
+        .tenantId(TENANT_ID)
+        .agencyId(AGENCY_ID)
+        .sessionId(1L)
+        .kind(kind)
+        .occurredAt(occurredAt)
+        .eventKey(eventKey)
+        .build();
+  }
 
   @Test
   void countDailyNewSessionsByTenantShouldProjectDayWithoutConversionError() {
@@ -84,7 +139,100 @@ class AdminStatisticsRepositoryMariaDbIT {
     assertThat(row.getDay()).isEqualTo(today);
   }
 
+  @Test
+  void countHourlyNewSessionsByTenantShouldProjectDayAndHour() {
+    var today = LocalDate.now();
+    seedSingleSession(today);
+
+    var rows =
+        underTest.countHourlyNewSessionsByTenant(
+            today.atStartOfDay(), today.plusDays(1).atStartOfDay());
+
+    assertThat(rows).hasSize(1);
+    var row = rows.get(0);
+    assertThat(row.getGroupId()).isEqualTo(TENANT_ID);
+    assertThat(row.getDay()).isEqualTo(today);
+    assertThat(row.getHourOfDay().intValue()).isEqualTo(9);
+    assertThat(row.getTotal()).isEqualTo(1L);
+    assertThat(
+            underTest.countHourlyNewSessionsByTenant(
+                today.minusDays(2).atStartOfDay(), today.atStartOfDay()))
+        .as("the end of the range is exclusive")
+        .isEmpty();
+  }
+
+  @Test
+  void countHourlyNewSessionsByAgencyShouldProjectAgencyDayAndHour() {
+    var today = LocalDate.now();
+    seedSingleSession(today, AGENCY_ID);
+
+    var rows =
+        underTest.countHourlyNewSessionsByAgency(
+            TENANT_ID, today.atStartOfDay(), today.plusDays(1).atStartOfDay());
+
+    assertThat(rows).hasSize(1);
+    var row = rows.get(0);
+    assertThat(row.getGroupId()).isEqualTo(AGENCY_ID);
+    assertThat(row.getDay()).isEqualTo(today);
+    assertThat(row.getHourOfDay().intValue()).isEqualTo(9);
+    assertThat(row.getTotal()).isEqualTo(1L);
+    assertThat(
+            underTest.countHourlyNewSessionsByAgency(
+                TENANT_ID, today.minusDays(2).atStartOfDay(), today.atStartOfDay()))
+        .as("the end of the range is exclusive")
+        .isEmpty();
+  }
+
+  @Test
+  void activeCounsellorCountsShouldRunOnMariaDbAndCountTheSamePeople() {
+    seedConsultant("active", false, "ACTIVE", "CREATED");
+    seedConsultant("absent", true, "ACTIVE", "CREATED");
+    seedConsultant("leaving", false, "PENDING_DELETION", "CREATED");
+    seedConsultant("joining", false, "ACTIVE", "IN_PROGRESS");
+
+    assertThat(underTest.countConsultantsForTenant(TENANT_ID)).isEqualTo(1);
+    assertThat(underTest.countConsultantsByAgency(TENANT_ID))
+        .extracting(row -> row.getGroupId() + ":" + row.getTotal())
+        .containsExactly(AGENCY_ID + ":1");
+    assertThat(underTest.countConsultantsByTenant())
+        .extracting(row -> row.getGroupId() + ":" + row.getTotal())
+        .contains(TENANT_ID + ":1");
+  }
+
+  private void seedConsultant(
+      String name, boolean absent, String lifecycleState, String linkStatus) {
+    var id = "stats-1560-" + name;
+    entityManager
+        .createNativeQuery(
+            "INSERT INTO `consultant` (`consultant_id`, `username`, `first_name`, `last_name`, "
+                + "`email`, `is_absent`, `is_team_consultant`, `language_formal`, `tenant_id`, "
+                + "`status`, `deletion_lifecycle_state`) "
+                + "VALUES (:id, :id, 'A', 'B', :email, :absent, 0, 1, :tenantId, 'CREATED', "
+                + ":lifecycle)")
+        .setParameter("id", id)
+        .setParameter("email", id + "@example.test")
+        .setParameter("absent", absent ? 1 : 0)
+        .setParameter("tenantId", TENANT_ID)
+        .setParameter("lifecycle", lifecycleState)
+        .executeUpdate();
+    entityManager
+        .createNativeQuery(
+            "INSERT INTO `consultant_agency` (`id`, `consultant_id`, `agency_id`, `tenant_id`, "
+                + "`status`) VALUES (:relationId, :id, :agencyId, :tenantId, :status)")
+        .setParameter("relationId", 990_000L + Math.abs(name.hashCode() % 1000))
+        .setParameter("id", id)
+        .setParameter("agencyId", AGENCY_ID)
+        .setParameter("tenantId", TENANT_ID)
+        .setParameter("status", linkStatus)
+        .executeUpdate();
+    entityManager.flush();
+  }
+
   private void seedSingleSession(LocalDate day) {
+    seedSingleSession(day, null);
+  }
+
+  private void seedSingleSession(LocalDate day, Long agencyId) {
     var userId = "stats-it-user-" + TENANT_ID;
     entityManager
         .createNativeQuery(
@@ -107,6 +255,14 @@ class AdminStatisticsRepositoryMariaDbIT {
         .setParameter("userId", userId)
         .setParameter("createDate", LocalDateTime.of(day, java.time.LocalTime.of(9, 0)))
         .executeUpdate();
+
+    if (agencyId != null) {
+      entityManager
+          .createNativeQuery("UPDATE `session` SET `agency_id` = :agencyId WHERE `id` = :id")
+          .setParameter("agencyId", agencyId)
+          .setParameter("id", 999_000_001L)
+          .executeUpdate();
+    }
 
     entityManager.flush();
   }

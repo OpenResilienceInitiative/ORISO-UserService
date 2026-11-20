@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+  xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-3.2.xsd">
+  <!-- #2237 follow-up: 20261112-matrix-call-observation-session-2237 is marked as ran on a
+       database that already had session_id, which also skips its chat_id nullability change.
+       This applies that change where it is still missing; everywhere else it is marked as ran. -->
+  <changeSet id="20261113-matrix-call-observation-chat-nullable-2237" author="oriso">
+    <preConditions onFail="MARK_RAN">
+      <sqlCheck expectedResult="1">
+        SELECT COUNT(*) FROM information_schema.COLUMNS
+        WHERE TABLE_SCHEMA = DATABASE()
+          AND TABLE_NAME = 'matrix_call_observation'
+          AND COLUMN_NAME = 'chat_id'
+          AND IS_NULLABLE = 'NO'
+      </sqlCheck>
+    </preConditions>
+    <dropNotNullConstraint tableName="matrix_call_observation" columnName="chat_id"
+      columnDataType="BIGINT"/>
+    <!-- Session rows have no chat_id; making it required again would need their removal, which
+         the #2237 changeset's own rollback does. -->
+    <rollback/>
+  </changeSet>
+</databaseChangeLog>

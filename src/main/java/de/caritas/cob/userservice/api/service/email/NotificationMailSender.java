@@ -1,5 +1,6 @@
 package de.caritas.cob.userservice.api.service.email;
 
+import static de.caritas.cob.userservice.api.service.emailsupplier.EmailSupplier.TEMPLATE_ADDON_NOTIFICATION;
 import static de.caritas.cob.userservice.api.service.emailsupplier.EmailSupplier.TEMPLATE_ASSIGN_ENQUIRY_NOTIFICATION;
 import static de.caritas.cob.userservice.api.service.emailsupplier.EmailSupplier.TEMPLATE_DAILY_ENQUIRY_NOTIFICATION;
 import static de.caritas.cob.userservice.api.service.emailsupplier.EmailSupplier.TEMPLATE_INQUIRY_ACCEPTED_NOTIFICATION;
@@ -30,7 +31,8 @@ public class NotificationMailSender {
         || TEMPLATE_NEW_DIRECT_ENQUIRY_NOTIFICATION.equals(template)
         || TEMPLATE_ASSIGN_ENQUIRY_NOTIFICATION.equals(template)
         || TEMPLATE_DAILY_ENQUIRY_NOTIFICATION.equals(template)
-        || TEMPLATE_INQUIRY_ACCEPTED_NOTIFICATION.equals(template);
+        || TEMPLATE_INQUIRY_ACCEPTED_NOTIFICATION.equals(template)
+        || TEMPLATE_ADDON_NOTIFICATION.equals(template);
   }
 
   /** Returns false only when notifications are explicitly disabled for this tenant. */
@@ -92,7 +94,7 @@ public class NotificationMailSender {
           TenantSystemEmailDelivery.Purpose.DIRECT_ENQUIRY;
       case TEMPLATE_ASSIGN_ENQUIRY_NOTIFICATION ->
           TenantSystemEmailDelivery.Purpose.ENQUIRY_ASSIGNED;
-      case TEMPLATE_INQUIRY_ACCEPTED_NOTIFICATION ->
+      case TEMPLATE_INQUIRY_ACCEPTED_NOTIFICATION, TEMPLATE_ADDON_NOTIFICATION ->
           TenantSystemEmailDelivery.Purpose.FREE_TEXT_NOTICE;
       case TEMPLATE_DAILY_ENQUIRY_NOTIFICATION ->
           TenantSystemEmailDelivery.Purpose.DAILY_ENQUIRY_DIGEST;

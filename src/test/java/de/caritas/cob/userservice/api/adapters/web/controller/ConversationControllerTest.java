@@ -140,7 +140,7 @@ class ConversationControllerTest {
     when(mapper.createDateOf(sessionMap)).thenReturn(LocalDateTime.now());
     when(topicConsultantRoutingService.findAvailableConsultantIds(7L))
         .thenThrow(new RuntimeException("presence down"));
-    when(messenger.countPendingEnquiriesAheadOf(11L, 3, 7L, mapper.createDateOf(sessionMap)))
+    when(messenger.countPendingEnquiriesAheadOf(11L, 3, 7L, mapper.createDateOf(sessionMap), 99L))
         .thenReturn(2L);
     when(mapper.anonymousEnquiryOf(sessionMap, 0, 2L)).thenReturn(enquiry);
 
@@ -215,7 +215,7 @@ class ConversationControllerTest {
     when(mapper.mainTopicIdOf(sessionMap)).thenReturn(null);
     when(mapper.agencyIdOf(sessionMap)).thenReturn(12L);
     when(mapper.createDateOf(sessionMap)).thenReturn(createdAt);
-    when(messenger.countPendingEnquiriesAheadOf(12L, null, null, createdAt)).thenReturn(0L);
+    when(messenger.countPendingEnquiriesAheadOf(12L, null, null, createdAt, 100L)).thenReturn(0L);
     when(mapper.anonymousEnquiryOf(sessionMap, 0, 0L)).thenReturn(enquiry);
 
     var response = controller.getAnonymousEnquiryDetails(100L);

@@ -26,6 +26,8 @@ import lombok.Setter;
 public class GroupChatMatrixCleanupTask {
   public enum Action {
     PURGE_ROOM,
+    /** Written before a room is created; {@code roomId} holds the full alias it will get. */
+    PURGE_ALIAS,
     REMOVE_MEMBER
   }
 

@@ -52,6 +52,10 @@ class SessionServiceAccessTest {
   @Mock private SessionOwnershipService sessionOwnershipService;
   @Mock private MembersOnlyChatAccess membersOnlyChatAccess;
 
+  @Mock
+  private de.caritas.cob.userservice.api.service.enquiry.EnquiryRejectionPendingReadAccess
+      rejectionReadAccess;
+
   private SessionService sessionService;
 
   @BeforeEach
@@ -68,6 +72,7 @@ class SessionServiceAccessTest {
             sessionTopicEnrichmentService,
             sessionSupervisorRepository,
             supervisionMarkerService,
+            rejectionReadAccess,
             sessionOwnershipService,
             membersOnlyChatAccess);
 
@@ -126,6 +131,27 @@ class SessionServiceAccessTest {
   }
 
   @Test
+  void isConsultantPermittedToSession_ShouldAllowRejectedRead_ForUnassignedConsultantWithGrant() {
+    var consultant = consultant(UNASSIGNED_CONSULTANT_ID);
+    var session = sessionOwnedBy(OWNER_ID);
+    session.setStatus(Session.SessionStatus.REJECTED);
+    when(rejectionReadAccess.canRead(session, consultant)).thenReturn(true);
+
+    assertEquals(true, sessionService.isConsultantPermittedToSession(consultant, session));
+  }
+
+  @Test
+  void isConsultantPermittedToSession_ShouldDenyRejectedRead_ForAssignedConsultantWithoutGrant() {
+    var consultant = consultant(CONSULTANT_ID);
+    var session = sessionOwnedBy(OWNER_ID);
+    session.setStatus(Session.SessionStatus.REJECTED);
+    session.setConsultant(consultant);
+    when(rejectionReadAccess.canRead(session, consultant)).thenReturn(false);
+
+    assertEquals(false, sessionService.isConsultantPermittedToSession(consultant, session));
+  }
+
+  @Test
   void
       assertUserHasAccess_ShouldThrowForbiddenException_WhenAssignedConsultantLeftTheMembersOnlyChat() {
     var former = consultant(CONSULTANT_ID);
@@ -140,6 +166,52 @@ class SessionServiceAccessTest {
     assertThrows(
         ForbiddenException.class,
         () -> sessionService.assertUserHasAccess(SESSION_ID, consultantUser(CONSULTANT_ID)));
+  }
+
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.ValueSource(booleans = {false, true})
+  void aRejectedTeamCaseUsesTheBoundedReadGrantInsteadOfAgencyMembership(boolean granted) {
+    var consultant = consultant(UNASSIGNED_CONSULTANT_ID);
+    consultant.setConsultantAgencies(
+        Set.of(
+            de.caritas.cob.userservice.api.model.ConsultantAgency.builder().agencyId(70L).build()));
+    var session = sessionOwnedBy(OWNER_ID);
+    session.setAgencyId(70L);
+    session.setTeamSession(true);
+    session.setStatus(Session.SessionStatus.REJECTED);
+    when(sessionRepository.findById(SESSION_ID)).thenReturn(Optional.of(session));
+    when(consultantService.getConsultant(UNASSIGNED_CONSULTANT_ID))
+        .thenReturn(Optional.of(consultant));
+    lenient().when(rejectionReadAccess.canRead(session, consultant)).thenReturn(granted);
+    if (granted) {
+      assertEquals(
+          session,
+          sessionService.assertUserHasAccess(SESSION_ID, consultantUser(UNASSIGNED_CONSULTANT_ID)));
+    } else {
+      assertThrows(
+          ForbiddenException.class,
+          () ->
+              sessionService.assertUserHasAccess(
+                  SESSION_ID, consultantUser(UNASSIGNED_CONSULTANT_ID)));
+    }
+  }
+
+  @Test
+  void anOrdinaryTeamEnquiryRemainsReadableByItsAgencyColleague() {
+    var consultant = consultant(UNASSIGNED_CONSULTANT_ID);
+    consultant.setConsultantAgencies(
+        Set.of(
+            de.caritas.cob.userservice.api.model.ConsultantAgency.builder().agencyId(70L).build()));
+    var session = sessionOwnedBy(OWNER_ID);
+    session.setAgencyId(70L);
+    session.setTeamSession(true);
+    session.setStatus(Session.SessionStatus.NEW);
+    when(sessionRepository.findById(SESSION_ID)).thenReturn(Optional.of(session));
+    when(consultantService.getConsultant(UNASSIGNED_CONSULTANT_ID))
+        .thenReturn(Optional.of(consultant));
+    assertEquals(
+        session,
+        sessionService.assertUserHasAccess(SESSION_ID, consultantUser(UNASSIGNED_CONSULTANT_ID)));
   }
 
   private AuthenticatedUser user(String userId) {

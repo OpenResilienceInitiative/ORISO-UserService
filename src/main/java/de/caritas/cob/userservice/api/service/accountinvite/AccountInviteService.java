@@ -66,9 +66,6 @@ public class AccountInviteService {
           AccountInviteStatus.DRAFT,
           AccountInviteStatus.EMAIL_SENT);
 
-  private static final List<AccountInviteStatus> EXPIRABLE_STATUSES =
-      List.of(AccountInviteStatus.DRAFT, AccountInviteStatus.EMAIL_SENT);
-
   /** Everything but ACCEPTED and REVOKED, as before the revoke became conditional. */
   private static final List<AccountInviteStatus> REVOCABLE_STATUSES =
       List.of(
@@ -78,7 +75,15 @@ public class AccountInviteService {
           AccountInviteStatus.EXPIRED,
           AccountInviteStatus.SUPERSEDED);
 
+  /** No link of these works any more; only such an invite is marked for deletion. */
+  private static final List<AccountInviteStatus> SETTLED_STATUSES =
+      List.of(
+          AccountInviteStatus.REVOKED, AccountInviteStatus.EXPIRED, AccountInviteStatus.SUPERSEDED);
+
   private static final int EXPIRY_SWEEP_BATCH = 100;
+
+  /** Bounds one sweep run to 2,000 invites; the next run, minutes later, takes the rest. */
+  private static final int EXPIRY_SWEEP_MAX_BATCHES = 20;
 
   /** Expiry already freed the address claim and the reserved numbers. */
   private static final String INACTIVE_RESEND_MESSAGE = "Inactive invites cannot be resent";
@@ -221,28 +226,31 @@ public class AccountInviteService {
       InviteTarget target,
       TopicPermission topicPermission,
       LocalDateTime now) {
-    return AccountInvite.builder()
-        .targetRole(command.targetRole())
-        .tenantId(target.tenantId())
-        .recipientEmail(command.recipientEmail().trim())
-        .activeRecipientKey(normalizeEmail(command.recipientEmail()))
-        .firstName(trimToNull(command.firstName()))
-        .lastName(trimToNull(command.lastName()))
-        .agencyId(target.agencyId())
-        .departmentId(target.departmentId())
-        .tenantIdAllocationMode(command.tenantIdAllocationMode())
-        .agencyIdAllocationMode(command.agencyIdAllocationMode())
-        .alsoCounsellor(alsoCounsellorOf(command))
-        .topicPermission(topicPermission)
-        .status(AccountInviteStatus.DRAFT)
-        .provisioningStatus(AccountInviteProvisioningStatus.PENDING)
-        .emailVerificationStatus(EmailVerificationStatus.PENDING)
-        .twoFactorStatus(defaultTwoFactorStatus(command.targetRole()))
-        .createdByUserId(authenticatedUser.getUserId())
-        .createdByUsername(authenticatedUser.getUsername())
-        .createDate(now)
-        .updateDate(now)
-        .build();
+    AccountInvite invite =
+        AccountInvite.builder()
+            .targetRole(command.targetRole())
+            .tenantId(target.tenantId())
+            .recipientEmail(command.recipientEmail().trim())
+            .activeRecipientKey(normalizeEmail(command.recipientEmail()))
+            .firstName(trimToNull(command.firstName()))
+            .lastName(trimToNull(command.lastName()))
+            .agencyId(target.agencyId())
+            .departmentId(target.departmentId())
+            .tenantIdAllocationMode(command.tenantIdAllocationMode())
+            .agencyIdAllocationMode(command.agencyIdAllocationMode())
+            .alsoCounsellor(alsoCounsellorOf(command))
+            .topicPermission(topicPermission)
+            .status(AccountInviteStatus.DRAFT)
+            .provisioningStatus(AccountInviteProvisioningStatus.PENDING)
+            .emailVerificationStatus(EmailVerificationStatus.PENDING)
+            .twoFactorStatus(defaultTwoFactorStatus(command.targetRole()))
+            .createdByUserId(authenticatedUser.getUserId())
+            .createdByUsername(authenticatedUser.getUsername())
+            .createDate(now)
+            .updateDate(now)
+            .build();
+    command.suggestion().applyTo(invite);
+    return invite;
   }
 
   private AccountInvite save(AccountInvite invite) {
@@ -401,7 +409,7 @@ public class AccountInviteService {
       return null;
     }
     String trimmed = query.trim();
-    return trimmed.isEmpty() ? null : trimmed.toLowerCase();
+    return trimmed.isEmpty() ? null : trimmed.toLowerCase(java.util.Locale.ROOT);
   }
 
   private static Long parseNumericSearch(String normalizedSearch) {
@@ -570,12 +578,19 @@ public class AccountInviteService {
                       .agencyIdAllocationMode(oldInvite.getAgencyIdAllocationMode())
                       .alsoCounsellor(oldInvite.getAlsoCounsellor())
                       .topicPermission(oldInvite.getTopicPermission())
+                      .suggestedAvatarKind(oldInvite.getSuggestedAvatarKind())
+                      .suggestedAvatarId(oldInvite.getSuggestedAvatarId())
+                      .suggestedDisplayName(oldInvite.getSuggestedDisplayName())
                       .unitCreatedAt(oldInvite.getUnitCreatedAt())
                       .tokenHash(prepared.tokenHash())
                       .expiresAt(resolveExpiry(now, DEFAULT_EXPIRY_DAYS))
                       .status(AccountInviteStatus.EMAIL_SENT)
                       .emailVerificationStatus(oldInvite.getEmailVerificationStatus())
-                      .twoFactorStatus(oldInvite.getTwoFactorStatus())
+                      .twoFactorStatus(
+                          // A legacy waiver never carries over: new staff accounts owe 2FA.
+                          oldInvite.getTwoFactorStatus() == TwoFactorGateStatus.WAIVED
+                              ? defaultTwoFactorStatus(oldInvite.getTargetRole())
+                              : oldInvite.getTwoFactorStatus())
                       .createdByUserId(authenticatedUser.getUserId())
                       .createdByUsername(authenticatedUser.getUsername())
                       .createDate(now)
@@ -641,42 +656,93 @@ public class AccountInviteService {
   }
 
   /**
-   * Expires elapsed invites that still hold a Träger or Beratungsstelle number; run by {@link
-   * ExpiredInviteReservationSweep}.
+   * Expires every sent invite whose link has lapsed, and a lapsed draft that holds a Träger or
+   * Beratungsstelle number, giving back a number no other invite needs; run by {@link
+   * ExpiredInviteReservationSweep}. Before ORISO-Admin#1522 only number-holding invites were swept,
+   * so a never-opened counsellor invite stayed {@code EMAIL_SENT} and was listed as open forever
+   * (ORISO-UserService#1617). A number-free draft is left alone: sending it re-arms its expiry.
+   *
+   * <p>Existing-account setup links are left to {@link ExistingAccountSetupService}, which keeps
+   * their private recovery data. Works in id order, at most {@link #EXPIRY_SWEEP_MAX_BATCHES}
+   * batches per run, so a legacy backlog drains over a few runs and a row that is busy this time
+   * never blocks the rows after it.
    *
    * @return how many invites were expired
    */
   public int expireElapsedInvites() {
     LocalDateTime now = LocalDateTime.now();
-    List<Long> elapsed =
-        requiresNewTransaction()
-            .execute(
-                transaction ->
-                    accountInviteRepository
-                        .findElapsedHoldingANumber(
-                            EXPIRABLE_STATUSES,
-                            ReservationLedger.RESERVING_MODES,
-                            now,
-                            PageRequest.of(0, EXPIRY_SWEEP_BATCH))
-                        .stream()
-                        .map(AccountInvite::getId)
-                        .toList());
     int expired = 0;
-    // One transaction per invite: the sweep never holds one invite's locks while taking another's.
-    for (Long inviteId : elapsed == null ? List.<Long>of() : elapsed) {
+    long afterId = 0L;
+    for (int batch = 0; batch < EXPIRY_SWEEP_MAX_BATCHES; batch++) {
+      long cursor = afterId;
+      List<Long> elapsed =
+          requiresNewTransaction()
+              .execute(
+                  transaction ->
+                      accountInviteRepository.findElapsedInviteIdsToExpire(
+                          AccountInvitePurpose.INVITE,
+                          AccountInviteStatus.EMAIL_SENT,
+                          AccountInviteStatus.DRAFT,
+                          ReservationLedger.RESERVING_MODES,
+                          now,
+                          cursor,
+                          PageRequest.of(0, EXPIRY_SWEEP_BATCH)));
+      if (elapsed == null || elapsed.isEmpty()) {
+        break;
+      }
+      // One transaction per invite: the sweep never holds one invite's locks while taking
+      // another's.
+      for (Long inviteId : elapsed) {
+        if (expireIfStillElapsed(inviteId, now)) {
+          expired++;
+        }
+      }
+      afterId = elapsed.get(elapsed.size() - 1);
+      if (elapsed.size() < EXPIRY_SWEEP_BATCH) {
+        break;
+      }
+    }
+    return expired;
+  }
+
+  /**
+   * Expires one invite the sweep picked, under its row lock. A send that renewed the lapsed link
+   * after the pick (new token and expiry, still EMAIL_SENT) wins: the expiry is checked again under
+   * the lock. A row another writer holds is skipped and left to the next run, so it never stops the
+   * rest of the sweep; any other failure still surfaces.
+   */
+  private boolean expireIfStillElapsed(Long inviteId, LocalDateTime now) {
+    try {
       Boolean done =
           requiresNewTransaction()
               .execute(
                   transaction ->
-                      accountInviteRepository
-                          .findById(inviteId)
+                      InviteRowHold.lock(accountInviteRepository, inviteId)
+                          .filter(invite -> hasLapsed(invite, now))
                           .map(invite -> expireAndReleaseNumbers(invite, now))
                           .orElse(false));
-      if (Boolean.TRUE.equals(done)) {
-        expired++;
+      return Boolean.TRUE.equals(done);
+    } catch (CustomValidationHttpStatusException conflict) {
+      if (!InviteRowHold.isBusy(conflict)) {
+        throw conflict;
       }
+      return false;
     }
-    return expired;
+  }
+
+  private static boolean hasLapsed(AccountInvite invite, LocalDateTime now) {
+    return invite.getExpiresAt() != null && !invite.getExpiresAt().isAfter(now);
+  }
+
+  /**
+   * A sent invite whose link has lapsed, as the expiry sweep will store it. Lets a view report
+   * {@code EXPIRED} in the minutes between two sweeps without writing to the row.
+   */
+  public static boolean isElapsedOpenInvite(AccountInvite invite, LocalDateTime now) {
+    return invite.getPurpose() == AccountInvitePurpose.INVITE
+        && invite.getStatus() == AccountInviteStatus.EMAIL_SENT
+        && invite.getExpiresAt() != null
+        && !invite.getExpiresAt().isAfter(now);
   }
 
   /**
@@ -685,7 +751,42 @@ public class AccountInviteService {
    */
   @Transactional
   public AccountInvite revokeInvite(Long inviteId) {
+    return revokeLocked(findAuthorizedInviteForUpdate(inviteId));
+  }
+
+  /**
+   * An admin deletes an invite (ORISO-Admin#1522): an open one is revoked at once — its link stops
+   * working, its address and any reserved number are given back — and the row is marked, so it is
+   * no longer listed and the nightly invite purge removes it. An expired or replaced invite keeps
+   * its status and is only marked. Repeating the call changes nothing.
+   *
+   * <p>Refused with 409 {@code INVITE_ALREADY_ACCEPTED} once the account exists (the invite goes
+   * with the account), and with 409 {@code INVITE_BUSY} while an existing account is being set up
+   * through it.
+   */
+  @Transactional
+  public void deleteInvite(Long inviteId) {
     AccountInvite invite = findAuthorizedInviteForUpdate(inviteId);
+    if (invite.getDeletionRequestedAt() != null) {
+      return;
+    }
+    if (invite.getStatus() == AccountInviteStatus.ACCEPTED) {
+      throw inviteAlreadyAccepted();
+    }
+    AccountInvite settled =
+        ReservationLedger.PENDING_STATUSES.contains(invite.getStatus())
+            ? revokeLocked(invite)
+            : invite;
+    if (!SETTLED_STATUSES.contains(settled.getStatus())) {
+      throw InviteRowHold.conflict(HttpStatusExceptionReason.INVITE_BUSY);
+    }
+    accountInviteRepository.markForDeletion(
+        inviteId, SETTLED_STATUSES, authenticatedUser.getUserId(), LocalDateTime.now());
+  }
+
+  /** Revokes an invite already locked and authorized; see {@link #revokeInvite(Long)}. */
+  private AccountInvite revokeLocked(AccountInvite invite) {
+    Long inviteId = invite.getId();
     if (invite.getStatus() == AccountInviteStatus.ACCEPTED) {
       throw inviteAlreadyAccepted();
     }
@@ -695,7 +796,7 @@ public class AccountInviteService {
     LocalDateTime now = LocalDateTime.now();
     int revoked =
         accountInviteRepository.revokeWhileStatusIn(
-            invite.getId(), REVOCABLE_STATUSES, authenticatedUser.getUserId(), now);
+            inviteId, REVOCABLE_STATUSES, authenticatedUser.getUserId(), now);
     AccountInvite current = findInvite(inviteId);
     if (revoked == 0) {
       if (current.getStatus() == AccountInviteStatus.ACCEPTED) {
@@ -911,21 +1012,15 @@ public class AccountInviteService {
     return waive(findAuthorizedInviteForUpdate(invite.getId()), command);
   }
 
+  /**
+   * Always refuses. Every new staff account (counsellor, agency admin, Träger admin) must set up
+   * two-factor authentication, so an administrator can no longer waive the gate with a free-text
+   * reason. The endpoint, DTO fields and the {@code WAIVED} status stay so that existing rows
+   * remain readable and clients get a clear refusal instead of a 404; nothing is written.
+   */
   private AccountInvite waive(AccountInvite invite, WaiveTwoFactorCommand command) {
-    if (invite.getPurpose() != AccountInvitePurpose.INVITE) {
-      throw new BadRequestException("Existing-account setup requires the normal two-factor gate");
-    }
-    if (command == null || isBlank(command.reason())) {
-      throw new BadRequestException("Waiver reason is required");
-    }
-    LocalDateTime now = LocalDateTime.now();
-    invite.setTwoFactorStatus(TwoFactorGateStatus.WAIVED);
-    invite.setTwoFactorWaivedBy(authenticatedUser.getUserId());
-    invite.setTwoFactorWaivedAt(now);
-    invite.setTwoFactorWaiverReason(command.reason());
-    invite.setUpdateDate(now);
-    accountInviteRepository.save(invite);
-    return invite;
+    throw new BadRequestException(
+        "Two-factor authentication is mandatory for new accounts and cannot be waived");
   }
 
   /** Marks pending invite gates as satisfied once the user has an OTP credential. */
@@ -1199,7 +1294,44 @@ public class AccountInviteService {
       /** AGENCY_ADMIN only; null = true. Any other role must leave it null. */
       Boolean alsoCounsellor,
       /** The admin's choice; null = SELECT_EXISTING (TopicPermissionPolicy). */
-      TopicPermission topicPermission) {
+      TopicPermission topicPermission,
+      /** Optional avatar and display-name suggestion for the invitee (ORISO-Admin#1274). */
+      InviteAvatarSuggestion suggestion) {
+
+    public CreateAccountInviteCommand {
+      if (suggestion == null) {
+        suggestion = InviteAvatarSuggestion.NONE;
+      }
+    }
+
+    public CreateAccountInviteCommand(
+        AccountInviteTargetRole targetRole,
+        Long tenantId,
+        String recipientEmail,
+        String firstName,
+        String lastName,
+        Long agencyId,
+        Long departmentId,
+        Long expiresInDays,
+        IdAllocationMode tenantIdAllocationMode,
+        IdAllocationMode agencyIdAllocationMode,
+        Boolean alsoCounsellor,
+        TopicPermission topicPermission) {
+      this(
+          targetRole,
+          tenantId,
+          recipientEmail,
+          firstName,
+          lastName,
+          agencyId,
+          departmentId,
+          expiresInDays,
+          tenantIdAllocationMode,
+          agencyIdAllocationMode,
+          alsoCounsellor,
+          topicPermission,
+          InviteAvatarSuggestion.NONE);
+    }
 
     public CreateAccountInviteCommand(
         AccountInviteTargetRole targetRole,
@@ -1266,7 +1398,8 @@ public class AccountInviteService {
           tenantIdAllocationMode,
           agencyIdAllocationMode,
           alsoCounsellor,
-          topicPermission);
+          topicPermission,
+          suggestion);
     }
 
     public CreateAccountInviteCommand withDepartmentId(Long newDepartmentId) {
@@ -1282,7 +1415,8 @@ public class AccountInviteService {
           tenantIdAllocationMode,
           agencyIdAllocationMode,
           alsoCounsellor,
-          topicPermission);
+          topicPermission,
+          suggestion);
     }
 
     /** Convenience for callers without ID-allocation semantics (no reservation modes). */

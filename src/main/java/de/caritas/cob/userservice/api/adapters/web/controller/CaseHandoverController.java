@@ -49,8 +49,10 @@ public class CaseHandoverController {
     "/users/case-handover/reason-policies",
     "/service/users/case-handover/reason-policies"
   })
-  public ResponseEntity<List<CaseHandoverReason>> listReasonPolicies() {
-    return ResponseEntity.ok(caseHandoverService.listReasonPolicies());
+  public ResponseEntity<List<CaseHandoverReason>> listReasonPolicies(
+      @RequestParam(value = "tenantId", required = false) Long tenantId) {
+    // tenantId = the Träger; required for platform admins (FE#1725).
+    return ResponseEntity.ok(caseHandoverService.listReasonPolicies(tenantId));
   }
 
   @PutMapping({
@@ -58,8 +60,9 @@ public class CaseHandoverController {
     "/service/users/case-handover/reason-policies"
   })
   public ResponseEntity<List<CaseHandoverReason>> updateReasonPolicies(
+      @RequestParam(value = "tenantId", required = false) Long tenantId,
       @Valid @RequestBody List<CaseHandoverReason> policies) {
-    return ResponseEntity.ok(caseHandoverService.updateReasonPolicies(policies));
+    return ResponseEntity.ok(caseHandoverService.updateReasonPolicies(tenantId, policies));
   }
 
   @GetMapping({
@@ -170,6 +173,15 @@ public class CaseHandoverController {
     return ResponseEntity.ok(
         caseHandoverService.resolveRecipientDecision(
             sessionId, requestId, Boolean.TRUE.equals(decision.getApproved())));
+  }
+
+  @PostMapping({
+    "/users/sessions/{sessionId}/case-handover/{requestId}/withdraw",
+    "/service/users/sessions/{sessionId}/case-handover/{requestId}/withdraw"
+  })
+  public ResponseEntity<CaseHandoverStatus> withdrawOffer(
+      @PathVariable Long sessionId, @PathVariable Long requestId) {
+    return ResponseEntity.ok(caseHandoverService.withdrawOffer(sessionId, requestId));
   }
 
   @PostMapping({

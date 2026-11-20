@@ -74,6 +74,7 @@ public class ConsultantAgencyServiceTest {
 
   @InjectMocks private ConsultantAgencyService consultantAgencyService;
   @Mock private ConsultantAgencyRepository consultantAgencyRepository;
+  @Mock private de.caritas.cob.userservice.api.port.out.ConsultantRepository consultantRepository;
   @Mock private AgencyService agencyService;
 
   @Mock

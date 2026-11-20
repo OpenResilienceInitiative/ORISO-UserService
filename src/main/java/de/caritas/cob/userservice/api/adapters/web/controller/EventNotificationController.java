@@ -5,6 +5,9 @@ import de.caritas.cob.userservice.api.model.NotificationRoomLevel;
 import de.caritas.cob.userservice.api.service.matrix.RedisMessageMirrorService;
 import de.caritas.cob.userservice.api.service.notification.EventNotificationService;
 import de.caritas.cob.userservice.api.service.notification.FeedbackMessageEmailService;
+import de.caritas.cob.userservice.api.service.notification.InternalChatEmailService;
+import de.caritas.cob.userservice.api.service.notification.MessageEventCurrentAccessService;
+import de.caritas.cob.userservice.api.service.notification.MessageMentionNotificationService;
 import de.caritas.cob.userservice.api.service.notification.PrivacyEnvelope;
 import de.caritas.cob.userservice.api.service.notification.TeamDiscussionNotificationService;
 import jakarta.validation.Valid;
@@ -36,8 +39,11 @@ public class EventNotificationController {
 
   private final @NonNull EventNotificationService eventNotificationService;
   private final @NonNull TeamDiscussionNotificationService teamDiscussionNotificationService;
+  private final @NonNull MessageMentionNotificationService messageMentionNotificationService;
   private final @NonNull FeedbackMessageEmailService feedbackMessageEmailService;
+  private final @NonNull InternalChatEmailService internalChatEmailService;
   private final @NonNull AuthenticatedUser authenticatedUser;
+  private final @NonNull MessageEventCurrentAccessService messageEventCurrentAccessService;
   private final Optional<RedisMessageMirrorService> redisMessageMirrorService;
 
   /** Upper bound of the {@code excludeEventTypes}/{@code eventTypes} lists (#1377 slice 7). */
@@ -148,8 +154,9 @@ public class EventNotificationController {
     boolean active = request == null || request.getActive() == null || request.getActive();
     String roomId = request != null ? request.getRoomId() : null;
     String threadRootId = request != null ? request.getThreadRootId() : null;
+    boolean mainChatHidden = request != null && Boolean.TRUE.equals(request.getMainChatHidden());
     eventNotificationService.updateActiveView(
-        authenticatedUser.getUserId(), roomId, threadRootId, active);
+        authenticatedUser.getUserId(), roomId, threadRootId, active, mainChatHidden);
     return new ResponseEntity<>(HttpStatus.NO_CONTENT);
   }
 
@@ -159,6 +166,10 @@ public class EventNotificationController {
     if (request == null || request.getRoomId() == null || request.getRoomId().isBlank()) {
       return new ResponseEntity<>(HttpStatus.BAD_REQUEST);
     }
+
+    // A claimed room/event is not proof that this principal may write to the current case.
+    messageEventCurrentAccessService.assertPrimaryRoomWriter(
+        request.getRoomId(), authenticatedUser);
 
     if (Boolean.TRUE.equals(request.getFeedbackMailIntent())) {
       if (request.getMatrixEventId() == null
@@ -183,6 +194,14 @@ public class EventNotificationController {
       return new ResponseEntity<>(HttpStatus.NO_CONTENT);
     }
 
+    // FE#1725 story 40: the service ignores rooms that are not internal groups.
+    if (!Boolean.TRUE.equals(request.getFeedbackMailIntent())
+        && request.getMatrixEventId() != null
+        && !request.getMatrixEventId().isBlank()) {
+      internalChatEmailService.onMessageIntent(
+          request.getRoomId(), request.getMatrixEventId(), authenticatedUser);
+    }
+
     // #942: the Matrix event id (when the client sends it) keys deduplication,
     // so this producer and the server-side Matrix listener collapse into one
     // row per recipient for the same message.
@@ -199,6 +218,17 @@ public class EventNotificationController {
                 .hasAttachment(request.getHasAttachment() != null && request.getHasAttachment())
                 .build()
             : null;
+    // ORISO-UserService#1510: a mention is a counsellor's tool. Before the fan-out, which then
+    // finds
+    // the marked row instead of writing an ordinary one.
+    if (authenticatedUser.isConsultant()) {
+      messageMentionNotificationService.notifyMentioned(
+          request.getRoomId(),
+          authenticatedUser.getUserId(),
+          request.getMentionedUserIds(),
+          request.getThreadRootId(),
+          envelope);
+    }
     if (request.getThreadRootId() != null && !request.getThreadRootId().isBlank()) {
       eventNotificationService.createThreadReplyNotificationFromRoom(
           request.getRoomId(),
@@ -442,6 +472,7 @@ public class EventNotificationController {
     private String roomId;
     private String threadRootId;
     private Boolean active;
+    private Boolean mainChatHidden;
 
     public String getRoomId() {
       return roomId;
@@ -465,6 +496,14 @@ public class EventNotificationController {
 
     public void setActive(Boolean active) {
       this.active = active;
+    }
+
+    public Boolean getMainChatHidden() {
+      return mainChatHidden;
+    }
+
+    public void setMainChatHidden(Boolean mainChatHidden) {
+      this.mainChatHidden = mainChatHidden;
     }
   }
 }

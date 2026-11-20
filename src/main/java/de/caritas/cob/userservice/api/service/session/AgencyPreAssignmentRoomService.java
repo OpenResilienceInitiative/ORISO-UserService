@@ -9,6 +9,8 @@ import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.out.SessionRoomGateway;
 import de.caritas.cob.userservice.api.service.agency.AgencyMatrixCredentialClient;
 import de.caritas.cob.userservice.api.service.agency.dto.AgencyMatrixCredentialsDTO;
+import de.caritas.cob.userservice.api.service.session.AgencySilentMembershipService.DepartmentFanOut;
+import java.time.Duration;
 import java.util.Optional;
 import java.util.UUID;
 import lombok.NonNull;
@@ -21,10 +23,24 @@ import org.springframework.stereotype.Service;
 @Slf4j
 public class AgencyPreAssignmentRoomService {
 
+  /**
+   * How long the registration request may spend joining the department before the rest moves to the
+   * background. Registration answers through a 60 s ingress timeout.
+   */
+  static final Duration DEPARTMENT_IN_REQUEST_BUDGET = Duration.ofSeconds(10);
+
+  /**
+   * When the department pass ended on a rate limit, the asker's invite into the same room would
+   * meet the same limit; waiting the server's delay first (bounded) lets it land on the first try.
+   */
+  static final long MAX_WAIT_BEFORE_ASKER_INVITE_MS = 5_000L;
+
   private final @NonNull AgencyMatrixCredentialClient matrixCredentialClient;
   private final @NonNull SessionRoomGateway sessionRoomGateway;
   private final @NonNull SessionService sessionService;
   private final @NonNull AgencySilentMembershipService agencySilentMembershipService;
+  private final @NonNull AgencyDepartmentMembershipBackfill departmentMembershipBackfill;
+  private final @NonNull MatrixRateLimitPause rateLimitPause;
 
   public void ensureHoldingRoom(Session session, User user) {
     if (session == null || user == null) {
@@ -101,7 +117,15 @@ public class AgencyPreAssignmentRoomService {
       // window in which their client can snapshot the membership list and encrypt the first
       // message for an audience that does not yet contain the department. Consultants-first makes
       // every membership view the asker's client can ever observe already include the department.
-      joinAgencyConsultants(session, roomId, agencyToken);
+      //
+      // Only the counsellors Synapse admits without waiting join here; the rest are joined in the
+      // background right after the asker (see AgencyDepartmentMembershipBackfill). Holding the
+      // request open for the whole department ran into the 60 s ingress timeout on Dev.
+      var departmentFanOut = joinAgencyConsultants(session, roomId, agencyToken);
+      if (departmentFanOut.retryAfterMs() > 0) {
+        rateLimitPause.pause(
+            Math.min(departmentFanOut.retryAfterMs(), MAX_WAIT_BEFORE_ASKER_INVITE_MS));
+      }
       if (!inviteUser(roomId, user, agencyToken)) {
         log.error(
             "Asker {} could not be invited to Matrix holding room {} for session {}; room id will not be persisted.",
@@ -119,6 +143,15 @@ public class AgencyPreAssignmentRoomService {
           roomId,
           session.getId(),
           session.getAgencyId());
+
+      // Queued only now: the asker's invite must not compete with the backfill for the room's
+      // invite budget, and a room that was never persisted needs no department.
+      departmentMembershipBackfill.schedule(
+          session.getAgencyId(),
+          session.getId(),
+          roomId,
+          credentials.getMatrixUserId(),
+          departmentFanOut.deferred());
 
     } catch (MatrixCreateRoomException ex) {
       log.error(
@@ -142,23 +175,27 @@ public class AgencyPreAssignmentRoomService {
    * invited, an unexpected failure here must not abort the asker's own invite/join or the room
    * persist — otherwise a single consultant-lookup hiccup would kill the whole enquiry.
    */
-  private void joinAgencyConsultants(Session session, String roomId, String agencyToken) {
+  private DepartmentFanOut joinAgencyConsultants(
+      Session session, String roomId, String agencyToken) {
     if (Boolean.TRUE.equals(session.getIsConsultantDirectlySet())) {
       log.debug(
           "Session {} is directly assigned to a consultant, skipping department membership.",
           session.getId());
-      return;
+      return DepartmentFanOut.NONE;
     }
 
     try {
-      agencySilentMembershipService.joinAgencyConsultants(
-          session.getAgencyId(), roomId, agencyToken);
+      var fanOut =
+          agencySilentMembershipService.joinAgencyConsultantsWithoutWaiting(
+              session.getAgencyId(), roomId, agencyToken, DEPARTMENT_IN_REQUEST_BUDGET);
+      return fanOut == null ? DepartmentFanOut.NONE : fanOut;
     } catch (RuntimeException ex) {
       log.error(
           "Department membership for room {} of session {} failed; continuing with asker-only room: {}",
           roomId,
           session.getId(),
           ex.getMessage());
+      return DepartmentFanOut.NONE;
     }
   }
 

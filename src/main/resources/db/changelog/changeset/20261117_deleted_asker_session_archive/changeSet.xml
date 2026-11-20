@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+  xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-3.2.xsd">
+  <!-- A counsellor moves the placeholder of a deleted advice-seeker chat into their archive.
+       Existing placeholders stay unarchived. -->
+  <changeSet id="20261117-deleted-asker-session-archive" author="oriso">
+    <preConditions onFail="MARK_RAN">
+      <tableExists tableName="deleted_asker_session"/>
+      <not><columnExists tableName="deleted_asker_session" columnName="archived_at"/></not>
+    </preConditions>
+    <addColumn tableName="deleted_asker_session">
+      <column name="archived_at" type="DATETIME(6)"/>
+    </addColumn>
+    <rollback><dropColumn tableName="deleted_asker_session" columnName="archived_at"/></rollback>
+  </changeSet>
+</databaseChangeLog>

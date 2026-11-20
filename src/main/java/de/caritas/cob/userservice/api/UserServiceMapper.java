@@ -14,8 +14,6 @@ import de.caritas.cob.userservice.api.helper.json.JsonSerializationUtils;
 import de.caritas.cob.userservice.api.model.Admin;
 import de.caritas.cob.userservice.api.model.Admin.AdminBase;
 import de.caritas.cob.userservice.api.model.AdminAgency.AdminAgencyBase;
-import de.caritas.cob.userservice.api.model.Appointment;
-import de.caritas.cob.userservice.api.model.Appointment.AppointmentStatus;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.Consultant.ConsultantBase;
 import de.caritas.cob.userservice.api.model.ConsultantAgency.ConsultantAgencyBase;
@@ -25,7 +23,6 @@ import de.caritas.cob.userservice.api.model.ConsultantStatus;
 import de.caritas.cob.userservice.api.model.NotificationsAware;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.User;
-import java.time.Instant;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -35,7 +32,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
-import java.util.UUID;
 import java.util.function.BiConsumer;
 import java.util.function.Function;
 import java.util.stream.Collectors;
@@ -50,17 +46,6 @@ import org.springframework.stereotype.Service;
 public class UserServiceMapper {
 
   private final UsernameTranscoder usernameTranscoder;
-
-  public Map<String, Object> mapOf(Appointment appointment) {
-    var map = new HashMap<String, Object>();
-    map.put("id", appointment.getId().toString());
-    map.put("description", appointment.getDescription());
-    map.put("datetime", appointment.getDatetime().toString());
-    map.put("status", appointment.getStatus().toString().toLowerCase());
-    map.put("consultantId", appointment.getConsultant().getId());
-
-    return map;
-  }
 
   public Map<String, Object> mapOf(User user) {
     var map = new HashMap<String, Object>();
@@ -411,10 +396,6 @@ public class UserServiceMapper {
     return chatMap.get("userId");
   }
 
-  public String consultantIdOf(Map<String, Object> appointmentMap) {
-    return (String) appointmentMap.get("consultantId");
-  }
-
   public Consultant consultantOf(Consultant consultant, Map<String, Object> patchMap) {
     if (patchMap.containsKey("email")) {
       consultant.setEmail((String) patchMap.get("email"));
@@ -594,6 +575,9 @@ public class UserServiceMapper {
               NotificationsSettingsDTO::getAssignmentNotificationEnabled,
               NotificationsSettingsDTO::setAssignmentNotificationEnabled),
           new NotificationSetting(
+              NotificationsSettingsDTO::getInternalChatNotificationEnabled,
+              NotificationsSettingsDTO::setInternalChatNotificationEnabled),
+          new NotificationSetting(
               NotificationsSettingsDTO::getFeedbackNotificationEnabled,
               NotificationsSettingsDTO::setFeedbackNotificationEnabled),
           new NotificationSetting(
@@ -619,25 +603,6 @@ public class UserServiceMapper {
 
   private boolean nullAsFalse(Boolean topicsInRegistrationEnabled) {
     return Boolean.TRUE.equals(topicsInRegistrationEnabled);
-  }
-
-  public Appointment appointmentOf(Map<String, Object> appointmentMap, Consultant consultant) {
-    var appointment = new Appointment();
-    if (appointmentMap.containsKey("id")) {
-      appointment.setId(UUID.fromString((String) appointmentMap.get("id")));
-    }
-    if (appointmentMap.containsKey("description")) {
-      appointment.setDescription((String) appointmentMap.get("description"));
-    }
-    appointment.setDatetime(Instant.parse((String) appointmentMap.get("datetime")));
-    var status = (String) appointmentMap.get("status");
-    appointment.setStatus(AppointmentStatus.valueOf(status.toUpperCase()));
-    appointment.setConsultant(consultant);
-    if (appointmentMap.containsKey("bookingId")) {
-      appointment.setBookingId((Integer) appointmentMap.get("bookingId"));
-    }
-
-    return appointment;
   }
 
   public List<Long> agencyIdsOf(List<ConsultantAgencyBase> consultantAgencies) {

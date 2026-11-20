@@ -22,7 +22,9 @@ public enum UserRole {
   NOTIFICATIONS_TECHNICAL("notifications-technical"),
   RESTRICTED_CONSULTANT_ADMIN("restricted-consultant-admin"),
   SUPERVISOR_CONSULTANT("supervisor-consultant"),
-  GLOBAL_SUPPORT_ADMIN("global-support-admin");
+  GLOBAL_SUPPORT_ADMIN("global-support-admin"),
+  /** Read-only platform statistics (ORISO-UserService#1666); created by platform admins only. */
+  STATISTICS_READER("statistics-reader");
 
   private final String value;
 

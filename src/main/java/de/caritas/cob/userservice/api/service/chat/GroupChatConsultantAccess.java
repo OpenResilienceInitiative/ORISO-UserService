@@ -138,7 +138,9 @@ public class GroupChatConsultantAccess {
     }
     var scope = recipientScopes.resolve(chat.getChatOwner().getTenantId());
     if (scope == InternalGroupChatRecipientScope.PLATFORM) {
-      return true;
+      return isSameTenantAsOwner(chat, consultant)
+          || recipientScopes.resolve(consultant.getTenantId())
+              == InternalGroupChatRecipientScope.PLATFORM;
     }
     return scope == InternalGroupChatRecipientScope.TENANT && isSameTenantAsOwner(chat, consultant);
   }

@@ -2,6 +2,7 @@ package de.caritas.cob.userservice.api.service.notification;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.client.ExpectedCount.once;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.header;
@@ -11,13 +12,13 @@ import static org.springframework.test.web.client.match.MockRestRequestMatchers.
 import static org.springframework.test.web.client.response.MockRestResponseCreators.withStatus;
 import static org.springframework.test.web.client.response.MockRestResponseCreators.withSuccess;
 
+import de.caritas.cob.userservice.api.config.auth.TaskPurpose;
 import de.caritas.cob.userservice.api.config.auth.TechnicalUserConfig;
 import de.caritas.cob.userservice.api.port.out.IdentityAuthentication;
 import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
 import de.caritas.cob.userservice.api.port.out.IdentityLogin;
 import de.caritas.cob.userservice.api.service.email.OrisoEmailRenderer;
 import de.caritas.cob.userservice.api.service.httpheader.SecurityHeaderSupplier;
-import java.util.Map;
 import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -53,8 +54,9 @@ class TenantSystemEmailClientTest {
     var account = new TechnicalUserConfig();
     account.setClientId("technical");
     account.setClientSecret("test-secret");
-    when(identityConfig.getTechnicalUser()).thenReturn(account);
-    when(authentication.loginService("technical", "test-secret"))
+    lenient().when(identityConfig.getTechnicalUser()).thenReturn(account);
+    lenient()
+        .when(authentication.loginService("technical", "test-secret"))
         .thenReturn(new IdentityLogin("technical-token", 60, 60, "refresh"));
     var headers = new HttpHeaders();
     headers.setBearerAuth("technical-token");
@@ -62,19 +64,43 @@ class TenantSystemEmailClientTest {
   }
 
   @Test
-  void readsFreshRedactedTenantSettingsWithTechnicalToken() {
+  void readsTheBoundedSystemEmailContextWithTaskToken() {
+    when(identityConfig.isFiveActorMode()).thenReturn(true);
+    when(identityConfig.taskAccessToken(TaskPurpose.SYSTEM_EMAIL_DELIVERY))
+        .thenReturn("technical-token");
     server
-        .expect(once(), requestTo("http://tenantservice.internal:8081/tenant/40"))
+        .expect(
+            once(),
+            requestTo(
+                "http://tenantservice.internal:8081/internal/tenants/40/system-email-context"))
         .andExpect(method(HttpMethod.GET))
         .andExpect(header(HttpHeaders.AUTHORIZATION, "Bearer technical-token"))
         .andRespond(
             withSuccess(
-                "{\"settings\":{\"smtpMode\":\"OWN\",\"smtp\":{\"passwordSet\":true}}}",
+                "{\"settings\":{\"featureSystemNotificationEmailsEnabled\":true,\"smtpMode\":\"OWN\",\"smtp\":{\"enabled\":true,\"configured\":true,\"emailThemeColor\":\"#005500\"}}}",
                 MediaType.APPLICATION_JSON));
 
-    Map<String, Object> tenant = client.readTenant(40L);
+    TenantSystemEmailClient.MailContext context = client.readMailContext(40L);
 
-    assertThat(tenant).containsKey("settings");
+    assertThat(context.ownSmtpConfigured()).isTrue();
+    assertThat(context.emailThemeColor()).isEqualTo("#005500");
+    server.verify();
+  }
+
+  @Test
+  void keepsTheLegacyPlatformRouteWhenOnlyBrandingIsConfigured() {
+    server
+        .expect(once(), requestTo("http://tenantservice.internal:8081/tenant/40"))
+        .andExpect(method(HttpMethod.GET))
+        .andRespond(
+            withSuccess(
+                "{\"settings\":{\"smtp\":{\"enabled\":false,\"emailThemeColor\":\"#005500\"}}}",
+                MediaType.APPLICATION_JSON));
+
+    TenantSystemEmailClient.MailContext context = client.readMailContext(40L);
+
+    assertThat(context.smtpConfigurationPresent()).isFalse();
+    assertThat(context.ownSmtpConfigured()).isFalse();
     server.verify();
   }
 

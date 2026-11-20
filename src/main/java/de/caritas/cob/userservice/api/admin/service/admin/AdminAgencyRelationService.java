@@ -37,14 +37,14 @@ public class AdminAgencyRelationService {
 
   public void createAdminAgencyRelation(
       final String adminId, final CreateAdminAgencyRelationDTO createAdminAgencyRelationDTO) {
-    adminScope.assertMay(Target.admin(adminId));
+    adminScope.assertMay(Target.managedAdmin(adminId));
     adminScope.assertMay(
         Target.agencies(Collections.singletonList(createAdminAgencyRelationDTO.getAgencyId())));
     createAdminAgencyRelationService.create(adminId, createAdminAgencyRelationDTO);
   }
 
   public void deleteAdminAgencyRelation(final String adminId, final Long agencyId) {
-    adminScope.assertMay(Target.admin(adminId));
+    adminScope.assertMay(Target.managedAdmin(adminId));
     adminScope.assertMay(Target.removedAgencies(Collections.singletonList(agencyId)));
     List<AdminAgency> adminAgencyRelations =
         adminAgencyRepository.findByAdminIdAndAgencyId(adminId, agencyId);
@@ -57,7 +57,7 @@ public class AdminAgencyRelationService {
 
   public void synchronizeAdminAgenciesRelation(
       final String adminId, final List<CreateAdminAgencyRelationDTO> newAdminAgencyRelationDTOs) {
-    adminScope.assertMay(Target.admin(adminId));
+    adminScope.assertMay(Target.managedAdmin(adminId));
     Set<Long> requested =
         newAdminAgencyRelationDTOs == null
             ? Set.of()

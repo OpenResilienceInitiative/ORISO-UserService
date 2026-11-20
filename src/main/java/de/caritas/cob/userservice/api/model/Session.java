@@ -67,7 +67,8 @@ public class Session implements TenantAware {
     NEW(1),
     IN_PROGRESS(2),
     DONE(3),
-    IN_ARCHIVE(4);
+    IN_ARCHIVE(4),
+    REJECTED(5);
 
     private final int value;
 
@@ -259,6 +260,37 @@ public class Session implements TenantAware {
    */
   @Column(name = "consented_legal_version_id")
   private Long consentedLegalVersionId;
+
+  /**
+   * ORISO-Frontend#1952: the medium ({@code CHAT}, {@code AUDIO}, {@code VIDEO}) of the counsellor
+   * direct link (#1475, ADR-029) this conversation was opened through; null for every other
+   * conversation. A label for the counsellor's list, not a modality: ADR-006 keeps {@link
+   * #conversationType}. Written once, only by {@code SessionRepository#recordDirectLinkOrigin}, so
+   * a stale entity save cannot erase it.
+   */
+  @Column(name = "direct_link_medium", length = 16, updatable = false)
+  private String directLinkMedium;
+
+  /**
+   * ORISO-Frontend#2170: the name of the counsellor direct link this conversation was opened
+   * through ("Flyer Schule"), as the link had it then; null when there was none. The call of the
+   * conversation is called that. A snapshot, not a reference: the conversation survives a rename or
+   * deletion of the link, like {@link #directLinkMedium}. Written once, only by {@code
+   * SessionRepository#recordDirectLinkName}, so a stale entity save cannot erase it.
+   */
+  @Column(name = "direct_link_name", length = 100, updatable = false)
+  private String directLinkName;
+
+  /**
+   * ORISO-Frontend#2252: the shared conversation of a direct invitation with an appointment, never
+   * a 1:1. Kept on the conversation itself, so it holds after the invitation is deleted. Written
+   * once, only by {@code SessionRepository#markDirectInvitationConversation}, so a stale entity
+   * save cannot erase it.
+   */
+  @org.hibernate.annotations.ColumnDefault("false")
+  @Column(name = "direct_invitation_conversation", nullable = false, updatable = false)
+  @Builder.Default
+  private boolean directInvitationConversation = false;
 
   @OneToMany(
       targetEntity = SessionTopic.class,

@@ -1203,6 +1203,9 @@ components:
           type: boolean
         dpaSigned:
           type: boolean
+        dpaSignedAt:
+          type: string
+          description: 'Authoritative UTC instant of the signature of the current valid AVV version, when known.'
         dpaForwardPending:
           type: boolean
           description: 'True while the governing DPA version is not signed but at least one
@@ -1420,6 +1423,33 @@ components:
           $ref: '#/components/schemas/Content'
         settings:
           $ref: '#/components/schemas/Settings'
+        permissionPolicies:
+          type: object
+          readOnly: true
+          description: Resolved boolean policies for downstream services. Suggestions are not applied to settings.
+          additionalProperties:
+            $ref: '#/components/schemas/BooleanPermissionPolicy'
+    PermissionPolicyMode:
+      type: string
+      enum:
+        - ENFORCED
+        - SUGGESTED
+
+    BooleanPermissionPolicy:
+      type: object
+      required:
+        - value
+        - mode
+      properties:
+        value:
+          type: boolean
+        mode:
+          $ref: '#/components/schemas/PermissionPolicyMode'
+        inherited:
+          type: boolean
+          readOnly: true
+          description: True when the resolved tenant value comes from the platform policy.
+
     Licensing:
       type: object
       required:
@@ -1512,9 +1542,27 @@ components:
     Settings:
       type: object
       properties:
+        featureDisplayNameEditable:
+          type: boolean
+          description: Whether askers may type a custom session alias; generated pseudonyms remain allowed. Opt-out defaults to true.
+        featureDisplayNameEditableAgencyCounsellingEnabled:
+          type: boolean
+          description: Allows typed asker names in this conversation type when the account-wide name rule permits them.
+        featureDisplayNameEditableLiveChatEnabled:
+          type: boolean
+          description: Allows typed asker names in this conversation type when the account-wide name rule permits them.
+        featureDisplayNameEditableSelfHelpEnabled:
+          type: boolean
+          description: Allows typed asker names in this conversation type when the account-wide name rule permits them.
         featureAskerEmailEnabled:
           type: boolean
           default: true
+        featureAskerEmailCollectionAgencyCounsellingEnabled:
+          type: boolean
+          description: Allows optional advice-seeker email collection in agency counselling; featureAskerEmailEnabled remains the account-wide outer limit. This is separate from email delivery and does not make an address required.
+        featureAskerEmailCollectionSelfHelpEnabled:
+          type: boolean
+          description: Allows optional advice-seeker email collection in self-help groups; featureAskerEmailEnabled remains the account-wide outer limit. This is separate from email delivery and does not make an address required.
         featureAskerEmailAgencyCounsellingEnabled:
           type: boolean
           default: true
@@ -1531,6 +1579,12 @@ components:
           type: boolean
           default: true
         featureAskerBrowserSelfHelpEnabled:
+          type: boolean
+          default: true
+        featureConsultantEmailInternalGroupEnabled:
+          type: boolean
+          default: true
+        featureConsultantBrowserInternalGroupEnabled:
           type: boolean
           default: true
         featureStatisticsEnabled:
@@ -1560,6 +1614,54 @@ components:
         featureAnonymousChatEnabled:
           type: boolean
           example: 'true'
+        featureDirectInviteChatEnabled:
+          type: boolean
+          example: 'true'
+          description: "Direkteinladung erlauben for chats (ADR-029 §6): may counsellors create and may guests redeem direct links. Effective Traeger value; opt-out, reads true when never stored."
+        featureDirectInviteAudioEnabled:
+          type: boolean
+          example: 'true'
+          description: "Direkteinladung erlauben for audio calls (ADR-029 §6): may counsellors create and may guests redeem direct links. Effective Traeger value; opt-out, reads true when never stored."
+        featureDirectInviteVideoEnabled:
+          type: boolean
+          example: 'true'
+          description: "Direkteinladung erlauben for video calls (ADR-029 §6): may counsellors create and may guests redeem direct links. Effective Traeger value; opt-out, reads true when never stored."
+        featureGuestAccountTemporaryChatEnabled:
+          type: boolean
+          example: 'true'
+          description: "#1662: may a counsellor offer the guest account mode TEMPORARY on chats links? Effective Traeger value (platform -> Traeger); opt-out, reads true when never stored."
+        featureGuestAccountGuestChoosesChatEnabled:
+          type: boolean
+          example: 'true'
+          description: "#1662: may a counsellor offer the guest account mode GUEST_CHOOSES on chats links? Effective Traeger value (platform -> Traeger); opt-out, reads true when never stored."
+        featureGuestAccountPermanentChatEnabled:
+          type: boolean
+          example: 'true'
+          description: "#1662: may a counsellor offer the guest account mode PERMANENT on chats links? Effective Traeger value (platform -> Traeger); opt-out, reads true when never stored."
+        featureGuestAccountTemporaryAudioEnabled:
+          type: boolean
+          example: 'true'
+          description: "#1662: may a counsellor offer the guest account mode TEMPORARY on audio calls links? Effective Traeger value (platform -> Traeger); opt-out, reads true when never stored."
+        featureGuestAccountGuestChoosesAudioEnabled:
+          type: boolean
+          example: 'true'
+          description: "#1662: may a counsellor offer the guest account mode GUEST_CHOOSES on audio calls links? Effective Traeger value (platform -> Traeger); opt-out, reads true when never stored."
+        featureGuestAccountPermanentAudioEnabled:
+          type: boolean
+          example: 'true'
+          description: "#1662: may a counsellor offer the guest account mode PERMANENT on audio calls links? Effective Traeger value (platform -> Traeger); opt-out, reads true when never stored."
+        featureGuestAccountTemporaryVideoEnabled:
+          type: boolean
+          example: 'true'
+          description: "#1662: may a counsellor offer the guest account mode TEMPORARY on video calls links? Effective Traeger value (platform -> Traeger); opt-out, reads true when never stored."
+        featureGuestAccountGuestChoosesVideoEnabled:
+          type: boolean
+          example: 'true'
+          description: "#1662: may a counsellor offer the guest account mode GUEST_CHOOSES on video calls links? Effective Traeger value (platform -> Traeger); opt-out, reads true when never stored."
+        featureGuestAccountPermanentVideoEnabled:
+          type: boolean
+          example: 'true'
+          description: "#1662: may a counsellor offer the guest account mode PERMANENT on video calls links? Effective Traeger value (platform -> Traeger); opt-out, reads true when never stored."
         featureCallsEnabled:
           type: boolean
           example: 'true'

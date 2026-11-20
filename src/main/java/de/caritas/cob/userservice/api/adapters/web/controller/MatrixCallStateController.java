@@ -2,12 +2,15 @@ package de.caritas.cob.userservice.api.adapters.web.controller;
 
 import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
+import de.caritas.cob.userservice.api.service.matrix.MatrixCallGuestService;
 import de.caritas.cob.userservice.api.service.matrix.MatrixCallStateService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.CacheControl;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
@@ -17,6 +20,13 @@ import org.springframework.web.bind.annotation.RestController;
 @RequiredArgsConstructor
 public class MatrixCallStateController {
   private final MatrixCallStateService states;
+  private final MatrixCallGuestService guests;
+  private final de.caritas.cob.userservice.api.service.matrix.MatrixCallObservationService
+      observations;
+  private final de.caritas.cob.userservice.api.service.matrix.MatrixSessionCallBindingService
+      sessionBindings;
+  private final de.caritas.cob.userservice.api.service.matrix.MatrixGroupCallBindingService
+      groupBindings;
   private final AuthenticatedUser authenticatedUser;
 
   @GetMapping("/state")
@@ -28,9 +38,153 @@ public class MatrixCallStateController {
           .map(value -> ResponseEntity.ok().cacheControl(CacheControl.noStore()).body(value))
           .orElseGet(() -> ResponseEntity.notFound().build());
     } catch (MatrixSynapseService.CallLookupUnavailableException unavailable) {
-      return ResponseEntity.status(HttpStatus.BAD_GATEWAY)
-          .cacheControl(CacheControl.noStore())
-          .body(java.util.Map.of("reason", "call_state_lookup_unavailable"));
+      return unavailable();
     }
   }
+
+  /**
+   * Lets a person into one running call without the source conversation (US#1477). Only a
+   * counsellor in the conversation may admit; the guest is invited into the call room alone.
+   */
+  @PostMapping("/guests")
+  public ResponseEntity<?> admitGuest(@RequestBody GuestAdmissionRequest request) {
+    try {
+      var admission =
+          guests.admit(
+              authenticatedUser, request.sourceRoomId(), request.callId(), request.guestUserId());
+      return switch (admission.outcome()) {
+        case ADMITTED ->
+            ResponseEntity.ok()
+                .cacheControl(CacheControl.noStore())
+                .body(
+                    new GuestAdmissionResponse(
+                        admission.callRoomId(),
+                        admission.guestMatrixUserId(),
+                        admission.admittedAt()));
+        case ALREADY_PARTICIPANT ->
+            ResponseEntity.status(HttpStatus.CONFLICT)
+                .cacheControl(CacheControl.noStore())
+                .body(java.util.Map.of("reason", "already_conversation_member"));
+        case MATRIX_UNAVAILABLE -> unavailable();
+        case NOT_FOUND -> ResponseEntity.notFound().build();
+      };
+    } catch (MatrixSynapseService.CallLookupUnavailableException unavailable) {
+      return unavailable();
+    }
+  }
+
+  /**
+   * Creator of an active encrypted group or session call registers it for observation. FE#2209: in
+   * a 1:1 session, the same registration by the session's assigned counsellor, verified against
+   * Matrix by {@code MatrixSessionCallBindingService}, also creates the call's authoritative
+   * binding, which share links, knocks and guest seats need. #1662: in a group chat, a moderator's
+   * registration does the same ({@code MatrixGroupCallBindingService}). Once bound, observation
+   * steps aside and renewals are answered by the binding.
+   */
+  @PostMapping("/observations")
+  public ResponseEntity<?> register(@RequestBody ObservationRequest request) {
+    try {
+      boolean video = Boolean.TRUE.equals(request.video());
+      var observed =
+          observations.register(
+              authenticatedUser,
+              request.sourceRoomId(),
+              request.callId(),
+              request.callRoomId(),
+              video);
+      // #1662: the same verified registration by a moderator of a group chat binds the group
+      // call, so group calls can have a share link too. Each path refuses the other's rooms.
+      boolean bound =
+          sessionBindings.bind(
+                  authenticatedUser,
+                  request.sourceRoomId(),
+                  request.callId(),
+                  request.callRoomId(),
+                  video)
+              || groupBindings.bind(
+                  authenticatedUser,
+                  request.sourceRoomId(),
+                  request.callId(),
+                  request.callRoomId(),
+                  video);
+      return observationResponse(
+          bound
+              ? de.caritas.cob.userservice.api.service.matrix.MatrixCallObservationService.Outcome
+                  .OK
+              : observed);
+    } catch (MatrixSynapseService.CallLookupUnavailableException unavailable) {
+      return unavailable();
+    } catch (org.springframework.dao.PessimisticLockingFailureException concurrent) {
+      // Lock timeout or deadlock between two first registrations on the same call.
+      return registrationConflict();
+    } catch (org.springframework.dao.DataIntegrityViolationException violation) {
+      // Only the two unique keys mean "two first registrations raced"; any other integrity
+      // failure is a server defect and must stay visible instead of looking retryable.
+      if (!violatesObservationUniqueKey(violation)) throw violation;
+      return registrationConflict();
+    }
+  }
+
+  private static ResponseEntity<?> registrationConflict() {
+    // A retry takes the renew path.
+    return ResponseEntity.status(HttpStatus.CONFLICT)
+        .cacheControl(CacheControl.noStore())
+        .body(java.util.Map.of("reason", "call_observation_conflict"));
+  }
+
+  private static boolean violatesObservationUniqueKey(Throwable failure) {
+    for (Throwable cause = failure; cause != null; cause = cause.getCause()) {
+      String message = cause.getMessage();
+      if (message != null) {
+        String lower = message.toLowerCase(java.util.Locale.ROOT);
+        if (lower.contains("uk_call_observation_source_call")
+            || lower.contains("uk_call_observation_media_room")
+            // FE#2209: two first bindings of the same 1:1 call raced.
+            || lower.contains("uk_call_binding_source_call")
+            || lower.contains("uk_call_binding_media_room")) {
+          return true;
+        }
+      }
+      if (cause.getCause() == cause) break;
+    }
+    return false;
+  }
+
+  @PostMapping("/observations/end")
+  public ResponseEntity<?> end(@RequestBody ObservationEndRequest request) {
+    try {
+      // FE#2209: for a 1:1 session call this also ends its binding, in the same transaction.
+      return observationResponse(
+          observations.end(authenticatedUser, request.sourceRoomId(), request.callId()));
+    } catch (MatrixSynapseService.CallLookupUnavailableException unavailable) {
+      return unavailable();
+    } catch (org.springframework.dao.PessimisticLockingFailureException concurrent) {
+      // Racing the creator's renew or end; the client may simply repeat the call.
+      return registrationConflict();
+    }
+  }
+
+  private static ResponseEntity<?> observationResponse(
+      de.caritas.cob.userservice.api.service.matrix.MatrixCallObservationService.Outcome outcome) {
+    return outcome
+            == de.caritas.cob.userservice.api.service.matrix.MatrixCallObservationService.Outcome.OK
+        ? ResponseEntity.noContent().cacheControl(CacheControl.noStore()).build()
+        : ResponseEntity.notFound().build();
+  }
+
+  public record ObservationRequest(
+      String sourceRoomId, String callId, String callRoomId, Boolean video) {}
+
+  public record ObservationEndRequest(String sourceRoomId, String callId) {}
+
+  private static ResponseEntity<?> unavailable() {
+    return ResponseEntity.status(HttpStatus.BAD_GATEWAY)
+        .cacheControl(CacheControl.noStore())
+        .body(java.util.Map.of("reason", "call_state_lookup_unavailable"));
+  }
+
+  public record GuestAdmissionRequest(String sourceRoomId, String callId, String guestUserId) {}
+
+  public record GuestAdmissionResponse(
+      String callRoomId, String guestMatrixUserId, Long admittedAt) {}
 }

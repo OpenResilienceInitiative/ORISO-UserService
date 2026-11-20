@@ -34,6 +34,7 @@ public class UserHelper {
   public static final String CONSULTING_TYPE_REGEXP = "[0-9]+|";
 
   public static final String REFERER_REGEXP = "[a-zA-Z0-9]{1,8}";
+  public static final String REGISTRATION_REF_REGEXP = "[A-Za-z0-9_-]{1,64}";
   public static final int CHAT_MIN_DURATION = 30;
   public static final int CHAT_MAX_DURATION = 180;
   public static final int CHAT_TOPIC_MIN_LENGTH = 3;
@@ -45,10 +46,10 @@ public class UserHelper {
   /**
    * Generates a random password which complies with the Keycloak policy.
    *
-   * @return a random generated password of 10 characters
+   * @return a random generated password of {@link PasswordPolicy#MIN_LENGTH} characters
    */
   public String getRandomPassword() {
-    return getRandomPassword(10);
+    return getRandomPassword(PasswordPolicy.MIN_LENGTH);
   }
 
   /**

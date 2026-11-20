@@ -14,6 +14,17 @@ public class MatrixCallBindingService {
   private final MatrixCallBindingRepository bindings;
   private final MatrixCallBindingWriter writer;
 
+  public java.util.Set<String> knownMediaRooms(java.util.Collection<String> rooms) {
+    var candidates = java.util.List.copyOf(rooms);
+    var known = new java.util.HashSet<String>();
+    for (int offset = 0; offset < candidates.size(); offset += 500) {
+      known.addAll(
+          bindings.findKnownMediaRooms(
+              candidates.subList(offset, Math.min(offset + 500, candidates.size()))));
+    }
+    return known;
+  }
+
   public java.util.List<String> unobservedMediaRooms(long now) {
     return bindings.findObservationCandidates(
         now, org.springframework.data.domain.PageRequest.of(0, 100));
@@ -22,6 +33,12 @@ public class MatrixCallBindingService {
   public java.util.List<String> expiredMediaRooms(long now) {
     return bindings.findExpiryCandidates(
         now, org.springframework.data.domain.PageRequest.of(0, 100));
+  }
+
+  /** FE#2209 review: never-observed session calls whose invite ran out before {@code cutoff}. */
+  public java.util.List<String> neverObservedSessionCalls(long cutoff) {
+    return bindings.findNeverObservedSessionCalls(
+        cutoff, org.springframework.data.domain.PageRequest.of(0, 100));
   }
 
   public boolean register(MatrixCallBinding proposed) {
@@ -34,6 +51,16 @@ public class MatrixCallBindingService {
       // Read the committed winner; unrelated database errors must still propagate.
       return existing(proposed).map(value -> matches(value, proposed)).orElseThrow(() -> collision);
     }
+  }
+
+  /** The locked Session serializes invitations; its FK insert must share the lock's transaction. */
+  @org.springframework.transaction.annotation.Transactional(
+      propagation = org.springframework.transaction.annotation.Propagation.MANDATORY)
+  public boolean registerWhileSourceLocked(MatrixCallBinding proposed) {
+    var existing = existing(proposed);
+    if (existing.isPresent()) return matches(existing.get(), proposed);
+    bindings.saveAndFlush(proposed);
+    return true;
   }
 
   public java.util.Set<String> invitedMembers(String sourceRoom, String callId) {

@@ -1,5 +1,7 @@
 package de.caritas.cob.userservice.api.service.agency;
 
+import de.caritas.cob.userservice.api.config.auth.RoutineTaskAuthentication;
+import de.caritas.cob.userservice.api.config.auth.TaskPurpose;
 import de.caritas.cob.userservice.api.port.out.IdentityAuthentication;
 import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
 import de.caritas.cob.userservice.api.service.agency.dto.AgencyMatrixCredentialsDTO;
@@ -65,10 +67,10 @@ public class AgencyMatrixCredentialClient {
   }
 
   private HttpHeaders technicalUserHeaders() {
-    var techUser = identityClientConfig.getTechnicalUser();
-    var identityLogin =
-        identityAuthentication.loginService(techUser.getClientId(), techUser.getClientSecret());
-    var headers = securityHeaderSupplier.getKeycloakAndCsrfHttpHeaders(identityLogin.accessToken());
+    String token =
+        RoutineTaskAuthentication.accessToken(
+            TaskPurpose.MATRIX_AGENCY, identityClientConfig, identityAuthentication);
+    var headers = securityHeaderSupplier.getKeycloakAndCsrfHttpHeaders(token);
     tenantHeaderSupplier.addTenantHeader(headers);
     return headers;
   }

@@ -150,6 +150,8 @@ class ArchivedTeamSessionConversationListProviderTestIT {
           session.setConsultant(consultant2);
           session.setUser(user);
           session.setId(null);
+          // A random string would not fit the column; these are no direct-link sessions (#1952).
+          session.setDirectLinkMedium(null);
           session.setConversationType(null);
           session.setSessionData(null);
           session.setTeamSession(true);

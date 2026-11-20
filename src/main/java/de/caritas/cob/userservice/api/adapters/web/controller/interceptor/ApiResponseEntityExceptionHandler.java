@@ -16,10 +16,17 @@ import de.caritas.cob.userservice.api.exception.httpresponses.ServiceUnavailable
 import de.caritas.cob.userservice.api.exception.httpresponses.customheader.CustomHttpHeader;
 import de.caritas.cob.userservice.api.exception.httpresponses.customheader.HttpStatusExceptionReason;
 import de.caritas.cob.userservice.api.exception.identity.IdentityProvisioningException;
+import de.caritas.cob.userservice.api.exception.identity.IdentityReactivationCompensationException;
+import de.caritas.cob.userservice.api.exception.identity.IdentityReactivationUpstreamException;
 import de.caritas.cob.userservice.api.exception.keycloak.KeycloakException;
 import de.caritas.cob.userservice.api.picture.PictureDiagnostics;
 import de.caritas.cob.userservice.api.service.LogService;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteLinkException;
+import de.caritas.cob.userservice.api.service.agencyinvitelink.CallShareLinkEndedException;
+import de.caritas.cob.userservice.api.service.agencyinvitelink.DirectInvitationRefusedException;
+import de.caritas.cob.userservice.api.service.agencyinvitelink.DirectLinkExpiredException;
+import de.caritas.cob.userservice.api.service.agencyinvitelink.DirectLinkInactiveException;
+import de.caritas.cob.userservice.api.service.agencyinvitelink.InviteLinkPausedException;
 import jakarta.persistence.OptimisticLockException;
 import jakarta.validation.ConstraintViolationException;
 import java.net.UnknownHostException;
@@ -40,6 +47,7 @@ import org.springframework.http.HttpStatusCode;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.lang.Nullable;
+import org.springframework.security.access.AccessDeniedException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ControllerAdvice;
 import org.springframework.web.bind.annotation.ExceptionHandler;
@@ -97,6 +105,30 @@ public class ApiResponseEntityExceptionHandler extends ResponseEntityExceptionHa
     log.error("Distributed transaction failed to complete", ex);
     return handleExceptionInternal(
         ex, null, ex.getCustomHttpHeaders(), HttpStatus.FAILED_DEPENDENCY, request);
+  }
+
+  @ExceptionHandler({IdentityReactivationUpstreamException.class})
+  public ResponseEntity<Object> handleIdentityReactivationUpstreamFailure(
+      final IdentityReactivationUpstreamException ex, final WebRequest request) {
+    log.error("Keycloak identity reactivation failed", ex);
+    return handleExceptionInternal(
+        ex,
+        reasonBody("IDENTITY_REACTIVATION_UPSTREAM_FAILED"),
+        new HttpHeaders(),
+        HttpStatus.BAD_GATEWAY,
+        request);
+  }
+
+  @ExceptionHandler({IdentityReactivationCompensationException.class})
+  public ResponseEntity<Object> handleIdentityReactivationCompensationFailure(
+      final IdentityReactivationCompensationException ex, final WebRequest request) {
+    log.error("Keycloak identity reactivation compensation failed", ex);
+    return handleExceptionInternal(
+        ex,
+        reasonBody("IDENTITY_REACTIVATION_COMPENSATION_FAILED"),
+        new HttpHeaders(),
+        HttpStatus.FAILED_DEPENDENCY,
+        request);
   }
 
   @ExceptionHandler({CreateEnquiryMessageException.class})
@@ -310,6 +342,65 @@ public class ApiResponseEntityExceptionHandler extends ResponseEntityExceptionHa
   }
 
   /**
+   * 410 - Gone: the owner switched the direct link off (#1475).
+   *
+   * @param request the invoking request
+   * @param ex the thrown exception
+   */
+  @ExceptionHandler({DirectLinkInactiveException.class})
+  public ResponseEntity<Object> handleDirectLinkInactive(
+      final DirectLinkInactiveException ex, final WebRequest request) {
+    return handleExceptionInternal(
+        ex,
+        reasonBody(DirectLinkInactiveException.REASON),
+        new HttpHeaders(),
+        HttpStatus.GONE,
+        request);
+  }
+
+  /** 410 - Gone: the direct invitation expired or its token was replaced (ORISO-Frontend#2252). */
+  @ExceptionHandler({DirectLinkExpiredException.class})
+  public ResponseEntity<Object> handleDirectLinkExpired(
+      final DirectLinkExpiredException ex, final WebRequest request) {
+    return handleExceptionInternal(
+        ex,
+        reasonBody(DirectLinkExpiredException.REASON),
+        new HttpHeaders(),
+        HttpStatus.GONE,
+        request);
+  }
+
+  /** 403 or 409 with a reason the entry page shows (ORISO-Frontend#2252). */
+  @ExceptionHandler({DirectInvitationRefusedException.class})
+  public ResponseEntity<Object> handleDirectInvitationRefused(
+      final DirectInvitationRefusedException ex, final WebRequest request) {
+    return handleExceptionInternal(
+        ex, reasonBody(ex.getReason().name()), new HttpHeaders(), ex.getReason().status(), request);
+  }
+
+  @ExceptionHandler({InviteLinkPausedException.class})
+  public ResponseEntity<Object> handleInviteLinkPaused(
+      final InviteLinkPausedException ex, final WebRequest request) {
+    return handleExceptionInternal(
+        ex,
+        reasonBody(InviteLinkPausedException.REASON),
+        new HttpHeaders(),
+        HttpStatus.GONE,
+        request);
+  }
+
+  @ExceptionHandler({CallShareLinkEndedException.class})
+  public ResponseEntity<Object> handleCallShareLinkEnded(
+      final CallShareLinkEndedException ex, final WebRequest request) {
+    return handleExceptionInternal(
+        ex,
+        reasonBody(CallShareLinkEndedException.REASON),
+        new HttpHeaders(),
+        HttpStatus.GONE,
+        request);
+  }
+
+  /**
    * 403 - Forbidden.
    *
    * @param request the invoking request
@@ -320,6 +411,14 @@ public class ApiResponseEntityExceptionHandler extends ResponseEntityExceptionHa
       final ForbiddenException ex, final WebRequest request) {
     ex.executeLogging();
 
+    return handleExceptionInternal(null, null, new HttpHeaders(), HttpStatus.FORBIDDEN, request);
+  }
+
+  /** Maps service-layer tenant-scope denials to the same explicit 403 contract as role denials. */
+  @ExceptionHandler({AccessDeniedException.class})
+  public ResponseEntity<Object> handleAccessDenied(
+      final AccessDeniedException ex, final WebRequest request) {
+    log.warn("Access denied by service-layer scope validation: {}", ex.getMessage());
     return handleExceptionInternal(null, null, new HttpHeaders(), HttpStatus.FORBIDDEN, request);
   }
 

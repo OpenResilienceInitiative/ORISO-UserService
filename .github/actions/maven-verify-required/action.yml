@@ -1,4 +1,5 @@
 name: Reusable required Maven integration contract
+description: Run and report the required integration suite without skipped tests.
 
 inputs:
   java_version:

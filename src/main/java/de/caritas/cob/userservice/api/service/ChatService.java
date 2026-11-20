@@ -14,6 +14,7 @@ import de.caritas.cob.userservice.api.adapters.web.dto.UserSessionResponseDTO;
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
 import de.caritas.cob.userservice.api.exception.httpresponses.ConflictException;
 import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
+import de.caritas.cob.userservice.api.facade.ChatConverter;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.model.Chat;
 import de.caritas.cob.userservice.api.model.Chat.ChatInterval;
@@ -21,7 +22,6 @@ import de.caritas.cob.userservice.api.model.Chat.ChatModality;
 import de.caritas.cob.userservice.api.model.ChatAgency;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.ConsultantAgency;
-import de.caritas.cob.userservice.api.model.ConversationType;
 import de.caritas.cob.userservice.api.model.GroupAppointmentMailOutbox.RecipientRole;
 import de.caritas.cob.userservice.api.model.GroupChatParticipant.ParticipantRole;
 import de.caritas.cob.userservice.api.model.User;
@@ -65,10 +65,15 @@ import org.springframework.transaction.annotation.Transactional;
 public class ChatService {
 
   private final @NonNull ChatRepository chatRepository;
+  private final @NonNull de.caritas.cob.userservice.api.service.matrixgroup
+          .GroupMatrixLifecycleCleanup
+      participationHistory;
   private final @NonNull ChatAgencyRepository chatAgencyRepository;
   private final @NonNull UserChatRepository userChatRepository;
   private final @NonNull ConsultantService consultantService;
   private final @NonNull GroupChatParticipantRepository groupChatParticipantRepository;
+  private final @NonNull de.caritas.cob.userservice.api.port.out.ChatOccurrenceExceptionRepository
+      chatOccurrenceExceptionRepository;
   private final @NonNull GroupChatParticipantReconciliationService participantReconciliationService;
   private final @NonNull GroupAppointmentSeriesEventProducer appointmentEvents;
 
@@ -220,7 +225,7 @@ public class ChatService {
    */
   public Chat saveChat(Chat chat) {
     if (chat.getConversationType() == null) {
-      chat.setConversationType(ConversationType.INTERNAL_GROUP);
+      chat.setConversationType(ChatConverter.conversationTypeOf(chat));
     }
     // Every chat mutation goes through here, so this is the one place to stamp it.
     chat.setUpdateDate(nowInUtc());
@@ -369,6 +374,10 @@ public class ChatService {
     result.setSourceLanguage(chat.getSourceLanguage());
     result.setHintMessageTranslations(chat.getHintMessageTranslations());
     result.setGroupChatRulesTranslations(chat.getGroupChatRulesTranslations());
+    if (ChatConverter.conversationTypeOf(chat)
+        == de.caritas.cob.userservice.api.model.ConversationType.SELF_HELP) {
+      result.setGuestAccountMode(chat.getGuestAccountMode());
+    }
     return result;
   }
 
@@ -536,8 +545,13 @@ public class ChatService {
    */
   @Transactional
   public void deleteChatRecords(Chat chat) {
+    participationHistory.deleteSeries(chat);
     // Needs the participations: they name the case of a members-only chat.
     membersOnlyRevocation.retireCaseOf(chat);
+    // A recurring chat's moved or skipped dates restrict the delete like its participants
+    // (ORISO-Admin#1523).
+    chatOccurrenceExceptionRepository.deleteAll(
+        chatOccurrenceExceptionRepository.findBySeries_Id(chat.getId()));
     groupChatParticipantRepository.deleteBySeriesId(chat.getId());
     chatRepository.delete(chat);
   }
@@ -624,6 +638,10 @@ public class ChatService {
     chat.setSourceLanguage(chatDTO.getSourceLanguage());
     chat.setHintMessageTranslations(chatDTO.getHintMessageTranslations());
     chat.setGroupChatRulesTranslations(chatDTO.getGroupChatRulesTranslations());
+    // #1662: an older app sends no mode; the circle keeps the one it has.
+    if (chatDTO.getGuestAccountMode() != null) {
+      chat.setGuestAccountMode(chatDTO.getGuestAccountMode());
+    }
 
     this.saveChat(chat);
     Set<GroupAppointmentMailQueue.Member> newlyJoinedMembers =

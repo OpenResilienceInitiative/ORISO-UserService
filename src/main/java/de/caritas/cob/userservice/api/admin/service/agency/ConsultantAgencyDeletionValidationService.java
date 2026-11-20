@@ -10,6 +10,7 @@ import static org.apache.commons.lang3.BooleanUtils.isFalse;
 
 import de.caritas.cob.userservice.api.adapters.web.dto.AgencyDTO;
 import de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHttpStatusException;
+import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.ConsultantAgency;
 import de.caritas.cob.userservice.api.model.Session.SessionStatus;
 import de.caritas.cob.userservice.api.port.out.ConsultantAgencyRepository;
@@ -71,6 +72,22 @@ public class ConsultantAgencyDeletionValidationService {
     }
     consultantAgency.setDeleteDate(deletedAt);
     consultantAgencyRepository.save(consultantAgency);
+  }
+
+  /**
+   * Counterpart of {@link #validateAndMarkForDeletion(ConsultantAgency, LocalDateTime)} for a
+   * cancelled consultant deletion: restores exactly the relations that were removed together with
+   * the consultant (same delete date). Relations the consultant had left earlier carry another date
+   * and stay removed.
+   */
+  public void restoreRelationsMarkedWith(Consultant consultant, LocalDateTime deletedAt) {
+    consultantAgencyRepository
+        .findByConsultantIdAndDeleteDate(consultant.getId(), deletedAt)
+        .forEach(
+            relation -> {
+              relation.setDeleteDate(null);
+              consultantAgencyRepository.save(relation);
+            });
   }
 
   private boolean isTheLastConsultantInAgency(ConsultantAgency consultantAgency) {

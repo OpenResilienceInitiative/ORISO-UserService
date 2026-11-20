@@ -5,6 +5,7 @@ import static org.hamcrest.Matchers.notNullValue;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -199,6 +200,32 @@ class GroupChatInviteLinkE2EIT {
     if (identityHttp != null) identityHttp.reset();
   }
 
+  /** #1662: the entry page reads the circle's guest account mode before anybody logs in. */
+  @Test
+  void anAnonymousHolderOfTheLinkReadsOnlyTheCirclesGuestAccountMode() throws Exception {
+    // The Träger's guest account caps are read from the TenantService.
+    permittedOwner.close();
+    permittedOwner =
+        de.caritas.cob.userservice.api.testHelper.DpaOwnerHttpFixtures.permitWithTenantLookup(
+            ownerFactory, GROUP_TENANT);
+    mockMvc
+        .perform(
+            get("/users/chat/" + selfHelpGroup.getId() + "/invite-context")
+                .queryParam("agencyId", String.valueOf(GROUP_AGENCY))
+                .queryParam("inviteToken", inviteTokenOf(selfHelpGroup)))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.guestAccountMode").value("GUEST_CHOOSES"))
+        .andExpect(jsonPath("$.length()").value(1));
+
+    mockMvc
+        .perform(
+            get("/users/chat/" + selfHelpGroup.getId() + "/invite-context")
+                .queryParam("agencyId", String.valueOf(GROUP_AGENCY))
+                .queryParam("inviteToken", "guessed"))
+        .andExpect(status().isForbidden())
+        .andExpect(header().string("X-Reason", "GROUP_INVITE_INVALID"));
+  }
+
   @Test
   @WithMockUser(authorities = AuthorityValue.USER_DEFAULT)
   void aClientCannotJoinAGroupByGuessingItsNumber() throws Exception {
@@ -206,7 +233,8 @@ class GroupChatInviteLinkE2EIT {
 
     mockMvc
         .perform(clientPut("/users/chat/" + selfHelpGroup.getId() + "/assign"))
-        .andExpect(status().isForbidden());
+        .andExpect(status().isForbidden())
+        .andExpect(header().string("X-Reason", "GROUP_INVITE_INVALID"));
   }
 
   @Test
@@ -251,7 +279,8 @@ class GroupChatInviteLinkE2EIT {
         .perform(
             clientPut("/users/chat/" + selfHelpGroup.getId() + "/assign")
                 .queryParam("inviteToken", "not-the-token"))
-        .andExpect(status().isForbidden());
+        .andExpect(status().isForbidden())
+        .andExpect(header().string("X-Reason", "GROUP_INVITE_INVALID"));
   }
 
   @Test
@@ -282,7 +311,33 @@ class GroupChatInviteLinkE2EIT {
         .perform(
             clientPut("/users/chat/" + internalGroup.getId() + "/assign")
                 .queryParam("inviteToken", inviteTokenOf(internalGroup)))
-        .andExpect(status().isForbidden());
+        .andExpect(status().isForbidden())
+        .andExpect(header().string("X-Reason", "GROUP_INVITE_INVALID"));
+  }
+
+  @Test
+  @WithMockUser(authorities = AuthorityValue.USER_DEFAULT)
+  void aClientWithALinkToAnUnknownGroupIsToldTheLinkDoesNotWork() throws Exception {
+    actingAsClient();
+
+    mockMvc
+        .perform(clientPut("/users/chat/987654321/assign").queryParam("inviteToken", "any-token"))
+        .andExpect(status().isNotFound())
+        .andExpect(header().string("X-Reason", "GROUP_INVITE_INVALID"));
+  }
+
+  @Test
+  @WithMockUser(authorities = AuthorityValue.USER_DEFAULT)
+  void aMemberWhoJoinsAgainGetsAConflictWithoutTheInviteReason() throws Exception {
+    givenTheClientIsAMember();
+    actingAsClient();
+
+    mockMvc
+        .perform(
+            clientPut("/users/chat/" + selfHelpGroup.getId() + "/assign")
+                .queryParam("inviteToken", inviteTokenOf(selfHelpGroup)))
+        .andExpect(status().isConflict())
+        .andExpect(header().doesNotExist("X-Reason"));
   }
 
   @Test

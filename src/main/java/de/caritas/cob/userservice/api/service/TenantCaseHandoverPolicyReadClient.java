@@ -1,10 +1,11 @@
 package de.caritas.cob.userservice.api.service;
 
 import de.caritas.cob.userservice.api.config.apiclient.TenantAdminServiceApiControllerFactory;
+import de.caritas.cob.userservice.api.config.auth.RoutineTaskAuthentication;
+import de.caritas.cob.userservice.api.config.auth.TaskPurpose;
 import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
 import de.caritas.cob.userservice.api.port.out.IdentityAuthentication;
 import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
-import de.caritas.cob.userservice.api.port.out.IdentityLogin;
 import de.caritas.cob.userservice.api.service.httpheader.SecurityHeaderSupplier;
 import de.caritas.cob.userservice.tenantadminservice.generated.web.model.TenantPermissionPolicies;
 import lombok.RequiredArgsConstructor;
@@ -124,24 +125,48 @@ public class TenantCaseHandoverPolicyReadClient {
               de.caritas.cob.userservice.tenantadminservice.generated.web.TenantControllerApi, T>
           operation,
       String operationName) {
-    IdentityLogin login = null;
     try {
-      var technical = identityClientConfig.getTechnicalUser();
-      login =
-          identityAuthentication.loginService(technical.getClientId(), technical.getClientSecret());
-      if (login == null || login.accessToken() == null || login.accessToken().isBlank())
-        throw new IllegalStateException("Service authentication unavailable");
+      String token =
+          RoutineTaskAuthentication.accessToken(
+              TaskPurpose.RUNTIME_POLICY, identityClientConfig, identityAuthentication);
       var api = tenantServiceFactory.createControllerApi();
       securityHeaderSupplier
-          .getKeycloakAndCsrfHttpHeaders(login.accessToken())
+          .getKeycloakAndCsrfHttpHeaders(token)
           .forEach(
               (name, values) ->
                   values.forEach(value -> api.getApiClient().addDefaultHeader(name, value)));
-      return operation.apply(api);
+      try {
+        return operation.apply(api);
+      } catch (RuntimeException responseFailure) {
+        if (isInvalidPolicyResponse(responseFailure)) throw new InvalidPolicyResponseException();
+        throw responseFailure;
+      }
+    } catch (InvalidPolicyResponseException invalid) {
+      throw invalid;
     } catch (RuntimeException exception) {
       // Neither downstream response bodies nor identity credentials may enter fallback logs.
       throw new IllegalStateException(operationName + " failed: " + failureSummary(exception));
     }
+  }
+
+  /**
+   * A successful HTTP response could not be decoded as policy authority. Contains no body/cause.
+   */
+  public static final class InvalidPolicyResponseException extends RuntimeException {
+    private static final long serialVersionUID = 1L;
+
+    private InvalidPolicyResponseException() {
+      super("Tenant policy response is invalid");
+    }
+  }
+
+  private boolean isInvalidPolicyResponse(RuntimeException failure) {
+    for (Throwable cause = failure; cause != null; cause = cause.getCause()) {
+      if (cause instanceof org.springframework.http.converter.HttpMessageConversionException
+          || cause instanceof org.springframework.web.client.UnknownContentTypeException)
+        return true;
+    }
+    return false;
   }
 
   public static String failureSummary(RuntimeException exception) {

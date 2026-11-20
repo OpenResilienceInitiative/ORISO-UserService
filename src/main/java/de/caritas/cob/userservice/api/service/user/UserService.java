@@ -121,6 +121,16 @@ public class UserService {
     return userRepository.findByUserIdAndDeleteDateIsNull(userId);
   }
 
+  /**
+   * The active user read under a row lock (PESSIMISTIC_WRITE), for a write that must not race the
+   * temporary-account keep (#1662). Call inside a transaction.
+   */
+  public Optional<User> getUserForUpdate(String userId) {
+    return userRepository
+        .findByUserIdForUpdate(userId)
+        .filter(user -> user.getDeleteDate() == null);
+  }
+
   public Optional<User> findDeletedById(String userId) {
     return userRepository.findById(userId).filter(user -> user.getDeleteDate() != null);
   }
@@ -161,6 +171,18 @@ public class UserService {
                 usernameTranscoder.decodeUsername(username)))
         .stream()
         .findFirst();
+  }
+
+  /**
+   * Finds active and soft-deleted users for a privileged identity-lifecycle operation.
+   *
+   * <p>The caller must still fail closed unless exactly one full identity tuple matches.
+   */
+  public List<User> findUsersByUsernameIncludingDeleted(String username) {
+    return userRepository.findAllByUsernameInOrderByCreateDateAsc(
+        List.of(
+            usernameTranscoder.encodeUsername(username),
+            usernameTranscoder.decodeUsername(username)));
   }
 
   public Optional<User> findUserByEmail(String email) {

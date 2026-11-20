@@ -10,6 +10,7 @@ import static org.mockito.Mockito.when;
 
 import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
 import de.caritas.cob.userservice.api.adapters.matrix.dto.MatrixCreateRoomResponseDTO;
+import de.caritas.cob.userservice.api.admin.service.tenant.TenantService;
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
 import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
@@ -65,6 +66,11 @@ class SessionSupervisorFacadeTest {
   private de.caritas.cob.userservice.api.service.chat.MembersOnlyChatAccess membersOnlyChatAccess;
 
   @Mock private de.caritas.cob.userservice.api.service.CaseHandoverMatrixRepairService repairs;
+
+  @Mock
+  private de.caritas.cob.userservice.api.service.conversationfeature.ConversationFeatureGate
+      conversationFeatureGate;
+
   @Mock private SessionSupervisorRepository sessionSupervisorRepository;
   @Mock private SessionRepository sessionRepository;
   @Mock private ConsultantRepository consultantRepository;
@@ -121,6 +127,42 @@ class SessionSupervisorFacadeTest {
     when(matrixSynapseService.joinRoom(any(), any())).thenReturn(true);
     when(sessionSupervisorRepository.save(any()))
         .thenAnswer(inv -> inv.getArgument(0, SessionSupervisor.class));
+  }
+
+  @Test
+  void addSupervisor_Should_beRefusedBeforeAnyMatrixCall_whenSupervisionIsSwitchedOff() {
+    org.mockito.Mockito.doThrow(
+            new de.caritas.cob.userservice.api.exception.httpresponses
+                .CustomValidationHttpStatusException(
+                de.caritas.cob.userservice.api.exception.httpresponses.customheader
+                    .HttpStatusExceptionReason.FEATURE_DISABLED,
+                org.springframework.http.HttpStatus.FORBIDDEN))
+        .when(conversationFeatureGate)
+        .require(
+            de.caritas.cob.userservice.api.service.conversationfeature.ConversationFeature
+                .SUPERVISION,
+            session);
+
+    org.junit.jupiter.api.Assertions.assertThrows(
+        de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHttpStatusException
+            .class,
+        () -> facade.addSupervisor(SESSION_ID, SUPERVISOR_ID, addedBy, null, "reason"));
+
+    org.mockito.Mockito.verifyNoInteractions(matrixSynapseService);
+    verify(sessionSupervisorRepository, org.mockito.Mockito.never()).save(any());
+  }
+
+  @Test
+  void addSupervisor_Should_notAskTheSwitchesOfAPersonWhoMayNotManageSupervisors() {
+    var stranger = new Consultant();
+    stranger.setId("stranger");
+    stranger.setMatrixUserId("@stranger:oriso");
+
+    org.junit.jupiter.api.Assertions.assertThrows(
+        de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException.class,
+        () -> facade.addSupervisor(SESSION_ID, SUPERVISOR_ID, stranger, null, "reason"));
+
+    org.mockito.Mockito.verifyNoInteractions(conversationFeatureGate);
   }
 
   @Test
@@ -525,6 +567,73 @@ class SessionSupervisorFacadeTest {
 
     verify(sessionSupervisorRepository, never()).save(any());
     verify(matrixSynapseService, never()).inviteUserToRoom(any(), any(), any());
+  }
+
+  @Test
+  void
+      attachStandingSupervisorIfAssigned_Should_neverThrow_andLeaveNothingBehind_whenTheSwitchIsOff()
+          throws Exception {
+    // The accept path rolls back on any exception: a switched-off supervision must leave the case
+    // unsupervised, not block the reply.
+    addedBy.setAssignedSupervisorId(SUPERVISOR_ID);
+    org.mockito.Mockito.doThrow(
+            new de.caritas.cob.userservice.api.exception.httpresponses
+                .CustomValidationHttpStatusException(
+                de.caritas.cob.userservice.api.exception.httpresponses.customheader
+                    .HttpStatusExceptionReason.FEATURE_DISABLED,
+                org.springframework.http.HttpStatus.FORBIDDEN))
+        .when(conversationFeatureGate)
+        .require(
+            de.caritas.cob.userservice.api.service.conversationfeature.ConversationFeature
+                .SUPERVISION,
+            session);
+
+    facade.attachStandingSupervisorIfAssigned(SESSION_ID, addedBy);
+
+    verify(sessionSupervisorRepository, never()).save(any());
+    org.mockito.Mockito.verifyNoInteractions(matrixSynapseService, repairs);
+  }
+
+  @Test
+  void
+      attachStandingSupervisorIfAssigned_Should_neverThrow_andLeaveNothingBehind_whenTheTenantServiceIsDown()
+          throws Exception {
+    // The real gate on top of a TenantService that is down: the reply is still accepted.
+    addedBy.setAssignedSupervisorId(SUPERVISOR_ID);
+    session.setTenantId(9L);
+    var tenantService = org.mockito.Mockito.mock(TenantService.class);
+    when(tenantService.getRestrictedTenantDataFresh(9L))
+        .thenThrow(new org.springframework.web.client.ResourceAccessException("down"));
+    var realGate =
+        new de.caritas.cob.userservice.api.service.conversationfeature.ConversationFeatureGate(
+            tenantService,
+            org.mockito.Mockito.mock(
+                de.caritas.cob.userservice.api.service.agency.EffectiveAgencySettingsLookup.class),
+            org.mockito.Mockito.mock(
+                de.caritas.cob.userservice.api.port.out.ChatAgencyRepository.class),
+            membersOnlyChatAccess);
+    org.mockito.Mockito.doAnswer(
+            invocation -> {
+              realGate.require(
+                  invocation
+                      .<de.caritas.cob.userservice.api.service.conversationfeature
+                              .ConversationFeature>
+                          getArgument(0),
+                  invocation.<Session>getArgument(1));
+              return null;
+            })
+        .when(conversationFeatureGate)
+        .require(
+            any(
+                de.caritas.cob.userservice.api.service.conversationfeature.ConversationFeature
+                    .class),
+            any(Session.class));
+
+    facade.attachStandingSupervisorIfAssigned(SESSION_ID, addedBy);
+
+    verify(tenantService).getRestrictedTenantDataFresh(9L);
+    verify(sessionSupervisorRepository, never()).save(any());
+    org.mockito.Mockito.verifyNoInteractions(matrixSynapseService, repairs);
   }
 
   // --- setSupervisionOptedOut (client opt-out toggle, grill 2026-07-13) ---

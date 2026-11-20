@@ -2,11 +2,12 @@ package de.caritas.cob.userservice.api.facade;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.same;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-import com.neovisionaries.i18n.LanguageCode;
 import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
 import de.caritas.cob.userservice.api.exception.httpresponses.ConflictException;
 import de.caritas.cob.userservice.api.exception.httpresponses.CreateEnquiryMessageException;
@@ -77,7 +78,11 @@ class CreateEnquiryMessageFacadeTest {
             eventNotificationService,
             agencyPreAssignmentRoomService,
             erstantwortPayloadBuilder,
-            matrixSessionSystemMessageService);
+            matrixSessionSystemMessageService,
+            new de.caritas.cob.userservice.api.service.erstantwort.ErstantwortTenantTextResolver(
+                org.mockito.Mockito.mock(
+                    de.caritas.cob.userservice.api.service.erstantwort
+                        .TenantErstantwortContentClient.class)));
     user = new User();
     user.setUserId(USER_ID);
     user.setMatrixUserId(MATRIX_USER_ID);
@@ -111,11 +116,8 @@ class CreateEnquiryMessageFacadeTest {
     assertThat(response.getMatrixRoomId()).isEqualTo(MATRIX_ROOM_ID);
     assertThat(response.getSessionId()).isEqualTo(SESSION_ID);
     assertThat(response.getT()).isEqualTo(MATRIX_EVENT_ID);
-    assertThat(session.getMatrixRoomId()).isEqualTo(MATRIX_ROOM_ID);
-    assertThat(session.getStatus()).isEqualTo(SessionStatus.NEW);
-    assertThat(session.getEnquiryMessageDate()).isNotNull();
-    assertThat(session.getLanguageCode()).isEqualTo(LanguageCode.de);
-    verify(sessionService).saveSession(session);
+    verify(sessionService).finalizeEnquiry(session, "de", MATRIX_ROOM_ID);
+    verify(emailNotificationFacade).sendNewEnquiryEmailNotification(same(finalized), any());
     verify(agencyPreAssignmentRoomService, never()).ensureHoldingRoom(session, user);
     verify(matrixSynapseService, never()).sendMessage(MATRIX_ROOM_ID, MESSAGE, MATRIX_TOKEN);
   }
@@ -187,7 +189,7 @@ class CreateEnquiryMessageFacadeTest {
         .isInstanceOf(InternalServerErrorException.class)
         .hasMessageContaining("requires an encrypted Matrix event");
 
-    verify(sessionService, never()).saveSession(session);
+    verify(sessionService, never()).finalizeEnquiry(session, "de", MATRIX_ROOM_ID);
     verify(matrixSynapseService, never()).sendMessage(MATRIX_ROOM_ID, MESSAGE, MATRIX_TOKEN);
   }
 
@@ -208,7 +210,7 @@ class CreateEnquiryMessageFacadeTest {
         .isInstanceOf(InternalServerErrorException.class)
         .hasMessageContaining("not an encrypted Matrix event");
 
-    verify(sessionService, never()).saveSession(session);
+    verify(sessionService, never()).finalizeEnquiry(session, "de", MATRIX_ROOM_ID);
   }
 
   @Test
@@ -228,7 +230,7 @@ class CreateEnquiryMessageFacadeTest {
         .isInstanceOf(InternalServerErrorException.class)
         .hasMessageContaining("was not sent by enquiry user");
 
-    verify(sessionService, never()).saveSession(session);
+    verify(sessionService, never()).finalizeEnquiry(session, "de", MATRIX_ROOM_ID);
   }
 
   @Test
@@ -243,7 +245,7 @@ class CreateEnquiryMessageFacadeTest {
         .isInstanceOf(InternalServerErrorException.class)
         .hasMessageContaining("Could not read Matrix enquiry event");
 
-    verify(sessionService, never()).saveSession(session);
+    verify(sessionService, never()).finalizeEnquiry(session, "de", MATRIX_ROOM_ID);
   }
 
   @Test
@@ -263,7 +265,7 @@ class CreateEnquiryMessageFacadeTest {
         .isInstanceOf(InternalServerErrorException.class)
         .hasMessageContaining("did not match");
 
-    verify(sessionService, never()).saveSession(session);
+    verify(sessionService, never()).finalizeEnquiry(session, "de", MATRIX_ROOM_ID);
   }
 
   @Test
@@ -304,10 +306,27 @@ class CreateEnquiryMessageFacadeTest {
     assertThat(response.getT()).isEmpty();
     verify(matrixSynapseService, never()).loginAsUserAccessToken(MATRIX_USER_ID);
     verify(matrixSynapseService, never()).sendMessage(MATRIX_ROOM_ID, MESSAGE, MATRIX_TOKEN);
-    verify(sessionService).saveSession(session);
+    verify(sessionService).finalizeEnquiry(session, "de", MATRIX_ROOM_ID);
   }
+
+  private Session finalized;
 
   private void givenExistingSession() {
     when(sessionService.getSession(SESSION_ID)).thenReturn(Optional.of(session));
+    org.mockito.Mockito.lenient()
+        .when(sessionService.finalizeEnquiry(session, "de", MATRIX_ROOM_ID))
+        .thenAnswer(
+            invocation -> {
+              // A distinct row proves the facade continues with the finalized session.
+              finalized = new Session();
+              finalized.setId(session.getId());
+              finalized.setAgencyId(session.getAgencyId());
+              finalized.setUser(session.getUser());
+              finalized.setRegistrationType(session.getRegistrationType());
+              finalized.setIsConsultantDirectlySet(session.getIsConsultantDirectlySet());
+              finalized.setMatrixRoomId(invocation.getArgument(2));
+              finalized.setStatus(SessionStatus.NEW);
+              return finalized;
+            });
   }
 }

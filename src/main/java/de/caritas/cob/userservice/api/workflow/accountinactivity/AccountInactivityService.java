@@ -111,6 +111,33 @@ public class AccountInactivityService {
         .findFirst();
   }
 
+  /**
+   * Current lifecycle exclusions for an already admitted audience; missing legacy rows stay
+   * eligible.
+   */
+  public java.util.Set<String> inactiveAmong(java.util.Collection<String> identityIds) {
+    if (identityIds == null || identityIds.isEmpty()) return java.util.Set.of();
+    var ids =
+        identityIds.stream()
+            .filter(java.util.Objects::nonNull)
+            .filter(id -> !id.isBlank())
+            .distinct()
+            .toList();
+    var inactive = new java.util.HashSet<String>();
+    for (int offset = 0; offset < ids.size(); offset += 256) {
+      var chunk = ids.subList(offset, Math.min(offset + 256, ids.size()));
+      String placeholders = String.join(",", java.util.Collections.nCopies(chunk.size(), "?"));
+      inactive.addAll(
+          jdbc.queryForList(
+              "SELECT identity_id FROM account_inactivity WHERE status <> 'ACTIVE' AND identity_id IN ("
+                  + placeholders
+                  + ")",
+              String.class,
+              chunk.toArray()));
+    }
+    return inactive;
+  }
+
   public void recordActivity(String id, Instant activityAt) {
     admit(id, activityAt);
   }
@@ -146,6 +173,7 @@ public class AccountInactivityService {
           var existing = locked(id);
           if (existing.isPresent() && existing.get().status() != Status.ACTIVE)
             throw new IllegalStateException("Account lifecycle action prevents role changes");
+          refuseDuringGuestTransition(id);
           change.run();
         });
   }
@@ -221,6 +249,7 @@ public class AccountInactivityService {
         ignored -> {
           var row = locked(id).orElseThrow();
           if (row.status() != Status.ACTIVE || row.dueAt().isAfter(clock.instant())) return;
+          refuseDuringGuestTransition(id);
           var roles = effects.currentRoles(id);
           if (roles == null
               || roles.isEmpty()
@@ -246,6 +275,7 @@ public class AccountInactivityService {
           if (row.status() == Status.SUSPENDING || row.status() == Status.SUSPENDED) return;
           if (row.status() != Status.ACTIVE)
             throw new IllegalStateException("Account has another lifecycle action");
+          refuseDuringGuestTransition(id);
           jdbc.update("UPDATE account_inactivity SET status='SUSPENDING' WHERE identity_id=?", id);
           audit(id, "SUSPENDING", "DATABASE", "CLAIMED");
         });
@@ -327,6 +357,7 @@ public class AccountInactivityService {
         work.execute(
             ignored -> {
               var row = locked(id).orElseThrow();
+              refuseDuringGuestTransition(id);
               boolean complete;
               Status next;
               switch (row.status()) {
@@ -364,6 +395,26 @@ public class AccountInactivityService {
               }
               return complete;
             }));
+  }
+
+  /** Called only after the inactivity row is locked: user and guest claim follow it. */
+  private void refuseDuringGuestTransition(String id) {
+    var users =
+        jdbc.query(
+            "SELECT user_id FROM `user` WHERE user_id=? FOR UPDATE", (r, n) -> r.getString(1), id);
+    if (users.isEmpty()) return; // Consultant and other identities have no asker row.
+    var guestStates =
+        jdbc.query(
+            "SELECT lifecycle FROM live_chat_account_claim WHERE user_id=? FOR UPDATE",
+            (r, n) -> r.getString(1),
+            id);
+    if (guestStates.stream()
+        .anyMatch(
+            state ->
+                state.equals("PROMOTION_PENDING")
+                    || state.equals("FINISH_PENDING")
+                    || state.equals("CLEANUP_STARTED")))
+      throw new IllegalStateException("Live Chat identity transition is in progress");
   }
 
   private Optional<Snapshot> locked(String id) {

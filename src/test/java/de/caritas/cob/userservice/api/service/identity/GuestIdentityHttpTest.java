@@ -62,6 +62,8 @@ class GuestIdentityHttpTest {
     GuestUsernameAvailability.class,
     AgencyInviteLinkController.class,
     AgencyInviteLinkService.class,
+    de.caritas.cob.userservice.api.service.agencyinvitelink.PlatformGuestAccountModePolicy.class,
+    de.caritas.cob.userservice.api.service.agencyinvitelink.ConfiguredTemporaryAccountPolicy.class,
     ApiResponseEntityExceptionHandler.class
   })
   static class Config {
@@ -109,6 +111,13 @@ class GuestIdentityHttpTest {
   @Autowired WebApplicationContext context;
   @MockitoBean JwtDecoder jwtDecoder;
   @MockitoBean de.caritas.cob.userservice.api.admin.service.admin.AdminScope adminScope;
+
+  @MockitoBean
+  de.caritas.cob.userservice.api.service.agencyinvitelink.CallShareLinkService callShareLinks;
+
+  @MockitoBean
+  de.caritas.cob.userservice.api.service.agencyinvitelink.DirectInvitePolicy directInvitePolicy;
+
   @MockitoBean IdentityUsernameAvailability identityProvider;
   @MockitoBean UserRepository users;
   @MockitoBean MatrixUserClient matrix;
@@ -117,6 +126,11 @@ class GuestIdentityHttpTest {
   @MockitoBean TopicService topics;
   @MockitoBean ConsultantRepository consultants;
   @MockitoBean ConsultingTypeService consultingTypes;
+
+  @MockitoBean
+  de.caritas.cob.userservice.api.service.temporaryaccount.TemporaryAccountSettingsService
+      temporaryAccountSettings;
+
   @MockitoBean AgencyService agencies;
   @MockitoBean CreateAnonymousEnquiryFacade provisioning;
 

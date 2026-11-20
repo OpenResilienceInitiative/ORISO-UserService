@@ -3,6 +3,7 @@ package de.caritas.cob.userservice.api.workflow.delete.service;
 import static java.util.Collections.singletonList;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.verify;
@@ -15,7 +16,6 @@ import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
 import de.caritas.cob.userservice.api.workflow.delete.action.asker.DeleteAnonymousRegistryIdAction;
-import de.caritas.cob.userservice.api.workflow.delete.action.asker.DeleteAppointmentServiceAskerAction;
 import de.caritas.cob.userservice.api.workflow.delete.action.asker.DeleteAskerDraftMessagesAction;
 import de.caritas.cob.userservice.api.workflow.delete.action.asker.DeleteAskerEventNotificationsAction;
 import de.caritas.cob.userservice.api.workflow.delete.action.asker.DeleteAskerReplyEmailDeliveriesAction;
@@ -24,19 +24,23 @@ import de.caritas.cob.userservice.api.workflow.delete.action.asker.DeleteDatabas
 import de.caritas.cob.userservice.api.workflow.delete.action.asker.DeleteDatabaseAskerAgencyAction;
 import de.caritas.cob.userservice.api.workflow.delete.action.asker.DeleteKeycloakAskerAction;
 import de.caritas.cob.userservice.api.workflow.delete.action.asker.DeleteMatrixAskerAction;
-import de.caritas.cob.userservice.api.workflow.delete.action.consultant.DeleteAppointmentServiceConsultantAction;
+import de.caritas.cob.userservice.api.workflow.delete.action.asker.PublishAskerDeletedEventAction;
 import de.caritas.cob.userservice.api.workflow.delete.action.consultant.DeleteCaseHandoverRequestsForConsultantAction;
 import de.caritas.cob.userservice.api.workflow.delete.action.consultant.DeleteChatAction;
+import de.caritas.cob.userservice.api.workflow.delete.action.consultant.DeleteConsultantCalendarAction;
 import de.caritas.cob.userservice.api.workflow.delete.action.consultant.DeleteConsultantDraftMessagesAction;
 import de.caritas.cob.userservice.api.workflow.delete.action.consultant.DeleteConsultantEventNotificationsAction;
 import de.caritas.cob.userservice.api.workflow.delete.action.consultant.DeleteConsultantMessageEmailDeliveriesAction;
+import de.caritas.cob.userservice.api.workflow.delete.action.consultant.DeleteConsultantMessageStatsAction;
 import de.caritas.cob.userservice.api.workflow.delete.action.consultant.DeleteDatabaseConsultantAction;
 import de.caritas.cob.userservice.api.workflow.delete.action.consultant.DeleteDatabaseConsultantAgencyAction;
 import de.caritas.cob.userservice.api.workflow.delete.action.consultant.DeleteKeycloakConsultantAction;
 import de.caritas.cob.userservice.api.workflow.delete.action.consultant.DeleteMatrixConsultantAction;
+import de.caritas.cob.userservice.api.workflow.delete.action.consultant.PublishConsultantDeletedEventAction;
 import de.caritas.cob.userservice.api.workflow.delete.model.AskerDeletionWorkflowDTO;
 import de.caritas.cob.userservice.api.workflow.delete.model.ConsultantDeletionWorkflowDTO;
 import java.util.List;
+import java.util.Optional;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -67,11 +71,11 @@ class DeleteUserAccountServiceActionCoverageTest {
           DeleteAskerRoomsAndSessionsAction.class,
           DeleteDatabaseAskerAgencyAction.class,
           DeleteAnonymousRegistryIdAction.class,
-          DeleteAppointmentServiceAskerAction.class,
           DeleteAskerDraftMessagesAction.class,
           DeleteAskerEventNotificationsAction.class,
           DeleteAskerReplyEmailDeliveriesAction.class,
-          DeleteDatabaseAskerAction.class);
+          DeleteDatabaseAskerAction.class,
+          PublishAskerDeletedEventAction.class);
 
   private static final List<Class<?>> EXPECTED_CONSULTANT_CHAIN =
       List.of(
@@ -79,12 +83,14 @@ class DeleteUserAccountServiceActionCoverageTest {
           DeleteMatrixConsultantAction.class,
           DeleteDatabaseConsultantAgencyAction.class,
           DeleteChatAction.class,
-          DeleteAppointmentServiceConsultantAction.class,
           DeleteCaseHandoverRequestsForConsultantAction.class,
           DeleteConsultantDraftMessagesAction.class,
           DeleteConsultantEventNotificationsAction.class,
           DeleteConsultantMessageEmailDeliveriesAction.class,
-          DeleteDatabaseConsultantAction.class);
+          DeleteConsultantMessageStatsAction.class,
+          DeleteConsultantCalendarAction.class,
+          DeleteDatabaseConsultantAction.class,
+          PublishConsultantDeletedEventAction.class);
 
   @InjectMocks private DeleteUserAccountService deleteUserAccountService;
 
@@ -98,6 +104,10 @@ class DeleteUserAccountServiceActionCoverageTest {
 
   @Mock private DeletionLifecycleService deletionLifecycleService;
 
+  @Mock private UserHardDeleteClaimService userHardDeleteClaimService;
+
+  @Mock private ConsultantHardDeleteClaimService consultantHardDeleteClaimService;
+
   @Mock private ActionContainer<AskerDeletionWorkflowDTO> askerContainer;
 
   @Mock private ActionContainer<ConsultantDeletionWorkflowDTO> consultantContainer;
@@ -105,12 +115,19 @@ class DeleteUserAccountServiceActionCoverageTest {
   @BeforeEach
   void setupLifecycleMocks() {
     lenient()
-        .when(deletionLifecycleService.normalizeUserLifecycle(any(User.class)))
-        .thenAnswer(invocation -> invocation.getArgument(0));
-    lenient()
         .when(deletionLifecycleService.normalizeConsultantLifecycle(any(Consultant.class)))
         .thenAnswer(invocation -> invocation.getArgument(0));
-    lenient().when(deletionLifecycleService.isReadyForHardDelete(any(User.class))).thenReturn(true);
+    lenient()
+        .when(userHardDeleteClaimService.claim(any()))
+        .thenAnswer(invocation -> Optional.of(new User()));
+    lenient()
+        .when(consultantHardDeleteClaimService.claim(anyString()))
+        .thenAnswer(
+            invocation -> {
+              var claimed = new Consultant();
+              claimed.setId(invocation.getArgument(0));
+              return Optional.of(claimed);
+            });
     lenient()
         .when(deletionLifecycleService.isReadyForHardDelete(any(Consultant.class)))
         .thenReturn(true);
@@ -132,8 +149,10 @@ class DeleteUserAccountServiceActionCoverageTest {
 
   @Test
   void consultantDeletion_registersEveryActionOfTheChain_inOrder() {
+    var consultant = new Consultant();
+    consultant.setId("chain-consultant");
     when(this.consultantRepository.findAllByDeleteDateNotNull())
-        .thenReturn(singletonList(new Consultant()));
+        .thenReturn(singletonList(consultant));
     when(this.actionsRegistry.buildContainerForType(ConsultantDeletionWorkflowDTO.class))
         .thenReturn(this.consultantContainer);
     when(this.consultantContainer.addActionToExecute(any())).thenReturn(this.consultantContainer);

@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+  xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-3.2.xsd">
+  <!-- ORISO-UserService#1663: a move proposal may say why it is made. Optional, at most 500
+       characters; existing proposals keep none. -->
+  <changeSet id="20261117-calendar-move-proposal-reason-1663" author="oriso">
+    <preConditions onFail="MARK_RAN">
+      <not><columnExists tableName="calendar_move_proposal" columnName="reason"/></not>
+    </preConditions>
+    <addColumn tableName="calendar_move_proposal">
+      <column name="reason" type="VARCHAR(500)"/>
+    </addColumn>
+    <rollback><dropColumn tableName="calendar_move_proposal" columnName="reason"/></rollback>
+  </changeSet>
+</databaseChangeLog>

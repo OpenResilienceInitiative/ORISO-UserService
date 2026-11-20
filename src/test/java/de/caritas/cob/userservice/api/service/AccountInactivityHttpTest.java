@@ -23,6 +23,9 @@ class AccountInactivityHttpTest {
   void backgroundReadsDoNotExtendThePeriodButDeliberateActivityDoes() throws Exception {
     var ds = new DriverManagerDataSource("jdbc:h2:mem:inactivityhttp;DB_CLOSE_DELAY=-1", "sa", "");
     var jdbc = new JdbcTemplate(ds);
+    jdbc.execute("CREATE TABLE IF NOT EXISTS `user` (user_id VARCHAR(36) PRIMARY KEY)");
+    jdbc.execute(
+        "CREATE TABLE IF NOT EXISTS live_chat_account_claim (user_id VARCHAR(36) PRIMARY KEY, lifecycle VARCHAR(32) NOT NULL)");
     jdbc.execute("DROP TABLE IF EXISTS account_inactivity");
     jdbc.execute(
         "CREATE TABLE account_inactivity(identity_id VARCHAR(36) PRIMARY KEY,tenant_id BIGINT,assigned_months INT NOT NULL,revision BIGINT NOT NULL,last_activity TIMESTAMP(6) NOT NULL,due_at TIMESTAMP(6) NOT NULL,status VARCHAR(20) NOT NULL,last_error VARCHAR(1000),attempts INT DEFAULT 0 NOT NULL)");

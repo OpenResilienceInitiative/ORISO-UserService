@@ -230,7 +230,6 @@ public class CreateConsultantSagaTenantAwareIT extends AccountInactivityPolicyHt
 
   private void createConsultantForTenant(String username, Long tenantId) {
     Consultant consultant = new Consultant();
-    consultant.setAppointments(null);
     consultant.setTenantId(tenantId);
     consultant.setId(username);
     consultant.setMatrixUserId(username);

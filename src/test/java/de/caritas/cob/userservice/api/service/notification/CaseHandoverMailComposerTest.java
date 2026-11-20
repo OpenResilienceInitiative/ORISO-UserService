@@ -56,8 +56,8 @@ class CaseHandoverMailComposerTest {
             .contains(
                 "https://tenant.example.test/sessions/user/view/session/77?caseHandoverRequestId=12")
             .doesNotContain("/sessions/consultant/sessionView/")
-            .doesNotContain("#123", "Counsellor Name", "{{");
-        assertThat(rendered.html()).doesNotContain("{{");
+            .doesNotContain("#123", "Counsellor Name", "{{", "/profile/einstellungen");
+        assertThat(rendered.html()).doesNotContain("{{", "/profile/einstellungen");
         var confirmed =
             composer.compose(
                 mail(CaseHandoverEmailNotification.Outcome.GRANTED, language, dialect),
@@ -68,9 +68,24 @@ class CaseHandoverMailComposerTest {
                 "https://tenant.example.test/sessions/consultant/sessionView/%21room%3Aexample.test/77")
             .doesNotContain("/sessions/user/view/session/")
             .doesNotContain("{{", "Your access to the previous");
-        assertThat(confirmed.html()).doesNotContain("{{");
+        assertThat(confirmed.html()).doesNotContain("{{").contains("/profile/einstellungen");
       }
     }
+  }
+
+  @Test
+  void requiredConsentHasNoOptionalSettingsOrUnsubscribeAction() {
+    prepareBrand();
+    var rendered =
+        composer.compose(
+            mail(
+                CaseHandoverEmailNotification.Outcome.CONSENT_REQUESTED,
+                LanguageCode.en,
+                Dialect.FORMAL),
+            "https://tenant.example.test");
+    assertThat(rendered.html()).doesNotContain("/profile/einstellungen");
+    assertThat(rendered.text()).doesNotContain("/profile/einstellungen");
+    assertThat(new OrisoEmailRenderer(true).isUnsubscribable("uebergabe-angefragt")).isFalse();
   }
 
   @Test

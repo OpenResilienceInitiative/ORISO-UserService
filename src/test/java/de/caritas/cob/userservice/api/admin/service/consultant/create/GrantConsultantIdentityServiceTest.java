@@ -153,6 +153,20 @@ class GrantConsultantIdentityServiceTest {
   }
 
   @Test
+  void refuse_When_adminIsAStatisticsReader() {
+    var admin = validAdmin();
+    admin.setType(de.caritas.cob.userservice.api.model.Admin.AdminType.STATISTICS);
+    when(adminRepository.findById(ADMIN_ID)).thenReturn(Optional.of(admin));
+
+    assertThrows(
+        ForbiddenException.class,
+        () -> grantConsultantIdentityService.grantConsultantIdentityToAdmin(ADMIN_ID, dto));
+
+    verify(identityRoleUpdater, never()).ensureRoles(anyString(), any());
+    verify(consultantService, never()).saveConsultant(any());
+  }
+
+  @Test
   void refuseBeforeConflictLookup_When_callerMayNotUseAgencies() {
     when(adminRepository.findById(ADMIN_ID)).thenReturn(Optional.of(validAdmin()));
     org.mockito.Mockito.lenient()
