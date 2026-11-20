@@ -47,6 +47,7 @@ import java.util.function.UnaryOperator;
 import java.util.stream.Stream;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.dao.TransientDataAccessException;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
@@ -107,6 +108,7 @@ public class DpaSignedNoticeService {
   private static final Duration ADMIN_RECOVERY_BUDGET = Duration.ofSeconds(45);
   private static final Duration ADMIN_RECOVERY_DELAY = Duration.ofMinutes(1);
   private static final Duration ADMIN_PROOF_RETRY_DELAY = Duration.ofMinutes(15);
+  private static final int ADMIN_REARM_ATTEMPTS = 3;
 
   static final String SOURCE_FORWARDED_EXTERNAL = "FORWARDED_EXTERNAL";
   static final String STATUS_SIGNED = "SIGNED";
@@ -562,7 +564,7 @@ public class DpaSignedNoticeService {
                               recipient.get(),
                               NoticeRole.ADMIN,
                               event))
-                  .or(() -> noticeRepository.findByAdminSourceEventId(event.id()));
+                  .or(() -> bindDeliveredAdminHint(event, signature, recipient.get()));
           accepted.set(
               existing
                   .filter(
@@ -580,6 +582,28 @@ public class DpaSignedNoticeService {
                   .isPresent());
         });
     return accepted.get();
+  }
+
+  private Optional<DpaSignedNotice> bindDeliveredAdminHint(
+      Event event, DpaSignatureDTO signature, Recipient recipient) {
+    try {
+      requiresNewTransaction.executeWithoutResult(
+          tx ->
+              noticeRepository
+                  .lockDeliveredAdminHint(event.tenantId(), signature.getDpaVersion())
+                  .filter(
+                      row ->
+                          row.getDpaVersion().equals(signature.getDpaVersion())
+                              && signature.getSignedAt().equals(row.getAdminRecoverySignatureAt())
+                              && recipient.email().equals(row.getRecipientEmail()))
+                  .ifPresent(
+                      row ->
+                          noticeRepository.bindDeliveredAdminHint(
+                              row.getId(), event.id(), event.signedAtEpochMillis())));
+    } catch (DataIntegrityViolationException concurrentBinding) {
+      // An event can only own one row. The complete proof is checked on the committed binding.
+    }
+    return noticeRepository.findByAdminSourceEventId(event.id());
   }
 
   private static boolean isSignedForward(DpaSignatureDTO signature) {
@@ -737,14 +761,59 @@ public class DpaSignedNoticeService {
 
   private void retainExactAdminNotice(DpaSignedNotice notice, DeliveryDisposition disposition) {
     if (disposition == DeliveryDisposition.CONFIRMED_NOT_SENT) {
-      requiresNewTransaction.executeWithoutResult(
-          tx ->
-              noticeRepository.rearmExactAdminNotice(
-                  notice.getId(),
-                  notice.getAdminSourceEventId(),
-                  nowUtc().plus(ADMIN_PROOF_RETRY_DELAY)));
+      rearmConfirmedUnsentAdminNotice(notice);
     }
     log.warn("Exact DPA administrator notice {} retained after {}", notice.getId(), disposition);
+  }
+
+  private void rearmConfirmedUnsentAdminNotice(DpaSignedNotice notice) {
+    var nextAttempt = nowUtc().plus(ADMIN_PROOF_RETRY_DELAY);
+    for (int attempt = 1; attempt <= ADMIN_REARM_ATTEMPTS; attempt++) {
+      var updateFinished = new AtomicBoolean();
+      try {
+        requiresNewTransaction.executeWithoutResult(
+            tx -> {
+              noticeRepository.rearmExactAdminNotice(
+                  notice.getId(), notice.getAdminSourceEventId(), nextAttempt);
+              updateFinished.set(true);
+            });
+        return;
+      } catch (RuntimeException failure) {
+        // A commit error can arrive after the write was applied. Do not replay across that
+        // boundary, where another worker could already have started a new SMTP attempt.
+        if (updateFinished.get()
+            || !(failure instanceof TransientDataAccessException)
+            || attempt == ADMIN_REARM_ATTEMPTS) {
+          verifyExactAdminRearm(notice, failure);
+          return;
+        }
+      }
+    }
+  }
+
+  private void verifyExactAdminRearm(DpaSignedNotice notice, RuntimeException rearmFailure) {
+    long noticeId = notice.getId();
+    try {
+      if (noticeRepository
+          .findByAdminSourceEventId(notice.getAdminSourceEventId())
+          .filter(
+              row ->
+                  row.getId().equals(notice.getId())
+                      && (row.getSentAt() != null || row.getAdminNextAttemptAt() != null))
+          .isPresent()) {
+        return;
+      }
+    } catch (RuntimeException readbackFailure) {
+      log.warn(
+          "Could not verify exact DPA administrator notice {} after rearm failure ({})",
+          noticeId,
+          readbackFailure.getClass().getSimpleName());
+    }
+    metrics.recordClaimStuck();
+    log.error(
+        "Exact DPA administrator notice {} requires reconciliation after confirmed non-delivery ({})",
+        noticeId,
+        rearmFailure.getClass().getSimpleName());
   }
 
   private PreparedNotice prepareNotice(

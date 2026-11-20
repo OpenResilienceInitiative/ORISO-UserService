@@ -18,6 +18,29 @@ public interface DpaSignedNoticeRepository extends JpaRepository<DpaSignedNotice
 
   Optional<DpaSignedNotice> findByAdminSourceEventId(Long eventId);
 
+  /** Lock a completed hint delivery before binding it to a verified outbox event. */
+  @Lock(LockModeType.PESSIMISTIC_WRITE)
+  @Query(
+      """
+      select n from DpaSignedNotice n
+      where n.tenantId = :tenantId and n.dpaVersion = :version and n.noticeRole = ADMIN
+        and n.sentAt is not null and n.adminSourceEventId is null
+        and n.adminSourceSignedAtEpochMillis is null
+      """)
+  Optional<DpaSignedNotice> lockDeliveredAdminHint(
+      @Param("tenantId") long tenantId, @Param("version") String version);
+
+  @Modifying
+  @Query(
+      """
+      update DpaSignedNotice n
+      set n.adminSourceEventId = :eventId, n.adminSourceSignedAtEpochMillis = :signedAt
+      where n.id = :id and n.noticeRole = ADMIN and n.sentAt is not null
+        and n.adminSourceEventId is null and n.adminSourceSignedAtEpochMillis is null
+      """)
+  int bindDeliveredAdminHint(
+      @Param("id") long id, @Param("eventId") long eventId, @Param("signedAt") long signedAt);
+
   @Query(
       """
       select n.id from DpaSignedNotice n

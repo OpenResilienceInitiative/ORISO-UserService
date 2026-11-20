@@ -2,9 +2,12 @@ package de.caritas.cob.userservice.api.service.notification;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.AdditionalAnswers.delegatesTo;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.times;
@@ -56,17 +59,22 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.data.jpa.test.autoconfigure.DataJpaTest;
 import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase;
+import org.springframework.dao.CannotAcquireLockException;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.MediaType;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.test.web.client.MockRestServiceServer;
 import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionSystemException;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.web.client.RestTemplate;
 
@@ -304,7 +312,52 @@ class DpaSignedNoticeRecoveryPersistenceIT {
   }
 
   @Test
-  void exactClaimSurvivesExplicitNonDeliveryAndCanBeRecoveredByAnotherWorker() {
+  void exactAcceptanceBindsTheCommittedHintDeliveryAndDoesNotSendAgain() {
+    var mail = mock(InviteMailDispatchService.class);
+    service(mail, false).onSignatureHint(TENANT_ID);
+    var delivered =
+        notices.findAll().stream()
+            .filter(
+                row -> TENANT_ID == row.getTenantId() && row.getNoticeRole() == NoticeRole.ADMIN)
+            .findFirst()
+            .orElseThrow();
+    assertThat(delivered.getSentAt()).isNotNull();
+    assertThat(delivered.getAdminSourceEventId()).isNull();
+
+    var acknowledged = new java.util.ArrayList<Event>();
+    var changedRecipient =
+        new DpaAdminNoticeOutboxConsumer(
+            service(mail, Clock.systemUTC(), "FORWARDER@example.test", () -> {}),
+            this::readExact,
+            acknowledged::add);
+    assertThat(changedRecipient.accept(EVENT)).isFalse();
+    assertThat(notices.findByAdminSourceEventId(EVENT.id())).isEmpty();
+
+    var worker =
+        new DpaAdminNoticeOutboxConsumer(
+            service(mail, false),
+            this::readExact,
+            event -> {
+              assertThat(notices.findByAdminSourceEventId(event.id()).orElseThrow().getId())
+                  .isEqualTo(delivered.getId());
+              acknowledged.add(event);
+            });
+    assertThat(worker.accept(EVENT)).isTrue();
+    assertThat(worker.accept(EVENT)).isTrue();
+    worker.recover();
+
+    var exactDelivery = notices.findByAdminSourceEventId(EVENT.id()).orElseThrow();
+    assertThat(exactDelivery.getId()).isEqualTo(delivered.getId());
+    assertThat(exactDelivery.getSentAt()).isEqualTo(delivered.getSentAt());
+    assertThat(exactDelivery.getAdminSourceSignedAtEpochMillis())
+        .isEqualTo(EVENT.signedAtEpochMillis());
+    assertThat(acknowledged).containsExactly(EVENT, EVENT);
+    verify(mail).send(eq(RECIPIENT), any(), any(), isNull(), eq(TENANT_ID), eq("de"), any());
+  }
+
+  @ParameterizedTest
+  @ValueSource(booleans = {false, true})
+  void exactClaimRecoversAfterRearmRollbackOrLostCommitConfirmation(boolean committedFirst) {
     var start = Instant.parse("2026-11-19T11:00:00Z");
     var clock = mock(Clock.class);
     when(clock.instant()).thenReturn(start);
@@ -316,9 +369,39 @@ class DpaSignedNoticeRecoveryPersistenceIT {
                 "synthetic refusal"))
         .when(rejectedMail)
         .send(eq(RECIPIENT), any(), any(), isNull(), eq(TENANT_ID), eq("de"), any());
+    var retryRepository = mock(DpaSignedNoticeRepository.class, delegatesTo(notices));
+    doAnswer(
+            invocation -> {
+              var id = invocation.<Long>getArgument(0);
+              var eventId = invocation.<Long>getArgument(1);
+              var next = invocation.<LocalDateTime>getArgument(2);
+              int updated = notices.rearmExactAdminNotice(id, eventId, next);
+              assertThat(updated).isEqualTo(1);
+              if (!committedFirst) {
+                throw new CannotAcquireLockException("synthetic transient failure before commit");
+              }
+              TransactionSynchronizationManager.registerSynchronization(
+                  new TransactionSynchronization() {
+                    @Override
+                    public void afterCommit() {
+                      throw new TransactionSystemException("synthetic lost commit confirmation");
+                    }
+                  });
+              return updated;
+            })
+        .doAnswer(
+            invocation ->
+                notices.rearmExactAdminNotice(
+                    invocation.getArgument(0),
+                    invocation.getArgument(1),
+                    invocation.getArgument(2)))
+        .when(retryRepository)
+        .rearmExactAdminNotice(anyLong(), anyLong(), any());
     var firstWorker =
         new DpaAdminNoticeOutboxConsumer(
-            service(rejectedMail, clock, RECIPIENT, () -> {}), this::readExact, event -> {});
+            service(rejectedMail, clock, RECIPIENT, () -> {}, retryRepository),
+            this::readExact,
+            event -> {});
     assertThat(firstWorker.accept(EVENT)).isTrue();
     var accepted = notices.findByAdminSourceEventId(EVENT.id()).orElseThrow();
 
@@ -329,6 +412,10 @@ class DpaSignedNoticeRecoveryPersistenceIT {
     assertThat(retained.getAdminSourceSignedAtEpochMillis()).isEqualTo(EVENT.signedAtEpochMillis());
     assertThat(retained.getAdminNextAttemptAt()).isAfter(utc(start.plusSeconds(61)));
     assertThat(retained.getSentAt()).isNull();
+    verify(retryRepository, times(committedFirst ? 1 : 2))
+        .rearmExactAdminNotice(eq(accepted.getId()), eq(EVENT.id()), any());
+    verify(rejectedMail)
+        .send(eq(RECIPIENT), any(), any(), isNull(), eq(TENANT_ID), eq("de"), any());
 
     when(clock.instant())
         .thenReturn(retained.getAdminNextAttemptAt().toInstant(ZoneOffset.UTC).plusSeconds(1));
@@ -439,6 +526,15 @@ class DpaSignedNoticeRecoveryPersistenceIT {
 
   private DpaSignedNoticeService service(
       InviteMailDispatchService mail, Clock clock, String address, Runnable duringPreparation) {
+    return service(mail, clock, address, duringPreparation, notices);
+  }
+
+  private DpaSignedNoticeService service(
+      InviteMailDispatchService mail,
+      Clock clock,
+      String address,
+      Runnable duringPreparation,
+      DpaSignedNoticeRepository repository) {
     var signatures = mock(TenantDpaSignatureReadClient.class);
     var signature = signature();
     when(signatures.readSignatures(TENANT_ID)).thenReturn(List.of(signature));
@@ -473,7 +569,7 @@ class DpaSignedNoticeRecoveryPersistenceIT {
     var service =
         new DpaSignedNoticeService(
             signatures,
-            notices,
+            repository,
             admins,
             mock(AccountInviteRepository.class),
             locales,
