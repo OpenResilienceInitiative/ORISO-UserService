@@ -6,9 +6,12 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.doNothing;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -23,12 +26,14 @@ import java.nio.file.Path;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
+import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import liquibase.integration.spring.SpringLiquibase;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.mockito.ArgumentCaptor;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
@@ -111,6 +116,41 @@ class DpaAdminNoticeOutboxSchedulerTest {
   }
 
   @Test
+  void suppressesAnotherSubmissionUntilTheQueuedTaskFinishes() {
+    doNothing().when(notices).submitAdminRecovery(any(Runnable.class));
+    when(client.readPending(0, PAGE_SIZE)).thenReturn(new PendingPage(List.of(), null));
+    var scheduler = scheduler();
+    var task = ArgumentCaptor.forClass(Runnable.class);
+
+    scheduler.retryPending();
+    scheduler.retryPending();
+
+    verify(notices).submitAdminRecovery(task.capture());
+    verifyNoInteractions(claims);
+
+    task.getValue().run();
+    verify(claims).release(FIRST_LEASE);
+    scheduler.retryPending();
+
+    verify(notices, times(2)).submitAdminRecovery(any(Runnable.class));
+  }
+
+  @Test
+  void retriesSubmissionAfterTheExecutorRejectsTheTask() {
+    doThrow(new RejectedExecutionException("synthetic saturation"))
+        .doNothing()
+        .when(notices)
+        .submitAdminRecovery(any(Runnable.class));
+    var scheduler = scheduler();
+
+    scheduler.retryPending();
+    scheduler.retryPending();
+
+    verify(notices, times(2)).submitAdminRecovery(any(Runnable.class));
+    verifyNoInteractions(claims);
+  }
+
+  @Test
   void resumesAnEmptyPageAcrossWorkerReplacementAndWrapsOnlyAfterTheLastPage() {
     when(client.readPending(0, PAGE_SIZE)).thenReturn(new PendingPage(List.of(), 9L));
     scheduler().retryPending();
@@ -123,7 +163,7 @@ class DpaAdminNoticeOutboxSchedulerTest {
     scheduler().retryPending();
 
     verify(client).acknowledge(event);
-    verify(notices, org.mockito.Mockito.times(2)).retryPendingExactAdminNotices(any());
+    verify(notices, times(2)).retryPendingExactAdminNotices(any());
     assertThat(cursor()).isZero();
   }
 
