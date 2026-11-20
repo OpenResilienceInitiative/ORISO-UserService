@@ -88,7 +88,8 @@ public class TenantDpaSignatureReadClient {
     try {
       page = restTemplate.exchange(url, HttpMethod.GET, request, PendingPage.class).getBody();
     } catch (RestClientException failure) {
-      throw new IllegalStateException("TenantService DPA outbox page is unavailable");
+      // Drop the original HTTP cause because it can retain a response body or request URL.
+      throw new IllegalStateException("TenantService DPA outbox page is unavailable"); // NOPMD
     }
     if (page == null || page.events() == null || page.events().size() > boundedLimit) {
       throw new IllegalStateException("Invalid TenantService DPA outbox page");
@@ -119,7 +120,7 @@ public class TenantDpaSignatureReadClient {
     } catch (HttpClientErrorException.NotFound unavailable) {
       return Optional.empty();
     } catch (RestClientException failure) {
-      throw new IllegalStateException("TenantService exact DPA signature is unavailable");
+      throw new IllegalStateException("TenantService exact DPA signature is unavailable"); // NOPMD
     }
     if (exact == null
         || !event.equals(new Event(exact.id(), exact.tenantId(), exact.signedAtEpochMillis()))
@@ -158,7 +159,7 @@ public class TenantDpaSignatureReadClient {
         return;
       }
     } catch (RestClientException failure) {
-      throw new IllegalStateException("TenantService DPA acknowledgement is unavailable");
+      throw new IllegalStateException("TenantService DPA acknowledgement is unavailable"); // NOPMD
     }
     throw new IllegalStateException("TenantService did not confirm the exact DPA acknowledgement");
   }
