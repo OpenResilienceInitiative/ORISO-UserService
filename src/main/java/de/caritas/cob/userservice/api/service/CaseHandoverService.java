@@ -2,6 +2,7 @@ package de.caritas.cob.userservice.api.service;
 
 import static org.apache.commons.lang3.StringUtils.isBlank;
 
+import com.google.common.collect.Lists;
 import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
 import de.caritas.cob.userservice.api.adapters.web.dto.AgencyDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantSessionListResponseDTO;
@@ -98,6 +99,7 @@ public class CaseHandoverService {
 
   private static final String ADVICE_NEEDED = CaseHandoverReasonCodes.ADVICE_REQUESTED;
   private static final int DEFAULT_ADVICE_ACCESS_DURATION_MINUTES = 180;
+  private static final int CANDIDATE_TOPIC_BATCH_SIZE = 500;
   private static final String POLICY_AUTHORITY = "platform-admin-default-case-handover-policy";
   private static final String TENANT_POLICY_AUTHORITY = "tenant-service-resolved";
   private static final String OUTCOME_ACTIVE_OWNER = "ACTIVE_OWNER";
@@ -837,18 +839,13 @@ public class CaseHandoverService {
             new ArrayList<>(agencyIds), requester, statuses);
 
     var membersOnlyCases = membersOnlyChatAccess.membersOnlySessionIds(candidates);
-    Map<Long, Set<Long>> topicsByAgency = new HashMap<>();
+    Set<Long> topicMatches =
+        candidateIdsInTopicScope(candidates, agencyIds, membersOnlyCases, requester);
     String normalizedQuery = normalizeSearchText(query);
     List<Session> pageSessions = new ArrayList<>();
     int total = 0;
     for (Session candidate : candidates) {
-      Long agencyId = candidate.getAgencyId();
-      if (membersOnlyCases.contains(candidate.getId())
-          || agencyId == null
-          || !agencyIds.contains(agencyId)
-          || !isInTopicScope(
-              candidate,
-              topicsByAgency.computeIfAbsent(agencyId, id -> consultantTopicIds(requester, id)))
+      if (!topicMatches.contains(candidate.getId())
           || !matchesCandidateQuery(candidate, normalizedQuery)) {
         continue;
       }
@@ -868,6 +865,45 @@ public class CaseHandoverService {
         .offset(safeOffset)
         .count(page.size())
         .total(total);
+  }
+
+  private Set<Long> candidateIdsInTopicScope(
+      List<Session> candidates,
+      Set<Long> agencyIds,
+      Set<Long> membersOnlyCases,
+      Consultant requester) {
+    Set<Long> matches = new HashSet<>();
+    Map<Long, Set<Long>> topicsByAgency = new HashMap<>();
+    Map<Long, List<Long>> secondaryTopicCandidates = new HashMap<>();
+    for (Session candidate : candidates) {
+      Long agencyId = candidate.getAgencyId();
+      Long sessionId = candidate.getId();
+      if (agencyId == null
+          || !agencyIds.contains(agencyId)
+          || membersOnlyCases.contains(sessionId)) {
+        continue;
+      }
+      Set<Long> topics =
+          topicsByAgency.computeIfAbsent(agencyId, id -> consultantTopicIds(requester, id));
+      if (topics.isEmpty()) {
+        if (!topicsEnabled) {
+          matches.add(sessionId);
+        }
+      } else if (topics.contains(candidate.getMainTopicId())) {
+        matches.add(sessionId);
+      } else {
+        secondaryTopicCandidates.computeIfAbsent(agencyId, id -> new ArrayList<>()).add(sessionId);
+      }
+    }
+    secondaryTopicCandidates.forEach(
+        (agencyId, sessionIds) -> {
+          for (var batch : Lists.partition(sessionIds, CANDIDATE_TOPIC_BATCH_SIZE)) {
+            matches.addAll(
+                sessionRepository.findSessionIdsWithAnyAdditionalTopic(
+                    batch, topicsByAgency.get(agencyId)));
+          }
+        });
+    return matches;
   }
 
   @Value("${multitenancy.enabled:true}")

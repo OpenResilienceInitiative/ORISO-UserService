@@ -4431,16 +4431,48 @@ class CaseHandoverServiceTest {
     // from any of them.
     givenRequesterTopics(6L);
     Session multiTopic = candidateSession(208L, 10L, 5L, false);
-    SessionTopic secondary = new SessionTopic();
-    secondary.setSession(multiTopic);
-    secondary.setTopicId(6L);
-    multiTopic.setSessionTopics(List.of(secondary));
     givenCandidates(multiTopic);
+    when(sessionRepository.findSessionIdsWithAnyAdditionalTopic(List.of(208L), Set.of(6L)))
+        .thenReturn(Set.of(208L));
 
     var response = caseHandoverService.searchCandidates("asker", 0, 15, false);
 
     assertEquals(1, response.getTotal());
     assertEquals(208L, response.getSessions().get(0).getSession().getId());
+  }
+
+  @Test
+  void searchCandidatesBatchesSecondaryTopicsByCentreAndKeepsRepositoryOrder() {
+    givenTwoRequesterCentres();
+    requester.setConsultantTopics(Set.of(requesterTopic(10L, 5L), requesterTopic(20L, 6L)));
+    var firstBatch = new ArrayList<Long>();
+    var rows = new ArrayList<Session>();
+    for (long id = 1; id <= 500; id++) {
+      rows.add(candidateSession(id, 10L, 99L, true));
+      firstBatch.add(id);
+    }
+    rows.add(candidateSession(501L, 20L, 99L, true));
+    rows.add(candidateSession(502L, 10L, null, false));
+    rows.add(candidateSession(503L, 10L, 99L, false));
+    rows.add(candidateSession(504L, 20L, 6L, false));
+    when(sessionRepository.findByAgencyIdInAndConsultantNotAndStatusInOrderByUpdateDateDesc(
+            any(), eq(requester), eq(List.of(SessionStatus.IN_PROGRESS, SessionStatus.DONE))))
+        .thenReturn(rows);
+    when(membersOnlyChatAccess.membersOnlySessionIds(rows)).thenReturn(Set.of(503L));
+    when(sessionRepository.findSessionIdsWithAnyAdditionalTopic(firstBatch, Set.of(5L)))
+        .thenReturn(Set.of(450L, 3L));
+    when(sessionRepository.findSessionIdsWithAnyAdditionalTopic(List.of(502L), Set.of(5L)))
+        .thenReturn(Set.of(502L));
+    when(sessionRepository.findSessionIdsWithAnyAdditionalTopic(List.of(501L), Set.of(6L)))
+        .thenReturn(Set.of(501L));
+
+    var response = caseHandoverService.searchCandidates("asker", 1, 3, false);
+
+    assertEquals(5, response.getTotal());
+    assertEquals(
+        List.of(450L, 501L, 502L),
+        response.getSessions().stream().map(dto -> dto.getSession().getId()).toList());
+    verify(sessionRepository, times(3)).findSessionIdsWithAnyAdditionalTopic(any(), any());
   }
 
   @Test

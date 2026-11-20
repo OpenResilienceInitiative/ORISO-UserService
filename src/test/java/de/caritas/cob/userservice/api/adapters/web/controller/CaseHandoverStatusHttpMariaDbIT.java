@@ -13,6 +13,7 @@ import de.caritas.cob.userservice.api.port.out.*;
 import de.caritas.cob.userservice.api.workflow.accountinactivity.AccountInactivityService;
 import java.time.Instant;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.AfterEach;
@@ -49,6 +50,8 @@ class CaseHandoverStatusHttpMariaDbIT {
   @Autowired UserRepository userRepository;
   @Autowired CaseHandoverRequestRepository caseHandoverRequestRepository;
   @Autowired ConsultantAgencyRepository consultantAgencyRepository;
+  @Autowired ConsultantTopicRepository consultantTopicRepository;
+  @Autowired SessionTopicRepository sessionTopicRepository;
   @Autowired AccountInactivityService inactivity;
   @Autowired PlatformTransactionManager transactionManager;
   @Autowired JdbcTemplate jdbc;
@@ -57,6 +60,7 @@ class CaseHandoverStatusHttpMariaDbIT {
   private Long sessionId;
   private Long secondSessionId;
   private Consultant ownerA, ownerB, ownerC;
+  private final List<Long> candidateSessionIds = new ArrayList<>();
 
   @DynamicPropertySource
   static void databaseProperties(DynamicPropertyRegistry registry) {
@@ -125,7 +129,10 @@ class CaseHandoverStatusHttpMariaDbIT {
         transactions.executeWithoutResult(
             ignored -> {
               caseHandoverRequestRepository.deleteAllBySessionId(sessionId);
+              candidateSessionIds.forEach(sessionTopicRepository::deleteAllBySessionId);
+              sessionRepository.deleteAllById(candidateSessionIds);
               sessionRepository.deleteAllById(List.of(sessionId, secondSessionId));
+              jdbc.update("DELETE FROM consultant_topic WHERE consultant_id = ?", OWNER_B_ID);
               consultantAgencyRepository.deleteAll(
                   consultantAgencyRepository.findByConsultantIdAndDeleteDateIsNull(OWNER_B_ID));
               consultantRepository.deleteAllById(List.of(OWNER_A_ID, OWNER_B_ID, OWNER_C_ID));
@@ -134,6 +141,65 @@ class CaseHandoverStatusHttpMariaDbIT {
     } finally {
       for (String id : List.of(OWNER_A_ID, OWNER_B_ID, OWNER_C_ID))
         jdbc.update("DELETE FROM account_inactivity WHERE identity_id=?", id);
+    }
+  }
+
+  @Test
+  void candidatesPageIncludesScopedSecondaryTopicsAndCountsOnlyVisibleCases() throws Exception {
+    transactions.executeWithoutResult(
+        ignored -> {
+          var now = LocalDateTime.now().minusMinutes(1);
+          var user = userRepository.findById(USER_ID).orElseThrow();
+          var owner = consultantRepository.findById(OWNER_A_ID).orElseThrow();
+          var requester = consultantRepository.findById(OWNER_B_ID).orElseThrow();
+          consultantTopicRepository.save(
+              ConsultantTopic.builder()
+                  .consultant(requester)
+                  .agencyId(700L)
+                  .topicId(5L)
+                  .createDate(now)
+                  .updateDate(now)
+                  .build());
+
+          Session secondaryMatch = proofSession(user, owner, now.plusSeconds(2));
+          secondaryMatch.setMainTopicId(99L);
+          candidateSessionIds.add(sessionRepository.save(secondaryMatch).getId());
+          sessionTopicRepository.save(
+              SessionTopic.builder()
+                  .session(secondaryMatch)
+                  .topicId(5L)
+                  .createDate(now)
+                  .updateDate(now)
+                  .build());
+
+          Session primaryMatch = proofSession(user, owner, now.plusSeconds(1));
+          primaryMatch.setMainTopicId(5L);
+          candidateSessionIds.add(sessionRepository.save(primaryMatch).getId());
+
+          Session outOfScope = proofSession(user, owner, now.plusSeconds(3));
+          outOfScope.setMainTopicId(99L);
+          outOfScope.setAgencyId(701L);
+          candidateSessionIds.add(sessionRepository.save(outOfScope).getId());
+          sessionTopicRepository.save(
+              SessionTopic.builder()
+                  .session(outOfScope)
+                  .topicId(5L)
+                  .createDate(now)
+                  .updateDate(now)
+                  .build());
+        });
+
+    for (int offset = 0; offset < 2; offset++) {
+      mvc.perform(
+              get("/service/users/case-handover/candidates")
+                  .header("Authorization", "Bearer " + OWNER_B_ID)
+                  .param("count", "1")
+                  .param("offset", Integer.toString(offset)))
+          .andExpect(status().isOk())
+          .andExpect(jsonPath("$.total").value(2))
+          .andExpect(jsonPath("$.offset").value(offset))
+          .andExpect(jsonPath("$.count").value(1))
+          .andExpect(jsonPath("$.sessions[0].session.id").value(candidateSessionIds.get(offset)));
     }
   }
 

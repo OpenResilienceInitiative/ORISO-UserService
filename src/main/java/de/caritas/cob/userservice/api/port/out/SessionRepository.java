@@ -222,6 +222,15 @@ public interface SessionRepository extends CrudRepository<Session, Long>, Sessio
   List<Session> findByAgencyIdInAndConsultantNotAndStatusInOrderByUpdateDateDesc(
       List<Long> agencyIds, Consultant consultant, List<SessionStatus> statuses);
 
+  @Query(
+      """
+      select distinct s.id from Session s join s.sessionTopics topic
+      where s.id in :sessionIds and topic.topicId in :topicIds
+      """)
+  Set<Long> findSessionIdsWithAnyAdditionalTopic(
+      @Param("sessionIds") Collection<Long> sessionIds,
+      @Param("topicIds") Collection<Long> topicIds);
+
   /**
    * Find team {@link Session} list by agency ids and status where consultant is not the given
    * consultant ordered by creation date descending.
