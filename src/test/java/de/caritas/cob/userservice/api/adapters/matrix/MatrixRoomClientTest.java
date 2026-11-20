@@ -102,6 +102,7 @@ class MatrixRoomClientTest {
             createRoomRequestCaptor.capture(),
             eq(MatrixCreateRoomResponseDTO.class)))
         .thenReturn(ResponseEntity.ok(responseBody));
+    stubSynapseDefaultPowerLevels();
 
     var response = matrixRoomClient.createRoom("Room name", "room-alias", ACCESS_TOKEN);
 
@@ -125,6 +126,7 @@ class MatrixRoomClientTest {
             createRoomRequestCaptor.capture(),
             eq(MatrixCreateRoomResponseDTO.class)))
         .thenReturn(ResponseEntity.ok(responseBody));
+    stubSynapseDefaultPowerLevels();
 
     matrixRoomClient.createRoom("Room name", "room-alias", ACCESS_TOKEN, true);
 
@@ -146,6 +148,7 @@ class MatrixRoomClientTest {
             createRoomRequestCaptor.capture(),
             eq(MatrixCreateRoomResponseDTO.class)))
         .thenReturn(ResponseEntity.ok(responseBody));
+    stubSynapseDefaultPowerLevels();
 
     matrixRoomClient.createMembersOnlyRoom("Room name", "room-alias", ACCESS_TOKEN, true);
 
@@ -173,11 +176,202 @@ class MatrixRoomClientTest {
             createRoomRequestCaptor.capture(),
             eq(MatrixCreateRoomResponseDTO.class)))
         .thenReturn(ResponseEntity.ok(responseBody));
+    stubSynapseDefaultPowerLevels();
 
     matrixRoomClient.createRoom("Room name", "room-alias", ACCESS_TOKEN, true);
 
     assertThat(createRoomRequestCaptor.getValue().getBody().getPowerLevelContentOverride())
         .isNull();
+  }
+
+  /** Synapse's default power levels for a private_chat room (synapse/handlers/room.py). */
+  private static Map<String, Object> synapseDefaultPowerLevels() {
+    var events = new HashMap<String, Object>();
+    events.put("m.room.name", 50);
+    events.put("m.room.power_levels", 100);
+    events.put("m.room.history_visibility", 100);
+    events.put("m.room.canonical_alias", 50);
+    events.put("m.room.avatar", 50);
+    events.put("m.room.tombstone", 100);
+    events.put("m.room.server_acl", 100);
+    events.put("m.room.encryption", 100);
+    var content = new HashMap<String, Object>();
+    content.put("users", Map.of(USER_ID, 100));
+    content.put("users_default", 0);
+    content.put("events", events);
+    content.put("events_default", 0);
+    content.put("state_default", 50);
+    content.put("ban", 50);
+    content.put("kick", 50);
+    content.put("redact", 50);
+    content.put("invite", 0);
+    return content;
+  }
+
+  private void stubPowerLevels(Map<String, Object> content) {
+    when(restTemplate.exchange(
+            eq(
+                uri(
+                    API_URL
+                        + "/_matrix/client/r0/rooms/"
+                        + ENCODED_ROOM_ID
+                        + "/state/m.room.power_levels")),
+            eq(HttpMethod.GET),
+            org.mockito.ArgumentMatchers.any(HttpEntity.class),
+            eq(Map.class)))
+        .thenReturn(ResponseEntity.ok(content));
+  }
+
+  private void stubSynapseDefaultPowerLevels() {
+    stubPowerLevels(synapseDefaultPowerLevels());
+  }
+
+  @SuppressWarnings("unchecked")
+  private Map<String, Object> writtenPowerLevels() {
+    verify(restTemplate)
+        .put(
+            eq(
+                uri(
+                    API_URL
+                        + "/_matrix/client/r0/rooms/"
+                        + ENCODED_ROOM_ID
+                        + "/state/m.room.power_levels")),
+            mapRequestCaptor.capture());
+    return mapRequestCaptor.getValue().getBody();
+  }
+
+  private void stubRoomCreated() {
+    var responseBody = new MatrixCreateRoomResponseDTO();
+    responseBody.setRoomId(ROOM_ID);
+    when(restTemplate.postForEntity(
+            eq(uri(API_URL + "/_matrix/client/r0/createRoom")),
+            org.mockito.ArgumentMatchers.any(HttpEntity.class),
+            eq(MatrixCreateRoomResponseDTO.class)))
+        .thenReturn(ResponseEntity.ok(responseBody));
+  }
+
+  /**
+   * ORISO-Frontend#2229: only a room moderator may blur a passage. The rule is added to the room's
+   * own power levels, so Synapse's defaults (power levels, encryption, ...) stay as they were.
+   */
+  @Test
+  void createRoom_ShouldRequireTheModeratorLevelForPassageBlurs() throws Exception {
+    stubRoomCreated();
+    stubSynapseDefaultPowerLevels();
+
+    matrixRoomClient.createRoom("Room name", "room-alias", ACCESS_TOKEN, true);
+
+    var written = writtenPowerLevels();
+    var expectedEvents = new HashMap<>(objectMapOf(synapseDefaultPowerLevels().get("events")));
+    expectedEvents.put("org.oriso.passage_blur", 50);
+    assertThat(written.get("events")).isEqualTo(expectedEvents);
+    assertThat(written).containsEntry("redact", 50).containsEntry("events_default", 0);
+    assertThat(written.get("users")).isEqualTo(Map.of(USER_ID, 100));
+    assertThat(mapRequestCaptor.getValue().getHeaders().getFirst("Authorization"))
+        .isEqualTo("Bearer " + ACCESS_TOKEN);
+  }
+
+  @Test
+  void createMembersOnlyRoom_ShouldRequireTheModeratorLevelForPassageBlurs() throws Exception {
+    stubRoomCreated();
+    stubSynapseDefaultPowerLevels();
+
+    matrixRoomClient.createMembersOnlyRoom("Room name", "room-alias", ACCESS_TOKEN, true);
+
+    assertThat(objectMapOf(writtenPowerLevels().get("events")))
+        .containsEntry("org.oriso.passage_blur", 50)
+        .containsEntry("m.room.power_levels", 100);
+  }
+
+  /** A room without the rule would let an advice seeker blur: creating it counts as failed. */
+  @Test
+  void createRoom_ShouldFail_WhenThePassageBlurRuleCannotBeWritten() {
+    stubRoomCreated();
+    stubSynapseDefaultPowerLevels();
+    doThrow(new org.springframework.web.client.ResourceAccessException("timeout"))
+        .when(restTemplate)
+        .put(
+            eq(
+                uri(
+                    API_URL
+                        + "/_matrix/client/r0/rooms/"
+                        + ENCODED_ROOM_ID
+                        + "/state/m.room.power_levels")),
+            org.mockito.ArgumentMatchers.any(HttpEntity.class));
+
+    assertThatThrownBy(
+            () -> matrixRoomClient.createRoom("Room name", "room-alias", ACCESS_TOKEN, true))
+        .isInstanceOf(
+            de.caritas.cob.userservice.api.exception.matrix.MatrixCreateRoomException.class);
+    verify(diagnosticMetrics).recordRoomCreation(true, LiveChatDiagnosticMetrics.Outcome.FAILURE);
+  }
+
+  @Test
+  void requireModeratorForPassageBlur_ShouldNotWrite_WhenTheRoomAlreadyHasTheRule() {
+    var content = synapseDefaultPowerLevels();
+    var events = new HashMap<>(objectMapOf(content.get("events")));
+    events.put("org.oriso.passage_blur", 50);
+    content.put("events", events);
+    stubPowerLevels(content);
+
+    assertThat(matrixRoomClient.requireModeratorForPassageBlur(ROOM_ID, ACCESS_TOKEN)).isTrue();
+
+    verify(restTemplate, times(0))
+        .put(org.mockito.ArgumentMatchers.any(URI.class), org.mockito.ArgumentMatchers.any());
+  }
+
+  /** A closed room keeps blurring as locked as every other message: the rule never lowers it. */
+  @Test
+  void requireModeratorForPassageBlur_ShouldKeepAClosedRoomClosed() {
+    var content = synapseDefaultPowerLevels();
+    content.put("events_default", 101);
+    stubPowerLevels(content);
+
+    assertThat(matrixRoomClient.requireModeratorForPassageBlur(ROOM_ID, ACCESS_TOKEN)).isTrue();
+
+    assertThat(objectMapOf(writtenPowerLevels().get("events")))
+        .containsEntry("org.oriso.passage_blur", 101);
+  }
+
+  /** With a lower redact level an advice seeker could lift a moderator's blur. */
+  @Test
+  void requireModeratorForPassageBlur_ShouldRaiseALowerRedactLevelToTheModeratorLevel() {
+    var content = synapseDefaultPowerLevels();
+    content.put("redact", 0);
+    stubPowerLevels(content);
+
+    assertThat(matrixRoomClient.requireModeratorForPassageBlur(ROOM_ID, ACCESS_TOKEN)).isTrue();
+
+    assertThat(writtenPowerLevels()).containsEntry("redact", 50);
+  }
+
+  /** With a higher redact level a moderator could not lift another moderator's blur. */
+  @Test
+  void requireModeratorForPassageBlur_ShouldLowerAHigherRedactLevelToTheModeratorLevel() {
+    var content = synapseDefaultPowerLevels();
+    content.put("redact", 100);
+    stubPowerLevels(content);
+
+    assertThat(matrixRoomClient.requireModeratorForPassageBlur(ROOM_ID, ACCESS_TOKEN)).isTrue();
+
+    assertThat(writtenPowerLevels()).containsEntry("redact", 50);
+  }
+
+  @Test
+  void requireModeratorForPassageBlur_ShouldReportFalse_WhenThePowerLevelsCannotBeRead() {
+    when(restTemplate.exchange(
+            org.mockito.ArgumentMatchers.any(URI.class),
+            eq(HttpMethod.GET),
+            org.mockito.ArgumentMatchers.any(HttpEntity.class),
+            eq(Map.class)))
+        .thenThrow(new org.springframework.web.client.ResourceAccessException("timeout"));
+
+    assertThat(matrixRoomClient.requireModeratorForPassageBlur(ROOM_ID, ACCESS_TOKEN)).isFalse();
+  }
+
+  @SuppressWarnings("unchecked")
+  private static Map<String, Object> objectMapOf(Object value) {
+    return (Map<String, Object>) value;
   }
 
   @Test
