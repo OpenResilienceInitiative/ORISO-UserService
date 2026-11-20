@@ -56,6 +56,7 @@ import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -819,7 +820,7 @@ public class CaseHandoverService {
   public ConsultantSessionListResponseDTO searchCandidates(
       String query, int offset, int count, boolean archived) {
     Consultant requester = retrieveCurrentConsultant();
-    List<Long> agencyIds = new ArrayList<>(consultantAgencyIds(requester));
+    Set<Long> agencyIds = consultantAgencyIds(requester);
     int safeOffset = Math.max(0, offset);
     int safeCount = Math.max(1, Math.min(count, 200));
 
@@ -833,17 +834,29 @@ public class CaseHandoverService {
             : List.of(SessionStatus.IN_PROGRESS, SessionStatus.DONE);
     List<Session> candidates =
         sessionRepository.findByAgencyIdInAndConsultantNotAndStatusInOrderByUpdateDateDesc(
-            agencyIds, requester, statuses);
+            new ArrayList<>(agencyIds), requester, statuses);
 
     var membersOnlyCases = membersOnlyChatAccess.membersOnlySessionIds(candidates);
-    List<Session> matchingCandidates =
-        candidates.stream()
-            .filter(session -> !membersOnlyCases.contains(session.getId()))
-            .filter(session -> isInRequesterDepartment(session, requester))
-            .filter(session -> matchesCandidateQuery(session, query))
-            .collect(Collectors.toList());
-    List<Session> pageSessions =
-        matchingCandidates.stream().skip(safeOffset).limit(safeCount).toList();
+    Map<Long, Set<Long>> topicsByAgency = new HashMap<>();
+    String normalizedQuery = normalizeSearchText(query);
+    List<Session> pageSessions = new ArrayList<>();
+    int total = 0;
+    for (Session candidate : candidates) {
+      Long agencyId = candidate.getAgencyId();
+      if (membersOnlyCases.contains(candidate.getId())
+          || agencyId == null
+          || !agencyIds.contains(agencyId)
+          || !isInTopicScope(
+              candidate,
+              topicsByAgency.computeIfAbsent(agencyId, id -> consultantTopicIds(requester, id)))
+          || !matchesCandidateQuery(candidate, normalizedQuery)) {
+        continue;
+      }
+      if (total >= safeOffset && pageSessions.size() < safeCount) {
+        pageSessions.add(candidate);
+      }
+      total++;
+    }
     Map<Long, String> agencyNames = candidateAgencyNames(pageSessions);
     List<ConsultantSessionResponseDTO> page =
         pageSessions.stream()
@@ -854,7 +867,7 @@ public class CaseHandoverService {
         .sessions(page)
         .offset(safeOffset)
         .count(page.size())
-        .total(matchingCandidates.size());
+        .total(total);
   }
 
   @Value("${multitenancy.enabled:true}")
@@ -1751,8 +1764,7 @@ public class CaseHandoverService {
         .total(0);
   }
 
-  private boolean matchesCandidateQuery(Session session, String query) {
-    String normalizedQuery = normalizeSearchText(query);
+  private boolean matchesCandidateQuery(Session session, String normalizedQuery) {
     if (normalizedQuery.isBlank()) {
       return true;
     }
@@ -1809,7 +1821,10 @@ public class CaseHandoverService {
         || !consultantAgencyIds(requester).contains(session.getAgencyId())) {
       return false;
     }
-    Set<Long> requesterTopicIds = consultantTopicIds(requester, session.getAgencyId());
+    return isInTopicScope(session, consultantTopicIds(requester, session.getAgencyId()));
+  }
+
+  private boolean isInTopicScope(Session session, Set<Long> requesterTopicIds) {
     if (requesterTopicIds.isEmpty()) {
       return !topicsEnabled;
     }

@@ -12,6 +12,7 @@ import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.atLeastOnce;
@@ -4500,6 +4501,97 @@ class CaseHandoverServiceTest {
     assertEquals(
         List.of(213L, 214L),
         response.getSessions().stream().map(dto -> dto.getSession().getId()).toList());
+  }
+
+  @ParameterizedTest
+  @CsvSource({"20, 5, false", "1000, 20, false", "20, 5, true"})
+  void searchCandidatePagesReuseStaffScope(int candidates, int pageSize, boolean archived) {
+    givenTwoRequesterCentres();
+    var agencyAssignments = List.copyOf(requester.getConsultantAgencies());
+    requester.setConsultantAgencies(Set.of());
+    requester.setConsultantTopics(Set.of(requesterTopic(10L, 5L), requesterTopic(20L, 6L)));
+    when(consultantAgencyRepository.findByConsultantIdAndDeleteDateIsNull(requester.getId()))
+        .thenReturn(agencyAssignments);
+
+    List<Session> repositoryRows = new ArrayList<>();
+    List<Long> expected = new ArrayList<>();
+    Set<Long> membersOnly = new HashSet<>();
+    for (int row = 0; row < candidates; row++) {
+      long id = candidates - row;
+      switch (row % 5) {
+        case 0 -> {
+          repositoryRows.add(candidateSession(id, 10L, 5L, true));
+          expected.add(id);
+        }
+        case 1 -> {
+          repositoryRows.add(candidateSession(id, 20L, 6L, false));
+          expected.add(id);
+        }
+        case 2 -> repositoryRows.add(candidateSession(id, 30L, 5L, true));
+        case 3 -> repositoryRows.add(candidateSession(id, 20L, 5L, false));
+        default -> {
+          repositoryRows.add(candidateSession(id, 10L, 5L, false));
+          membersOnly.add(id);
+        }
+      }
+    }
+
+    var statuses =
+        archived
+            ? List.of(SessionStatus.IN_ARCHIVE)
+            : List.of(SessionStatus.IN_PROGRESS, SessionStatus.DONE);
+    if (archived) {
+      repositoryRows.forEach(candidate -> candidate.setStatus(SessionStatus.IN_ARCHIVE));
+    }
+    when(sessionRepository.findByAgencyIdInAndConsultantNotAndStatusInOrderByUpdateDateDesc(
+            any(), eq(requester), eq(statuses)))
+        .thenReturn(repositoryRows);
+    when(membersOnlyChatAccess.membersOnlySessionIds(repositoryRows)).thenReturn(membersOnly);
+
+    String query = archived ? "  AsKeR  " : "asker";
+    List<Long> observed = new ArrayList<>();
+    int pages = 0;
+    for (int offset = 0; offset < expected.size(); offset += pageSize) {
+      var response = caseHandoverService.searchCandidates(query, offset, pageSize, archived);
+      var expectedPage = expected.subList(offset, Math.min(offset + pageSize, expected.size()));
+      assertEquals(offset, response.getOffset());
+      assertEquals(expectedPage.size(), response.getCount());
+      assertEquals(expected.size(), response.getTotal());
+      var ids = response.getSessions().stream().map(dto -> dto.getSession().getId()).toList();
+      assertEquals(expectedPage, ids);
+      observed.addAll(ids);
+      pages++;
+    }
+    assertEquals(expected, observed);
+
+    var empty = caseHandoverService.searchCandidates(query, expected.size(), pageSize, archived);
+    assertEquals(expected.size(), empty.getTotal());
+    assertEquals(0, empty.getCount());
+    assertTrue(empty.getSessions().isEmpty());
+    int requests = pages + 1;
+    verify(sessionRepository, times(requests))
+        .findByAgencyIdInAndConsultantNotAndStatusInOrderByUpdateDateDesc(
+            argThat(ids -> ids.size() == 2 && ids.containsAll(List.of(10L, 20L))),
+            eq(requester),
+            eq(statuses));
+    verify(membersOnlyChatAccess, times(requests)).membersOnlySessionIds(repositoryRows);
+    verify(agencyService, times(pages)).getAgencies(any());
+    verify(consultantAgencyRepository, times(requests))
+        .findByConsultantIdAndDeleteDateIsNull(requester.getId());
+  }
+
+  @Test
+  void searchCandidatesKeepsTotalBeyondTheLastPage() {
+    givenRequesterTopics(5L);
+    givenCandidates(candidateSession(301L, 10L, 5L, true));
+
+    var response = caseHandoverService.searchCandidates(null, Integer.MAX_VALUE, 200, false);
+
+    assertEquals(Integer.MAX_VALUE, response.getOffset());
+    assertEquals(1, response.getTotal());
+    assertEquals(0, response.getCount());
+    assertTrue(response.getSessions().isEmpty());
+    verify(agencyService, never()).getAgencies(any());
   }
 
   @Test
