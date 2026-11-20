@@ -610,13 +610,21 @@ public class AgencyInviteLinkService {
    * Redeem the token: validate, mark USED, return tenant/agency/consulting-type/topic metadata for
    * the frontend registration flow. Does not create Keycloak or Matrix users on the server.
    */
+  /**
+   * @param chosenUsername the animal handle a Live Chat guest rolled on the entry page; {@code
+   *     null} lets the server roll one. Ignored for links that register on the client.
+   */
   @Transactional
-  public RedeemContext redeemWithContext(String token) {
-    return redeem(token);
+  public RedeemContext redeemWithContext(String token, String chosenUsername) {
+    return redeem(token, chosenUsername);
   }
 
   @Transactional
   RedeemContext redeem(String token) {
+    return redeem(token, null);
+  }
+
+  private RedeemContext redeem(String token, String chosenUsername) {
     // The remote policy reads must not run while the row lock below is held. Read the token
     // unlocked first; status, expiry and the other checks still decide on the locked row.
     repository
@@ -670,7 +678,8 @@ public class AgencyInviteLinkService {
       // that agency's data-protection declaration happen only when a live consultant accepts.
       if (InviteLinkChatType.LIVE_CHAT.name().equals(link.getChatType())) {
         var dto = new CreateAnonymousEnquiryDTO(consultingTypeId).mainTopicId(link.getTopicId());
-        var session = createAnonymousEnquiryFacade.createAnonymousEnquiry(dto, true);
+        var session =
+            createAnonymousEnquiryFacade.createAnonymousEnquiry(dto, true, chosenUsername);
         // Public Live Chat entry points are reusable until expiry so multiple clients can enter
         // the shared topic queue through the same published link.
         return new RedeemContext(

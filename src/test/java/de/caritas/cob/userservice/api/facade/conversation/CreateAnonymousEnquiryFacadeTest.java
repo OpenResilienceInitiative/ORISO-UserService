@@ -87,6 +87,56 @@ public class CreateAnonymousEnquiryFacadeTest {
   }
 
   @Test
+  void createAnonymousEnquiry_Should_CreateTheHandleTheGuestRolled_When_OneIsChosen() {
+    when(usernameRegistry.claimChosenUsername("katze_sam_4821")).thenReturn("enc.katze");
+    when(anonymousUserCreatorService.createAnonymousUser(any()))
+        .thenReturn(AnonymousUserCredentials.builder().userId("user-id").build());
+    when(anonymousConversationCreatorService.createAnonymousConversation(any(), any()))
+        .thenReturn(easyRandom.nextObject(Session.class));
+
+    var response =
+        createAnonymousEnquiryFacade.createAnonymousEnquiry(
+            new CreateAnonymousEnquiryDTO(CONSULTING_TYPE_ID_SUCHT), true, "katze_sam_4821");
+
+    var created =
+        org.mockito.ArgumentCaptor.forClass(
+            de.caritas.cob.userservice.api.adapters.web.dto.UserDTO.class);
+    verify(anonymousUserCreatorService).createAnonymousUser(created.capture());
+    assertEquals("enc.katze", created.getValue().getUsername());
+    assertEquals("enc.katze", response.getUserName());
+    verify(usernameRegistry, org.mockito.Mockito.never()).generateUniqueUsername();
+  }
+
+  @Test
+  void createAnonymousEnquiry_Should_CreateNothing_When_TheChosenHandleIsRefused() {
+    when(usernameRegistry.claimChosenUsername("max_mustermann"))
+        .thenThrow(new BadRequestException("typed"));
+
+    assertThrows(
+        BadRequestException.class,
+        () ->
+            createAnonymousEnquiryFacade.createAnonymousEnquiry(
+                new CreateAnonymousEnquiryDTO(CONSULTING_TYPE_ID_SUCHT), true, "max_mustermann"));
+    verifyNoInteractions(anonymousUserCreatorService, anonymousConversationCreatorService);
+  }
+
+  @Test
+  void createAnonymousEnquiry_Should_LetTheServerRoll_When_NoHandleIsChosen() {
+    when(usernameRegistry.generateUniqueUsername()).thenReturn("enc.eule");
+    when(anonymousUserCreatorService.createAnonymousUser(any()))
+        .thenReturn(AnonymousUserCredentials.builder().userId("user-id").build());
+    when(anonymousConversationCreatorService.createAnonymousConversation(any(), any()))
+        .thenReturn(easyRandom.nextObject(Session.class));
+
+    var response =
+        createAnonymousEnquiryFacade.createAnonymousEnquiry(
+            new CreateAnonymousEnquiryDTO(CONSULTING_TYPE_ID_SUCHT), true, null);
+
+    assertEquals("enc.eule", response.getUserName());
+    verify(usernameRegistry, org.mockito.Mockito.never()).claimChosenUsername(any());
+  }
+
+  @Test
   void createAnonymousEnquiry_Should_ReturnMatrixOnlyResponse() {
     CreateAnonymousEnquiryDTO request = new CreateAnonymousEnquiryDTO(CONSULTING_TYPE_ID_SUCHT);
     AnonymousUserCredentials credentials =
