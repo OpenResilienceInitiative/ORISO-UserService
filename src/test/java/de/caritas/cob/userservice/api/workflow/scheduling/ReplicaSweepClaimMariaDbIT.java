@@ -42,11 +42,12 @@ import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabas
 import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase.Replace;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.scheduling.annotation.ScheduledAnnotationBeanPostProcessor;
+import org.springframework.scheduling.config.ScheduledTask;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
-import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 import org.springframework.test.util.AopTestUtils;
 import org.springframework.test.util.ReflectionTestUtils;
 
@@ -99,9 +100,21 @@ class ReplicaSweepClaimMariaDbIT {
   @Autowired private HandshakeSessionRepository handshakeSessionRepository;
   @Autowired private SupportRoomRepository supportRoomRepository;
   @Autowired private ScheduledTaskClaimRepository claimRepository;
-  @MockitoSpyBean private ScheduledTaskClaimService claimService;
+  @Autowired private ScheduledTaskClaimService claimService;
   @Autowired private JdbcTemplate jdbcTemplate;
+  @Autowired private ScheduledAnnotationBeanPostProcessor scheduledTasks;
   @MockitoBean private MatrixSynapseService matrixSynapseService;
+
+  /**
+   * The application's own {@code @Scheduled} handshake sweep would otherwise join the scenario as
+   * an uncontrolled third instance; the scenarios start every sweep themselves.
+   */
+  @BeforeEach
+  void stopBackgroundHandshakeSweep() {
+    scheduledTasks.getScheduledTasks().stream()
+        .filter(task -> task.getTask().toString().contains("HandshakeService.sweepExpired"))
+        .forEach(ScheduledTask::cancel);
+  }
 
   @BeforeEach
   @AfterEach
@@ -129,25 +142,15 @@ class ReplicaSweepClaimMariaDbIT {
             .expiryDate(now.minusMinutes(5))
             .build());
 
-    // Pause the first instance after it has read the lapsed session and before it writes it, and
-    // release it only once the second instance has moved: either it started its claim attempt
-    // (claim present) or it read the same pending session (claim missing). Without the claim both
-    // instances hold the PENDING row, so the second write fails or a second audit entry appears.
+    // Pause the first instance after it has read the lapsed session and before it writes it.
+    // Release it only once the database shows the second instance has moved: it either waits on
+    // the held lease row (claim serializes) or has read the same pending session (claim missing or
+    // not serializing). In the latter case both instances hold the PENDING row, so the session is
+    // written twice and the test fails.
     var firstReadPending = new CountDownLatch(1);
-    var secondInstanceMoved = new CountDownLatch(1);
-    var claimAttempts = new AtomicInteger();
+    var releaseFirst = new CountDownLatch(1);
     var reads = new AtomicInteger();
     var saves = new AtomicInteger();
-    doAnswer(
-            invocation -> {
-              if (HandshakeService.SWEEP_TASK_NAME.equals(invocation.getArgument(0))
-                  && claimAttempts.incrementAndGet() == 2) {
-                secondInstanceMoved.countDown();
-              }
-              return invocation.callRealMethod();
-            })
-        .when(claimService)
-        .runIfClaimed(any(), any(), any());
     HandshakeSessionRepository pausing =
         mock(
             HandshakeSessionRepository.class,
@@ -160,9 +163,7 @@ class ReplicaSweepClaimMariaDbIT {
                       invocation.getArgument(0),
                       invocation.getArgument(1),
                       invocation.getArgument(2));
-              if (reads.incrementAndGet() == 2) {
-                secondInstanceMoved.countDown();
-              }
+              reads.incrementAndGet();
               return pending;
             })
         .when(pausing)
@@ -171,7 +172,7 @@ class ReplicaSweepClaimMariaDbIT {
             invocation -> {
               if (saves.incrementAndGet() == 1) {
                 firstReadPending.countDown();
-                awaitOrFail(secondInstanceMoved);
+                awaitOrFail(releaseFirst);
               }
               return handshakeSessionRepository.save(invocation.<HandshakeSession>getArgument(0));
             })
@@ -191,10 +192,14 @@ class ReplicaSweepClaimMariaDbIT {
           .as("the first instance read the lapsed session and is about to write it")
           .isTrue();
       var second = executor.submit(() -> handshakeService.sweepExpired());
+      assertThat(awaitSecondInstanceMoved(second, reads))
+          .as("the second instance waits on the lease row or reads the pending session")
+          .isTrue();
+      releaseFirst.countDown();
       first.get(20, TimeUnit.SECONDS);
       second.get(20, TimeUnit.SECONDS);
     } finally {
-      secondInstanceMoved.countDown();
+      releaseFirst.countDown();
       executor.shutdownNow();
       ReflectionTestUtils.setField(
           target, "handshakeSessionRepository", handshakeSessionRepository);
@@ -303,10 +308,33 @@ class ReplicaSweepClaimMariaDbIT {
     return scheduler;
   }
 
+  private boolean awaitSecondInstanceMoved(
+      java.util.concurrent.Future<?> second, AtomicInteger reads) throws InterruptedException {
+    var deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+    while (System.nanoTime() < deadline) {
+      if (reads.get() >= 2 || second.isDone() || lockWaits() > 0) {
+        return true;
+      }
+      Thread.sleep(20);
+    }
+    return false;
+  }
+
+  /** Statements blocked on a lock right now, as seen from a third connection. */
+  private int lockWaits() {
+    return jdbcTemplate.queryForObject(
+            "SELECT COUNT(*) FROM information_schema.PROCESSLIST"
+                + " WHERE COMMAND = 'Query' AND INFO LIKE '%scheduled_task_claim%for update%'",
+            Integer.class)
+        + jdbcTemplate.queryForObject(
+            "SELECT COUNT(*) FROM information_schema.INNODB_TRX WHERE trx_state = 'LOCK WAIT'",
+            Integer.class);
+  }
+
   private static void awaitOrFail(CountDownLatch latch) {
     try {
       assertThat(latch.await(10, TimeUnit.SECONDS))
-          .as("the second instance moved while the first held its read")
+          .as("the first instance is released in time")
           .isTrue();
     } catch (InterruptedException interrupted) {
       Thread.currentThread().interrupt();
