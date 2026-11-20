@@ -320,15 +320,17 @@ class ReplicaSweepClaimMariaDbIT {
     return false;
   }
 
-  /** Statements blocked on a lock right now, as seen from a third connection. */
+  /**
+   * Another connection is executing the locking read of the handshake lease row right now, i.e. the
+   * second instance is waiting for the first instance's lease. The observer's own connection is
+   * excluded, and the statement must target the handshake claim row.
+   */
   private int lockWaits() {
     return jdbcTemplate.queryForObject(
-            "SELECT COUNT(*) FROM information_schema.PROCESSLIST"
-                + " WHERE COMMAND = 'Query' AND INFO LIKE '%scheduled_task_claim%for update%'",
-            Integer.class)
-        + jdbcTemplate.queryForObject(
-            "SELECT COUNT(*) FROM information_schema.INNODB_TRX WHERE trx_state = 'LOCK WAIT'",
-            Integer.class);
+        "SELECT COUNT(*) FROM information_schema.PROCESSLIST"
+            + " WHERE ID <> CONNECTION_ID() AND COMMAND = 'Query'"
+            + " AND INFO LIKE CONCAT('%scheduled\\_task\\_claim%', ?, '%for update%')",
+        Integer.class, HandshakeService.SWEEP_TASK_NAME);
   }
 
   private static void awaitOrFail(CountDownLatch latch) {
