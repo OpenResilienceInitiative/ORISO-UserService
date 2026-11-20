@@ -462,6 +462,73 @@ class MultiTenantRegistrationIT {
     assertCreatedInTenant();
   }
 
+  @Test
+  void redeemLiveChatLink_Should_MakeTheRolledHandleTheGuestsLogin() throws Exception {
+    // ORISO-Frontend#2346: the animal name the guest rolled is the account, not only a label.
+    var link = persistInviteLink("LIVE_CHAT");
+
+    var result =
+        mockMvc
+            .perform(
+                post("/users/invitelinks/{token}/redeem", link.getToken())
+                    .cookie(CSRF_COOKIE)
+                    .header(CSRF_HEADER, CSRF_VALUE)
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content("{\"username\": \"katze_sam_4821\"}"))
+            .andReturn();
+
+    assertStatus(result, 200);
+    assertThat(createdGuestLogin()).isEqualTo("katze_sam_4821");
+  }
+
+  @Test
+  void redeemLiveChatLink_Should_RollAnAnimalHandle_When_TheClientSendsNone() throws Exception {
+    var link = persistInviteLink("LIVE_CHAT");
+
+    var result =
+        mockMvc
+            .perform(
+                post("/users/invitelinks/{token}/redeem", link.getToken())
+                    .cookie(CSRF_COOKIE)
+                    .header(CSRF_HEADER, CSRF_VALUE))
+            .andReturn();
+
+    assertStatus(result, 200);
+    assertThat(createdGuestLogin())
+        .matches("[a-z0-9_]{1,25}_[1-9][0-9]{3}")
+        .doesNotStartWith("anon_");
+  }
+
+  @Test
+  void redeemLiveChatLink_Should_RefuseATypedName_AndCreateNothing() throws Exception {
+    var link = persistInviteLink("LIVE_CHAT");
+
+    var result =
+        mockMvc
+            .perform(
+                post("/users/invitelinks/{token}/redeem", link.getToken())
+                    .cookie(CSRF_COOKIE)
+                    .header(CSRF_HEADER, CSRF_VALUE)
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content("{\"username\": \"max_mustermann\"}"))
+            .andReturn();
+
+    assertStatus(result, 400);
+    assertThat(createdUserIds).isEmpty();
+    verify(identityClient, never()).createUser(any());
+  }
+
+  private String createdGuestLogin() {
+    assertThat(createdUserIds).hasSize(1);
+    TenantContext.setCurrentTenant(TENANT);
+    try {
+      var stored = userRepository.findById(createdUserIds.getFirst()).orElseThrow().getUsername();
+      return new de.caritas.cob.userservice.api.helper.UsernameTranscoder().decodeUsername(stored);
+    } finally {
+      TenantContext.clear();
+    }
+  }
+
   // --- anonymous enquiry: the real facade writes user and session in the resolved tenant ------
 
   @Test
