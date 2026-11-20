@@ -215,6 +215,20 @@ class AgencyEnquiryRoomPublicationDatabaseIT {
         .isTrue();
   }
 
+  @Test
+  void clearsOnlyTheMatchingAttemptWhenTheSameRoomIsAlreadyBound() {
+    assertThat(publication.publish(enquiry, ROOM, contacts())).contains(ROOM);
+    var matchingAttempt = recordInvitationAttempt(ROOM);
+    var differentAttempt = recordInvitationAttempt("!other:example.invalid");
+
+    assertThat(publication.publish(enquiry, ROOM, contacts())).contains(ROOM);
+
+    assertThat(sessions.findById(enquiry.getId()).orElseThrow().getMatrixRoomId()).isEqualTo(ROOM);
+    assertThat(attempts.findById(matchingAttempt)).isEmpty();
+    assertThat(attempts.findById(differentAttempt).orElseThrow().isRequesterInvitationStarted())
+        .isTrue();
+  }
+
   private Long recordInvitationAttempt(String room) {
     var attempt = roomAttempts.recordCreated(enquiry, room);
     attemptIds.add(attempt);
