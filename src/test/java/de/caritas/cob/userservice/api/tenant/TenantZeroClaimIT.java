@@ -52,6 +52,8 @@ class TenantZeroClaimIT {
     when(subdomainTenantResolver.resolve(any())).thenReturn(Optional.of(SUBDOMAIN_TENANT));
     when(tenantService.getRestrictedTenantData(SUBDOMAIN_TENANT))
         .thenReturn(new RestrictedTenantDTO().subdomain("synthetic"));
+    when(tenantService.getRestrictedTenantDataFresh(SUBDOMAIN_TENANT))
+        .thenReturn(new RestrictedTenantDTO().active(true).subdomain("synthetic"));
     when(authenticatedUser.getUserId()).thenReturn("tenant-zero-claim-caller");
   }
 

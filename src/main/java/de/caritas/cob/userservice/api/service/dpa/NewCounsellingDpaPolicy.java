@@ -49,6 +49,19 @@ public class NewCounsellingDpaPolicy {
     requireForTenant(tenantId);
   }
 
+  /**
+   * Read-only form of {@link #requireForConcreteTenant} for the consultant's own view (#1704):
+   * {@code false} when the AVV refuses new counselling, {@code null} when the owner cannot tell.
+   */
+  public Boolean allowsNewCounselling(Long tenantId) {
+    try {
+      requireForConcreteTenant(tenantId);
+      return true;
+    } catch (CustomValidationHttpStatusException refusal) {
+      return HttpStatus.FORBIDDEN.equals(refusal.getHttpStatus()) ? Boolean.FALSE : null;
+    }
+  }
+
   public void requireForTenant(Long tenantId) {
     DpaGateStatusDTO gate;
     try {

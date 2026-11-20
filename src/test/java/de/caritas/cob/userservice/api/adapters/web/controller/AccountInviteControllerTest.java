@@ -8,14 +8,17 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import de.caritas.cob.userservice.api.adapters.web.controller.interceptor.ApiResponseEntityExceptionHandler;
 import de.caritas.cob.userservice.api.exception.SmtpSendException;
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
 import de.caritas.cob.userservice.api.exception.httpresponses.ConflictException;
+import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
 import de.caritas.cob.userservice.api.model.AccountInvite;
 import de.caritas.cob.userservice.api.model.InviteEmailDelivery;
@@ -59,9 +62,15 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.context.annotation.AnnotationConfigApplicationContext;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
+import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
+import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;
+import org.springframework.security.core.authority.SimpleGrantedAuthority;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 
 @ExtendWith(MockitoExtension.class)
@@ -492,6 +501,26 @@ class AccountInviteControllerTest {
   }
 
   @Test
+  void listInvites_Should_keepEveryScalarPhaseAndRejectAmbiguousParameters() {
+    when(accountInviteService.listAllInvites(null, null, null)).thenReturn(List.of());
+    for (var phase :
+        de.caritas.cob.userservice.api.service.accountinvite.InviteProgress.Phase.values())
+      assertEquals(
+          HttpStatus.OK,
+          controller
+              .listInvites(null, null, null, phase.name(), null, null, null, null)
+              .getStatusCode());
+    assertThrows(
+        BadRequestException.class,
+        () ->
+            controller.listInvites(
+                null, null, null, "CLOSED", null, null, null, null, null, null, "NEEDS_ACTION"));
+    assertThrows(
+        BadRequestException.class,
+        () -> controller.listInvites(null, null, null, "", null, null, null, null, null, null, ""));
+  }
+
+  @Test
   void listInvites_Should_throwBadRequest_When_unknownEnum() {
     assertThrows(
         BadRequestException.class,
@@ -561,6 +590,16 @@ class AccountInviteControllerTest {
 
     assertEquals(HttpStatus.OK, response.getStatusCode());
     verify(accountInviteService).revokeInvite(10L);
+  }
+
+  @Test
+  void deleteInvite_Should_returnNoContent() throws Exception {
+    MockMvcBuilders.standaloneSetup(controller)
+        .build()
+        .perform(delete("/useradmin/account-invites/10"))
+        .andExpect(status().isNoContent());
+
+    verify(accountInviteService).deleteInvite(10L);
   }
 
   @Test
@@ -681,6 +720,74 @@ class AccountInviteControllerTest {
   }
 
   @Test
+  void deleteTemplate_Should_returnNoContent() throws Exception {
+    MockMvcBuilders.standaloneSetup(controller)
+        .build()
+        .perform(delete("/useradmin/invite-email-templates/9"))
+        .andExpect(status().isNoContent());
+
+    verify(templateService).deleteTemplate(9L);
+  }
+
+  @Test
+  void deleteTemplate_Should_surfaceRefusalMissingAndQueuedStatuses() throws Exception {
+    var mvc =
+        MockMvcBuilders.standaloneSetup(controller)
+            .setControllerAdvice(new ApiResponseEntityExceptionHandler())
+            .build();
+    org.mockito.Mockito.doThrow(new ForbiddenException("readonly or system"))
+        .when(templateService)
+        .deleteTemplate(1L);
+    org.mockito.Mockito.doThrow(new NotFoundException("missing"))
+        .when(templateService)
+        .deleteTemplate(2L);
+    org.mockito.Mockito.doThrow(new ConflictException("queued"))
+        .when(templateService)
+        .deleteTemplate(3L);
+
+    mvc.perform(delete("/useradmin/invite-email-templates/1")).andExpect(status().isForbidden());
+    mvc.perform(delete("/useradmin/invite-email-templates/2")).andExpect(status().isNotFound());
+    mvc.perform(delete("/useradmin/invite-email-templates/3")).andExpect(status().isConflict());
+  }
+
+  @EnableMethodSecurity
+  static class DeleteMethodSecurity {}
+
+  @Test
+  void deleteTemplate_Should_refusePlainCounsellorAndAllowInviteAdmins() {
+    try (var context = new AnnotationConfigApplicationContext()) {
+      context.register(DeleteMethodSecurity.class);
+      context.registerBean(AccountInviteController.class, () -> controller);
+      context.refresh();
+      var securedController = context.getBean(AccountInviteController.class);
+      SecurityContextHolder.getContext()
+          .setAuthentication(
+              new UsernamePasswordAuthenticationToken(
+                  "counsellor",
+                  "unused",
+                  List.of(new SimpleGrantedAuthority("AUTHORIZATION_CONSULTANT"))));
+
+      assertThrows(AccessDeniedException.class, () -> securedController.deleteTemplate(9L));
+      org.mockito.Mockito.verifyNoInteractions(templateService);
+
+      for (String authority :
+          List.of(
+              "AUTHORIZATION_TENANT_ADMIN",
+              "AUTHORIZATION_USER_ADMIN",
+              "AUTHORIZATION_RESTRICTED_AGENCY_ADMIN")) {
+        SecurityContextHolder.getContext()
+            .setAuthentication(
+                new UsernamePasswordAuthenticationToken(
+                    "admin", "unused", List.of(new SimpleGrantedAuthority(authority))));
+        assertEquals(HttpStatus.NO_CONTENT, securedController.deleteTemplate(9L).getStatusCode());
+      }
+      verify(templateService, org.mockito.Mockito.times(3)).deleteTemplate(9L);
+    } finally {
+      SecurityContextHolder.clearContext();
+    }
+  }
+
+  @Test
   void listInvites_adminEndpoints_havePreAuthorizeAnnotation() throws Exception {
     // Business reason: admin-only invite operations must enforce role-based policy at controller
     // boundary.
@@ -697,15 +804,42 @@ class AccountInviteControllerTest {
         Integer.class,
         Integer.class);
     assertHasPreAuthorize(
+        "listInvites",
+        String.class,
+        String.class,
+        String.class,
+        String.class,
+        Long.class,
+        String.class,
+        Integer.class,
+        Integer.class,
+        String.class,
+        String.class);
+    assertHasPreAuthorize(
+        "listInvites",
+        String.class,
+        String.class,
+        String.class,
+        String.class,
+        Long.class,
+        String.class,
+        Integer.class,
+        Integer.class,
+        String.class,
+        String.class,
+        String.class);
+    assertHasPreAuthorize(
         "sendInvite", Long.class, AccountInviteController.SendInviteRequestDTO.class);
     assertHasPreAuthorize(
         "resendInvite", Long.class, AccountInviteController.SendInviteRequestDTO.class);
     assertHasPreAuthorize("revokeInvite", Long.class);
+    assertHasPreAuthorize("deleteInvite", Long.class);
     assertHasPreAuthorize(
         "changeRole", Long.class, AccountInviteController.ChangeRoleRequestDTO.class);
     assertHasPreAuthorize("createTemplate", AccountInviteController.TemplateRequestDTO.class);
     assertHasPreAuthorize(
         "updateTemplate", Long.class, AccountInviteController.TemplateRequestDTO.class);
+    assertHasPreAuthorize("deleteTemplate", Long.class);
     assertHasPreAuthorize("listTemplates", String.class);
   }
 
@@ -733,6 +867,46 @@ class AccountInviteControllerTest {
     assertEquals(LocalDateTime.parse("2026-08-20T10:00:00"), dto.dpaForwardedAt);
     assertEquals(2, dto.dpaForwardCount);
     assertEquals(LocalDateTime.parse("2026-08-21T09:30:00"), dto.dpaSignedAt);
+  }
+
+  /**
+   * ORISO-Admin#1522 / ORISO-UserService#1617: between two expiry sweeps a lapsed invite must not
+   * be listed as open. The stored row is left alone; only the view says EXPIRED.
+   */
+  @Test
+  void responseDto_Should_ReportAnElapsedOpenInviteAsExpired() {
+    var invite = sampleInvite();
+    invite.setStatus(AccountInviteStatus.EMAIL_SENT);
+    invite.setExpiresAt(LocalDateTime.now().minusMinutes(1));
+
+    var dto = AccountInviteController.AccountInviteResponseDTO.from(invite, null, null);
+
+    assertEquals("EXPIRED", dto.inviteStatus);
+    assertEquals(AccountInviteStatus.EMAIL_SENT, invite.getStatus());
+  }
+
+  @Test
+  void responseDto_Should_KeepTheStatusOfAStillValidOrSettledInvite() {
+    var valid = sampleInvite();
+    valid.setStatus(AccountInviteStatus.EMAIL_SENT);
+    valid.setExpiresAt(LocalDateTime.now().plusDays(1));
+    var accepted = sampleInvite();
+    accepted.setStatus(AccountInviteStatus.ACCEPTED);
+    accepted.setExpiresAt(LocalDateTime.now().minusDays(1));
+    // Sending a draft re-arms its expiry, so a lapsed draft is still a draft.
+    var draft = sampleInvite();
+    draft.setStatus(AccountInviteStatus.DRAFT);
+    draft.setExpiresAt(LocalDateTime.now().minusDays(1));
+
+    assertEquals(
+        "DRAFT",
+        AccountInviteController.AccountInviteResponseDTO.from(draft, null, null).inviteStatus);
+    assertEquals(
+        "EMAIL_SENT",
+        AccountInviteController.AccountInviteResponseDTO.from(valid, null, null).inviteStatus);
+    assertEquals(
+        "ACCEPTED",
+        AccountInviteController.AccountInviteResponseDTO.from(accepted, null, null).inviteStatus);
   }
 
   private static AccountInvite sampleInviteWithDpaState() {

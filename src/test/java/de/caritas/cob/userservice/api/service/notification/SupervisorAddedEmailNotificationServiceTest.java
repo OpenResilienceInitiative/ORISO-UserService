@@ -10,8 +10,10 @@ import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
+import static org.mockito.Mockito.verifyNoMoreInteractions;
 import static org.mockito.Mockito.when;
 
 import ch.qos.logback.classic.Level;
@@ -20,7 +22,10 @@ import com.neovisionaries.i18n.LanguageCode;
 import de.caritas.cob.userservice.api.admin.service.tenant.TenantService;
 import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
 import de.caritas.cob.userservice.api.model.Consultant;
+import de.caritas.cob.userservice.api.model.ConversationType;
+import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.User;
+import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.service.email.OrisoEmailBrand;
 import de.caritas.cob.userservice.api.service.email.OrisoEmailRenderer;
 import de.caritas.cob.userservice.api.service.email.layout.EmailBranding;
@@ -32,6 +37,7 @@ import de.caritas.cob.userservice.api.service.user.UserService;
 import de.caritas.cob.userservice.api.tenant.TenantData;
 import de.caritas.cob.userservice.mailservice.generated.web.model.TemplateDataDTO;
 import de.caritas.cob.userservice.tenantservice.generated.web.model.RestrictedTenantDTO;
+import de.caritas.cob.userservice.tenantservice.generated.web.model.Settings;
 import de.caritas.cob.userservice.tenantservice.generated.web.model.Theming;
 import de.caritas.cob.userservice.testutils.LogbackCaptor;
 import java.util.List;
@@ -58,6 +64,9 @@ class SupervisorAddedEmailNotificationServiceTest {
   @Mock private TenantSystemEmailDelivery emailDelivery;
   @Mock private UserService userService;
   @Mock private TenantTemplateSupplier tenantTemplateSupplier;
+  // Frontend#1979: the Träger's advice-seeker e-mail policy and the session it applies to.
+  @Mock private TenantService tenantPolicies;
+  @Mock private SessionRepository sessions;
   // Real instances rather than mocks: these tests exercise the whole send path,
   // and the point of the port is that the path now produces a mail from the
   // design system. A mock here would assert that a method was called; this
@@ -77,12 +86,148 @@ class SupervisorAddedEmailNotificationServiceTest {
     doReturn("Wayfinder").when(emailBrand).platformName();
     ReflectionTestUtils.setField(service, "emailDummySuffix", "@dummy.invalid");
     ReflectionTestUtils.setField(service, "publicFrontendBaseUrl", "https://app.example.org");
+    // Default: an agency-counselling session of a Träger that has decided nothing, so every
+    // pre-existing advice-seeker mail case keeps a session and policy that allow e-mail.
+    when(sessions.findById(any()))
+        .thenReturn(Optional.of(session(ConversationType.AGENCY_COUNSELLING)));
+    when(tenantPolicies.getRestrictedTenantDataFresh(anyLong()))
+        .thenReturn(new RestrictedTenantDTO());
+  }
+
+  private static Session session(ConversationType type) {
+    Session session = new Session();
+    session.setId(42L);
+    session.setConversationType(type);
+    return session;
+  }
+
+  private User askerOfTenant(long tenantId) {
+    User user = new User();
+    user.setTenantId(tenantId);
+    user.setEmail("asker@example.org");
+    user.setLanguageCode(LanguageCode.de);
+    return user;
+  }
+
+  private Consultant supervisorWithMail() {
+    Consultant supervisor = new Consultant();
+    supervisor.setEmail("supervisor@example.org");
+    supervisor.setLanguageCode(LanguageCode.de);
+    return supervisor;
+  }
+
+  private void traegerSettings(long tenantId, Settings settings) {
+    when(tenantPolicies.getRestrictedTenantDataFresh(tenantId))
+        .thenReturn(new RestrictedTenantDTO().id(tenantId).settings(settings));
+  }
+
+  // ── Frontend#1979: Admin "Berechtigungen" decide the advice seeker's copy ──
+
+  @ParameterizedTest
+  @ValueSource(booleans = {true, false})
+  void teamChangeMailSkipsTheAdviceSeekerWhenTheTraegerSwitchedAskerEmailOff(boolean added) {
+    when(emailRoutes.resolve(8L)).thenReturn(Optional.of(routeSettings()));
+    traegerSettings(8L, new Settings().featureAskerEmailEnabled(false));
+
+    if (added)
+      service.notifySupervisorAdded(askerOfTenant(8L), supervisorWithMail(), 42L, null, null);
+    else service.notifySupervisorRemoved(askerOfTenant(8L), supervisorWithMail(), 42L, null, null);
+
+    verify(emailDelivery, never()).send(anyLong(), any(), any(), eq("asker@example.org"), any());
+    verify(emailDelivery).send(eq(8L), any(), any(), eq("supervisor@example.org"), any());
+  }
+
+  @ParameterizedTest
+  @ValueSource(booleans = {true, false})
+  void teamChangeMailSkipsTheAdviceSeekerWhenTheSessionTypesEmailIsOff(boolean added) {
+    when(emailRoutes.resolve(8L)).thenReturn(Optional.of(routeSettings()));
+    traegerSettings(8L, new Settings().featureAskerEmailAgencyCounsellingEnabled(false));
+
+    if (added)
+      service.notifySupervisorAdded(askerOfTenant(8L), supervisorWithMail(), 42L, null, null);
+    else service.notifySupervisorRemoved(askerOfTenant(8L), supervisorWithMail(), 42L, null, null);
+
+    verify(emailDelivery, never()).send(anyLong(), any(), any(), eq("asker@example.org"), any());
+  }
+
+  @Test
+  void teamChangeMailStillReachesTheAdviceSeekerWhenTheTraegerAllowsIt() {
+    when(emailRoutes.resolve(8L)).thenReturn(Optional.of(routeSettings()));
+    traegerSettings(8L, new Settings().featureAskerEmailEnabled(true));
+
+    service.notifySupervisorAdded(askerOfTenant(8L), supervisorWithMail(), 42L, null, null);
+
+    verify(emailDelivery).send(eq(8L), any(), any(), eq("asker@example.org"), any());
+  }
+
+  @Test
+  void teamChangeMailSkipsTheAdviceSeekerWhenTheTraegerPolicyIsUnreadable() {
+    when(emailRoutes.resolve(8L)).thenReturn(Optional.of(routeSettings()));
+    when(tenantPolicies.getRestrictedTenantDataFresh(8L)).thenReturn(null);
+
+    service.notifySupervisorAdded(askerOfTenant(8L), supervisorWithMail(), 42L, null, null);
+
+    verify(emailDelivery, never()).send(anyLong(), any(), any(), eq("asker@example.org"), any());
+    verify(emailDelivery).send(eq(8L), any(), any(), eq("supervisor@example.org"), any());
+  }
+
+  @Test
+  void teamChangeMailSkipsTheAdviceSeekerWhenTheTraegerPolicyLookupFails() {
+    when(emailRoutes.resolve(8L)).thenReturn(Optional.of(routeSettings()));
+    when(tenantPolicies.getRestrictedTenantDataFresh(8L))
+        .thenThrow(new IllegalStateException("tenant service down"));
+
+    service.notifySupervisorRemoved(askerOfTenant(8L), supervisorWithMail(), 42L, null, null);
+
+    verify(emailDelivery, never()).send(anyLong(), any(), any(), eq("asker@example.org"), any());
+    verify(emailDelivery).send(eq(8L), any(), any(), eq("supervisor@example.org"), any());
+  }
+
+  @Test
+  void teamChangeMailSkipsBothRecipientsWhenTheSessionIsUnknown() {
+    when(sessions.findById(42L)).thenReturn(Optional.empty());
+
+    service.notifySupervisorAdded(askerOfTenant(8L), supervisorWithMail(), 42L, null, null);
+
+    verifyNoInteractions(emailDelivery);
+  }
+
+  @Test
+  void liveChatTeamChangesNeverSendEmailToEitherParticipant() {
+    givenRoutesForEveryTeamChangeMail();
+    when(sessions.findById(42L)).thenReturn(Optional.of(session(ConversationType.LIVE_CHAT)));
+
+    sendEveryTeamChangeMail();
+
+    verifyNoInteractions(emailDelivery);
+  }
+
+  @Test
+  void theSameTeamChangesSendEmailForANonLiveChatSession() {
+    givenRoutesForEveryTeamChangeMail();
+
+    sendEveryTeamChangeMail();
+
+    verify(emailDelivery, times(2)).send(eq(8L), any(), any(), eq("asker@example.org"), any());
+    verify(emailDelivery, times(2)).send(eq(8L), any(), any(), eq("supervisor@example.org"), any());
+    verify(emailDelivery).send(eq(3L), any(), any(), eq("old@example.org"), any());
+  }
+
+  private void givenRoutesForEveryTeamChangeMail() {
+    when(emailRoutes.resolve(8L)).thenReturn(Optional.of(routeSettings()));
+    when(emailRoutes.resolve(3L)).thenReturn(Optional.of(routeSettings()));
+  }
+
+  private void sendEveryTeamChangeMail() {
+    service.notifySupervisorAdded(askerOfTenant(8L), supervisorWithMail(), 42L, null, null);
+    service.notifySupervisorRemoved(askerOfTenant(8L), supervisorWithMail(), 42L, null, null);
+    service.notifyTopicDuplicateStarted(topicDuplicateCounsellor(), 42L, null);
   }
 
   @Test
   void missingPublicFrontendUrlFailsSendWithSettingName() {
     ReflectionTestUtils.setField(service, "publicFrontendBaseUrl", "");
-    when(emailRoutes.resolve(1L)).thenReturn(Optional.of(routeSettings()));
+    when(emailRoutes.resolveTransport(1L)).thenReturn(routeSettings());
 
     org.assertj.core.api.Assertions.assertThatThrownBy(
             () ->
@@ -98,7 +243,7 @@ class SupervisorAddedEmailNotificationServiceTest {
     String readableUsername = "<b>Zoë & Jo</b>";
     String storedUsername = new UsernameTranscoder().encodeUsername(readableUsername);
     var route = routeSettings();
-    when(emailRoutes.resolve(4L)).thenReturn(Optional.of(route));
+    when(emailRoutes.resolveTransport(4L)).thenReturn(route);
 
     service.notifyEmailAddressChanged(
         storedUsername, "recipient@example.org", 4L, null, null, LanguageCode.valueOf(language));
@@ -121,7 +266,7 @@ class SupervisorAddedEmailNotificationServiceTest {
   void contactChangeMailKeepsAnAlreadyReadableLongLogin() {
     String readableUsername = "a-legitimate-long-login-".repeat(12);
     var route = routeSettings();
-    when(emailRoutes.resolve(4L)).thenReturn(Optional.of(route));
+    when(emailRoutes.resolveTransport(4L)).thenReturn(route);
 
     service.notifyEmailAddressChanged(
         readableUsername, "recipient@example.org", 4L, null, null, LanguageCode.de);
@@ -238,41 +383,114 @@ class SupervisorAddedEmailNotificationServiceTest {
 
   // ── notifyEmailAddressChanged early-return paths ──────────────────────────
 
+  @ParameterizedTest
+  @ValueSource(strings = {"PLATFORM", "OWN"})
+  void contactChangeMailIsNotMutedByTheTenantNotificationSwitch(String mode) {
+    var client = mock(TenantSystemEmailClient.class);
+    when(client.readMailContext(40L))
+        .thenReturn(
+            new TenantSystemEmailClient.MailContext(false, mode, null, "OWN".equals(mode), true));
+    ReflectionTestUtils.setField(service, "emailRoutes", new TenantSystemEmailRouteService(client));
+
+    service.notifyEmailAddressChanged(
+        "johndoe", "new@example.org", 40L, null, null, LanguageCode.de);
+
+    var mail = ArgumentCaptor.forClass(OrisoEmailRenderer.RenderedEmail.class);
+    verify(emailDelivery)
+        .send(
+            eq(40L),
+            eq(
+                new TenantSystemEmailRouteService.Route(
+                    TenantSystemEmailRouteService.Mode.valueOf(mode), null)),
+            eq(TenantSystemEmailDelivery.Purpose.EMAIL_ADDRESS_CHANGED),
+            eq("new@example.org"),
+            mail.capture());
+    assertThat(mail.getValue().html()).contains("https://app.example.org", "johndoe");
+    assertThat(mail.getValue().text()).contains("https://app.example.org", "johndoe");
+    verify(client).readMailContext(40L);
+    verifyNoMoreInteractions(client, emailDelivery);
+  }
+
+  @Test
+  void contactChangeMailRejectsIncompleteOwnTransportWithoutPlatformFallback() {
+    var client = mock(TenantSystemEmailClient.class);
+    when(client.readMailContext(40L))
+        .thenReturn(new TenantSystemEmailClient.MailContext(false, "OWN", null, false, true));
+    ReflectionTestUtils.setField(service, "emailRoutes", new TenantSystemEmailRouteService(client));
+
+    try (var logs = LogbackCaptor.forClass(SupervisorAddedEmailNotificationService.class)) {
+      service.notifyEmailAddressChanged(
+          "johndoe", "new@example.org", 40L, null, null, LanguageCode.de);
+
+      verifyNoInteractions(emailDelivery);
+      assertThat(logs.events())
+          .anySatisfy(
+              event -> {
+                assertThat(event.getLevel()).isEqualTo(Level.ERROR);
+                assertThat(event.getFormattedMessage()).contains("40", "OWN", "incomplete");
+                assertThat(event.getFormattedMessage()).doesNotContain("new@example.org");
+              });
+    }
+    verify(client).readMailContext(40L);
+    verifyNoMoreInteractions(client);
+  }
+
+  @Test
+  void supervisorMailRemainsMutedByTheTenantNotificationSwitch() {
+    var client = mock(TenantSystemEmailClient.class);
+    when(client.readMailContext(40L))
+        .thenReturn(new TenantSystemEmailClient.MailContext(false, "PLATFORM", null, false, false));
+    ReflectionTestUtils.setField(service, "emailRoutes", new TenantSystemEmailRouteService(client));
+    User user = new User();
+    user.setTenantId(40L);
+    user.setEmail("asker@example.org");
+    Consultant supervisor = new Consultant();
+    supervisor.setEmail("supervisor@example.org");
+
+    service.notifySupervisorAdded(user, supervisor, 99L, null, null);
+    service.notifySupervisorRemoved(user, supervisor, 99L, null, null);
+
+    verifyNoInteractions(emailDelivery);
+  }
+
   @Test
   void notifyEmailAddressChanged_Should_ReturnEarly_When_EmailBlank() {
     service.notifyEmailAddressChanged("user", "  ", 1L, null, null, LanguageCode.de);
 
-    verify(emailRoutes, never()).resolve(any());
+    verifyNoInteractions(emailRoutes);
   }
 
   @Test
   void notifyEmailAddressChanged_Should_ReturnEarly_When_UsernameBlank() {
     service.notifyEmailAddressChanged("", "new@example.com", 1L, null, null, LanguageCode.de);
 
-    verify(emailRoutes, never()).resolve(any());
+    verifyNoInteractions(emailRoutes);
   }
 
   @Test
   void notifyEmailAddressChanged_Should_ReturnEarly_When_TenantIdNull() {
     service.notifyEmailAddressChanged("user", "new@example.com", null, null, null, LanguageCode.de);
 
-    verify(emailRoutes, never()).resolve(any());
+    verifyNoInteractions(emailRoutes);
   }
 
   @Test
-  void notifyEmailAddressChanged_Should_ReturnEarly_When_SmtpSettingsNotAvailable() {
-    when(emailRoutes.resolve(eq(2L))).thenReturn(Optional.empty());
+  void notifyEmailAddressChanged_Should_ReturnEarly_When_RouteConfigurationUnavailable() {
+    when(emailRoutes.resolveTransport(eq(2L)))
+        .thenThrow(
+            new TenantSystemEmailRouteService.ConfigurationException("OWN SMTP settings missing"));
 
     service.notifyEmailAddressChanged("user1", "new@example.com", 2L, null, "tok", LanguageCode.de);
 
-    verify(emailRoutes).resolve(eq(2L));
+    verify(emailRoutes).resolveTransport(eq(2L));
+    verifyNoInteractions(emailDelivery);
   }
 
   @Test
   void notifyEmailAddressChanged_Should_AttemptEmail_When_SmtpSettingsPresent() {
     TenantSystemEmailRouteService.Route settings =
         new TenantSystemEmailRouteService.Route(TenantSystemEmailRouteService.Mode.PLATFORM, null);
-    when(emailRoutes.resolve(eq(4L))).thenReturn(Optional.of(settings));
+    when(emailRoutes.resolveTransport(eq(4L))).thenReturn(settings);
 
     service.notifyEmailAddressChanged(
         "johndoe", "john@example.com", 4L, null, null, LanguageCode.de);
@@ -288,7 +506,7 @@ class SupervisorAddedEmailNotificationServiceTest {
   @Test
   void deliveryFailureDoesNotLogRecipientOrProviderReply() {
     var route = routeSettings();
-    when(emailRoutes.resolve(4L)).thenReturn(Optional.of(route));
+    when(emailRoutes.resolveTransport(4L)).thenReturn(route);
     String privateReply = "550 john@example.com mailbox unavailable";
     doThrow(new IllegalStateException(privateReply))
         .when(emailDelivery)
@@ -444,7 +662,7 @@ class SupervisorAddedEmailNotificationServiceTest {
     ReflectionTestUtils.setField(service, "publicFrontendBaseUrl", "http://localhost:8080");
     TenantSystemEmailRouteService.Route settings =
         new TenantSystemEmailRouteService.Route(TenantSystemEmailRouteService.Mode.PLATFORM, null);
-    when(emailRoutes.resolve(any())).thenReturn(Optional.of(settings));
+    when(emailRoutes.resolveTransport(any())).thenReturn(settings);
 
     // Explicit loopback addresses remain usable in the local test profile.
     assertThatCode(
@@ -618,7 +836,7 @@ class SupervisorAddedEmailNotificationServiceTest {
   @Test
   void notifyEmailAddressChanged_Should_AllowExplicitLocalUrl_When_ConfigIs127_0_0_1() {
     ReflectionTestUtils.setField(service, "publicFrontendBaseUrl", "http://127.0.0.1:8080");
-    when(emailRoutes.resolve(any())).thenReturn(Optional.of(routeSettings()));
+    when(emailRoutes.resolveTransport(any())).thenReturn(routeSettings());
 
     assertThatCode(
             () ->
@@ -630,7 +848,7 @@ class SupervisorAddedEmailNotificationServiceTest {
   @Test
   void notifyEmailAddressChanged_Should_AllowExplicitLocalUrl_When_ConfigIsIPv6Loopback() {
     ReflectionTestUtils.setField(service, "publicFrontendBaseUrl", "http://[::1]:8080");
-    when(emailRoutes.resolve(any())).thenReturn(Optional.of(routeSettings()));
+    when(emailRoutes.resolveTransport(any())).thenReturn(routeSettings());
 
     assertThatCode(
             () ->
@@ -643,7 +861,7 @@ class SupervisorAddedEmailNotificationServiceTest {
   void notifyEmailAddressChanged_Should_RejectInvalidPublicFrontendUrl_When_ConfigUrlIsMalformed() {
     // A malformed URL is rejected; no replacement URL is selected.
     ReflectionTestUtils.setField(service, "publicFrontendBaseUrl", "not-a-valid-url");
-    when(emailRoutes.resolve(any())).thenReturn(Optional.of(routeSettings()));
+    when(emailRoutes.resolveTransport(any())).thenReturn(routeSettings());
 
     assertThatCode(
             () ->
@@ -728,7 +946,7 @@ class SupervisorAddedEmailNotificationServiceTest {
 
   @Test
   void notifyEmailAddressChanged_Should_UseUrlFromTenantData_When_TenantDataProvided() {
-    when(emailRoutes.resolve(any())).thenReturn(Optional.of(routeSettings()));
+    when(emailRoutes.resolveTransport(any())).thenReturn(routeSettings());
     TenantData tenantData = new TenantData();
     tenantData.setTenantId(8L);
     TemplateDataDTO urlAttr = mock(TemplateDataDTO.class);
@@ -768,7 +986,7 @@ class SupervisorAddedEmailNotificationServiceTest {
   void notifyEmailAddressChanged_Should_UseSslSmtp_When_SettingsIsSecureIsTrue() {
     TenantSystemEmailRouteService.Route sslSettings =
         new TenantSystemEmailRouteService.Route(TenantSystemEmailRouteService.Mode.PLATFORM, null);
-    when(emailRoutes.resolve(any())).thenReturn(Optional.of(sslSettings));
+    when(emailRoutes.resolveTransport(any())).thenReturn(sslSettings);
 
     // Invalid configuration fails before delivery.
     assertThatCode(
@@ -783,7 +1001,7 @@ class SupervisorAddedEmailNotificationServiceTest {
   @Test
   void notifyEmailAddressChanged_Should_StripTrailingSlash_When_AppBaseUrlEndsWithSlash() {
     ReflectionTestUtils.setField(service, "publicFrontendBaseUrl", "https://app.example.org/");
-    when(emailRoutes.resolve(any())).thenReturn(Optional.of(routeSettings()));
+    when(emailRoutes.resolveTransport(any())).thenReturn(routeSettings());
 
     assertThatCode(
             () ->
@@ -1001,5 +1219,78 @@ class SupervisorAddedEmailNotificationServiceTest {
     assertThat(email.getValue().text())
         .contains("Nord Beratung", "nord/impressum", "nord/datenschutz");
     verify(resolver).resolve(1L);
+  }
+
+  // ── FE#1876 topic duplicate mail ─────────────────────────────────────────
+
+  private Consultant topicDuplicateCounsellor() {
+    Consultant counsellor = new Consultant();
+    counsellor.setId("old-counsellor");
+    counsellor.setTenantId(3L);
+    counsellor.setEmail("old@example.org");
+    counsellor.setLanguageCode(LanguageCode.de);
+    counsellor.setNotificationsEnabled(true);
+    return counsellor;
+  }
+
+  @Test
+  void topicDuplicateMailGoesToTheExistingCounsellorWithTheChatLink() {
+    var route = routeSettings();
+    when(emailRoutes.resolve(3L)).thenReturn(Optional.of(route));
+
+    service.notifyTopicDuplicateStarted(topicDuplicateCounsellor(), 41L, null);
+
+    var mail = ArgumentCaptor.forClass(OrisoEmailRenderer.RenderedEmail.class);
+    verify(emailDelivery)
+        .send(
+            eq(3L),
+            eq(route),
+            eq(TenantSystemEmailDelivery.Purpose.NEW_MESSAGE),
+            eq("old@example.org"),
+            mail.capture());
+    assertThat(mail.getValue().text())
+        .contains("weitere Beratung begonnen")
+        .contains("/sessions/consultant/sessionView/session/41");
+  }
+
+  @Test
+  void topicDuplicateMailRespectsTheSwitchedOffMailPreference() {
+    when(emailRoutes.resolve(any())).thenReturn(Optional.of(routeSettings()));
+    var counsellor = topicDuplicateCounsellor();
+    counsellor.setNotificationsSettings("{\"newChatMessageNotificationEnabled\":true}");
+    counsellor.setNotificationsEnabled(false);
+
+    service.notifyTopicDuplicateStarted(counsellor, 41L, null);
+
+    verify(emailDelivery, never()).send(anyLong(), any(), any(), any(), any());
+  }
+
+  @Test
+  void topicDuplicateMailRespectsTheAdviceSeekerMessageSwitch() {
+    when(emailRoutes.resolve(any())).thenReturn(Optional.of(routeSettings()));
+    var counsellor = topicDuplicateCounsellor();
+    counsellor.setNotifyNewChatMessageFromAdviceSeeker(false);
+
+    service.notifyTopicDuplicateStarted(counsellor, 41L, null);
+
+    verify(emailDelivery, never()).send(anyLong(), any(), any(), any(), any());
+  }
+
+  @Test
+  void topicDuplicateMailRespectsTheSwitchedOffChatMessageSwitch() {
+    when(emailRoutes.resolve(any())).thenReturn(Optional.of(routeSettings()));
+    var counsellor = topicDuplicateCounsellor();
+    counsellor.setNotificationsSettings("{\"newChatMessageNotificationEnabled\":false}");
+
+    service.notifyTopicDuplicateStarted(counsellor, 41L, null);
+
+    verify(emailDelivery, never()).send(anyLong(), any(), any(), any(), any());
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {"de", "en", "fr", "ru", "ti", "tr"})
+  void topicDuplicateStatementExistsInEveryLanguage(String language) {
+    assertThat(service.staffStatementTopicDuplicateStarted(LanguageCode.valueOf(language)))
+        .isNotBlank();
   }
 }

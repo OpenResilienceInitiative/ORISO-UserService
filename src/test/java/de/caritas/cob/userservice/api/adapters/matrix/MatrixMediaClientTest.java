@@ -14,6 +14,9 @@ import java.util.Map;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.NullAndEmptySource;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -392,5 +395,57 @@ class MatrixMediaClientTest {
             () -> matrixMediaClient.downloadFile("matrix.local", "media-id", ACCESS_TOKEN))
         .isInstanceOf(RuntimeException.class)
         .hasMessageContaining("Failed to download file");
+  }
+
+  @ParameterizedTest
+  @ValueSource(
+      strings = {
+        "audio/ogg",
+        "audio/ogg; codecs=opus",
+        "audio/mpeg",
+        "AUDIO/ogg",
+        "Audio/Ogg; codecs=opus",
+        "audio/"
+      })
+  void isAudio_Should_BeTrue_ForAudioMediaTypesOfAnyCaseAndWithParameters(String mimeType) {
+    assertThat(MatrixMediaClient.isAudio(mimeType)).isTrue();
+  }
+
+  @ParameterizedTest
+  @NullAndEmptySource
+  @ValueSource(
+      strings = {
+        "image/png",
+        "video/mp4",
+        "application/octet-stream",
+        "text/plain",
+        "audio",
+        "xaudio/ogg"
+      })
+  void isAudio_Should_BeFalse_ForEverythingElse(String mimeType) {
+    assertThat(MatrixMediaClient.isAudio(mimeType)).isFalse();
+  }
+
+  @Test
+  void uploadFile_Should_PostAnUpperCaseAudioTypeAsVoiceMessage() {
+    var captured = ArgumentCaptor.forClass(HttpEntity.class);
+    when(restTemplate.postForEntity(
+            eq(BASE_URL + "/_matrix/media/v3/upload"), any(HttpEntity.class), eq(Map.class)))
+        .thenReturn(new ResponseEntity<>(Map.of("content_uri", "mxc://x/y"), HttpStatus.OK));
+    when(restTemplate.exchange(
+            uriContaining(ENCODED_SEND_MSG_PATH),
+            eq(HttpMethod.PUT),
+            captured.capture(),
+            eq(Map.class)))
+        .thenReturn(new ResponseEntity<>(Map.of("event_id", "$e"), HttpStatus.OK));
+
+    matrixMediaClient.uploadFile(
+        new MockMultipartFile("file", "note.ogg", "AUDIO/ogg", new byte[] {1}),
+        ROOM_ID,
+        ACCESS_TOKEN);
+
+    @SuppressWarnings("unchecked")
+    var body = (Map<String, Object>) captured.getValue().getBody();
+    assertThat(body).containsEntry("msgtype", "m.audio");
   }
 }

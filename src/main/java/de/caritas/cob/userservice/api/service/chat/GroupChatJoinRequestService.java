@@ -48,6 +48,7 @@ public class GroupChatJoinRequestService {
   private final GroupChatPermissionService groupChatPermissionService;
   private final GroupChatConsultantAccess groupChatConsultantAccess;
   private final GroupChatAdmissionProcessor admissionProcessor;
+  private final GroupCounsellingDpaPolicy dpaPolicy;
 
   /** Result of a knock: the request, and whether this call created it. */
   public record KnockResult(GroupChatJoinRequest request, boolean created) {}
@@ -149,8 +150,13 @@ public class GroupChatJoinRequestService {
     }
 
     var pending =
-        joinRequestRepository.findBySeriesIdInAndStatusOrderByRequestedAtAscIdAsc(
-            moderatedSeries.keySet(), Status.PENDING);
+        joinRequestRepository
+            .findBySeriesIdInAndStatusOrderByRequestedAtAscIdAsc(
+                moderatedSeries.keySet(), Status.PENDING)
+            .stream()
+            // Waiting-room entries (#2237) share the table but are not counsellor requests.
+            .filter(request -> request.getVia() == GroupChatJoinRequest.Via.INVITE_LINK)
+            .toList();
     var seriesById =
         StreamSupport.stream(
                 chatRepository
@@ -185,17 +191,8 @@ public class GroupChatJoinRequestService {
     var request = requirePendingRequest(seriesId, requestId);
     var requester = requireConsultant(request.getConsultantId());
 
-    if (admittedRole == ParticipantRole.CO_MODERATOR) {
-      if (!isOwner(series, participants, actorId)) {
-        throw new ForbiddenException("Only a Series Owner can admit a Co-Moderator");
-      }
-      if (series.getChatOwner() == null) {
-        throw new BadRequestException("Chat Series has no owner");
-      }
-      if (!Objects.equals(series.getChatOwner().getTenantId(), requester.getTenantId())) {
-        throw new BadRequestException("Consultant does not belong to the chat owner's tenant");
-      }
-    }
+    groupChatPermissionService.requireCanAssignAdmissionRole(
+        series, participants, actor, requester, admittedRole);
 
     var alreadyParticipant =
         participants.stream()
@@ -209,6 +206,7 @@ public class GroupChatJoinRequestService {
               () ->
                   new ConflictException(
                       "Chat Series has no participations and cannot admit members"));
+      dpaPolicy.requireAuthorizedFirstEntry(series, requester.getMatrixUserId());
       request.setAdmissionRequestedAt(CustomLocalDateTime.nowInUtc());
       request.setStatus(Status.ADMITTING);
       request.setAdmittedRole(admittedRole);
@@ -267,18 +265,6 @@ public class GroupChatJoinRequestService {
     return (series.getChatOwner() != null
             && consultant.getId().equals(series.getChatOwner().getId()))
         || groupChatConsultantAccess.mayAccess(series, consultant);
-  }
-
-  private boolean isOwner(
-      Chat series, List<GroupChatParticipant> participants, String consultantId) {
-    if (participants.isEmpty()) {
-      return series.getChatOwner() != null && consultantId.equals(series.getChatOwner().getId());
-    }
-    return participants.stream()
-        .anyMatch(
-            participant ->
-                consultantId.equals(participant.getConsultantId())
-                    && participant.getRole() == ParticipantRole.OWNER);
   }
 
   private static boolean isModeratorRole(ParticipantRole role) {

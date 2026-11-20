@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+  xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-3.2.xsd">
+  <!-- US#1477: a call guest holds the call room only; the row drives removal at call end. -->
+  <changeSet id="20261028-matrix-call-guest-1477" author="oriso">
+    <createTable tableName="matrix_call_guest">
+      <column name="id" type="BIGINT" autoIncrement="true"><constraints primaryKey="true" nullable="false"/></column>
+      <column name="binding_id" type="BIGINT"><constraints nullable="false"/></column>
+      <column name="matrix_user_id" type="VARCHAR(255)"><constraints nullable="false"/></column>
+      <column name="admitted_by_matrix_id" type="VARCHAR(255)"><constraints nullable="false"/></column>
+      <column name="admitted_at" type="BIGINT"><constraints nullable="false"/></column>
+      <column name="revoked_at" type="BIGINT"/>
+      <column name="revoke_attempts" type="INT" defaultValueNumeric="0"><constraints nullable="false"/></column>
+      <column name="last_revoke_attempt_at" type="BIGINT"/>
+    </createTable>
+    <addUniqueConstraint tableName="matrix_call_guest" columnNames="binding_id, matrix_user_id"
+      constraintName="uk_call_guest_binding_user"/>
+    <addForeignKeyConstraint baseTableName="matrix_call_guest" baseColumnNames="binding_id"
+      constraintName="fk_call_guest_binding" referencedTableName="matrix_call_binding"
+      referencedColumnNames="id" onDelete="CASCADE"/>
+    <rollback><dropTable tableName="matrix_call_guest"/></rollback>
+  </changeSet>
+</databaseChangeLog>

@@ -46,10 +46,42 @@ class AnonymousEnquiryTenantIT {
   @MockitoBean private TenantService tenantService;
 
   @Test
-  void createAnonymousEnquiry_Should_RunInTheResolvedTenant() throws Exception {
+  void authoritativePausedTenantStopsAnonymousEnquiryBeforeFacadeWork() throws Exception {
     when(tenantResolverService.resolve(any())).thenReturn(TENANT);
     when(tenantService.getRestrictedTenantData(TENANT))
-        .thenReturn(new RestrictedTenantDTO().subdomain("seven"));
+        .thenReturn(new RestrictedTenantDTO().id(TENANT).active(true).subdomain("seven"));
+    when(tenantService.getRestrictedTenantDataFresh(TENANT))
+        .thenReturn(new RestrictedTenantDTO().id(TENANT).active(false).subdomain("seven"));
+    mockMvc
+        .perform(
+            post("/conversations/askers/anonymous/new")
+                .cookie(new Cookie("CSRF-TOKEN", "test"))
+                .header("X-CSRF-Token", "test")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"consultingType\":1}"))
+        .andExpect(status().isForbidden());
+    org.mockito.Mockito.verifyNoInteractions(createAnonymousEnquiryFacade);
+  }
+
+  @Test
+  void unknownTenantAuthorityStopsAnonymousEnquiryBeforeFacadeWork() throws Exception {
+    when(tenantResolverService.resolve(any())).thenReturn(TENANT);
+    mockMvc
+        .perform(
+            post("/conversations/askers/anonymous/new")
+                .cookie(new Cookie("CSRF-TOKEN", "test"))
+                .header("X-CSRF-Token", "test")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"consultingType\":1}"))
+        .andExpect(status().isBadGateway());
+    org.mockito.Mockito.verifyNoInteractions(createAnonymousEnquiryFacade);
+  }
+
+  @Test
+  void createAnonymousEnquiry_Should_RunInTheResolvedTenant() throws Exception {
+    when(tenantResolverService.resolve(any())).thenReturn(TENANT);
+    when(tenantService.getRestrictedTenantDataFresh(TENANT))
+        .thenReturn(new RestrictedTenantDTO().id(TENANT).active(true).subdomain("seven"));
     var tenantSeenByFacade = new AtomicReference<Long>();
     when(createAnonymousEnquiryFacade.createAnonymousEnquiry(any()))
         .thenAnswer(

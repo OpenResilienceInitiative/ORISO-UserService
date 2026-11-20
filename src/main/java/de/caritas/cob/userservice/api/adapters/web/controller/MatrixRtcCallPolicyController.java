@@ -1,6 +1,7 @@
 package de.caritas.cob.userservice.api.adapters.web.controller;
 
 import de.caritas.cob.userservice.api.service.matrixrtc.CallMediaPolicy;
+import de.caritas.cob.userservice.api.service.matrixrtc.ConsultingTypeCallGate;
 import de.caritas.cob.userservice.api.service.matrixrtc.MatrixRtcCallPolicyService;
 import de.caritas.cob.userservice.api.service.matrixrtc.MatrixRtcPolicyTokenVerifier;
 import jakarta.validation.Valid;
@@ -24,6 +25,7 @@ public class MatrixRtcCallPolicyController {
 
   private final @NonNull MatrixRtcCallPolicyService callPolicyService;
   private final @NonNull MatrixRtcPolicyTokenVerifier tokenVerifier;
+  private final @NonNull ConsultingTypeCallGate consultingTypeCallGate;
 
   @PostMapping("/call-policy")
   public ResponseEntity<CallMediaPolicy> resolve(
@@ -32,9 +34,19 @@ public class MatrixRtcCallPolicyController {
     if (!tokenVerifier.isValid(policyToken)) {
       return ResponseEntity.status(HttpStatus.UNAUTHORIZED).build();
     }
-    return ResponseEntity.ok(
-        callPolicyService.resolve(request.sourceRoomId(), request.matrixUserId()));
+    var granted =
+        request.callRoomId() == null
+            ? callPolicyService.resolve(request.sourceRoomId(), request.matrixUserId())
+            : callPolicyService.resolve(
+                request.sourceRoomId(), request.matrixUserId(), request.callRoomId());
+    return ResponseEntity.ok(consultingTypeCallGate.restrict(granted, request.sourceRoomId()));
   }
 
-  public record CallPolicyRequest(@NotBlank String sourceRoomId, @NotBlank String matrixUserId) {}
+  /** callRoomId is optional; only a call guest (US#1477) needs it, and is denied without it. */
+  public record CallPolicyRequest(
+      @NotBlank String sourceRoomId, @NotBlank String matrixUserId, String callRoomId) {
+    public CallPolicyRequest(String sourceRoomId, String matrixUserId) {
+      this(sourceRoomId, matrixUserId, null);
+    }
+  }
 }

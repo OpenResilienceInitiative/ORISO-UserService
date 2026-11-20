@@ -34,7 +34,13 @@ class AccountInactivityEnrollmentTest {
     var factory = new TenantServiceApiControllerFactory();
     ReflectionTestUtils.setField(factory, "restTemplate", rest);
     ReflectionTestUtils.setField(factory, "tenantServiceApiUrl", "https://tenant.test");
-    var enrollment = new AccountInactivityEnrollmentService(factory, lifecycle, clock);
+    var enrollment =
+        new AccountInactivityEnrollmentService(
+            factory,
+            lifecycle,
+            clock,
+            org.mockito.Mockito.mock(
+                de.caritas.cob.userservice.api.service.httpheader.SecurityHeaderSupplier.class));
     server
         .expect(requestTo("https://tenant.test/tenant/public/id/1"))
         .andRespond(

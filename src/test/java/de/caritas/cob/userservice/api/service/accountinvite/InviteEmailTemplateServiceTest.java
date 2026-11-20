@@ -9,10 +9,12 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
+import de.caritas.cob.userservice.api.exception.httpresponses.ConflictException;
 import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.model.InviteEmailTemplate;
+import de.caritas.cob.userservice.api.port.out.AccountInviteRepository;
 import de.caritas.cob.userservice.api.port.out.InviteEmailTemplateRepository;
 import de.caritas.cob.userservice.api.service.accountinvite.InviteEmailTemplateService.TemplateCommand;
 import java.util.List;
@@ -24,12 +26,14 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
+import org.springframework.dao.DataIntegrityViolationException;
 
 @ExtendWith(MockitoExtension.class)
 @MockitoSettings(strictness = Strictness.LENIENT)
 class InviteEmailTemplateServiceTest {
 
   @Mock private InviteEmailTemplateRepository templateRepository;
+  @Mock private AccountInviteRepository inviteRepository;
   @Mock private AuthenticatedUser authenticatedUser;
   @Mock private AccountInviteAccessPolicy accessPolicy;
 
@@ -261,7 +265,7 @@ class InviteEmailTemplateServiceTest {
     when(templateRepository.findById(1L)).thenReturn(Optional.of(stored));
     doThrow(new ForbiddenException("denied"))
         .when(accessPolicy)
-        .authorizeTemplateUse(4L, InviteEmailTemplateKind.COUNSELLOR_INVITE);
+        .authorizeTemplateUse(4L, InviteEmailTemplateKind.COUNSELLOR_INVITE, false);
 
     assertThatThrownBy(() -> service.requireUsableTemplate(1L))
         .isInstanceOf(ForbiddenException.class);
@@ -465,5 +469,24 @@ class InviteEmailTemplateServiceTest {
     assertThat(saved.getSubject()).isEqualTo("New");
     assertThat(saved.getSystemDefault()).isTrue();
     assertThat(saved.getActive()).isTrue();
+  }
+
+  @Test
+  void deleteTemplate_Should_returnConflict_When_QueueReferenceCommitsAfterPrecheck() {
+    var template =
+        InviteEmailTemplate.builder()
+            .id(7L)
+            .kind(InviteEmailTemplateKind.COUNSELLOR_INVITE)
+            .build();
+    when(templateRepository.findById(7L)).thenReturn(Optional.of(template));
+    // The ordinary queued check saw no reference; the database is the final concurrency guard.
+    doThrow(new DataIntegrityViolationException("fk_account_invite_queued_template"))
+        .when(templateRepository)
+        .flush();
+
+    assertThatThrownBy(() -> service.deleteTemplate(7L)).isInstanceOf(ConflictException.class);
+
+    verify(inviteRepository)
+        .clearReleasedTemplateReferences(7L, AccountInviteStatus.WAITING_FOR_UNIT);
   }
 }

@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog xmlns="http://www.liquibase.org/xml/ns/dbchangelog" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.25.xsd">
+  <changeSet id="20261014-co-access-power-rollback" author="oriso">
+    <addColumn tableName="case_handover_matrix_repair_task">
+      <column name="previous_power_level" type="INT"/>
+      <column name="ownership_revision" type="BIGINT"/>
+      <column name="attempt_operation_id" type="CHAR(36)"/>
+    </addColumn>
+    <rollback>
+      <dropColumn tableName="case_handover_matrix_repair_task" columnName="attempt_operation_id"/>
+      <dropColumn tableName="case_handover_matrix_repair_task" columnName="ownership_revision"/>
+      <dropColumn tableName="case_handover_matrix_repair_task" columnName="previous_power_level"/>
+    </rollback>
+  </changeSet>
+</databaseChangeLog>

@@ -264,6 +264,7 @@ class InviteEmailTemplateKindRulesIT {
     return templateRepository.save(
         InviteEmailTemplate.builder()
             .tenantId(tenantId)
+            .systemDefault(tenantId == null)
             .kind(kind)
             .name(name)
             .language("de")

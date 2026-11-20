@@ -22,6 +22,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -52,6 +53,7 @@ import de.caritas.cob.userservice.api.config.auth.IdentityConfig;
 import de.caritas.cob.userservice.api.config.auth.UserRole;
 import de.caritas.cob.userservice.api.exception.matrix.MatrixCreateUserException;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
+import de.caritas.cob.userservice.api.helper.PasswordPolicy;
 import de.caritas.cob.userservice.api.helper.UserVerifier;
 import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
 import de.caritas.cob.userservice.api.model.Chat;
@@ -647,47 +649,8 @@ class UserControllerE2EIT extends AccountInactivityPolicyHttpFixture {
 
   @Test
   @WithMockUser(authorities = {AuthorityValue.NOTIFICATIONS_TECHNICAL})
-  void getNotificationDataShouldGetNotificationDataForExistingConsultant() throws Exception {
-
-    mockMvc
-        .perform(
-            get("/users/notifications")
-                .param("email", "emigration@consultant.de")
-                .cookie(CSRF_COOKIE)
-                .header(CSRF_HEADER, CSRF_VALUE)
-                .accept(MediaType.APPLICATION_JSON))
-        .andExpect(status().isOk())
-        .andExpect(jsonPath("emailNotificationsEnabled", is(true)))
-        .andExpect(jsonPath("settings.initialEnquiryNotificationEnabled", is(true)))
-        .andExpect(jsonPath("settings.newChatMessageNotificationEnabled", is(true)))
-        .andExpect(jsonPath("settings.reassignmentNotificationEnabled", is(true)))
-        .andExpect(jsonPath("settings.appointmentNotificationEnabled", is(true)));
-  }
-
-  @Test
-  @WithMockUser(authorities = {AuthorityValue.NOTIFICATIONS_TECHNICAL})
-  void getNotificationDataShouldGetNotificationDataForExistingAdviceSeeker() throws Exception {
-    givenConsultingTypeServiceResponse();
-    mockMvc
-        .perform(
-            get("/users/notifications")
-                .param("email", "fd639b0e-4e90-415e-9cd4-372781b71ce4@beratungcaritas.de")
-                .cookie(CSRF_COOKIE)
-                .header(CSRF_HEADER, CSRF_VALUE)
-                .accept(MediaType.APPLICATION_JSON))
-        .andExpect(status().isOk())
-        .andExpect(jsonPath("emailNotificationsEnabled", is(false)))
-        .andExpect(jsonPath("settings.initialEnquiryNotificationEnabled", is(false)))
-        .andExpect(jsonPath("settings.newChatMessageNotificationEnabled", is(false)))
-        .andExpect(jsonPath("settings.reassignmentNotificationEnabled", is(false)))
-        .andExpect(jsonPath("settings.appointmentNotificationEnabled", is(false)));
-  }
-
-  @Test
-  @WithMockUser(authorities = {AuthorityValue.USER_ADMIN})
-  void getNotificationDataShouldReturnAccessDeniedIfDoesNotHaveNotificationsTechnicalAuthority()
-      throws Exception {
-
+  void calcomNotificationLookupIsNoLongerExposed() throws Exception {
+    // ADR-032: the cal.com AppointmentService was the only caller of this lookup.
     mockMvc
         .perform(
             get("/users/notifications")
@@ -696,21 +659,6 @@ class UserControllerE2EIT extends AccountInactivityPolicyHttpFixture {
                 .header(CSRF_HEADER, CSRF_VALUE)
                 .accept(MediaType.APPLICATION_JSON))
         .andExpect(status().isForbidden());
-  }
-
-  @Test
-  @WithMockUser(authorities = {AuthorityValue.NOTIFICATIONS_TECHNICAL})
-  void getNotificationDataShouldReturnNotFoundForMailNotMatchingAnyAdviceSeekerNorConsultant()
-      throws Exception {
-
-    mockMvc
-        .perform(
-            get("/users/notifications")
-                .param("email", "dummymail@dummy.de")
-                .cookie(CSRF_COOKIE)
-                .header(CSRF_HEADER, CSRF_VALUE)
-                .accept(MediaType.APPLICATION_JSON))
-        .andExpect(status().isNotFound());
   }
 
   @Test
@@ -738,6 +686,37 @@ class UserControllerE2EIT extends AccountInactivityPolicyHttpFixture {
         .andExpect(jsonPath("sessions[0].session.topic.name", is("topic name")))
         .andExpect(jsonPath("sessions[0].session.topic.description", is("topic desc")))
         .andExpect(jsonPath("sessions[0].session.topic.status", is("INACTIVE")));
+  }
+
+  @Test
+  @WithMockUser(authorities = {AuthorityValue.CONSULTANT_DEFAULT})
+  void sessionListShouldReturnTheAskersStoredAnimalAndClearIt() throws Exception {
+    givenABearerToken();
+    givenAValidConsultantWithId("34c3x5b1-0677-4fd2-a7ea-56a71aefd099");
+    givenConsultingTypeServiceResponse();
+    givenAValidTopicServiceResponse();
+    var session = sessionRepository.findById(1215L).orElseThrow();
+    var asker = session.getUser();
+    asker.setAvatarId("fox");
+    userRepository.save(asker);
+    mockMvc
+        .perform(
+            get("/users/sessions/consultants?status=2&count=15&filter=all&offset=0")
+                .cookie(CSRF_COOKIE)
+                .header(CSRF_HEADER, CSRF_VALUE)
+                .accept(MediaType.APPLICATION_JSON))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("sessions[0].user.avatarId", is("fox")));
+    asker.setAvatarId(null);
+    userRepository.save(asker);
+    mockMvc
+        .perform(
+            get("/users/sessions/consultants?status=2&count=15&filter=all&offset=0")
+                .cookie(CSRF_COOKIE)
+                .header(CSRF_HEADER, CSRF_VALUE)
+                .accept(MediaType.APPLICATION_JSON))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("sessions[0].user.avatarId", is(nullValue())));
   }
 
   @Test
@@ -1126,6 +1105,37 @@ class UserControllerE2EIT extends AccountInactivityPolicyHttpFixture {
   }
 
   @Test
+  @WithMockUser(authorities = AuthorityValue.CONSULTANT_DEFAULT)
+  void patchUserDataShouldDistinguishStandardFromExplicitInitialsAndKeepOtherAccountsUnchanged()
+      throws Exception {
+    givenABearerToken();
+    givenAValidConsultant();
+    givenConsultingTypeServiceResponse();
+    givenKeycloakRespondsOtpHasNotBeenSetup(consultant.getUsername());
+    var other =
+        StreamSupport.stream(consultantRepository.findAll().spliterator(), false)
+            .filter(candidate -> !candidate.getId().equals(consultant.getId()))
+            .findFirst()
+            .orElseThrow();
+    other.setAvatarKind(de.caritas.cob.userservice.api.model.ConsultantAvatarKind.ICON);
+    other.setAvatarId("owl");
+    consultantRepository.save(other);
+    patchUserData(
+        "{\"avatarKind\":\"ICON\",\"avatarId\":\"magpie\",\"id\":\"" + other.getId() + "\"}");
+    expectAvatar("avatarId", is("magpie"));
+    assertEquals("owl", consultantRepository.findById(other.getId()).orElseThrow().getAvatarId());
+    patchUserData("{\"walkThroughEnabled\":true}");
+    expectAvatar("avatarId", is("magpie"));
+    patchUserData("{\"avatarId\":\"\"}");
+    expectAvatar("avatarKind", is(nullValue()));
+    expectAvatar("avatarId", is(nullValue()));
+    patchUserData("{\"avatarKind\":\"INITIALS\",\"avatarId\":\"\"}");
+    expectAvatar("avatarKind", is("INITIALS"));
+    patchUserData("{\"avatarId\":\"\"}");
+    expectAvatar("avatarKind", is(nullValue()));
+  }
+
+  @Test
   @WithMockUser(authorities = AuthorityValue.USER_DEFAULT)
   void patchUserDataShouldRejectAnAvatarThatIsNotABundledId() throws Exception {
     givenAValidUser();
@@ -1217,7 +1227,7 @@ class UserControllerE2EIT extends AccountInactivityPolicyHttpFixture {
     assertThat(savedUser.isNotificationsEnabled()).isTrue();
     assertThat(savedUser.getNotificationsSettings())
         .isEqualTo(
-            "{\"initialEnquiryNotificationEnabled\":true,\"newChatMessageNotificationEnabled\":true,\"reassignmentNotificationEnabled\":true,\"appointmentNotificationEnabled\":true,\"assignmentNotificationEnabled\":true,\"feedbackNotificationEnabled\":true,\"serviceNoticeNotificationEnabled\":true}");
+            "{\"initialEnquiryNotificationEnabled\":true,\"newChatMessageNotificationEnabled\":true,\"reassignmentNotificationEnabled\":true,\"appointmentNotificationEnabled\":true,\"assignmentNotificationEnabled\":true,\"internalChatNotificationEnabled\":null,\"feedbackNotificationEnabled\":true,\"serviceNoticeNotificationEnabled\":true}");
   }
 
   @Test
@@ -1252,7 +1262,41 @@ class UserControllerE2EIT extends AccountInactivityPolicyHttpFixture {
     assertThat(savedConsultant.isNotificationsEnabled()).isTrue();
     assertThat(savedConsultant.getNotificationsSettings())
         .isEqualTo(
-            "{\"initialEnquiryNotificationEnabled\":true,\"newChatMessageNotificationEnabled\":false,\"reassignmentNotificationEnabled\":false,\"appointmentNotificationEnabled\":true,\"assignmentNotificationEnabled\":true,\"feedbackNotificationEnabled\":true,\"serviceNoticeNotificationEnabled\":true}");
+            "{\"initialEnquiryNotificationEnabled\":true,\"newChatMessageNotificationEnabled\":false,\"reassignmentNotificationEnabled\":false,\"appointmentNotificationEnabled\":true,\"assignmentNotificationEnabled\":true,\"internalChatNotificationEnabled\":null,\"feedbackNotificationEnabled\":true,\"serviceNoticeNotificationEnabled\":true}");
+  }
+
+  @Test
+  @WithMockUser(authorities = AuthorityValue.CONSULTANT_DEFAULT)
+  void patchAnotherEmailSettingPreservesConsultantInternalChatOptOut() throws Exception {
+    givenABearerToken();
+    givenAValidConsultant();
+    givenConsultingTypeServiceResponse();
+    givenKeycloakRespondsOtpHasNotBeenSetup(consultant.getUsername());
+    patchUserData(
+        "{\"emailNotifications\":{\"emailNotificationsEnabled\":true,\"settings\":{\"internalChatNotificationEnabled\":false}}}");
+    patchUserData(
+        "{\"emailNotifications\":{\"emailNotificationsEnabled\":true,\"settings\":{\"initialEnquiryNotificationEnabled\":false}}}");
+    entityManager.flush();
+    entityManager.clear();
+    var saved = consultantRepository.findById(consultant.getId()).orElseThrow();
+    var internalChatSetting =
+        objectMapper
+            .readTree(saved.getNotificationsSettings())
+            .get("internalChatNotificationEnabled");
+    assertThat(internalChatSetting).isNotNull();
+    assertThat(internalChatSetting.isBoolean()).isTrue();
+    assertThat(internalChatSetting.booleanValue()).isFalse();
+    mockMvc
+        .perform(
+            get("/users/data")
+                .cookie(CSRF_COOKIE)
+                .header(CSRF_HEADER, CSRF_VALUE)
+                .accept(MediaType.APPLICATION_JSON))
+        .andExpect(status().isOk())
+        .andExpect(
+            jsonPath("emailNotifications.settings.internalChatNotificationEnabled", is(false)))
+        .andExpect(
+            jsonPath("emailNotifications.settings.initialEnquiryNotificationEnabled", is(false)));
   }
 
   @Test
@@ -1922,7 +1966,8 @@ class UserControllerE2EIT extends AccountInactivityPolicyHttpFixture {
                 .header(CSRF_HEADER, CSRF_VALUE)
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(objectMapper.writeValueAsString(userDTO)))
-        .andExpect(status().isBadRequest());
+        .andExpect(status().isBadRequest())
+        .andExpect(header().string("X-Reason", "GROUP_INVITE_INVALID"));
 
     assertThat(userRepository.findAll())
         .noneMatch(dbUser -> userDTO.getEmail().equals(dbUser.getEmail()));
@@ -1944,7 +1989,8 @@ class UserControllerE2EIT extends AccountInactivityPolicyHttpFixture {
                 .header(CSRF_HEADER, CSRF_VALUE)
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(objectMapper.writeValueAsString(userDTO)))
-        .andExpect(status().isBadRequest());
+        .andExpect(status().isBadRequest())
+        .andExpect(header().string("X-Reason", "GROUP_INVITE_INVALID"));
 
     assertThat(userRepository.findAll())
         .noneMatch(dbUser -> userDTO.getEmail().equals(dbUser.getEmail()));
@@ -1968,7 +2014,8 @@ class UserControllerE2EIT extends AccountInactivityPolicyHttpFixture {
                 .header(CSRF_HEADER, CSRF_VALUE)
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(objectMapper.writeValueAsString(userDTO)))
-        .andExpect(status().isBadRequest());
+        .andExpect(status().isBadRequest())
+        .andExpect(header().string("X-Reason", "GROUP_INVITE_INVALID"));
 
     assertThat(userRepository.findAll())
         .noneMatch(dbUser -> userDTO.getEmail().equals(dbUser.getEmail()));
@@ -2024,7 +2071,8 @@ class UserControllerE2EIT extends AccountInactivityPolicyHttpFixture {
                 .header(CSRF_HEADER, CSRF_VALUE)
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(objectMapper.writeValueAsString(userDTO)))
-        .andExpect(status().isForbidden());
+        .andExpect(status().isForbidden())
+        .andExpect(header().string("X-Reason", "GROUP_INVITE_INVALID"));
 
     assertThat(userRepository.findAll())
         .noneMatch(dbUser -> userDTO.getEmail().equals(dbUser.getEmail()));
@@ -2048,10 +2096,55 @@ class UserControllerE2EIT extends AccountInactivityPolicyHttpFixture {
                 .header(CSRF_HEADER, CSRF_VALUE)
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(objectMapper.writeValueAsString(userDTO)))
-        .andExpect(status().isForbidden());
+        .andExpect(status().isForbidden())
+        .andExpect(header().string("X-Reason", "GROUP_INVITE_INVALID"));
 
     assertThat(userRepository.findAll())
         .noneMatch(dbUser -> userDTO.getEmail().equals(dbUser.getEmail()));
+  }
+
+  @Test
+  void registerUserThroughAnUnknownGroupNumberShouldBeRejectedWithTheInviteReason()
+      throws Exception {
+    givenAValidTopicServiceResponse();
+    givenConsultingTypeServiceResponse();
+    givenARealmResource();
+    givenAUserDTO();
+    userDTO.setGroupChatId(987654321L);
+    userDTO.setGroupChatInviteToken(GROUP_INVITE_TOKEN);
+
+    mockMvc
+        .perform(
+            post("/users/askers/new")
+                .cookie(CSRF_COOKIE)
+                .header(CSRF_HEADER, CSRF_VALUE)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(userDTO)))
+        .andExpect(status().isBadRequest())
+        .andExpect(header().string("X-Reason", "GROUP_INVITE_INVALID"));
+
+    assertThat(userRepository.findAll())
+        .noneMatch(dbUser -> userDTO.getEmail().equals(dbUser.getEmail()));
+  }
+
+  @Test
+  void registerUserWithAMistakeButNoGroupLinkShouldKeepAPlainBadRequest() throws Exception {
+    givenAValidTopicServiceResponse();
+    givenConsultingTypeServiceResponse();
+    givenARealmResource();
+    givenAUserDTO();
+    // A temporary account without a group link is a form mistake, not a refused invite (#1483).
+    userDTO.setTemporary(true);
+
+    mockMvc
+        .perform(
+            post("/users/askers/new")
+                .cookie(CSRF_COOKIE)
+                .header(CSRF_HEADER, CSRF_VALUE)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(userDTO)))
+        .andExpect(status().isBadRequest())
+        .andExpect(header().doesNotExist("X-Reason"));
   }
 
   @Test
@@ -2155,6 +2248,13 @@ class UserControllerE2EIT extends AccountInactivityPolicyHttpFixture {
     when(applicationSettingsService.getApplicationSettings())
         .thenReturn(new ApplicationSettingsDTO().releaseToggles(Maps.newHashMap()));
     var session = givenAExistingSession();
+    // Frontend#1979: the reassignment mail follows the Träger's advice-seeker e-mail
+    // policy. Pin what EasyRandom would otherwise pick at random: a counselling session
+    // of a known tenant whose settings leave e-mail on.
+    session.setConversationType(ConversationType.AGENCY_COUNSELLING);
+    session.getUser().setTenantId(1L);
+    userRepository.save(session.getUser());
+    sessionRepository.save(session);
     var assignemtNotification =
         new ReassignmentNotificationDTO()
             .toConsultantId(UUID.randomUUID())
@@ -2191,6 +2291,9 @@ class UserControllerE2EIT extends AccountInactivityPolicyHttpFixture {
     session.setPostcode("12345");
     session.setConsultingTypeId(1);
     session.setSessionTopics(Lists.newArrayList());
+    // EasyRandom fills every string up to 32 characters; these columns are shorter.
+    session.setDirectLinkMedium(null);
+    session.setDirectLinkName(null);
     return sessionRepository.save(session);
   }
 
@@ -2208,6 +2311,8 @@ class UserControllerE2EIT extends AccountInactivityPolicyHttpFixture {
     de.caritas.cob.userservice.api.tenant.TenantContext.setCurrentTenant(1L);
     userDTO = easyRandom.nextObject(UserDTO.class);
     userDTO.setUsername(RandomStringUtils.randomAlphabetic(5, 30));
+    // EasyRandom's password is usually shorter than the registration minimum.
+    userDTO.setPassword(RandomStringUtils.randomAlphanumeric(PasswordPolicy.MIN_LENGTH));
     userDTO.setAge("17");
     userDTO.setState("8");
     userDTO.setPostcode(RandomStringUtils.randomNumeric(5));
@@ -2219,6 +2324,7 @@ class UserControllerE2EIT extends AccountInactivityPolicyHttpFixture {
     userDTO.setReferer("validRef");
     userDTO.setGroupChatId(null);
     userDTO.setGroupChatInviteToken(null);
+    userDTO.setDirectLinkToken(null);
     // EasyRandom would otherwise ask for a temporary account at random.
     userDTO.setTemporary(false);
   }
@@ -2568,6 +2674,7 @@ class UserControllerE2EIT extends AccountInactivityPolicyHttpFixture {
 
   private void givenAPasswordDto() {
     passwordDto = easyRandom.nextObject(PasswordDTO.class);
+    passwordDto.setNewPassword(RandomStringUtils.randomAlphanumeric(PasswordPolicy.MIN_LENGTH));
   }
 
   private void givenADeleteUserAccountDto() {

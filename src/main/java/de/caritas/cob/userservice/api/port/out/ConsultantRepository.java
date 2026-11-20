@@ -2,6 +2,8 @@ package de.caritas.cob.userservice.api.port.out;
 
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.Consultant.ConsultantBase;
+import de.caritas.cob.userservice.api.workflow.delete.model.DeletionLifecycleState;
+import java.time.LocalDateTime;
 import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
@@ -11,11 +13,49 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.EntityGraph;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.JpaSpecificationExecutor;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
+import org.springframework.transaction.annotation.Transactional;
 
 public interface ConsultantRepository
-    extends JpaRepository<Consultant, String>, JpaSpecificationExecutor<Consultant> {
+    extends JpaRepository<Consultant, String>,
+        JpaSpecificationExecutor<Consultant>,
+        ConsultantRowLock {
+
+  boolean existsByIdAndManagedPausedTrue(String id);
+
+  /**
+   * Which of the ids belong to a counsellor who has a row, deleted or not. Native, so that no
+   * tenant filter hides the counsellors of another Träger: a background job that drops what an
+   * account left behind must not take those for gone.
+   */
+  @Query(
+      value = "SELECT consultant_id FROM consultant WHERE consultant_id IN (:ids)",
+      nativeQuery = true)
+  List<String> findIdsAmong(@Param("ids") Collection<String> ids);
+
+  /**
+   * Which of the ids belong to a counsellor who has a row and is not deleted. Native for the same
+   * reason as {@link #findIdsAmong}.
+   */
+  @Query(
+      value =
+          "SELECT consultant_id FROM consultant"
+              + " WHERE consultant_id IN (:ids) AND delete_date IS NULL",
+      nativeQuery = true)
+  List<String> findIdsNotDeletedAmong(@Param("ids") Collection<String> ids);
+
+  /**
+   * Locks the counsellor's own row until the transaction ends, so that their calendar writes run
+   * one after another: two new day exceptions cannot both pass the limit check, and two first
+   * writes of the holiday region cannot both insert its row. Empty when there is no such
+   * counsellor.
+   */
+  @Query(
+      value = "SELECT consultant_id FROM consultant WHERE consultant_id = :consultantId FOR UPDATE",
+      nativeQuery = true)
+  Optional<String> lockConsultant(@Param("consultantId") String consultantId);
 
   @org.springframework.data.jpa.repository.Lock(jakarta.persistence.LockModeType.PESSIMISTIC_WRITE)
   @Query("select c from Consultant c where c.id = :id")
@@ -28,11 +68,49 @@ public interface ConsultantRepository
   @EntityGraph(attributePaths = {"consultantAgencies", "languages"})
   Optional<Consultant> findByIdAndDeleteDateIsNull(String id);
 
+  /**
+   * Ends every standing supervision that points at {@code supervisorId} (#1419): a counsellor who
+   * moves to another Träger must not stay attached, read-only, to the cases their former colleagues
+   * accept.
+   */
+  @org.springframework.data.jpa.repository.Modifying(
+      flushAutomatically = true,
+      clearAutomatically = false)
+  @Query(
+      "UPDATE Consultant c SET c.assignedSupervisorId = null"
+          + " WHERE c.assignedSupervisorId = :supervisorId")
+  int clearAssignedSupervisor(@Param("supervisorId") String supervisorId);
+
+  /** Active selection only; scalar identity fields suffice, so no association fetch graph. */
+  List<Consultant> findByIdInAndDeleteDateIsNull(Collection<String> ids);
+
   Optional<Consultant> findByEmailAndDeleteDateIsNull(String email);
 
   List<Consultant> findAllByEmailAndDeleteDateIsNull(String email);
 
   Optional<Consultant> findByUsernameAndDeleteDateIsNull(String username);
+
+  /** Whether a counsellor marked for deletion still holds this (encoded) username. */
+  boolean existsByUsernameAndDeleteDateIsNotNull(String username);
+
+  /**
+   * Frees the username of a counsellor that is being hard-deleted, so the name can be given to a
+   * new account even when the row itself cannot be removed yet (ORISO-Admin#1489). The column is
+   * unique, and the row of a counsellor whose hard deletion failed used to keep the name forever.
+   * Native and in its own transaction on purpose: the JPA mapping marks the column as not
+   * updatable, and the release must stay committed when the later row delete fails.
+   *
+   * @return the number of rows updated (0 or 1)
+   */
+  @Modifying
+  @Transactional(propagation = org.springframework.transaction.annotation.Propagation.REQUIRES_NEW)
+  @Query(
+      value =
+          "UPDATE consultant SET username = :releasedUsername"
+              + " WHERE consultant_id = :id AND delete_date IS NOT NULL",
+      nativeQuery = true)
+  int releaseUsernameOfDeletedConsultant(
+      @Param("id") String id, @Param("releasedUsername") String releasedUsername);
 
   @EntityGraph(attributePaths = {"consultantAgencies", "languages"})
   Optional<Consultant> findByPublicSlugAndDeleteDateIsNull(String publicSlug);
@@ -44,6 +122,18 @@ public interface ConsultantRepository
   Optional<Consultant> findByMatrixUserIdAndDeleteDateIsNull(String matrixUserId);
 
   /**
+   * Every not deleted consultant row holding the given Matrix id. The column is not unique, so the
+   * call code reads all of them and decides itself (FE#2209 round 10).
+   */
+  List<Consultant> findAllByMatrixUserIdAndDeleteDateIsNull(String matrixUserId);
+
+  /**
+   * Batched form of {@link #findAllByMatrixUserIdAndDeleteDateIsNull}: every not deleted consultant
+   * row holding one of the given Matrix ids, in one query (#1656).
+   */
+  List<Consultant> findAllByMatrixUserIdInAndDeleteDateIsNull(Collection<String> matrixUserIds);
+
+  /**
    * Every consultant row referencing the given chat (Matrix) identity, <em>including soft-deleted
    * ones</em>. Uniqueness here is by username, so a soft-deleted consultant keeps owning their chat
    * account while freeing the username — the repair has to see that row or it would adopt a
@@ -53,6 +143,16 @@ public interface ConsultantRepository
    * @return the rows holding it, empty when it is free
    */
   List<Consultant> findByMatrixUserId(String matrixUserId);
+
+  /**
+   * FE#2209 round 6: how many consultant rows of any tenant, soft-deleted ones included, hold this
+   * Matrix id. Native, so the Hibernate tenant filter does not apply: a counsellor moved to another
+   * tenant keeps their Matrix id and is still a counsellor.
+   */
+  @Query(
+      value = "SELECT COUNT(*) FROM consultant WHERE matrix_user_id = :matrixUserId",
+      nativeQuery = true)
+  long countAnyTenantByMatrixUserId(@Param("matrixUserId") String matrixUserId);
 
   /**
    * Every active consultant that owns no chat (Matrix) identity. Such a record looks complete to an
@@ -72,6 +172,9 @@ public interface ConsultantRepository
   List<Consultant> findAllByDeleteDateNotNull();
 
   List<Consultant> findByDeleteDateIsNull();
+
+  @EntityGraph(attributePaths = "consultantAgencies")
+  List<Consultant> findByDeleteDateIsNullAndManagedPausedFalseAndMatrixUserIdIsNotNull();
 
   List<Consultant> findByTenantIdAndDeleteDateIsNullOrderByFirstNameAscLastNameAsc(Long tenantId);
 
@@ -136,4 +239,47 @@ public interface ConsultantRepository
   long countByDeleteDateIsNull();
 
   long countByTenantIdAndDeleteDateIsNull(Long tenantId);
+
+  /**
+   * Opens the account-setup gate once the counsellor has reset their own password (#1699). Native
+   * SQL on purpose: a public reset link runs with the link's tenant, and the tenant filter would
+   * hide a counsellor of another provider from an entity lookup.
+   *
+   * @return the number of counsellors whose requirement was cleared (0 or 1)
+   */
+  @Modifying
+  @Transactional
+  @Query(
+      value =
+          "UPDATE consultant SET password_change_required = FALSE, update_date = :now"
+              + " WHERE consultant_id = :id AND password_change_required = TRUE"
+              + " AND delete_date IS NULL",
+      nativeQuery = true)
+  int clearPasswordChangeRequired(@Param("id") String id, @Param("now") LocalDateTime now);
+
+  @Modifying(clearAutomatically = true, flushAutomatically = true)
+  @Query(
+      """
+      UPDATE Consultant consultant
+         SET consultant.deletionLifecycleState = :readyState
+       WHERE consultant.id = :id
+         AND consultant.deleteDate IS NOT NULL
+         AND consultant.deletionLifecycleState = :claimedState
+      """)
+  int releaseConsultantHardDeleteClaim(
+      @Param("id") String id,
+      @Param("claimedState") DeletionLifecycleState claimedState,
+      @Param("readyState") DeletionLifecycleState readyState);
+
+  @Modifying(clearAutomatically = true, flushAutomatically = true)
+  @Query(
+      """
+      UPDATE Consultant consultant
+         SET consultant.deletionLifecycleState = :readyState
+       WHERE consultant.deleteDate IS NOT NULL
+         AND consultant.deletionLifecycleState = :claimedState
+      """)
+  int releaseInterruptedConsultantHardDeleteClaims(
+      @Param("claimedState") DeletionLifecycleState claimedState,
+      @Param("readyState") DeletionLifecycleState readyState);
 }

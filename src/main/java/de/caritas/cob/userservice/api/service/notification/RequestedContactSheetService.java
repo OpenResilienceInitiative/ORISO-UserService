@@ -57,6 +57,9 @@ public class RequestedContactSheetService {
     if (seeker == null || !Objects.equals(seeker.getUserId(), requestingUserId)) {
       throw new ForbiddenException("Only the session owner can request contact details");
     }
+    if (AskerNotificationChannelPolicy.isLiveChat(session)) {
+      throw new ForbiddenException("Live chat does not send email");
+    }
     if (seeker.getDeleteDate() != null
         || (session.getStatus() != Session.SessionStatus.NEW
             && session.getStatus() != Session.SessionStatus.IN_PROGRESS)) {

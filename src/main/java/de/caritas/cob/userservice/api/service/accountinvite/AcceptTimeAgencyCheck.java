@@ -1,10 +1,11 @@
 package de.caritas.cob.userservice.api.service.accountinvite;
 
+import de.caritas.cob.userservice.api.config.auth.RoutineTaskAuthentication;
+import de.caritas.cob.userservice.api.config.auth.TaskPurpose;
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
 import de.caritas.cob.userservice.api.model.AccountInvite;
 import de.caritas.cob.userservice.api.port.out.IdentityAuthentication;
 import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
-import de.caritas.cob.userservice.api.port.out.IdentityLogin;
 import de.caritas.cob.userservice.api.service.httpheader.TechnicalAccessTokenContext;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
@@ -22,9 +23,18 @@ public class AcceptTimeAgencyCheck {
   private final @NonNull AgencyFacts agencyFacts;
   private final @NonNull IdentityAuthentication identityAuthentication;
   private final @NonNull IdentityClientConfig identityClientConfig;
+  private final @NonNull de.caritas.cob.userservice.api.admin.service.tenant.TenantService
+      tenantService;
 
   @Value("${multitenancy.enabled}")
   private boolean multiTenancyEnabled;
+
+  /**
+   * Called before a pending invite claims a row or creates a centre/identity. Resume stays allowed.
+   */
+  public void requireOperationalTenant(AccountInvite invite) {
+    tenantService.requireOperationalTenant(invite.getTenantId());
+  }
 
   /** Logs in the Keycloak technical user and checks with that token. */
   public void requireLiveAgency(AccountInvite invite) {
@@ -59,18 +69,11 @@ public class AcceptTimeAgencyCheck {
 
   /** The Keycloak technical user's access token; its failure text stays out of the invite. */
   public String serviceToken() {
-    var technicalUser = identityClientConfig.getTechnicalUser();
-    IdentityLogin login;
     try {
-      login =
-          identityAuthentication.loginService(
-              technicalUser.getClientId(), technicalUser.getClientSecret());
+      return RoutineTaskAuthentication.accessToken(
+          TaskPurpose.INVITE_RESERVATIONS, identityClientConfig, identityAuthentication);
     } catch (RuntimeException exception) {
-      throw new IllegalStateException("Service authentication unavailable", exception);
-    }
-    if (login == null || login.accessToken() == null || login.accessToken().isBlank()) {
       throw new IllegalStateException("Service authentication unavailable");
     }
-    return login.accessToken();
   }
 }

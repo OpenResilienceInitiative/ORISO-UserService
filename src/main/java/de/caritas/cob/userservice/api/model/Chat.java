@@ -125,6 +125,15 @@ public class Chat {
   @Column(name = "is_active", nullable = false)
   private boolean active;
 
+  /**
+   * A chat only its members may see and join: the room for a subset of selected colleagues
+   * (ORISO-UserService#1418). Every other chat is open to the colleagues {@code
+   * GroupChatConsultantAccess} admits by the Träger's recipient scope.
+   */
+  @Column(name = "members_only", nullable = false)
+  @org.hibernate.annotations.ColumnDefault("false")
+  private boolean membersOnly;
+
   @Column(name = "max_participants", columnDefinition = "tinyint(4) unsigned NULL")
   @JdbcTypeCode(SqlTypes.TINYINT)
   private Integer maxParticipants;
@@ -164,6 +173,17 @@ public class Chat {
   @JdbcTypeCode(SqlTypes.JSON)
   @Column(name = "group_chat_rules_translations", columnDefinition = "json")
   private Map<String, List<String>> groupChatRulesTranslations;
+
+  /**
+   * Gesprächskreis (#1662): which account a person without one gets through the invite link. The
+   * default is today's behaviour: the guest chooses "Ohne Konto beitreten" or "Konto anlegen".
+   * Group-join temporaries keep their 24 h lifetime (DeleteTemporaryAccountsScheduler).
+   */
+  @Builder.Default
+  @jakarta.persistence.Enumerated(jakarta.persistence.EnumType.STRING)
+  @org.hibernate.annotations.ColumnDefault("'GUEST_CHOOSES'")
+  @Column(name = "guest_account_mode", length = 16, nullable = false)
+  private GuestAccountMode guestAccountMode = GuestAccountMode.GUEST_CHOOSES;
 
   /** Secret part of the invite link (#1237); never serialised. */
   @JsonIgnore

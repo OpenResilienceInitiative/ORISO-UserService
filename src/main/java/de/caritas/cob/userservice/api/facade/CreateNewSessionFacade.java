@@ -88,6 +88,27 @@ public class CreateNewSessionFacade {
         Lists.newArrayList(NewSessionValidationConstraint.ONE_SESSION_PER_CONSULTING_TYPE));
   }
 
+  /**
+   * The shared conversation of a direct invitation with an appointment (ORISO-Frontend#2252):
+   * always a new conversation assigned to the counsellor, never the person's existing one.
+   */
+  public NewRegistrationResponseDto initializeAppointmentSession(
+      NewRegistrationDto registration, User user) {
+    try {
+      var consultingType =
+          consultingTypeManager.getConsultingTypeSettings(registration.getConsultingType());
+      var response =
+          createSessionFacade.createNewDirectUserSession(
+              registration.getConsultantId(), convertToUserDTO(registration), user, consultingType);
+      statisticsService.fireEvent(
+          new AssignSessionStatisticsEvent(
+              registration.getConsultantId(), UserRole.CONSULTANT, response.getSessionId()));
+      return response;
+    } catch (MissingConsultingTypeException | IllegalArgumentException e) {
+      throw new BadRequestException(e.getMessage(), e);
+    }
+  }
+
   private NewRegistrationResponseDto createSessionOrChat(
       UserRegistrationDTO userRegistrationDTO,
       User user,

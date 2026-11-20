@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+  xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-3.2.xsd">
+  <!-- FE#2209 round 5: how a call binding ended. ENDPOINT: a counsellor ended it through the end
+       endpoint. LIFECYCLE: the server closed it (invite ran out, never observed, everybody left).
+       NULL for running calls and for calls ended before this column existed; NULL counts as an
+       explicit end, so an existing ended binding is never taken over (fail closed). -->
+  <changeSet id="20261113-matrix-call-binding-end-cause-2209" author="oriso">
+    <preConditions onFail="MARK_RAN">
+      <tableExists tableName="matrix_call_binding"/>
+      <not>
+        <columnExists tableName="matrix_call_binding" columnName="end_cause"/>
+      </not>
+    </preConditions>
+    <addColumn tableName="matrix_call_binding">
+      <column name="end_cause" type="VARCHAR(16)"/>
+    </addColumn>
+    <rollback>
+      <dropColumn tableName="matrix_call_binding" columnName="end_cause"/>
+    </rollback>
+  </changeSet>
+</databaseChangeLog>

@@ -1,0 +1,34 @@
+name: Notification SMTP receipt contract
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Actual STARTTLS notification receipts
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v6
+      with:
+        persist-credentials: false
+    - name: Set up JDK and Maven
+      uses: actions/setup-java@v5
+      with:
+        java-version: '21'
+        distribution: temurin
+        cache: maven
+    - name: Verify actual notification receipts and suppression
+      run: scripts/ci/run-notification-smtp-receipts.sh
+    - name: Upload SMTP contract report
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: notification-smtp-receipts
+        path: target/surefire-reports/TEST-*NotificationEmailSmtpContract.xml
+        if-no-files-found: error
+        retention-days: 7

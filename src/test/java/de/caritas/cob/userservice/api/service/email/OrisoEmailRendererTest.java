@@ -422,6 +422,20 @@ class OrisoEmailRendererTest {
   }
 
   @Test
+  void paintsTheLogoBoxInThePageColourSoABlockedImageShowsNoColouredBox() {
+    // Frank, 2026-10-09: with remote images blocked, clients draw their own coloured
+    // placeholder for the logo. The image background matches the page, so it blends in.
+    Map<String, String> values = brand();
+    values.put("loginUrl", "https://example.org/login");
+    values.put("expiryMinutes", "15");
+
+    String html = renderer.render("anmeldelink", OrisoEmailRenderer.Tone.DE_FORMAL, values).html();
+    String img = html.substring(html.indexOf("<img"), html.indexOf('>', html.indexOf("<img")) + 1);
+
+    assertThat(img).contains("background:#f2efef");
+  }
+
+  @Test
   void showsTheNameBesideADecorativeLogoSoAFailedImageRepeatsNothing() {
     // Frank, 2026-09-23: logo AND name. The name is text in the next cell, so the
     // logo is decorative: alt="" and never the platform name a second time.
@@ -434,10 +448,57 @@ class OrisoEmailRendererTest {
 
     assertThat(img)
         .contains(" alt=\"\"")
-        .contains("width=\"36\" height=\"36\"")
+        .contains("height=\"48\"")
+        .contains("width:auto;height:48px;max-width:none")
+        .doesNotContain("width=\"")
         .contains("border:0")
         .doesNotContain("Online-Beratung");
     assertThat(html.substring(html.indexOf("<img"))).contains(">Online-Beratung</td>");
+  }
+
+  @Test
+  void scalesKnownLogoShapesTo48PixelsWithoutSquashing() {
+    for (int[] dimensions :
+        List.of(new int[] {1, 2}, new int[] {1, 1}, new int[] {3, 1}, new int[] {6, 1})) {
+      Map<String, String> values = brand();
+      values.put("logoWidth", Integer.toString(dimensions[0]));
+      values.put("logoHeight", Integer.toString(dimensions[1]));
+      String html =
+          renderer.render("anmeldelink", OrisoEmailRenderer.Tone.DE_FORMAL, values).html();
+      int width = 48 * dimensions[0] / dimensions[1];
+      assertThat(html).contains("width=\"" + width + "\" height=\"48\"");
+      assertThat(html).contains("width:" + width + "px;height:48px;");
+      if (dimensions[0] > 3 * dimensions[1]) {
+        assertThat(html)
+            .contains("class=\"logo-cell logo-cell-wide\"")
+            .contains(
+                "class=\"sp logo-header logo-header-wide\"",
+                "class=\"logo-wordmark logo-wordmark-wide\"")
+            .contains(
+                ".logo-cell-wide{display:block !important;padding-right:0 !important;"
+                    + "padding-bottom:8px !important}",
+                ".logo-wordmark-wide{display:block !important}")
+            .doesNotContainPattern("\\.logo-wordmark[^{]*\\{[^}]*display:none")
+            .contains(">Online-Beratung</td>")
+            .contains("alt=\"Online-Beratung\"");
+      } else {
+        assertThat(html).doesNotContain("class=\"logo-cell logo-cell-wide\"");
+      }
+    }
+  }
+
+  @Test
+  void ignoresInvalidLogoDimensionsWithoutHidingTheName() {
+    for (String dimension : java.util.Arrays.asList(null, "0", "-1", "NaN", "Infinity", "broken")) {
+      Map<String, String> values = brand();
+      values.put("logoWidth", dimension);
+      values.put("logoHeight", "1");
+      String html =
+          renderer.render("anmeldelink", OrisoEmailRenderer.Tone.DE_FORMAL, values).html();
+      assertThat(html)
+          .contains("width:auto;height:48px;")
+          .doesNotContain("class=\"logo-cell logo-cell-wide\"");
+    }
   }
 
   @Test

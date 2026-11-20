@@ -150,7 +150,7 @@ class OpenApiContractGateTest(unittest.TestCase):
             workflow,
             re.compile(
                 r"repository: OpenResilienceInitiative/ORISO-AgencyService.*"
-                r"bbdc934477212020b8c43d8bf3cb28a30081156c",
+                r"c25826f5e247ce9e711206bda340beca0b91fdd7",
                 re.DOTALL,
             ),
         )
@@ -158,7 +158,7 @@ class OpenApiContractGateTest(unittest.TestCase):
             workflow,
             re.compile(
                 r"repository: OpenResilienceInitiative/ORISO-ConsultingTypeService.*"
-                r"fd06f72beab16a92e2d1f1c2b88acbb054254baf",
+                r"25e7068e6c587b12fab3aa02633749023c3ed071",
                 re.DOTALL,
             ),
         )
@@ -166,12 +166,15 @@ class OpenApiContractGateTest(unittest.TestCase):
             workflow,
             re.compile(
                 r"repository: OpenResilienceInitiative/ORISO-TenantService.*"
-                # Merged TenantPR303 includes the stored confirmation language consumed here.
-                r"6d7e2d1dcc640af1bd027131f1c217899ad2a70e",
+                # TenantService provider: TenantService#368 head (dev including #357 plus the
+                # featureGuestAccount* caps of UserService#1662).
+                r"b9e4036bf8924e49a0b033af1f85670dc4ca998a",
                 re.DOTALL,
             ),
         )
-        self.assertIn("|| 'pre-dev'", workflow)
+        self.assertIn("|| 'dev'", workflow)
+        self.assertIn("    - dev", workflow)
+        self.assertNotIn("pre-dev", workflow)
 
     def test_contract_gate_tests_are_executed_by_ci(self):
         # A gate assertion that never runs protects nothing. Without a job that
@@ -193,6 +196,91 @@ class OpenApiContractGateTest(unittest.TestCase):
             "teamAccessAllowed",
             provider["components"]["schemas"]["SessionDTO"]["properties"],
         )
+
+    def _run_provider_gate(self, temp, retired_text, accepted_text):
+        base_api = temp / "base" / "api"
+        base_api.mkdir(parents=True)
+        (base_api / "kept.yaml").write_text("openapi: 3.0.3\n")
+        (base_api / "gone.yaml").write_text("openapi: 3.0.3\n")
+        head = temp / "head"
+        head.mkdir()
+        (head / "kept.yaml").write_text("openapi: 3.0.3\n")
+
+        calls = temp / "oasdiff-calls"
+        fake_oasdiff = temp / "oasdiff"
+        fake_oasdiff.write_text(
+            "#!/usr/bin/env bash\n" f'echo "$*" >> "{calls}"\n'
+        )
+        fake_oasdiff.chmod(0o755)
+        retired = temp / "retired.txt"
+        retired.write_text(retired_text)
+        accepted = temp / "accepted.txt"
+        accepted.write_text(accepted_text)
+
+        env = os.environ.copy()
+        env["OASDIFF_BIN"] = str(fake_oasdiff)
+        env["RETIRED_PROVIDER_CONTRACTS"] = str(retired)
+        env["ACCEPTED_BREAKING_CHANGES"] = str(accepted)
+        result = subprocess.run(
+            [
+                ROOT / "scripts/contracts/verify-provider-source-compatibility.sh",
+                temp / "base",
+                head,
+            ],
+            cwd=ROOT,
+            env=env,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        return result, calls.read_text() if calls.exists() else ""
+
+    def test_provider_gate_fails_on_an_unlisted_removed_contract(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            result, _ = self._run_provider_gate(Path(temp_dir), "# none\n", "")
+
+        self.assertEqual(1, result.returncode)
+        self.assertIn("Provider contract was removed: gone.yaml", result.stderr)
+
+    def test_provider_gate_needs_a_reason_to_skip_a_removed_contract(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            result, _ = self._run_provider_gate(Path(temp_dir), "gone.yaml\n", "")
+
+        self.assertEqual(1, result.returncode)
+
+    def test_provider_gate_skips_a_retired_contract_and_passes_accepted_changes(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp = Path(temp_dir)
+            result, calls = self._run_provider_gate(
+                temp, "gone.yaml ADR-000 removed on purpose\n", "# none\n"
+            )
+
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertIn("retired on purpose: gone.yaml (ADR-000", result.stdout)
+        self.assertEqual(1, len(calls.splitlines()))
+        self.assertIn("kept.yaml", calls)
+        self.assertIn(f"--err-ignore {temp / 'accepted.txt'}", calls)
+        self.assertIn(f"--warn-ignore {temp / 'accepted.txt'}", calls)
+
+    def test_reviewed_exception_lists_give_a_reason_for_every_entry(self):
+        retired = (
+            ROOT / "scripts/contracts/retired-provider-contracts.txt"
+        ).read_text()
+        for line in retired.splitlines():
+            if line.strip() and not line.startswith("#"):
+                name, _, reason = line.partition(" ")
+                self.assertFalse((ROOT / "api" / name).exists(), name)
+                self.assertIn("ADR-", reason, line)
+
+        accepted = (
+            ROOT / "scripts/contracts/accepted-breaking-changes.txt"
+        ).read_text().splitlines()
+        for index, line in enumerate(accepted):
+            if line.strip() and not line.startswith("#"):
+                self.assertTrue(
+                    index > 0 and "ADR-" in accepted[index - 1],
+                    f"{line!r} needs a comment line with its ADR above it",
+                )
 
 
 if __name__ == "__main__":

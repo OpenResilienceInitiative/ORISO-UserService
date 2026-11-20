@@ -6,11 +6,13 @@ import static java.util.Objects.nonNull;
 
 import de.caritas.cob.userservice.api.adapters.web.dto.AgencyConsultantResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.AgencyTypeDTO;
+import de.caritas.cob.userservice.api.adapters.web.dto.ChangeConsultantTenantDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantAdminResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantAgencyResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantFilter;
 import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantSearchResultDTO;
+import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantTenantChangeResultDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateConsultantAgencyDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateConsultantDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.Sort;
@@ -23,9 +25,13 @@ import de.caritas.cob.userservice.api.admin.service.admin.AdminScope.Target;
 import de.caritas.cob.userservice.api.admin.service.agency.ConsultantAgencyAdminService;
 import de.caritas.cob.userservice.api.admin.service.consultant.ConsultantAdminFilterService;
 import de.caritas.cob.userservice.api.admin.service.consultant.ConsultantAdminService;
+import de.caritas.cob.userservice.api.admin.service.consultant.ConsultantTenantChangeService;
 import de.caritas.cob.userservice.api.admin.service.consultant.create.agencyrelation.ConsultantAgencyRelationCreatorService;
 import de.caritas.cob.userservice.api.admin.service.consultant.create.agencyrelation.CreateConsultantAgencyDTOInputAdapter;
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
+import de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHttpStatusException;
+import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
+import de.caritas.cob.userservice.api.exception.httpresponses.customheader.HttpStatusExceptionReason;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.ConsultantAgency;
@@ -41,6 +47,7 @@ import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -63,6 +70,11 @@ public class ConsultantAdminFacade {
   private final @NonNull ConsultantChatIdentityService consultantChatIdentityService;
 
   private final @NonNull AdminScope adminScope;
+  private final @NonNull de.caritas.cob.userservice.api.admin.service.admin
+          .AccountLoginStatusService
+      accountStatus;
+
+  private final @NonNull ConsultantTenantChangeService consultantTenantChangeService;
 
   @Value("${multitenancy.enabled}")
   private boolean multiTenancyEnabled;
@@ -75,7 +87,7 @@ public class ConsultantAdminFacade {
    */
   public ConsultantAdminResponseDTO findConsultant(String consultantId) {
     adminScope.assertMay(Target.counsellor(consultantId));
-    return this.consultantAdminService.findConsultantById(consultantId);
+    return withStatus(this.consultantAdminService.findConsultantById(consultantId));
   }
 
   /**
@@ -94,6 +106,8 @@ public class ConsultantAdminFacade {
         this.consultantAdminFilterService.findFilteredConsultants(
             page, perPage, consultantFilter, sort);
     retrieveAndMergeAgenciesToConsultants(filteredConsultants);
+    if (filteredConsultants != null)
+      accountStatus.appendConsultantStatuses(filteredConsultants.getEmbedded());
 
     return filteredConsultants;
   }
@@ -155,7 +169,8 @@ public class ConsultantAdminFacade {
   public ConsultantAdminResponseDTO updateConsultant(
       String consultantId, UpdateAdminConsultantDTO updateConsultantDTO) {
     adminScope.assertMay(Target.counsellor(consultantId));
-    return this.consultantAdminService.updateConsultant(consultantId, updateConsultantDTO);
+    return withStatus(
+        this.consultantAdminService.updateConsultant(consultantId, updateConsultantDTO));
   }
 
   /**
@@ -168,7 +183,7 @@ public class ConsultantAdminFacade {
   public ConsultantAdminResponseDTO repairConsultantChatIdentity(String consultantId) {
     adminScope.assertMay(Target.counsellor(consultantId));
     this.consultantChatIdentityService.provisionMissingChatIdentity(consultantId);
-    return this.consultantAdminService.findConsultantById(consultantId);
+    return withStatus(this.consultantAdminService.findConsultantById(consultantId));
   }
 
   /**
@@ -247,6 +262,43 @@ public class ConsultantAdminFacade {
   }
 
   /**
+   * Moves a consultant to another Träger (#1419). Platform admins only: the move crosses the
+   * boundary between two Träger, which no Träger admin may do.
+   *
+   * @param consultantId the consultant to move
+   * @param request the new Träger, its centres and the topics offered there
+   * @return the ids and counts of what the move did
+   */
+  public ConsultantTenantChangeResultDTO changeConsultantTenant(
+      String consultantId, ChangeConsultantTenantDTO request) {
+    if (!(adminScope.current() instanceof AdminScope.Platform)) {
+      throw new ForbiddenException("Only a platform admin can move a consultant to another Träger");
+    }
+    var agencies =
+        request.getAgencies().stream()
+            .filter(java.util.Objects::nonNull)
+            .collect(Collectors.toList());
+    if (agencies.isEmpty() || agencies.stream().anyMatch(agency -> agency.getAgencyId() == null)) {
+      throw new CustomValidationHttpStatusException(
+          HttpStatusExceptionReason.TENANT_CHANGE_AGENCIES_REQUIRED, HttpStatus.BAD_REQUEST);
+    }
+    var result =
+        consultantTenantChangeService.changeTenant(
+            consultantId,
+            request.getTenantId(),
+            agencies,
+            request.getTopicIds(),
+            authenticatedUser.getUserId());
+    return new ConsultantTenantChangeResultDTO()
+        .consultantId(result.consultantId())
+        .previousTenantId(result.previousTenantId())
+        .tenantId(result.tenantId())
+        .agencyIds(result.agencyIds())
+        .casesLeftWithPreviousTenant(result.casesLeftWithPreviousTenant())
+        .matrixAccessRevocationsQueued(result.matrixAccessRevocationsQueued());
+  }
+
+  /**
    * Changes the consultant flag is_team_consultant and assignments for agency type changes.
    *
    * @param agencyId the id of the changed agency
@@ -300,6 +352,11 @@ public class ConsultantAdminFacade {
     this.consultantAdminService.pauseConsultantDeletion(consultantId, reason, months, pausedBy);
   }
 
+  public void cancelConsultantDeletion(String consultantId) {
+    adminScope.assertMay(Target.counsellor(consultantId));
+    this.consultantAdminService.cancelConsultantDeletion(consultantId);
+  }
+
   /**
    * Retrieves all consultants of the agency with given id.
    *
@@ -309,7 +366,9 @@ public class ConsultantAdminFacade {
   public AgencyConsultantResponseDTO findConsultantsForAgency(String agencyId) {
     var parsedAgencyId = Long.valueOf(agencyId);
     adminScope.assertMay(Target.agencies(List.of(parsedAgencyId)));
-    return this.consultantAgencyAdminService.findConsultantsForAgency(parsedAgencyId);
+    var result = this.consultantAgencyAdminService.findConsultantsForAgency(parsedAgencyId);
+    if (result != null) accountStatus.appendConsultantStatuses(result.getEmbedded());
+    return result;
   }
 
   /**
@@ -438,5 +497,10 @@ public class ConsultantAdminFacade {
       log.warn("Consultant has no tenant assigned ", consultantId);
       throw new BadRequestException("Consultant has no tenant assigned");
     }
+  }
+
+  private ConsultantAdminResponseDTO withStatus(ConsultantAdminResponseDTO response) {
+    if (response != null) accountStatus.appendConsultantStatuses(List.of(response));
+    return response;
   }
 }

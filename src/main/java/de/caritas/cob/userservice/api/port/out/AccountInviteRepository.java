@@ -1,5 +1,6 @@
 package de.caritas.cob.userservice.api.port.out;
 
+import de.caritas.cob.userservice.api.admin.service.search.InviteSearchSpecification;
 import de.caritas.cob.userservice.api.model.AccountInvite;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteProvisioningStatus;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInvitePurpose;
@@ -16,12 +17,25 @@ import java.util.Optional;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.JpaSpecificationExecutor;
 import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
+import org.springframework.transaction.annotation.Transactional;
 
-public interface AccountInviteRepository extends JpaRepository<AccountInvite, Long> {
+public interface AccountInviteRepository
+    extends JpaRepository<AccountInvite, Long>, JpaSpecificationExecutor<AccountInvite> {
+
+  boolean existsByQueuedTemplateIdAndStatus(Long templateId, AccountInviteStatus status);
+
+  /** Released or closed invites keep their immutable delivery history, not queue payload. */
+  @Modifying(flushAutomatically = true, clearAutomatically = true)
+  @Query(
+      "UPDATE AccountInvite i SET i.queuedTemplateId = NULL"
+          + " WHERE i.queuedTemplateId = :templateId AND i.status <> :waiting")
+  int clearReleasedTemplateReferences(
+      @Param("templateId") Long templateId, @Param("waiting") AccountInviteStatus waiting);
 
   @Lock(LockModeType.PESSIMISTIC_WRITE)
   Optional<AccountInvite> findByTokenHash(String tokenHash);
@@ -153,7 +167,20 @@ public interface AccountInviteRepository extends JpaRepository<AccountInvite, Lo
       @Param("boundUserId") String boundUserId,
       @Param("now") LocalDateTime now);
 
-  /** Waits for a running accept, which holds this row lock while it creates the account. */
+  /**
+   * Re-reads one invite row under the same PESSIMISTIC_WRITE lock as {@link
+   * #findByTokenHash(String)}. Two callers need it: an accept that waits for a running accept,
+   * which holds this row lock while it creates the account — and the read half of a targeted-field
+   * update (#1008 review).
+   *
+   * <p>The public onboarding flows deliberately drop out of their transaction for every remote call
+   * (Agency/Topic/Keycloak/DPA), so the invite they carry across such a call is a DETACHED
+   * snapshot. Saving that snapshot afterwards would merge every column as it looked BEFORE the call
+   * — and because {@link AccountInvite} carries neither {@code @Version} nor
+   * {@code @DynamicUpdate}, a concurrent update of an unrelated field would be silently overwritten
+   * (lost update). Writes therefore re-read the row here, inside a short transaction, and set only
+   * the fields they own.
+   */
   @Lock(LockModeType.PESSIMISTIC_WRITE)
   @Query("SELECT i FROM AccountInvite i WHERE i.id = :id")
   Optional<AccountInvite> findByIdForUpdate(@Param("id") Long id);
@@ -182,6 +209,53 @@ public interface AccountInviteRepository extends JpaRepository<AccountInvite, Lo
       @Param("id") Long id,
       @Param("revocable") Collection<AccountInviteStatus> revocable,
       @Param("revokedByUserId") String revokedByUserId,
+      @Param("now") LocalDateTime now);
+
+  /**
+   * Marks a settled invite as deleted by an admin (ORISO-Admin#1522); 0 when it is already marked
+   * or no longer settled. Only the mark is written, so a concurrent writer's fields stay intact.
+   */
+  @Modifying(clearAutomatically = true, flushAutomatically = true)
+  @Query(
+      "UPDATE AccountInvite i SET i.deletionRequestedAt = :now,"
+          + " i.deletionRequestedByUserId = :requestedByUserId, i.updateDate = :now"
+          + " WHERE i.id = :id AND i.deletionRequestedAt IS NULL AND i.status IN :settled")
+  int markForDeletion(
+      @Param("id") Long id,
+      @Param("settled") Collection<AccountInviteStatus> settled,
+      @Param("requestedByUserId") String requestedByUserId,
+      @Param("now") LocalDateTime now);
+
+  /**
+   * Revokes every open invite of a deleted Träger ({@code tenantId}) or Beratungsstelle ({@code
+   * agencyId}); the other argument is null (ORISO-Admin#1522). Frees each address like a manual
+   * revoke. A setup link through which an account is being set up right now is left alone.
+   */
+  @Transactional
+  @Modifying(clearAutomatically = true, flushAutomatically = true)
+  @Query(
+      "UPDATE AccountInvite i"
+          + " SET i.status ="
+          + " de.caritas.cob.userservice.api.service.accountinvite.AccountInviteStatus.REVOKED,"
+          + " i.activeRecipientKey = NULL,"
+          + " i.activeSetupIdentityKey = NULL,"
+          + " i.initialPasswordVerifier = NULL,"
+          + " i.revokedAt = :now,"
+          + " i.provisioningFailureReason = :reason,"
+          + " i.updateDate = :now"
+          + " WHERE (:tenantId IS NULL OR i.tenantId = :tenantId)"
+          + " AND (:agencyId IS NULL OR i.agencyId = :agencyId)"
+          + " AND (:tenantId IS NOT NULL OR :agencyId IS NOT NULL)"
+          + " AND i.status IN :open"
+          + " AND (i.purpose <>"
+          + " de.caritas.cob.userservice.api.service.accountinvite.AccountInvitePurpose.EXISTING_ACCOUNT_SETUP"
+          + " OR i.provisioningStatus <>"
+          + " de.caritas.cob.userservice.api.service.accountinvite.AccountInviteProvisioningStatus.IN_PROGRESS)")
+  int revokeOpenInvitesOfUnit(
+      @Param("tenantId") Long tenantId,
+      @Param("agencyId") Long agencyId,
+      @Param("open") Collection<AccountInviteStatus> open,
+      @Param("reason") String reason,
       @Param("now") LocalDateTime now);
 
   /**
@@ -249,10 +323,11 @@ public interface AccountInviteRepository extends JpaRepository<AccountInvite, Lo
    *       case-preserving, and the two databases involved disagree on the default: MariaDB's {@code
    *       utf8mb4_*_ci} collation compares case-insensitively, H2 (tests) does not. The guard must
    *       not depend on which one it runs against.
-   *   <li>The expiry clause reflects that expiry is materialized lazily — {@code EXPIRED} is only
-   *       stamped when someone opens the link (see {@code AccountInviteService#acceptInvite}), so a
-   *       never-opened invite stays {@code EMAIL_SENT} forever. Without the date check a lapsed
-   *       invite would permanently block its address, leaving the admin no way to re-invite.
+   *   <li>The expiry clause reflects that expiry is materialized with a delay — {@code EXPIRED} is
+   *       stamped when someone opens the link or by the periodic expiry sweep ({@code
+   *       AccountInviteService#expireElapsedInvites}), so a lapsed invite can still read {@code
+   *       EMAIL_SENT} for a few minutes. Without the date check it would block its address until
+   *       the next sweep.
    * </ul>
    *
    * <p>The caller passes the non-terminal statuses; terminal ones ({@code ACCEPTED}, {@code
@@ -307,54 +382,30 @@ public interface AccountInviteRepository extends JpaRepository<AccountInvite, Lo
       @Param("statuses") Collection<AccountInviteStatus> statuses,
       @Param("now") LocalDateTime now);
 
-  /**
-   * The {@code search} match against recipient email/first/last name and the {@code searchTenantId}
-   * exact tenant-ID match are two independent legs of the same query-box term
-   * (ORISO-UserService#479): the service lower-cases and trims the raw query once for {@code
-   * search}, and additionally parses it as a tenant ID for {@code searchTenantId} when it is purely
-   * numeric. A blank/absent query leaves both null, which short-circuits this clause to true and
-   * preserves the existing result set.
-   */
-  @Query(
-      "SELECT i FROM AccountInvite i"
-          + " WHERE (:tenantId IS NULL OR i.tenantId = :tenantId)"
-          + " AND (:targetRole IS NULL OR i.targetRole = :targetRole)"
-          + " AND (:status IS NULL OR i.status = :status)"
-          + " AND (:search IS NULL"
-          + "      OR LOWER(i.recipientEmail) LIKE CONCAT('%', :search, '%')"
-          + "      OR LOWER(i.firstName) LIKE CONCAT('%', :search, '%')"
-          + "      OR LOWER(i.lastName) LIKE CONCAT('%', :search, '%')"
-          + "      OR (:searchTenantId IS NOT NULL AND i.tenantId = :searchTenantId))"
-          + " ORDER BY i.createDate DESC")
-  Page<AccountInvite> findAllByFilters(
-      @Param("tenantId") Long tenantId,
-      @Param("targetRole") AccountInviteTargetRole targetRole,
-      @Param("status") AccountInviteStatus status,
-      @Param("search") String search,
-      @Param("searchTenantId") Long searchTenantId,
-      Pageable pageable);
+  /** Compatibility entry point; every word is matched before paging. */
+  default Page<AccountInvite> findAllByFilters(
+      Long tenantId,
+      AccountInviteTargetRole targetRole,
+      AccountInviteStatus status,
+      String search,
+      Long searchTenantId,
+      Pageable pageable) {
+    return findAll(
+        InviteSearchSpecification.matching(tenantId, targetRole, status, search, null), pageable);
+  }
 
-  /** {@link #findAllByFilters} narrowed to the given agencies, which are never empty. */
-  @Query(
-      "SELECT i FROM AccountInvite i"
-          + " WHERE i.agencyId IN :agencyIds"
-          + " AND (:tenantId IS NULL OR i.tenantId = :tenantId)"
-          + " AND (:targetRole IS NULL OR i.targetRole = :targetRole)"
-          + " AND (:status IS NULL OR i.status = :status)"
-          + " AND (:search IS NULL"
-          + "      OR LOWER(i.recipientEmail) LIKE CONCAT('%', :search, '%')"
-          + "      OR LOWER(i.firstName) LIKE CONCAT('%', :search, '%')"
-          + "      OR LOWER(i.lastName) LIKE CONCAT('%', :search, '%')"
-          + "      OR (:searchTenantId IS NOT NULL AND i.tenantId = :searchTenantId))"
-          + " ORDER BY i.createDate DESC")
-  Page<AccountInvite> findAllByFiltersWithinAgencies(
-      @Param("tenantId") Long tenantId,
-      @Param("targetRole") AccountInviteTargetRole targetRole,
-      @Param("status") AccountInviteStatus status,
-      @Param("search") String search,
-      @Param("searchTenantId") Long searchTenantId,
-      @Param("agencyIds") Collection<Long> agencyIds,
-      Pageable pageable);
+  default Page<AccountInvite> findAllByFiltersWithinAgencies(
+      Long tenantId,
+      AccountInviteTargetRole targetRole,
+      AccountInviteStatus status,
+      String search,
+      Long searchTenantId,
+      Collection<Long> agencyIds,
+      Pageable pageable) {
+    return findAll(
+        InviteSearchSpecification.matching(tenantId, targetRole, status, search, agencyIds),
+        pageable);
+  }
 
   /** Null {@code tenantId} matches any tenant; null {@code excludedId} excludes nothing. */
   @Query(
@@ -535,17 +586,55 @@ public interface AccountInviteRepository extends JpaRepository<AccountInvite, Lo
       @Param("statuses") Collection<AccountInviteStatus> statuses,
       @Param("now") LocalDateTime now);
 
-  /** Elapsed, unaccepted invites that may still hold a reserved Träger or agency number. */
+  /**
+   * Ids of elapsed invites the expiry sweep settles, after {@code afterId} in id order:
+   *
+   * <ul>
+   *   <li>every sent invite whose link has lapsed — not only those holding a reserved Träger or
+   *       agency number (ORISO-Admin#1522), else a never-opened counsellor invite is listed as open
+   *       forever;
+   *   <li>a draft only while it holds a number, as before: sending a draft re-arms its expiry, so
+   *       an old number-free draft stays sendable.
+   * </ul>
+   *
+   * The id cursor lets the sweep page past a row it could not expire this time.
+   */
   @Query(
-      "SELECT i FROM AccountInvite i WHERE i.status IN :statuses"
-          + " AND i.expiresAt IS NOT NULL AND i.expiresAt <= :now"
-          + " AND (i.tenantIdReservationToken IS NOT NULL OR i.agencyIdAllocationMode IN :modes)"
-          + " ORDER BY i.expiresAt ASC")
-  List<AccountInvite> findElapsedHoldingANumber(
-      @Param("statuses") Collection<AccountInviteStatus> statuses,
+      "SELECT i.id FROM AccountInvite i WHERE i.purpose = :purpose"
+          + " AND (i.status = :sent OR (i.status = :draft"
+          + "      AND (i.tenantIdReservationToken IS NOT NULL"
+          + "           OR i.agencyIdAllocationMode IN :modes)))"
+          + " AND i.expiresAt IS NOT NULL AND i.expiresAt <= :now AND i.id > :afterId"
+          + " ORDER BY i.id ASC")
+  List<Long> findElapsedInviteIdsToExpire(
+      @Param("purpose") AccountInvitePurpose purpose,
+      @Param("sent") AccountInviteStatus sent,
+      @Param("draft") AccountInviteStatus draft,
       @Param("modes") Collection<IdAllocationMode> modes,
       @Param("now") LocalDateTime now,
+      @Param("afterId") Long afterId,
       Pageable pageable);
+
+  /**
+   * Settled invites whose settling (revoke, replacement, recorded expiry) is older than {@code
+   * cutoff}; for the nightly purge (ORISO-Admin#1522). Oldest first.
+   */
+  @Query(
+      "SELECT i.id FROM AccountInvite i WHERE i.status IN :settled"
+          + " AND COALESCE(i.revokedAt, i.supersededAt, i.updateDate, i.createDate) < :cutoff"
+          + " ORDER BY i.id ASC")
+  List<Long> findSettledBefore(
+      @Param("settled") Collection<AccountInviteStatus> settled,
+      @Param("cutoff") LocalDateTime cutoff,
+      Pageable pageable);
+
+  /** Deletes the given invites if they are still settled; the mail deliveries must be gone. */
+  @Transactional
+  @Modifying(clearAutomatically = true, flushAutomatically = true)
+  @Query("DELETE FROM AccountInvite i WHERE i.id IN :ids AND i.status IN :settled")
+  int deleteSettledByIdIn(
+      @Param("ids") Collection<Long> ids,
+      @Param("settled") Collection<AccountInviteStatus> settled);
 
   /** The elapsed address-holding rows {@link #expireElapsedRecipientClaims} is about to expire. */
   @Query(
@@ -591,4 +680,66 @@ public interface AccountInviteRepository extends JpaRepository<AccountInvite, Lo
       @Param("tenantId") Long tenantId,
       @Param("targetRole") AccountInviteTargetRole targetRole,
       @Param("signedAt") LocalDateTime signedAt);
+
+  // The same current account/tenant proof must hold when the candidate is selected and when the
+  // timestamp is written, as the authoritative owner read happens between those operations.
+  String DPA_RECONCILIATION_SCOPE =
+      """
+      i.status = ACCEPTED AND i.targetRole = TENANT_ADMIN
+      AND i.tenantId > 0 AND i.dpaSignedAt IS NULL
+      AND (i.acceptedByUserId IS NULL OR i.provisionedUserId IS NULL
+           OR i.acceptedByUserId = i.provisionedUserId)
+      AND EXISTS (
+        SELECT a.id FROM Admin a
+        WHERE a.id = COALESCE(i.provisionedUserId, i.acceptedByUserId)
+          AND a.tenantId = i.tenantId AND a.type = TENANT)
+      """;
+
+  interface DpaReconciliationCandidate {
+    Long getInviteId();
+
+    Long getTenantId();
+
+    String getActorId();
+  }
+
+  @Query("SELECT MAX(i.id) FROM AccountInvite i")
+  Optional<Long> findDpaReconciliationUpperBound();
+
+  @Query(
+      """
+      SELECT i.id AS inviteId, i.tenantId AS tenantId,
+             COALESCE(i.provisionedUserId, i.acceptedByUserId) AS actorId
+      FROM AccountInvite i WHERE i.id > :afterId AND i.id <= :throughId AND
+      """
+          + DPA_RECONCILIATION_SCOPE
+          + " ORDER BY i.id")
+  List<DpaReconciliationCandidate> findDpaReconciliationCandidates(
+      @Param("afterId") Long afterId, @Param("throughId") Long throughId, Pageable pageable);
+
+  @Transactional
+  @Modifying(clearAutomatically = true, flushAutomatically = true)
+  @Query(
+      """
+      UPDATE AccountInvite i SET i.dpaSignedAt = :signedAt
+      WHERE i.id = :inviteId AND i.tenantId = :tenantId
+        AND COALESCE(i.provisionedUserId, i.acceptedByUserId) = :actorId AND
+      """
+          + DPA_RECONCILIATION_SCOPE)
+  int reconcileDpaSigned(
+      @Param("inviteId") Long inviteId,
+      @Param("tenantId") Long tenantId,
+      @Param("actorId") String actorId,
+      @Param("signedAt") LocalDateTime signedAt);
+
+  /** Invitations of a Träger that can still be accepted, of every target role (#1466). */
+  @Query(
+      "SELECT COUNT(i) FROM AccountInvite i"
+          + " WHERE i.tenantId = :tenantId"
+          + " AND i.status IN :statuses"
+          + " AND (i.expiresAt IS NULL OR i.expiresAt > :now)")
+  long countOpenInvitesOfTenant(
+      @Param("tenantId") Long tenantId,
+      @Param("statuses") Collection<AccountInviteStatus> statuses,
+      @Param("now") LocalDateTime now);
 }

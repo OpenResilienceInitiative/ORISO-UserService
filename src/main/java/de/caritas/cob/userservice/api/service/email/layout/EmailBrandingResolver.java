@@ -179,12 +179,16 @@ public class EmailBrandingResolver {
     String brandName =
         tenant != null && !isBlank(tenant.getName()) ? tenant.getName() : configuredPlatformName;
 
+    String logoUrl = resolveLogoUrl(tenant, theming);
+    EmailLogoDimensions dimensions = resolveLogoDimensions(tenant, theming, logoUrl);
     return new EmailBranding(
         brandName,
-        resolveLogoUrl(tenant, theming),
+        logoUrl,
         resolveAccentColor(tenant),
         resolveFooterUrl(tenant, "/impressum"),
-        resolveFooterUrl(tenant, "/datenschutz"));
+        resolveFooterUrl(tenant, "/datenschutz"),
+        dimensions == null ? null : dimensions.width(),
+        dimensions == null ? null : dimensions.height());
   }
 
   /** Notification links must belong to the exact existing recipient tenant. */
@@ -205,12 +209,16 @@ public class EmailBrandingResolver {
     }
     Theming theming = tenant.getTheming();
     String brandName = !isBlank(tenant.getName()) ? tenant.getName() : configuredPlatformName;
+    String logoUrl = resolveLogoUrl(tenant, theming);
+    EmailLogoDimensions dimensions = resolveLogoDimensions(tenant, theming, logoUrl);
     return new EmailBranding(
         brandName,
-        resolveLogoUrl(tenant, theming),
+        logoUrl,
         resolveAccentColor(tenant),
         expected + "/impressum",
-        expected + "/datenschutz");
+        expected + "/datenschutz",
+        dimensions == null ? null : dimensions.width(),
+        dimensions == null ? null : dimensions.height());
   }
 
   private static String requireBaseUrl(String value) {
@@ -252,6 +260,22 @@ public class EmailBrandingResolver {
       }
     }
     return firstPartyLogo(platformLogoUrl);
+  }
+
+  private EmailLogoDimensions resolveLogoDimensions(
+      RestrictedTenantDTO tenant, Theming theming, String logoUrl) {
+    if (tenant == null
+        || theming == null
+        || logoUrl == null
+        || firstPartyLogo(theming.getLogo(), theming.getAssociationLogo()) != null) return null;
+    String baseUrl = firstAbsoluteUrl(applicationBaseUrl);
+    if (baseUrl == null
+        || tenant.getId() == null
+        || !logoUrl.equals(baseUrl + "/service/tenant/public/branding/" + tenant.getId() + "/logo"))
+      return null;
+    // Match the endpoint exactly: non-null logo takes precedence, even when invalid.
+    return EmailLogoDimensions.read(
+        theming.getLogo() != null ? theming.getLogo() : theming.getAssociationLogo());
   }
 
   private boolean isStoredImage(String value) {

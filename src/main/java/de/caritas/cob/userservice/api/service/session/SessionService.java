@@ -39,6 +39,7 @@ import de.caritas.cob.userservice.api.port.out.SessionSupervisorRepository;
 import de.caritas.cob.userservice.api.service.ConsultantService;
 import de.caritas.cob.userservice.api.service.LogService;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
+import de.caritas.cob.userservice.api.service.chat.MembersOnlyChatAccess;
 import de.caritas.cob.userservice.api.service.user.UserService;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
 import de.caritas.cob.userservice.consultingtypeservice.generated.web.model.ExtendedConsultingTypeResponseDTO;
@@ -81,6 +82,11 @@ public class SessionService {
   private final @Nullable ConsultantSessionTopicEnrichmentService sessionTopicEnrichmentService;
   private final @NonNull SessionSupervisorRepository sessionSupervisorRepository;
   private final @NonNull SessionSupervisionMarkerService supervisionMarkerService;
+  private final @NonNull de.caritas.cob.userservice.api.service.enquiry
+          .EnquiryRejectionPendingReadAccess
+      rejectionReadAccess;
+  private final @NonNull SessionOwnershipService sessionOwnershipService;
+  private final @NonNull MembersOnlyChatAccess membersOnlyChatAccess;
 
   @Value("${feature.topics.enabled}")
   private boolean topicsFeatureEnabled;
@@ -117,13 +123,51 @@ public class SessionService {
    * @return the authorized {@link Session}
    */
   public Session assertUserHasAccess(Long sessionId, AuthenticatedUser authenticatedUser) {
-    var session =
-        getSession(sessionId)
-            .orElseThrow(() -> new NotFoundException("Session with id %s not found.", sessionId));
     var roles = Optional.ofNullable(authenticatedUser.getRoles()).orElse(emptySet());
+    var visible = getSession(sessionId);
+    if (visible.isEmpty()) {
+      // A colleague admitted from another Träger is a participant of a members-only chat whose
+      // session stays in the creator's tenant: participation alone opens it. Fail closed for
+      // everyone else.
+      return participantSessionAcrossTenants(sessionId, authenticatedUser.getUserId(), roles)
+          .orElseThrow(() -> new NotFoundException("Session with id %s not found.", sessionId));
+    }
+    var session = visible.get();
 
     checkUserPermissionForSession(session, authenticatedUser.getUserId(), roles);
     return session;
+  }
+
+  /** Session-data edits by an asker also support the anonymous live-chat owner. */
+  public Session assertAskerHasAccess(Long sessionId, AuthenticatedUser authenticatedUser) {
+    Session session =
+        getSession(sessionId)
+            .orElseThrow(() -> new NotFoundException("Session with id %s not found.", sessionId));
+    if (session.getUser() == null || authenticatedUser.getUserId() == null) {
+      throw new ForbiddenException("The session has no accessible asker owner");
+    }
+    var roles = Optional.ofNullable(authenticatedUser.getRoles()).orElse(emptySet());
+    checkAskerPermissionForSession(session, authenticatedUser.getUserId(), roles);
+    return session;
+  }
+
+  private Optional<Session> participantSessionAcrossTenants(
+      Long sessionId, String userId, Set<String> roles) {
+    if (!roles.contains(UserRole.CONSULTANT.getValue()) || userId == null) {
+      return Optional.empty();
+    }
+    return consultantService
+        .getConsultant(userId)
+        .flatMap(consultant -> participantSessionAcrossTenants(sessionId, consultant));
+  }
+
+  /**
+   * The session of a members-only chat, loaded across Träger, when the consultant is one of its
+   * participants. Fail closed: everyone else gets nothing.
+   */
+  private Optional<Session> participantSessionAcrossTenants(Long sessionId, Consultant consultant) {
+    return TenantContext.supplyAcrossTenants(() -> sessionRepository.findById(sessionId))
+        .filter(session -> membersOnlyChatAccess.admits(session, consultant));
   }
 
   /**
@@ -147,11 +191,20 @@ public class SessionService {
    * @param consultant the consultant
    * @param status the status of the session
    */
-  public void updateConsultantAndStatusForSession(
+  public SessionOwnershipService.OwnershipChange updateConsultantAndStatusForSession(
       Session session, Consultant consultant, SessionStatus status) {
-    session.setConsultant(consultant);
-    session.setStatus(status);
-    saveSession(session);
+    stampConversationTypeIfAbsent(session);
+    return sessionOwnershipService.updateOwnerAndStatus(session, consultant, status);
+  }
+
+  public boolean compensateConsultantAssignment(
+      Long sessionId,
+      SessionOwnershipService.OwnershipChange assignment,
+      Consultant previousConsultant,
+      SessionStatus previousStatus,
+      boolean clearDepartment) {
+    return sessionOwnershipService.compensateOwnerChange(
+        sessionId, assignment, previousConsultant, previousStatus, nowInUtc(), clearDepartment);
   }
 
   /**
@@ -161,6 +214,8 @@ public class SessionService {
    * @param userId Keycloak/MariaDB user ID
    * @return {@link List} of {@link UserSessionResponseDTO}
    */
+  // #2175: the asker alias reads the lazy sessionData while mapping.
+  @Transactional(readOnly = true)
   public List<UserSessionResponseDTO> getSessionsForUserId(String userId) {
     List<UserSessionResponseDTO> sessionResponseDTOs = new ArrayList<>();
     List<Session> sessions = sessionRepository.findByUserUserId(userId);
@@ -281,6 +336,30 @@ public class SessionService {
     return consultingTypeId;
   }
 
+  /** Finalizes only the still-current enquiry after encrypted Matrix event readback. */
+  @Transactional
+  public Session finalizeEnquiry(Session expected, String language, String matrixRoomId) {
+    var current =
+        sessionRepository
+            .findByIdForUpdate(expected.getId())
+            .orElseThrow(() -> new NotFoundException("Session unavailable"));
+    if (current.getStatus() == SessionStatus.REJECTED
+        || current.getEnquiryMessageDate() != null
+        || !java.util.Objects.equals(current.getTenantId(), expected.getTenantId())
+        || !java.util.Objects.equals(current.getAgencyId(), expected.getAgencyId())
+        || !java.util.Objects.equals(current.getUser().getUserId(), expected.getUser().getUserId())
+        || !java.util.Objects.equals(current.getMatrixRoomId(), expected.getMatrixRoomId())) {
+      throw new de.caritas.cob.userservice.api.exception.httpresponses.ConflictException(
+          "Enquiry is no longer available for finalization");
+    }
+    current.setMatrixRoomId(matrixRoomId);
+    current.setStatus(
+        current.getConsultant() == null ? SessionStatus.NEW : SessionStatus.IN_PROGRESS);
+    current.setEnquiryMessageDate(nowInUtc());
+    if (language != null) current.setLanguageCode(LanguageCode.getByCode(language));
+    return saveSession(current);
+  }
+
   /**
    * Save a {@link Session} to the database.
    *
@@ -288,6 +367,11 @@ public class SessionService {
    * @return the {@link Session}
    */
   public Session saveSession(Session session) {
+    stampConversationTypeIfAbsent(session);
+    return sessionRepository.save(session);
+  }
+
+  private void stampConversationTypeIfAbsent(Session session) {
     if (session.getConversationType() == null) {
       /* ADR-006 addendum 2026-09-04: `teamSession` is NOT a modality. It also marks a
        * "Team-Beratungsstelle" 1:1 case (every counsellor of the agency may see it), so deriving
@@ -299,7 +383,6 @@ public class SessionService {
               ? ConversationType.LIVE_CHAT
               : ConversationType.AGENCY_COUNSELLING);
     }
-    return sessionRepository.save(session);
   }
 
   /**
@@ -370,7 +453,7 @@ public class SessionService {
       }
     }
 
-    return mapSessionsToConsultantSessionDto(sessions);
+    return mapSessionsToConsultantSessionDto(withoutExcluded(sessions, consultant));
   }
 
   /**
@@ -496,7 +579,20 @@ public class SessionService {
       }
     }
 
-    return allSessions;
+    return withoutExcluded(allSessions, consultant);
+  }
+
+  /**
+   * Leaves out the sessions of members-only chats the consultant does not take part in, whatever
+   * else lists them (assignment, supervision row).
+   */
+  private List<Session> withoutExcluded(List<Session> sessions, Consultant consultant) {
+    var excluded = membersOnlyChatAccess.excludedSessionIds(sessions, consultant);
+    return excluded.isEmpty()
+        ? sessions
+        : sessions.stream()
+            .filter(session -> !excluded.contains(session.getId()))
+            .collect(Collectors.toList());
   }
 
   private List<UserSessionResponseDTO> convertToUserSessionResponseDTO(
@@ -507,8 +603,10 @@ public class SessionService {
   }
 
   private UserSessionResponseDTO buildUserSessionDTO(Session session, List<AgencyDTO> agencies) {
+    var mapper = new SessionMapper();
     return new UserSessionResponseDTO()
-        .session(new SessionMapper().convertToSessionDTO(session))
+        .session(mapper.convertToSessionDTO(session))
+        .user(mapper.toOwnSessionAlias(session))
         .agency(
             agencies.stream()
                 .filter(agency -> agency.getId().longValue() == session.getAgencyId().longValue())
@@ -549,6 +647,8 @@ public class SessionService {
    * @param roles the roles of the given user
    * @return {@link UserSessionResponseDTO}
    */
+  // #2175: the asker alias reads the lazy sessionData while mapping.
+  @Transactional(readOnly = true)
   public List<UserSessionResponseDTO> getSessionsByUserAndRoomIds(
       String userId, Set<String> matrixRoomIds, Set<String> roles) {
     checkForAskerRoles(roles);
@@ -566,6 +666,8 @@ public class SessionService {
    * @param roles the roles of the given user
    * @return {@link UserSessionResponseDTO}
    */
+  // #2175: the asker alias reads the lazy sessionData while mapping.
+  @Transactional(readOnly = true)
   public List<UserSessionResponseDTO> getSessionsByUserAndSessionIds(
       String userId, Set<Long> sessionIds, Set<String> roles) {
     checkForAskerRoles(roles);
@@ -674,6 +776,29 @@ public class SessionService {
   }
 
   /**
+   * The anonymous Live Chat enquiry with this id, if the anonymous queue shows it to the
+   * consultant: same topic-based, cross-tenant visibility as {@link
+   * #getVisibleAnonymousLiveChatEnquiriesByIds}, returned as the entity.
+   */
+  @Transactional(readOnly = true)
+  public Optional<Session> findVisibleAnonymousLiveChatEnquiry(
+      Consultant consultant, Long sessionId) {
+    var topicIds = consultantTopicRepository.findTopicIdsByConsultantId(consultant.getId());
+    if (topicIds == null || topicIds.isEmpty()) {
+      return Optional.empty();
+    }
+    return TenantContext.supplyAcrossTenants(
+            () ->
+                sessionRepository.findVisibleAnonymousLiveChatEnquiriesForConsultantByIds(
+                    Set.of(sessionId),
+                    new HashSet<>(topicIds),
+                    SessionStatus.NEW,
+                    RegistrationType.ANONYMOUS))
+        .stream()
+        .findFirst();
+  }
+
+  /**
    * Loads sessions the consultant is <b>directly assigned to</b> by id, bypassing the tenant
    * filter.
    *
@@ -682,9 +807,9 @@ public class SessionService {
    * to the accepted conversation, but {@link #getSessionsByIds} is tenant-filtered and no longer
    * matches the anonymous-NEW fallback above, so the post-accept read returns 204 and the accepted
    * chat never opens. This scoped fallback resolves such a session across tenants, but only when
-   * the consultant is its directly assigned advisor ({@link Session#isAdvisedBy(Consultant)}) — it
-   * never widens access by agency or topic, and it does not change the session's tenant ownership
-   * (the asker keeps seeing their own chat).
+   * the consultant is its directly assigned advisor ({@link Session#isAdvisedBy(Consultant)}) or a
+   * participant of the members-only chat it belongs to — it never widens access by agency or topic,
+   * and it does not change the session's tenant ownership (the asker keeps seeing their own chat).
    */
   @Transactional(readOnly = true)
   public List<ConsultantSessionResponseDTO> getDirectlyAssignedSessionsByIdsCrossTenant(
@@ -696,7 +821,11 @@ public class SessionService {
         TenantContext.supplyAcrossTenants(
             () ->
                 StreamSupport.stream(sessionRepository.findAllById(sessionIds).spliterator(), false)
-                    .filter(session -> session.isAdvisedBy(consultant))
+                    .filter(
+                        session ->
+                            session.isAdvisedBy(consultant)
+                                || membersOnlyChatAccess.admits(session, consultant))
+                    .filter(session -> !membersOnlyChatAccess.excludes(session, consultant))
                     .collect(Collectors.toList()));
     return mapSessionsToConsultantSessionDto(sessions);
   }
@@ -787,9 +916,15 @@ public class SessionService {
   }
 
   private void checkConsultantAssignment(Consultant consultant, Session session) {
+    membersOnlyChatAccess.requireAccess(session, consultant);
+    if (session.getStatus() == SessionStatus.REJECTED) {
+      if (rejectionReadAccess.canRead(session, consultant)) return;
+      throw new ForbiddenException("No current access to rejected enquiry");
+    }
     if (session.isAdvisedBy(consultant)
         || isSupervisor(consultant, session)
         || isAllowedToAdvise(consultant, session)
+        || isMemberOfGroupChat(consultant, session)
         || isAllowedToAdviseByTopic(consultant, session)
         || isAnonymousEnquiryAndAllowedToAdviseConsultingType(consultant, session)) {
       return;
@@ -804,6 +939,17 @@ public class SessionService {
         .findBySessionIdAndSupervisorConsultantIdAndIsActiveTrue(
             session.getId(), consultant.getId())
         .isPresent();
+  }
+
+  /**
+   * A member of the group chat of this session. A members-only chat's session is no team session,
+   * so membership is what opens it to a colleague who is not its creator; {@link
+   * MembersOnlyChatAccess} has already refused everyone who is not a member.
+   */
+  private boolean isMemberOfGroupChat(Consultant consultant, Session session) {
+    return session.getId() != null
+        && groupChatParticipantRepository.existsByChatIdAndConsultantId(
+            session.getId(), consultant.getId());
   }
 
   private boolean isAllowedToAdvise(Consultant consultant, Session session) {
@@ -849,12 +995,21 @@ public class SessionService {
    * @param consultant the calling consultant
    * @return {@link ConsultantSessionDTO} entity for the specific session
    */
+  @Transactional(readOnly = true)
   public ConsultantSessionDTO fetchSessionForConsultant(
       @NonNull Long sessionId, @NonNull Consultant consultant) {
 
-    var session =
-        getSession(sessionId)
-            .orElseThrow(() -> new NotFoundException("Session with id %s not found.", sessionId));
+    var visible = getSession(sessionId);
+    if (visible.isEmpty()) {
+      // A participant admitted from another Traeger: participation alone opens the case.
+      var admitted = participantSessionAcrossTenants(sessionId, consultant);
+      if (admitted.isPresent()) {
+        return TenantContext.supplyAcrossTenants(
+            () -> toConsultantSessionDTO(admitted.get(), consultant));
+      }
+      throw new NotFoundException("Session with id %s not found.", sessionId);
+    }
+    var session = visible.get();
 
     checkPermissionForConsultantSession(session, consultant);
     return toConsultantSessionDTO(session, consultant);
@@ -913,9 +1068,15 @@ public class SessionService {
   }
 
   private void checkPermissionForConsultantSession(Session session, Consultant consultant) {
+    membersOnlyChatAccess.requireAccess(session, consultant);
+    if (session.getStatus() == SessionStatus.REJECTED) {
+      checkConsultantAssignment(consultant, session);
+      return;
+    }
     if (!session.isAdvisedBy(consultant)
         && !isSupervisor(consultant, session)
         && !(session.isTeamSession() && consultant.isInAgency(session.getAgencyId()))
+        && !isMemberOfGroupChat(consultant, session)
         && !isAllowedToAdviseByTopic(consultant, session)) {
       throw new ForbiddenException(
           String.format(
@@ -935,7 +1096,7 @@ public class SessionService {
       Consultant consultant) {
     final List<Session> sessions = retrieveArchivedSessions(consultant);
 
-    return mapSessionsToConsultantSessionDto(sessions);
+    return mapSessionsToConsultantSessionDto(withoutExcluded(sessions, consultant));
   }
 
   private List<Session> retrieveArchivedSessions(Consultant consultant) {
@@ -991,8 +1152,9 @@ public class SessionService {
   public Optional<Session> findSessionByConsultantAndUserAndConsultingType(
       Consultant consultant, User user, Integer consultingTypeId) {
     if (nonNull(consultant) && nonNull(user)) {
-      return sessionRepository.findByConsultantAndUserAndConsultingTypeId(
-          consultant, user, consultingTypeId);
+      // ORISO-Frontend#2252: never an appointment conversation, and never "more than one row".
+      return sessionRepository.findOneToOneSessions(consultant, user, consultingTypeId).stream()
+          .findFirst();
     }
     return Optional.empty();
   }

@@ -1,5 +1,6 @@
 package de.caritas.cob.userservice.api.service;
 
+import static de.caritas.cob.userservice.api.helper.CustomLocalDateTime.nowInUtc;
 import static org.apache.commons.lang3.StringUtils.isNotBlank;
 
 import de.caritas.cob.userservice.api.exception.httpresponses.ConflictException;
@@ -36,11 +37,27 @@ public class ConsultantService {
   }
 
   /**
+   * Clears the "must change password" flag after a reset, whatever the request's tenant (#1699).
+   */
+  public void clearPasswordChangeRequirement(String consultantId) {
+    consultantRepository.clearPasswordChangeRequired(consultantId, nowInUtc());
+  }
+
+  /**
    * Load a {@link Consultant}.
    *
    * @param consultantId consultant ID
    * @return An {@link Optional} with the {@link Consultant} if found
    */
+  /**
+   * Whether a counsellor marked for deletion still holds the given encoded username. Usernames are
+   * unique across all tenants, so the lookup ignores the tenant filter.
+   */
+  public boolean isUsernameHeldByDeletedConsultant(String encodedUsername) {
+    return de.caritas.cob.userservice.api.tenant.TenantContext.supplyAcrossTenants(
+        () -> consultantRepository.existsByUsernameAndDeleteDateIsNotNull(encodedUsername));
+  }
+
   public Optional<Consultant> getConsultant(String consultantId) {
     return consultantRepository.findByIdAndDeleteDateIsNull(consultantId);
   }

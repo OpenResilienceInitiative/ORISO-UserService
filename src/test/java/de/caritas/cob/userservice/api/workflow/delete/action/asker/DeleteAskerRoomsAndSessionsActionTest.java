@@ -12,6 +12,7 @@ import static org.hamcrest.Matchers.notNullValue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.inOrder;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -28,6 +29,8 @@ import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.port.out.SessionSupervisorRepository;
 import de.caritas.cob.userservice.api.port.out.SessionTopicRepository;
 import de.caritas.cob.userservice.api.port.out.TeamDiscussionRepository;
+import de.caritas.cob.userservice.api.service.lifecycle.LifecycleEventPublisher;
+import de.caritas.cob.userservice.api.service.lifecycle.LifecycleEventPublisher.DeletedSession;
 import de.caritas.cob.userservice.api.workflow.delete.model.AskerDeletionWorkflowDTO;
 import de.caritas.cob.userservice.api.workflow.delete.model.DeletionWorkflowError;
 import de.caritas.cob.userservice.api.workflow.delete.service.TeamDiscussionPurgeService;
@@ -64,6 +67,12 @@ class DeleteAskerRoomsAndSessionsActionTest {
   @Mock private TeamDiscussionRepository teamDiscussionRepository;
 
   @Mock private TeamDiscussionPurgeService teamDiscussionPurgeService;
+
+  @Mock private LifecycleEventPublisher lifecycleEventPublisher;
+
+  @Mock
+  private de.caritas.cob.userservice.api.service.session.DeletedAskerSessionService
+      deletedAskerSessionService;
 
   private LogbackCaptor logCaptor;
 
@@ -110,6 +119,56 @@ class DeleteAskerRoomsAndSessionsActionTest {
     InOrder dependencyOrder = inOrder(this.sessionTopicRepository, this.sessionRepository);
     dependencyOrder.verify(this.sessionTopicRepository).deleteAllBySessionId(session.getId());
     dependencyOrder.verify(this.sessionRepository).delete(session);
+  }
+
+  @Test
+  void execute_Should_recordThePlaceholderAfterTheSessionWasDeleted() {
+    Session session = new EasyRandom().nextObject(Session.class);
+    when(this.sessionRepository.findByUser(any())).thenReturn(singletonList(session));
+
+    this.deleteAskerRoomsAndSessionsAction.execute(
+        new AskerDeletionWorkflowDTO(new User(), new ArrayList<>()));
+
+    // ORISO-Frontend#1159: captured while the row exists, recorded once it is gone.
+    InOrder order = inOrder(this.sessionRepository, deletedAskerSessionService);
+    order.verify(this.sessionRepository).delete(session);
+    order
+        .verify(deletedAskerSessionService)
+        .recordDeletionAfterCommit(
+            new de.caritas.cob.userservice.api.service.session.DeletedAskerSessionService
+                .Placeholder(
+                session.getConsultant().getId(),
+                session.getId(),
+                session.getAgencyId(),
+                session.getTenantId()));
+  }
+
+  @Test
+  void execute_Should_recordNoPlaceholder_When_theSessionCouldNotBeDeleted() {
+    Session session = new EasyRandom().nextObject(Session.class);
+    when(this.sessionRepository.findByUser(any())).thenReturn(singletonList(session));
+    doThrow(new RuntimeException()).when(this.sessionRepository).delete(any());
+
+    this.deleteAskerRoomsAndSessionsAction.execute(
+        new AskerDeletionWorkflowDTO(new User(), new ArrayList<>()));
+
+    org.mockito.Mockito.verifyNoInteractions(deletedAskerSessionService);
+  }
+
+  @Test
+  void execute_Should_stillDeleteTheSession_When_recordingThePlaceholderFails() {
+    Session session = new EasyRandom().nextObject(Session.class);
+    when(this.sessionRepository.findByUser(any())).thenReturn(singletonList(session));
+    doThrow(new RuntimeException("placeholder failed"))
+        .when(deletedAskerSessionService)
+        .recordDeletionAfterCommit(any());
+    AskerDeletionWorkflowDTO workflowDTO =
+        new AskerDeletionWorkflowDTO(new User(), new ArrayList<>());
+
+    this.deleteAskerRoomsAndSessionsAction.execute(workflowDTO);
+
+    assertThat(workflowDTO.getDeletionWorkflowErrors(), hasSize(0));
+    verify(this.sessionRepository).delete(session);
   }
 
   @Test
@@ -307,5 +366,37 @@ class DeleteAskerRoomsAndSessionsActionTest {
         workflowErrors.get(0).getReason(), is("Unable to delete team discussion for session"));
     assertThat(workflowErrors.get(0).getTimestamp(), notNullValue());
     verify(this.sessionRepository).delete(session);
+    verify(this.deletedAskerSessionService)
+        .recordDeletionAfterCommit(
+            de.caritas.cob.userservice.api.service.session.DeletedAskerSessionService.Placeholder
+                .of(session)
+                .orElseThrow());
+  }
+
+  @Test
+  void execute_Should_publishSessionDeletedForEveryDeletedSession() {
+    var random = new EasyRandom();
+    Session first = random.nextObject(Session.class);
+    Session second = random.nextObject(Session.class);
+    second.setId(first.getId() + 1);
+    when(this.sessionRepository.findByUser(any())).thenReturn(List.of(first, second));
+    // lenient: a strict stub would reject the call for the first session as a stubbing problem.
+    lenient().doThrow(new RuntimeException()).when(this.sessionRepository).delete(second);
+
+    this.deleteAskerRoomsAndSessionsAction.execute(
+        new AskerDeletionWorkflowDTO(new User(), new ArrayList<>()));
+
+    // ADR-034: the deleted session is announced after its row is gone, the kept one is not.
+    InOrder order = inOrder(this.sessionRepository, this.lifecycleEventPublisher);
+    order.verify(this.sessionRepository).delete(first);
+    order
+        .verify(this.lifecycleEventPublisher)
+        .sessionDeleted(
+            new DeletedSession(
+                first.getTenantId(),
+                first.getId(),
+                first.getUser().getUserId(),
+                first.getAgencyId()));
+    verify(this.lifecycleEventPublisher, times(1)).sessionDeleted(any());
   }
 }

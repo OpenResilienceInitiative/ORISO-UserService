@@ -566,6 +566,37 @@ class ApplicationSettingsServiceTest {
       assertThat(controllerApi.settingsCallCount.get()).isEqualTo(1);
     }
 
+    @Test
+    void fetchApplicationSettings_readsPolicyChangeDespiteWarmCache() {
+      controllerApi.settingsResult =
+          new ApplicationSettingsDTO()
+              .oneTopicPerAgencyEnabled(
+                  new de.caritas.cob.userservice.applicationsettingsservice.generated.web.model
+                          .FeatureToggleDTO()
+                      .value(false));
+      cachedApplicationSettingsService.getApplicationSettings();
+      controllerApi.settingsResult =
+          new ApplicationSettingsDTO()
+              .oneTopicPerAgencyEnabled(
+                  new de.caritas.cob.userservice.applicationsettingsservice.generated.web.model
+                          .FeatureToggleDTO()
+                      .value(true));
+
+      assertThat(
+              cachedApplicationSettingsService
+                  .fetchApplicationSettings()
+                  .getOneTopicPerAgencyEnabled()
+                  .getValue())
+          .isTrue();
+      assertThat(
+              cachedApplicationSettingsService
+                  .getApplicationSettings()
+                  .getOneTopicPerAgencyEnabled()
+                  .getValue())
+          .isFalse();
+      assertThat(controllerApi.settingsCallCount.get()).isEqualTo(2);
+    }
+
     // Header wiring runs on the cache-miss path that populates the shared settings entry.
     @Test
     void getApplicationSettings_calledTwice_wiresHeadersOnlyOnFirstCall() {

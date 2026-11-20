@@ -44,9 +44,11 @@ import de.caritas.cob.userservice.api.port.out.IdentityPasswordChangeRequirement
 import de.caritas.cob.userservice.api.port.out.IdentityPasswordUpdater;
 import de.caritas.cob.userservice.api.port.out.IdentityProfileLookup;
 import de.caritas.cob.userservice.api.port.out.IdentityProfileUpdater;
+import de.caritas.cob.userservice.api.port.out.IdentityReactivator;
 import de.caritas.cob.userservice.api.port.out.IdentityRoleLookup;
 import de.caritas.cob.userservice.api.port.out.IdentityRoleUpdater;
 import de.caritas.cob.userservice.api.port.out.IdentitySecondFactor;
+import de.caritas.cob.userservice.api.port.out.IdentityTenantUpdater;
 import de.caritas.cob.userservice.api.port.out.IdentityUsernameAvailability;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
 import de.caritas.cob.userservice.api.service.session.SessionTopicEnrichmentService;
@@ -115,6 +117,7 @@ class UserAdminListAndChatIdentityScopeIT {
         IdentityAccountStatusLookup.class,
         IdentityAuthentication.class,
         IdentityDeactivator.class,
+        IdentityReactivator.class,
         IdentityDummyEmailUpdater.class,
         IdentityEmailAddressUpdater.class,
         IdentityEmailOwnerLookup.class,
@@ -126,6 +129,7 @@ class UserAdminListAndChatIdentityScopeIT {
         IdentityRoleLookup.class,
         IdentityRoleUpdater.class,
         IdentitySecondFactor.class,
+        IdentityTenantUpdater.class,
         IdentityUsernameAvailability.class
       })
   IdentityClient identityClient;
@@ -181,6 +185,8 @@ class UserAdminListAndChatIdentityScopeIT {
   void seedTwoAgenciesOfOneTenantAndOneOfAnother() {
     when(tenantService.getRestrictedTenantData(anyLong()))
         .thenReturn(new RestrictedTenantDTO().subdomain("synthetic"));
+    when(tenantService.getRestrictedTenantDataFresh(anyLong()))
+        .thenReturn(new RestrictedTenantDTO().active(true).subdomain("synthetic"));
     when(((IdentityRoleLookup) identityClient).findAllByUserId(anyString()))
         .thenReturn(List.of("user-admin"));
     givenAgency(OWN_AGENCY, OWN_TENANT);

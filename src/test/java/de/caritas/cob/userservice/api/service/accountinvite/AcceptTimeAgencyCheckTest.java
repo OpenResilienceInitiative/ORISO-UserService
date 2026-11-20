@@ -22,7 +22,10 @@ class AcceptTimeAgencyCheckTest {
   private final AgencyFacts agencyFacts = mock(AgencyFacts.class);
   private final AcceptTimeAgencyCheck check =
       new AcceptTimeAgencyCheck(
-          agencyFacts, mock(IdentityAuthentication.class), mock(IdentityClientConfig.class));
+          agencyFacts,
+          mock(IdentityAuthentication.class),
+          mock(IdentityClientConfig.class),
+          mock(de.caritas.cob.userservice.api.admin.service.tenant.TenantService.class));
 
   @Test
   void requireLiveAgency_Should_Refuse_When_MultiTenantAndTheAgencyHasNoTenant() {

@@ -5,6 +5,7 @@ import de.caritas.cob.userservice.api.UserServiceMapper;
 import de.caritas.cob.userservice.api.adapters.web.dto.AdminResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateAdminDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.PatchAdminDTO;
+import de.caritas.cob.userservice.api.adapters.web.dto.TenantAdminLoginEmailsDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.UpdateTenantAdminDTO;
 import de.caritas.cob.userservice.api.admin.service.admin.AdminScope.Target;
 import de.caritas.cob.userservice.api.admin.service.admin.create.CreateAdminService;
@@ -18,7 +19,9 @@ import de.caritas.cob.userservice.api.model.Admin.AdminBase;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.SearchFilter;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
+import java.util.ArrayList;
 import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -35,6 +38,8 @@ import org.springframework.stereotype.Service;
 @RequiredArgsConstructor
 @Slf4j
 public class TenantAdminUserService {
+
+  private static final int MAX_LOGIN_EMAIL_TENANTS = 100;
 
   private final @NonNull RetrieveAdminService retrieveAdminService;
   private final @NonNull CreateAdminService createAdminService;
@@ -83,7 +88,7 @@ public class TenantAdminUserService {
   public AdminResponseDTO updateTenantAdmin(
       final String adminId, final UpdateTenantAdminDTO updateTenantAdminDTO) {
     validateUpdateAdmin(updateTenantAdminDTO);
-    adminScope.assertMay(Target.admin(adminId));
+    adminScope.assertMay(Target.managedAdmin(adminId));
     final Admin updatedAdmin = updateAdminService.updateTenantAdmin(adminId, updateTenantAdminDTO);
     var responseDTO =
         AdminResponseDTOBuilder.getInstance(updatedAdmin).buildAgencyAdminResponseDTO();
@@ -99,7 +104,7 @@ public class TenantAdminUserService {
   }
 
   public void deleteTenantAdmin(final String adminId) {
-    adminScope.assertMay(Target.admin(adminId));
+    adminScope.assertMay(Target.managedAdmin(adminId));
     this.deleteAdminService.deleteTenantAdmin(adminId);
   }
 
@@ -173,7 +178,32 @@ public class TenantAdminUserService {
         .collect(Collectors.toList());
   }
 
+  public List<TenantAdminLoginEmailsDTO> findTenantAdminLoginEmails(List<Long> tenantIds) {
+    if (tenantIds == null
+        || tenantIds.isEmpty()
+        || tenantIds.size() > MAX_LOGIN_EMAIL_TENANTS
+        || tenantIds.stream().anyMatch(id -> id == null || id <= 0)
+        || Set.copyOf(tenantIds).size() != tenantIds.size()) {
+      throw new BadRequestException("Provide 1 to 100 distinct positive tenant IDs");
+    }
+
+    var emailsByTenant = new LinkedHashMap<Long, List<String>>();
+    for (var tenantId : tenantIds) {
+      adminScope.assertMay(Target.tenant(tenantId));
+      emailsByTenant.put(tenantId, new ArrayList<>());
+    }
+    for (var admin : retrieveAdminService.findTenantAdminLoginEmails(tenantIds)) {
+      emailsByTenant.get(admin.getTenantId()).add(admin.getEmail());
+    }
+    return emailsByTenant.entrySet().stream()
+        .map(
+            tenant ->
+                new TenantAdminLoginEmailsDTO().tenantId(tenant.getKey()).emails(tenant.getValue()))
+        .toList();
+  }
+
   public AdminResponseDTO patchTenantAdmin(String adminId, PatchAdminDTO patchAdminDTO) {
+    // Only reached from the caller's own profile (PATCH /useradmin/data), which stays editable.
     adminScope.assertMay(Target.admin(adminId));
     final Admin updatedAdmin = updateAdminService.patchTenantAdmin(adminId, patchAdminDTO);
     var responseDTO =

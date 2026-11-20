@@ -5,6 +5,7 @@ import static de.caritas.cob.userservice.api.helper.UserHelper.AGENCY_ID_MIN;
 import static de.caritas.cob.userservice.api.helper.UserHelper.AGE_REGEXP;
 import static de.caritas.cob.userservice.api.helper.UserHelper.CONSULTING_TYPE_REGEXP;
 import static de.caritas.cob.userservice.api.helper.UserHelper.REFERER_REGEXP;
+import static de.caritas.cob.userservice.api.helper.UserHelper.REGISTRATION_REF_REGEXP;
 import static de.caritas.cob.userservice.api.helper.UserHelper.STATE_REGEXP;
 import static de.caritas.cob.userservice.api.helper.UserHelper.TERMS_ACCEPTED_REGEXP;
 import static de.caritas.cob.userservice.api.helper.UserHelper.VALID_POSTCODE_REGEX;
@@ -19,6 +20,7 @@ import de.caritas.cob.userservice.api.adapters.web.dto.serialization.EncodeUsern
 import de.caritas.cob.userservice.api.adapters.web.dto.serialization.UrlDecodePasswordJsonDeserializer;
 import de.caritas.cob.userservice.api.adapters.web.dto.validation.ValidAge;
 import de.caritas.cob.userservice.api.adapters.web.dto.validation.ValidState;
+import de.caritas.cob.userservice.api.helper.PasswordPolicy;
 import io.swagger.annotations.ApiModel;
 import io.swagger.annotations.ApiModelProperty;
 import jakarta.validation.constraints.Email;
@@ -27,6 +29,7 @@ import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Pattern;
+import jakarta.validation.constraints.Size;
 import java.util.Collection;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
@@ -69,10 +72,16 @@ public class UserDTO implements UserRegistrationDTO {
   private Long agencyId;
 
   @NotBlank(message = "{user.password.notBlank}")
+  @Size(min = PasswordPolicy.MIN_LENGTH, message = "{user.password.tooShort}")
   @ApiModelProperty(required = true, example = "pass@w0rd", position = 3)
   @JsonDeserialize(using = UrlDecodePasswordJsonDeserializer.class)
   @JsonProperty("password")
   private String password;
+
+  /** Optional first ordinary-session alias, separate from the immutable login username. */
+  @JsonInclude(value = Include.NON_NULL)
+  @JsonProperty("displayName")
+  private String displayName;
 
   @JsonInclude(value = Include.NON_NULL)
   @Email(message = "{user.email.invalid}")
@@ -155,6 +164,23 @@ public class UserDTO implements UserRegistrationDTO {
   @ApiModelProperty(required = false)
   @JsonProperty("groupChatInviteToken")
   private String groupChatInviteToken;
+
+  /**
+   * Token of the counsellor direct link that creates this temporary account (ADR-029 §3, #1476).
+   * Requires {@code temporary}; the account copies the platform lifetimes and opens no enquiry.
+   */
+  @ApiModelProperty(required = false, example = "\"a1b2c3\"")
+  @JsonProperty("directLinkToken")
+  private String directLinkToken;
+
+  /**
+   * Opaque reference of a registration add-on (ADR-034). Not stored; announced once in {@code
+   * user.registered} so the add-on can link what it stored before the account existed.
+   */
+  @ApiModelProperty(required = false, example = "\"r3f_a1-B2\"")
+  @Pattern(regexp = REGISTRATION_REF_REGEXP, message = "{user.registrationRef.invalid}")
+  @JsonProperty("registrationRef")
+  private String registrationRef;
 
   public Integer getUserAge() {
     return StringUtils.isNumeric(age) ? Integer.valueOf(age) : null;

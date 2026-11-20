@@ -77,6 +77,8 @@ class InviteEmailTemplateWriteAccessIT {
             InviteEmailTemplate.builder()
                 .kind(InviteEmailTemplateKind.COUNSELLOR_INVITE)
                 .name("Shared counsellor invite")
+                .systemDefault(true)
+                .language("de")
                 .subject("Welcome")
                 .body("Original body used by every Träger")
                 .active(true)

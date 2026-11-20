@@ -21,6 +21,7 @@ import de.caritas.cob.userservice.api.service.accountinvite.CounsellorInviteProv
 import de.caritas.cob.userservice.api.service.accountinvite.ExistingAccountSetupIssuer;
 import de.caritas.cob.userservice.api.service.accountinvite.ExistingAccountSetupService;
 import de.caritas.cob.userservice.api.service.accountinvite.InviteAccountRoles;
+import de.caritas.cob.userservice.api.service.accountinvite.InviteAvatarSuggestion;
 import de.caritas.cob.userservice.api.service.accountinvite.InviteBoard;
 import de.caritas.cob.userservice.api.service.accountinvite.InviteEmailDeliveryStatus;
 import de.caritas.cob.userservice.api.service.accountinvite.InviteEmailPreviewService;
@@ -41,12 +42,14 @@ import java.time.LocalDateTime;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -97,7 +100,8 @@ public class AccountInviteController {
             parseOptionalEnum(
                 IdAllocationMode.class, safe.agencyIdAllocationMode, "agencyIdAllocationMode"),
             safe.alsoCounsellor,
-            TopicPermission.fromWire(safe.topicPermission));
+            TopicPermission.fromWire(safe.topicPermission),
+            InviteAvatarSuggestion.of(safe.avatarKind, safe.avatarId, safe.displayName));
 
     if (safe.templateId != null) {
       InviteSendResult result = accountInviteService.createAndSendInvite(command, safe.templateId);
@@ -116,6 +120,58 @@ public class AccountInviteController {
         HttpStatus.CREATED);
   }
 
+  /** Compatibility overload for existing in-process callers. */
+  @PreAuthorize(ADMIN_AUTH)
+  public ResponseEntity<PagedAccountInviteResponseDTO> listInvites(
+      String tab,
+      String targetRole,
+      String status,
+      String progressPhase,
+      Long tenantId,
+      String query,
+      Integer page,
+      Integer size) {
+    return listInvites(
+        tab, targetRole, status, progressPhase, tenantId, query, page, size, null, null);
+  }
+
+  private static Set<InviteProgress.Phase> parsePhases(String raw) {
+    if (raw == null || raw.isBlank()) return Set.of();
+    Set<InviteProgress.Phase> phases = java.util.EnumSet.noneOf(InviteProgress.Phase.class);
+    for (String value : raw.split(",", -1)) {
+      if (value.isBlank()) throw new BadRequestException("Invalid progress_phase");
+      phases.add(parseOptionalEnum(InviteProgress.Phase.class, value, "progress_phase"));
+    }
+    return phases;
+  }
+
+  /** Compatibility overload for the original sort-aware Java callers. */
+  @PreAuthorize(ADMIN_AUTH)
+  public ResponseEntity<PagedAccountInviteResponseDTO> listInvites(
+      String tab,
+      String targetRole,
+      String status,
+      String progressPhase,
+      Long tenantId,
+      String query,
+      Integer page,
+      Integer size,
+      String sort,
+      String sortDirection) {
+    return listInvites(
+        tab,
+        targetRole,
+        status,
+        progressPhase,
+        tenantId,
+        query,
+        page,
+        size,
+        sort,
+        sortDirection,
+        null);
+  }
+
   @PreAuthorize(ADMIN_AUTH)
   @GetMapping("/useradmin/account-invites")
   public ResponseEntity<PagedAccountInviteResponseDTO> listInvites(
@@ -126,17 +182,24 @@ public class AccountInviteController {
       @RequestParam(value = "tenant_id", required = false) Long tenantId,
       @RequestParam(value = "query", required = false) String query,
       @RequestParam(value = "page", required = false) Integer page,
-      @RequestParam(value = "size", required = false) Integer size) {
+      @RequestParam(value = "size", required = false) Integer size,
+      @RequestParam(value = "sort", required = false) String sort,
+      @RequestParam(value = "sort_direction", required = false) String sortDirection,
+      @RequestParam(value = "progress_phases", required = false) String progressPhases) {
+    if (progressPhase != null && progressPhases != null)
+      throw new BadRequestException("Use either progress_phase or progress_phases, not both");
     InviteBoard.Listing listing =
         inviteBoard.list(
             parseOptionalEnum(InviteBoard.Tab.class, tab, "tab"),
             parseOptionalEnum(AccountInviteTargetRole.class, targetRole, "target_role"),
             parseOptionalEnum(AccountInviteStatus.class, status, "status"),
-            parseOptionalEnum(InviteProgress.Phase.class, progressPhase, "progress_phase"),
+            parsePhases(progressPhases == null ? progressPhase : progressPhases),
             tenantId,
             query,
             page == null ? 0 : page,
-            size == null ? 20 : size);
+            size == null ? 20 : size,
+            sort,
+            sortDirection);
     Page<InviteBoard.Row> result = listing.rows();
     List<AccountInvite> invites =
         result.getContent().stream().map(InviteBoard.Row::invite).toList();
@@ -230,6 +293,17 @@ public class AccountInviteController {
             accountInviteService.calculateAccessGate(invite)));
   }
 
+  /**
+   * Deletes an invite (ORISO-Admin#1522): revoked at once if still open, no longer listed, removed
+   * by the nightly purge. 409 once its account exists or while an account is set up through it.
+   */
+  @PreAuthorize(ADMIN_AUTH)
+  @DeleteMapping("/useradmin/account-invites/{inviteId}")
+  public ResponseEntity<Void> deleteInvite(@PathVariable Long inviteId) {
+    accountInviteService.deleteInvite(inviteId);
+    return ResponseEntity.noContent().build();
+  }
+
   /** Also after the account exists; the counsellor's own permission follows. */
   @PreAuthorize(ADMIN_AUTH)
   @PutMapping("/useradmin/account-invites/{inviteId}/topic-permission")
@@ -248,6 +322,10 @@ public class AccountInviteController {
             invite));
   }
 
+  /**
+   * Kept for client compatibility, but 2FA is mandatory for new accounts: always answers 400 (see
+   * {@link AccountInviteService#waiveTwoFactor(Long, WaiveTwoFactorCommand)}).
+   */
   @PreAuthorize(ADMIN_AUTH)
   @PostMapping("/useradmin/account-invites/{inviteId}/waive-two-factor")
   public ResponseEntity<AccountInviteResponseDTO> waiveTwoFactor(
@@ -353,6 +431,13 @@ public class AccountInviteController {
     InviteEmailTemplate template = templateService.updateTemplate(templateId, toCommand(request));
     return ResponseEntity.ok(
         InviteEmailTemplateResponseDTO.from(template, templateService.mayChange(template)));
+  }
+
+  @PreAuthorize(ADMIN_AUTH)
+  @DeleteMapping("/useradmin/invite-email-templates/{templateId}")
+  public ResponseEntity<Void> deleteTemplate(@PathVariable Long templateId) {
+    templateService.deleteTemplate(templateId);
+    return ResponseEntity.noContent().build();
   }
 
   @PreAuthorize(ADMIN_AUTH)
@@ -531,6 +616,18 @@ public class AccountInviteController {
 
     /** Object, not enum: the CSV import sends true/false. Omitted = SELECT_EXISTING. */
     public Object topicPermission;
+
+    /**
+     * Optional suggestion for the invitee (ORISO-Admin#1274): ICON, INITIALS or PICTURE (400 for
+     * anything else). The invitee sees it prefilled and may change it.
+     */
+    public String avatarKind;
+
+    /** Motif id for {@code avatarKind = ICON}; dropped for the other kinds. */
+    public String avatarId;
+
+    /** The suggested public display name, at most 100 characters. */
+    public String displayName;
   }
 
   public static class TopicPermissionRequestDTO {
@@ -640,6 +737,12 @@ public class AccountInviteController {
 
     /** AGENCY_ADMIN invites: whether the person also counsels; null for every other role. */
     public Boolean alsoCounsellor;
+
+    /** The inviter's avatar / display-name suggestion; null when none was made. */
+    public String avatarKind;
+
+    public String avatarId;
+    public String displayName;
 
     /** AGENCY or TENANT while WAITING_FOR_UNIT: that unit does not exist yet. */
     public String waitingForUnit;
@@ -767,6 +870,10 @@ public class AccountInviteController {
               ? null
               : invite.getAgencyIdAllocationMode().name();
       dto.alsoCounsellor = invite.getAlsoCounsellor();
+      dto.avatarKind =
+          invite.getSuggestedAvatarKind() == null ? null : invite.getSuggestedAvatarKind().name();
+      dto.avatarId = invite.getSuggestedAvatarId();
+      dto.displayName = invite.getSuggestedDisplayName();
       dto.waitingForUnit =
           invite.getWaitingForUnit() == null ? null : invite.getWaitingForUnit().name();
       dto.provisioningStatus =
@@ -778,7 +885,11 @@ public class AccountInviteController {
               ? invite.getProvisioningFailureReason()
               : null;
       dto.provisionedUserId = invite.getProvisionedUserId();
-      dto.inviteStatus = invite.getStatus() == null ? null : invite.getStatus().name();
+      // Lapsed but not yet swept: shown as the sweep will store it (ORISO-Admin#1522).
+      dto.inviteStatus =
+          AccountInviteService.isElapsedOpenInvite(invite, LocalDateTime.now())
+              ? AccountInviteStatus.EXPIRED.name()
+              : invite.getStatus() == null ? null : invite.getStatus().name();
       dto.emailVerificationStatus =
           invite.getEmailVerificationStatus() == null
               ? null

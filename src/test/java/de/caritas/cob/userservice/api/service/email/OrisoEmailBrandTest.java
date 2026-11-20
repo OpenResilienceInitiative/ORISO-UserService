@@ -52,6 +52,31 @@ class OrisoEmailBrandTest {
     return tenantService;
   }
 
+  @Test
+  void carriesKnownLogoDimensionsWithoutInventingUnknownMetadata() {
+    var resolved =
+        new de.caritas.cob.userservice.api.service.email.layout.EmailBranding(
+            "Brand",
+            "https://app.example.org/logo",
+            "#a5000a",
+            "https://app.example.org/impressum",
+            "https://app.example.org/datenschutz",
+            600,
+            100);
+    assertThat(brand.valuesForResolvedBrand("https://app.example.org", resolved))
+        .containsEntry("logoWidth", "600")
+        .containsEntry("logoHeight", "100");
+    var unknown =
+        new de.caritas.cob.userservice.api.service.email.layout.EmailBranding(
+            "Brand",
+            "https://app.example.org/logo",
+            "#a5000a",
+            "https://app.example.org/impressum",
+            "https://app.example.org/datenschutz");
+    assertThat(brand.valuesForResolvedBrand("https://app.example.org", unknown))
+        .doesNotContainKeys("logoWidth", "logoHeight");
+  }
+
   @BeforeEach
   void configurePlatformName() {
     ReflectionTestUtils.setField(brandingResolver, "platformName", "Wayfinder");

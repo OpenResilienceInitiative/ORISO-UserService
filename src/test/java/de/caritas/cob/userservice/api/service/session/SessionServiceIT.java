@@ -94,6 +94,19 @@ class SessionServiceIT {
   }
 
   @Test
+  void fetchSessionForConsultant_Should_LoadTopics_When_CalledOutsideATransaction() {
+    givenAValidTopicServiceResponse();
+    Consultant consultant =
+        consultantRepository
+            .findByIdAndDeleteDateIsNull("473f7c4b-f011-4fc2-847c-ceb636a5b399")
+            .get();
+
+    ConsultantSessionDTO result = sessionService.fetchSessionForConsultant(1216L, consultant);
+
+    assertEquals(2, result.getTopics().size());
+  }
+
+  @Test
   @Transactional
   void
       fetchSessionForConsultant_Should_Return_ValidConsultantSessionDTO_When_ConsultantIsAssigned() {

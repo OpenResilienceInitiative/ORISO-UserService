@@ -27,6 +27,9 @@ import org.mockito.junit.jupiter.MockitoExtension;
 
 @ExtendWith(MockitoExtension.class)
 class MatrixCaseReplyActorAuthorizerTest {
+  @Mock
+  private de.caritas.cob.userservice.api.service.chat.MembersOnlyChatAccess membersOnlyChatAccess;
+
   @Mock ConsultantRepository consultants;
   @Mock ConsultantAgencyRepository agencies;
   @Mock CaseHandoverRequestRepository handovers;
@@ -102,6 +105,17 @@ class MatrixCaseReplyActorAuthorizerTest {
 
     assertThat(authorizer.isCurrentWriter(session, "@team:matrix.example", false)).isFalse();
     verifyNoInteractions(handovers, matrix);
+  }
+
+  @Test
+  void controllerLegacyCompatibilityDoesNotBroadenThePublicMailAuthorizer() {
+    var session = session();
+    session.setTenantId(null);
+    session.getConsultant().setTenantId(null);
+
+    assertThat(authorizer.isCurrentAssignedOrTeamWriter(session, session.getConsultant())).isTrue();
+    assertThat(authorizer.isCurrentWriter(session, "@owner:matrix.example", false)).isFalse();
+    verifyNoInteractions(consultants, agencies, handovers, supervisors, matrix);
   }
 
   private static Session session() {

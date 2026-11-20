@@ -34,6 +34,10 @@ class DeleteConsultantMessageEmailDeliveriesActionTest {
         .deleteByRecipientKindAndRecipientUserId(RecipientKind.FEEDBACK, "consultant-id");
     verify(repository)
         .deleteByRecipientKindAndRecipientUserId(RecipientKind.FEEDBACK_INTENT, "consultant-id");
+    verify(repository)
+        .deleteByRecipientKindAndRecipientUserId(RecipientKind.INTERNAL, "consultant-id");
+    verify(repository)
+        .deleteByRecipientKindAndRecipientUserId(RecipientKind.INTERNAL_INTENT, "consultant-id");
     verify(repository).deleteBySourceMatrixUserId("@consultant:matrix.example");
     assertThat(target.getDeletionWorkflowErrors()).isEmpty();
   }

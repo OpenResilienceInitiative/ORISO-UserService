@@ -214,7 +214,9 @@ class RemoveConsultantFromSessionMembershipIT {
                     consultant.getId(),
                     consultant.getUsername(),
                     "Synthetic",
-                    true)));
+                    true,
+                    null,
+                    null)));
   }
 
   private void actAs(Consultant consultant) {

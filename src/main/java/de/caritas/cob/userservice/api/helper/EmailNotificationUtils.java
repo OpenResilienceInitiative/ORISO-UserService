@@ -1,5 +1,7 @@
 package de.caritas.cob.userservice.api.helper;
 
+import static org.apache.commons.lang3.StringUtils.isBlank;
+
 import de.caritas.cob.userservice.api.adapters.web.dto.NotificationsSettingsDTO;
 import de.caritas.cob.userservice.api.helper.json.JsonSerializationUtils;
 import de.caritas.cob.userservice.api.model.NotificationSettings;
@@ -9,9 +11,11 @@ public class EmailNotificationUtils {
 
   private EmailNotificationUtils() {}
 
+  // Blank counts as missing: the nullable column defaults to an empty string.
+
   public static NotificationSettings deserializeNotificationSettingsOrDefaultIfNull(
       NotificationsAware notificationsAware) {
-    return notificationsAware.getNotificationsSettings() == null
+    return isBlank(notificationsAware.getNotificationsSettings())
         ? new NotificationSettings()
         : JsonSerializationUtils.deserializeFromJsonString(
             notificationsAware.getNotificationsSettings(), NotificationSettings.class);
@@ -19,7 +23,7 @@ public class EmailNotificationUtils {
 
   public static NotificationsSettingsDTO deserializeNotificationSettingsDTOOrDefaultIfNull(
       NotificationsAware notificationsAware) {
-    return notificationsAware.getNotificationsSettings() == null
+    return isBlank(notificationsAware.getNotificationsSettings())
         ? new NotificationsSettingsDTO()
         : JsonSerializationUtils.deserializeFromJsonString(
             notificationsAware.getNotificationsSettings(), NotificationsSettingsDTO.class);

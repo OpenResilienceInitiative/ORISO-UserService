@@ -193,6 +193,31 @@ class InviteFrameMailRendererTest {
         .doesNotContain("Musterstadt e.V. ist ein Angebot von");
   }
 
+  /** Wide logo (above 3:1): on phones the name stacks under the logo, it is never hidden. */
+  @Test
+  void keepsTheTraegerNameVisibleBesideAWideLogoAlsoOnPhones() {
+    BrandedEmail mail =
+        render(
+            new EmailBranding(
+                "Träger Breit e.V.",
+                "https://nord.example.org/service/tenant/public/branding/logo",
+                "#1c4f8f",
+                "https://nord.example.org/impressum",
+                "https://nord.example.org/datenschutz",
+                600,
+                100),
+            "Einladung",
+            "Hallo",
+            ACCEPT_URL);
+
+    assertThat(mail.html())
+        .contains("<img src=\"https://nord.example.org/service/tenant/public/branding/logo\"")
+        .contains("class=\"logo-wordmark logo-wordmark-wide\"")
+        .contains(">Träger Breit e.V.</td>")
+        .contains(".logo-wordmark-wide{display:block !important}")
+        .doesNotContainPattern("\\.logo-wordmark[^{]*\\{[^}]*display:none");
+  }
+
   /** No logo means the text wordmark carries the header — never an {@code <img src="">}. */
   @Test
   void rendersNoImageAtAllWhenTheTenantHasNoLogo() {

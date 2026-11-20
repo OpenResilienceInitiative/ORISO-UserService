@@ -77,6 +77,42 @@ class AgencyAdminInviteProvisioningServiceTest {
   }
 
   @Test
+  void pausedInviteTenantStopsAgencyAdminBeforeClaimWizardIdentityAndPersistence() {
+    org.mockito.Mockito.reset(accountInviteService, accountInviteRepository, createAdminService);
+    when(accountInviteService.findInviteByToken(TOKEN)).thenReturn(invite);
+    var authorityCheck =
+        new AcceptTimeAgencyCheck(
+            org.mockito.Mockito.mock(AgencyFacts.class),
+            org.mockito.Mockito.mock(
+                de.caritas.cob.userservice.api.port.out.IdentityAuthentication.class),
+            org.mockito.Mockito.mock(
+                de.caritas.cob.userservice.api.port.out.IdentityClientConfig.class),
+            de.caritas.cob.userservice.api.testHelper.PausedTenantAuthorityFixture.paused(79L));
+    org.springframework.test.util.ReflectionTestUtils.setField(
+        service, "acceptTimeAgencyCheck", authorityCheck);
+    var createUnit = org.mockito.Mockito.mock(Runnable.class);
+    var refused =
+        org.junit.jupiter.api.Assertions.assertThrows(
+            org.springframework.web.server.ResponseStatusException.class,
+            () ->
+                service.acceptAsAgencyAdmin(
+                    TOKEN,
+                    "new-admin",
+                    "fixture-password",
+                    WizardAccept.decidedFrom(invite, createUnit)));
+    assertThat(refused.getStatusCode()).isEqualTo(org.springframework.http.HttpStatus.FORBIDDEN);
+    org.mockito.Mockito.verifyNoInteractions(
+        accountInviteRepository,
+        createUnit,
+        createAdminService,
+        adminAgencyRepository,
+        adminRepository,
+        identityAccountRemover);
+    assertThat(invite.getProvisioningStatus()).isEqualTo(AccountInviteProvisioningStatus.PENDING);
+    verify(accountInviteService, org.mockito.Mockito.never()).acceptInvite(any(), any());
+  }
+
+  @Test
   void acceptAsAgencyAdmin_Should_DeleteTheAdminRowsAndTheIdentity_When_ALaterStepFails() {
     assertThatThrownBy(() -> service.acceptAsAgencyAdmin(TOKEN, "ada", "pw")).isSameAs(failure);
 

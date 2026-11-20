@@ -352,10 +352,24 @@ public class TenantAdminOnboardingController {
     public String firstName;
     public String lastName;
 
+    /**
+     * Counsellor invites only (ORISO-Admin#1274): the inviter's avatar / display-name suggestion
+     * the form prefills. All three are null when the invite carries no suggestion, and the invitee
+     * may change them.
+     */
+    public String avatarKind;
+
+    public String avatarId;
+    public String displayName;
+
     /** Counsellor invites only (#997): the tenant/agency/department routing of the invite. */
     public Long tenantId;
 
     public Long agencyId;
+
+    /** Persisted invitation origin: AUTO/MANUAL reserve a new agency, EXISTING joins one. */
+    public String agencyIdAllocationMode;
+
     public Long departmentId;
 
     /** Counsellor invites only (#997): the invite's coverage — preselected in the wizard. */
@@ -369,6 +383,9 @@ public class TenantAdminOnboardingController {
      * asks for the name of the new Beratungsstelle.
      */
     public Boolean agencyExists;
+
+    /** Platform limit for configuring the new reserved centre. */
+    public Boolean oneTopicPerAgencyEnabled;
 
     /** Agency-admin invites only: the inviter's proposal; the invitee may override it. */
     public Boolean alsoCounsellor;
@@ -473,12 +490,21 @@ public class TenantAdminOnboardingController {
       dto.recipientEmail = invite.getRecipientEmail();
       dto.firstName = invite.getFirstName();
       dto.lastName = invite.getLastName();
+      dto.avatarKind =
+          invite.getSuggestedAvatarKind() == null ? null : invite.getSuggestedAvatarKind().name();
+      dto.avatarId = invite.getSuggestedAvatarId();
+      dto.displayName = invite.getSuggestedDisplayName();
       dto.tenantId = invite.getTenantId();
       dto.agencyId = invite.getAgencyId();
+      dto.agencyIdAllocationMode =
+          invite.getAgencyIdAllocationMode() == null
+              ? null
+              : invite.getAgencyIdAllocationMode().name();
       dto.departmentId = invite.getDepartmentId();
       dto.topics = state.topics().stream().map(TopicOptionDTO::from).toList();
       dto.availableTopics = state.availableTopics().stream().map(TopicOptionDTO::from).toList();
       dto.agencyExists = state.agencyExists();
+      dto.oneTopicPerAgencyEnabled = state.oneTopicPerAgencyEnabled();
       dto.topicPermission = TopicPermissionPolicy.effective(invite).name();
       dto.expiresAt = invite.getExpiresAt();
       applyTwoFactorResume(dto, invite, state.pendingTwoFactorResume());

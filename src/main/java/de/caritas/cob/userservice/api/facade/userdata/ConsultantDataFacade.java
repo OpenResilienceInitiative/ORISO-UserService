@@ -9,10 +9,12 @@ import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantSessionResponse
 import de.caritas.cob.userservice.api.adapters.web.dto.GroupSessionListResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.UserSessionListResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.mapping.UserDtoMapper;
+import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
 import de.caritas.cob.userservice.api.helper.Helper;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.port.in.AccountManaging;
 import de.caritas.cob.userservice.api.service.ConsultantService;
+import de.caritas.cob.userservice.api.service.chat.MembersOnlyChatAccess;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -29,6 +31,7 @@ public class ConsultantDataFacade {
   private final @NonNull ConsultantService consultantService;
   private final @NonNull AccountManaging accountManager;
   private final @NonNull UserDtoMapper userDtoMapper;
+  private final @NonNull MembersOnlyChatAccess membersOnlyChatAccess;
 
   /**
    * Updates a {@link Consultant} with the absence data from a (@Link AbsenceDTO).
@@ -36,7 +39,16 @@ public class ConsultantDataFacade {
    * @param absence {@link AbsenceDTO}
    */
   public Consultant updateConsultantAbsent(Consultant consultant, AbsenceDTO absence) {
-    consultant.setAbsent(isTrue(absence.getAbsent()));
+    var switchedOn = isTrue(absence.getAbsent());
+    var start = switchedOn ? absence.getStart() : null;
+    var end = switchedOn ? absence.getEnd() : null;
+    if (start != null && end != null && end.isBefore(start)) {
+      throw new BadRequestException("The absence must not end before it starts.");
+    }
+    consultant.setAbsent(switchedOn);
+    // ORISO-Frontend#2303: switching off ends the absence together with its planned range.
+    consultant.setAbsenceStart(start);
+    consultant.setAbsenceEnd(end);
 
     if (isNotBlank(absence.getMessage())) {
       consultant.setAbsenceMessage(Helper.removeHTMLFromText(absence.getMessage()));
@@ -57,8 +69,12 @@ public class ConsultantDataFacade {
               var consultant = session.getConsultant();
               if (nonNull(consultant) && nonNull(consultant.getUsername())) {
                 try {
-                  accountManager
-                      .findConsultantByUsername(consultant.getUsername())
+                  // The owner of a members-only chat may work for another Traeger than the reader.
+                  var chatId = session.getChat() == null ? null : session.getChat().getId();
+                  membersOnlyChatAccess
+                      .readingAcrossTraegerOfChat(
+                          chatId,
+                          () -> accountManager.findConsultantByUsername(consultant.getUsername()))
                       .ifPresent(
                           consultantMap ->
                               consultant.setDisplayName(

@@ -75,9 +75,9 @@ class AccountInviteAccessPolicyTemplateScopeTest {
 
     assertThat(policy.templateOwnerTenantId()).isEqualTo(OWN_TENANT);
     assertThat(policy.seesEveryTemplate()).isFalse();
-    assertThat(policy.canUseTemplate(OWN_TENANT)).isTrue();
-    assertThat(policy.canUseTemplate(null)).isTrue();
-    assertThat(policy.canUseTemplate(FOREIGN_TENANT)).isFalse();
+    assertThat(policy.canUseTemplate(OWN_TENANT, false)).isTrue();
+    assertThat(policy.canUseTemplate(null, true)).isTrue();
+    assertThat(policy.canUseTemplate(FOREIGN_TENANT, false)).isFalse();
     assertThat(policy.canChangeTemplate(OWN_TENANT)).isTrue();
     assertThat(policy.canChangeTemplate(null)).isFalse();
     assertThat(policy.canChangeTemplate(FOREIGN_TENANT)).isFalse();
@@ -95,7 +95,7 @@ class AccountInviteAccessPolicyTemplateScopeTest {
     assertThat(policy.seesEveryTemplate()).isTrue();
     assertThat(policy.templateOwnerTenantId()).isNull();
     assertThat(policy.canChangeTemplate(null)).isTrue();
-    assertThat(policy.canUseTemplate(FOREIGN_TENANT)).isTrue();
+    assertThat(policy.canUseTemplate(FOREIGN_TENANT, false)).isTrue();
   }
 
   @Test
@@ -172,7 +172,7 @@ class AccountInviteAccessPolicyTemplateScopeTest {
           .isInstanceOf(ForbiddenException.class);
       assertThatThrownBy(() -> policy.canChangeTemplate(null))
           .isInstanceOf(ForbiddenException.class);
-      assertThatThrownBy(() -> policy.canUseTemplate(FOREIGN_TENANT))
+      assertThatThrownBy(() -> policy.canUseTemplate(FOREIGN_TENANT, false))
           .isInstanceOf(ForbiddenException.class);
       return;
     }
@@ -181,7 +181,7 @@ class AccountInviteAccessPolicyTemplateScopeTest {
                 policy.seesEveryTemplate(),
                 policy.templateOwnerTenantId(),
                 policy.canChangeTemplate(null),
-                policy.canUseTemplate(FOREIGN_TENANT)))
+                policy.canUseTemplate(FOREIGN_TENANT, false)))
         .isEqualTo(expected);
     verifyNoInteractions(adminAgencyRepository, agencyService);
   }

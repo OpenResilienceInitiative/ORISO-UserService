@@ -34,6 +34,7 @@ public class UserHelper {
   public static final String CONSULTING_TYPE_REGEXP = "[0-9]+|";
 
   public static final String REFERER_REGEXP = "[a-zA-Z0-9]{1,8}";
+  public static final String REGISTRATION_REF_REGEXP = "[A-Za-z0-9_-]{1,64}";
   public static final int CHAT_MIN_DURATION = 30;
   public static final int CHAT_MAX_DURATION = 180;
   public static final int CHAT_TOPIC_MIN_LENGTH = 3;
@@ -45,9 +46,20 @@ public class UserHelper {
   /**
    * Generates a random password which complies with the Keycloak policy.
    *
-   * @return a random generated password
+   * @return a random generated password of {@link PasswordPolicy#MIN_LENGTH} characters
    */
   public String getRandomPassword() {
+    return getRandomPassword(PasswordPolicy.MIN_LENGTH);
+  }
+
+  /**
+   * Generates a random password of the given length with at least one upper-case, lower-case, digit
+   * and special character. Passay's generator draws from {@code SecureRandom}.
+   *
+   * @param length number of characters
+   * @return a random generated password
+   */
+  public String getRandomPassword(int length) {
     List<CharacterRule> rules =
         Arrays.asList(
             // at least one upper-case character
@@ -71,8 +83,7 @@ public class UserHelper {
                 },
                 1));
     var generator = new PasswordGenerator();
-    // Generated password is 8 characters long, which complies with policy
-    return generator.generatePassword(10, rules);
+    return generator.generatePassword(length, rules);
   }
 
   /**

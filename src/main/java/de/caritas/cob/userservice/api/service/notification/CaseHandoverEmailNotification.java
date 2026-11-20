@@ -39,7 +39,77 @@ public class CaseHandoverEmailNotification {
       long tenantId,
       String recipient,
       LanguageCode language,
-      Dialect dialect) {}
+      Dialect dialect,
+      String recipientUserId,
+      AccessType accessType) {
+    public Mail(
+        Long requestId,
+        Long sessionId,
+        String matrixRoomId,
+        Outcome outcome,
+        long tenantId,
+        String recipient,
+        LanguageCode language,
+        Dialect dialect,
+        String recipientUserId) {
+      this(
+          requestId,
+          sessionId,
+          matrixRoomId,
+          outcome,
+          tenantId,
+          recipient,
+          language,
+          dialect,
+          recipientUserId,
+          AccessType.TAKEOVER);
+    }
+
+    public Mail(
+        Long requestId,
+        Long sessionId,
+        String matrixRoomId,
+        Outcome outcome,
+        long tenantId,
+        String recipient,
+        LanguageCode language,
+        Dialect dialect,
+        AccessType accessType) {
+      this(
+          requestId,
+          sessionId,
+          matrixRoomId,
+          outcome,
+          tenantId,
+          recipient,
+          language,
+          dialect,
+          null,
+          accessType);
+    }
+
+    public Mail(
+        Long requestId,
+        Long sessionId,
+        String matrixRoomId,
+        Outcome outcome,
+        long tenantId,
+        String recipient,
+        LanguageCode language,
+        Dialect dialect) {
+      this(
+          requestId,
+          sessionId,
+          matrixRoomId,
+          outcome,
+          tenantId,
+          recipient,
+          language,
+          dialect,
+          null,
+          AccessType.TAKEOVER);
+    }
+  }
 
   private record DeliveryKey(Long requestId, Outcome outcome) {}
 
@@ -48,9 +118,15 @@ public class CaseHandoverEmailNotification {
   private final @NonNull IdentityClientConfig identityClientConfig;
 
   public void consentRequested(CaseHandoverRequest request) {
-    if (!isTakeover(request) || request.getStatus() != Status.PENDING_CLIENT_CONSENT) return;
+    if (request == null) return;
+    boolean requiredTakeover =
+        CaseHandoverRequiredConsentMailEligibility.requiresPersonalConsent(request);
+    boolean optionalCoAccess =
+        request.getAccessType() == AccessType.CO_ACCESS
+            && request.getStatus() == Status.PENDING_CLIENT_CONSENT;
+    if (!requiredTakeover && !optionalCoAccess) return;
     User recipient = request.getSession().getUser();
-    if (!eligible(recipient)) return;
+    if (requiredTakeover ? !hasUsableEmail(recipient) : !eligible(recipient)) return;
     schedule(
         snapshot(
             request,
@@ -80,16 +156,21 @@ public class CaseHandoverEmailNotification {
   }
 
   private boolean eligible(NotificationsAware recipient) {
-    if (recipient == null) return false;
-    String email =
-        recipient instanceof User user ? user.getEmail() : ((Consultant) recipient).getEmail();
-    String dummySuffix = identityClientConfig.getEmailDummySuffix();
-    if (email == null || email.isBlank() || (dummySuffix != null && email.endsWith(dummySuffix)))
-      return false;
+    if (!hasUsableEmail(recipient)) return false;
     if (!releaseToggles.isToggleEnabled(ReleaseToggle.NEW_EMAIL_NOTIFICATIONS)) return true;
     return recipient.isNotificationsEnabled()
         && deserializeNotificationSettingsDTOOrDefaultIfNull(recipient)
             .getReassignmentNotificationEnabled();
+  }
+
+  private boolean hasUsableEmail(NotificationsAware recipient) {
+    if (recipient == null) return false;
+    String email =
+        recipient instanceof User user ? user.getEmail() : ((Consultant) recipient).getEmail();
+    String dummySuffix = identityClientConfig.getEmailDummySuffix();
+    return email != null
+        && !email.isBlank()
+        && (dummySuffix == null || !email.endsWith(dummySuffix));
   }
 
   private Mail snapshot(
@@ -117,7 +198,9 @@ public class CaseHandoverEmailNotification {
         tenantId,
         email,
         language,
-        dialect);
+        dialect,
+        outcome == Outcome.CONSENT_REQUESTED ? request.getSession().getUser().getUserId() : null,
+        request.getAccessType());
   }
 
   private void schedule(Mail mail) {

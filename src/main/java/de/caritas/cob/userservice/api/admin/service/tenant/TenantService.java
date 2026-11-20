@@ -12,6 +12,7 @@ import java.util.Set;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.cache.CacheManager;
 import org.springframework.cache.annotation.Cacheable;
 import org.springframework.stereotype.Service;
@@ -25,6 +26,13 @@ public class TenantService {
 
   private final @NonNull TenantServiceApiControllerFactory tenantServiceApiControllerFactory;
   private final @NonNull CacheManager cacheManager;
+
+  @Value("${multitenancy.enabled:false}")
+  private boolean multitenancyEnabled;
+
+  public boolean isMultitenancyEnabled() {
+    return multitenancyEnabled;
+  }
 
   @Cacheable(cacheNames = CacheManagerConfig.TENANT_CACHE, key = "#subdomain")
   public RestrictedTenantDTO getRestrictedTenantData(String subdomain) {
@@ -118,5 +126,27 @@ public class TenantService {
     if (TenantContext.TECHNICAL_TENANT_ID.equals(tenantId)) {
       throw new IllegalArgumentException("Concrete tenant id required");
     }
+  }
+
+  /** Independent operational admission; this never changes legal signatures or descendant state. */
+  public void requireOperationalTenant(Long tenantId) {
+    RestrictedTenantDTO tenant;
+    try {
+      if (TenantContext.TECHNICAL_TENANT_ID.equals(tenantId))
+        throw new IllegalArgumentException("Concrete tenant required");
+      tenant =
+          tenantId == null
+              ? getSingleTenancyTenantDataFresh()
+              : getRestrictedTenantDataFresh(tenantId);
+      if (tenant == null) throw new IllegalStateException("Tenant metadata unavailable");
+    } catch (RuntimeException unavailable) {
+      throw new org.springframework.web.server.ResponseStatusException(
+          org.springframework.http.HttpStatus.BAD_GATEWAY,
+          "Tenant operational status unavailable",
+          unavailable);
+    }
+    if (Boolean.FALSE.equals(tenant.getActive()))
+      throw new org.springframework.web.server.ResponseStatusException(
+          org.springframework.http.HttpStatus.FORBIDDEN, "Tenant operationally inactive");
   }
 }

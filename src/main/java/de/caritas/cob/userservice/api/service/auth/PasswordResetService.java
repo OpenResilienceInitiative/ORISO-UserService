@@ -229,7 +229,24 @@ public class PasswordResetService {
     // Any other failure: the update outcome is unknown (Keycloak may have applied the password
     // before the error surfaced), so the token stays consumed — re-inserting could allow a second
     // password change with an already-used link.
+
+    // Success only: the password is the owner's own now.
+    clearPasswordChangeRequirement(claim.get().subjectId());
     return true;
+  }
+
+  /**
+   * The password is the account owner's own now, so the app must not ask for another one (#1699).
+   * The reset already succeeded; a failure here must not turn it into an error.
+   */
+  private void clearPasswordChangeRequirement(String subjectId) {
+    try {
+      consultantService.clearPasswordChangeRequirement(subjectId);
+    } catch (RuntimeException failure) {
+      log.error(
+          "Password change requirement not cleared after reset ({})",
+          failure.getClass().getSimpleName());
+    }
   }
 
   private Optional<AccountResetTarget> resolveAccount(String username) {

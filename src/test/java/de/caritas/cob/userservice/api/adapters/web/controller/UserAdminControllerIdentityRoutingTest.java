@@ -19,7 +19,6 @@ import de.caritas.cob.userservice.api.admin.service.consultant.create.GrantConsu
 import de.caritas.cob.userservice.api.admin.service.listpreference.AdminListPreferenceService;
 import de.caritas.cob.userservice.api.admin.service.session.SessionAdminService;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
-import de.caritas.cob.userservice.api.service.appointment.AppointmentService;
 import de.caritas.cob.userservice.api.service.identity.UserIdentitiesService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -58,7 +57,6 @@ class UserAdminControllerIdentityRoutingTest {
             mock(ConsultantAdminFacade.class),
             mock(AskerUserAdminFacade.class),
             mock(AdminUserFacade.class),
-            mock(AppointmentService.class),
             mock(AdminDtoMapper.class),
             mock(AuthenticatedUser.class),
             grantConsultantIdentityService,
@@ -66,6 +64,13 @@ class UserAdminControllerIdentityRoutingTest {
             mock(AdminListPreferenceService.class),
             mock(
                 de.caritas.cob.userservice.api.service.accountinvite.ExistingAccountSetupIssuer
+                    .class),
+            mock(de.caritas.cob.userservice.api.helper.UserHelper.class),
+            mock(
+                de.caritas.cob.userservice.api.admin.service.tenant.TenantDeletionBlockerService
+                    .class),
+            mock(
+                de.caritas.cob.userservice.api.admin.service.contactperson.ContactPersonAdminService
                     .class));
 
     mockMvc = MockMvcBuilders.standaloneSetup(controller).build();

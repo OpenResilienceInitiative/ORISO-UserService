@@ -32,9 +32,12 @@ import de.caritas.cob.userservice.api.service.ConsultantService;
 import de.caritas.cob.userservice.api.service.agency.AgencyMatrixCredentialClient;
 import de.caritas.cob.userservice.api.service.agency.dto.AgencyMatrixCredentialsDTO;
 import de.caritas.cob.userservice.api.service.matrix.MatrixSessionSystemMessageService;
+import de.caritas.cob.userservice.api.service.session.AgencyDepartmentMembershipBackfill;
 import de.caritas.cob.userservice.api.service.session.AgencyLateJoinerMembershipService;
+import de.caritas.cob.userservice.api.service.session.AgencyOpenEnquiryMembership;
 import de.caritas.cob.userservice.api.service.session.AgencyPreAssignmentRoomService;
 import de.caritas.cob.userservice.api.service.session.AgencySilentMembershipService;
+import de.caritas.cob.userservice.api.service.session.MatrixRateLimitPause;
 import de.caritas.cob.userservice.api.service.session.SessionService;
 import de.caritas.cob.userservice.api.service.teamdiscussion.TeamDiscussionCreationWriter;
 import de.caritas.cob.userservice.api.service.teamdiscussion.TeamDiscussionFeatureGate;
@@ -259,14 +262,22 @@ class AgencyPasswordFreeSynapseIT {
     when(sessionRepository.findByAgencyIdAndStatusAndConsultantIsNull(
             7L, Session.SessionStatus.NEW))
         .thenReturn(List.of(session));
+    var assignments = mock(ConsultantAgencyRepository.class);
+    when(consultants.findActiveByIdForUpdate(consultant.getId()))
+        .thenReturn(Optional.of(consultant));
+    when(assignments.existsByConsultantIdAndAgencyIdAndDeleteDateIsNull(consultant.getId(), 7L))
+        .thenReturn(true);
+    when(sessionRepository.findByIdForUpdate(session.getId())).thenReturn(Optional.of(session));
     var lateJoin =
         new AgencyLateJoinerMembershipService(
             sessionRepository,
             identities,
             gateway,
-            silentMembership,
+            new AgencyOpenEnquiryMembership(
+                consultants, assignments, sessionRepository, silentMembership),
+            new MatrixRateLimitPause(),
             discussions,
-            mock(ConsultantAgencyRepository.class),
+            assignments,
             mock(TeamDiscussionParticipantWriter.class),
             mock(
                 de.caritas.cob.userservice.api.workflow.scheduling.ScheduledTaskClaimService
@@ -274,7 +285,10 @@ class AgencyPasswordFreeSynapseIT {
     assertThat(lateJoin.joinConsultantIntoOpenEnquiryRooms(consultant, 7L)).isEqualTo(1);
     var token = matrix.loginAsUserAccessToken(agencyId);
     assertThat(members(session.getMatrixRoomId(), token)).contains(consultant.getMatrixUserId());
-    assertThat(lateJoin.removeConsultantFromAgencyRooms(consultant, 7L)).isEqualTo(1);
+    assertThat(
+            gateway.removeUserFromRoom(
+                session.getMatrixRoomId(), consultant.getMatrixUserId(), token))
+        .isTrue();
     assertThat(members(session.getMatrixRoomId(), token))
         .doesNotContain(consultant.getMatrixUserId());
   }
@@ -302,6 +316,9 @@ class AgencyPasswordFreeSynapseIT {
             mock(UserService.class),
             identities,
             mock(ChatPermissionVerifier.class),
+            mock(
+                de.caritas.cob.userservice.api.service.conversationfeature.ConversationFeatureGate
+                    .class),
             Optional.empty());
     var response = controller.getMessages(42L);
     assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
@@ -331,6 +348,8 @@ class AgencyPasswordFreeSynapseIT {
   @Test
   void teamDiscussionCreatesJoinsAndArchivesReadOnlyWithoutPassword() {
     when(sessionRepository.findById(42L)).thenReturn(Optional.of(session));
+    when(sessionRepository.findByIdForUpdate(42L))
+        .thenAnswer(invocation -> sessionRepository.findById(42L));
     when(consultants.findById(consultant.getId())).thenReturn(Optional.of(consultant));
     var relations = mock(ConsultantAgencyRepository.class);
     when(relations.existsByConsultantIdAndAgencyIdAndDeleteDateIsNull(consultant.getId(), 7L))
@@ -343,6 +362,7 @@ class AgencyPasswordFreeSynapseIT {
               when(discussions.findBySessionId(42L)).thenReturn(Optional.of(discussion));
               return discussion;
             });
+    when(discussions.findById(99L)).thenAnswer(call -> discussions.findBySessionId(42L));
     var facade =
         new TeamDiscussionFacade(
             sessionRepository,
@@ -352,9 +372,18 @@ class AgencyPasswordFreeSynapseIT {
             matrix,
             identities,
             mock(TeamDiscussionFeatureGate.class),
-            new TeamDiscussionCreationWriter(discussions),
-            mock(TeamDiscussionParticipantWriter.class),
-            mock(TeamDiscussionRoomCleanupService.class));
+            new TeamDiscussionCreationWriter(discussions, sessionRepository),
+            new de.caritas.cob.userservice.api.service.teamdiscussion
+                .TeamDiscussionAccessTransactions(
+                sessionRepository,
+                consultants,
+                relations,
+                discussions,
+                mock(
+                    de.caritas.cob.userservice.api.port.out.TeamDiscussionParticipantRepository
+                        .class)),
+            mock(TeamDiscussionRoomCleanupService.class),
+            mock(de.caritas.cob.userservice.api.service.chat.MembersOnlyChatAccess.class));
     var view = facade.getOrCreateDiscussion(42L, consultant.getId());
     var consultantToken = matrix.loginAsUserAccessToken(consultant.getMatrixUserId());
     assertThat(matrix.sendMessage(view.matrixRoomId(), "before archive", consultantToken))
@@ -389,13 +418,22 @@ class AgencyPasswordFreeSynapseIT {
             mock(UsernameTranscoder.class),
             mock(ConsultantDisplayNameResolver.class),
             identities,
+            mock(de.caritas.cob.userservice.api.service.session.AgencyEnquiryRoomRetirements.class),
             mock(
                 de.caritas.cob.userservice.api.service.notification.EventNotificationService.class),
             mock(
                 de.caritas.cob.userservice.api.facade.assignsession
                     .AnonymousEnquiryDepartmentResolver.class),
             mock(de.caritas.cob.userservice.api.facade.SessionSupervisorFacade.class),
-            mock(TeamDiscussionFacade.class));
+            mock(TeamDiscussionFacade.class),
+            mock(de.caritas.cob.userservice.api.service.matrix.InquiryAcceptanceNoticeStore.class),
+            mock(
+                de.caritas.cob.userservice.api.service.matrix.InquiryAcceptanceNoticeDelivery
+                    .class),
+            mock(
+                de.caritas.cob.userservice.api.service.furthercounselling.TopicDuplicateService
+                    .class),
+            mock(de.caritas.cob.userservice.api.port.in.Messaging.class));
     facade.assignRegisteredEnquiry(session, consultant);
     assertThat(session.getMatrixRoomId()).isEqualTo(originalRoom);
     var token = matrix.loginAsUserAccessToken(consultant.getMatrixUserId());
@@ -413,7 +451,22 @@ class AgencyPasswordFreeSynapseIT {
   }
 
   private void holdingRoom() {
-    new AgencyPreAssignmentRoomService(identities, gateway, sessions, silentMembership)
+    var pause = new MatrixRateLimitPause();
+    new AgencyPreAssignmentRoomService(
+            identities,
+            gateway,
+            sessions,
+            silentMembership,
+            new AgencyDepartmentMembershipBackfill(
+                new AgencyOpenEnquiryMembership(
+                    consultants,
+                    mock(ConsultantAgencyRepository.class),
+                    sessionRepository,
+                    silentMembership),
+                gateway,
+                pause,
+                Runnable::run),
+            pause)
         .ensureHoldingRoom(session, session.getUser());
     assertThat(session.getMatrixRoomId()).isNotBlank();
   }

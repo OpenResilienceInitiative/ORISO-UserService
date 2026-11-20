@@ -19,13 +19,16 @@ import jakarta.persistence.OneToMany;
 import jakarta.persistence.Table;
 import jakarta.persistence.Transient;
 import jakarta.validation.constraints.Size;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.ZoneId;
 import java.util.Collection;
 import java.util.HashSet;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.stream.Collectors;
+import java.util.stream.Stream;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Getter;
@@ -50,6 +53,7 @@ import org.springframework.lang.Nullable;
 
 /** Represents a consultant */
 @Entity
+@org.hibernate.annotations.DynamicUpdate
 @Table(
     name = "consultant",
     indexes = {
@@ -74,6 +78,11 @@ import org.springframework.lang.Nullable;
 public class Consultant implements TenantAware, NotificationsAware {
 
   protected static final String EMAIL_ANALYZER = "emailAnalyzer";
+
+  /** Explicit management pause; independent identity and lifecycle restrictions stay intact. */
+  @org.hibernate.annotations.ColumnDefault("false")
+  @Column(name = "managed_paused", nullable = false)
+  private boolean managedPaused;
 
   @Id
   @Column(name = "consultant_id", updatable = false, nullable = false)
@@ -217,6 +226,14 @@ public class Consultant implements TenantAware, NotificationsAware {
   @JdbcTypeCode(SqlTypes.LONGVARCHAR)
   private String absenceMessage;
 
+  /** First day of a planned absence (ORISO-Frontend#2303); null = from now. */
+  @Column(name = "absence_start")
+  private LocalDate absenceStart;
+
+  /** Last day of a planned absence, inclusive; null = until switched off. */
+  @Column(name = "absence_end")
+  private LocalDate absenceEnd;
+
   @Column(name = "language_formal", nullable = false, columnDefinition = "tinyint")
   @JdbcTypeCode(SqlTypes.TINYINT)
   private boolean languageFormal;
@@ -337,9 +354,6 @@ public class Consultant implements TenantAware, NotificationsAware {
   @Field
   private Long tenantId;
 
-  @OneToMany(mappedBy = "consultant", cascade = CascadeType.ALL)
-  private Set<Appointment> appointments;
-
   @Column(name = "status", length = 11)
   @Enumerated(EnumType.STRING)
   @Field
@@ -387,10 +401,30 @@ public class Consultant implements TenantAware, NotificationsAware {
    */
   @JsonIgnore
   public String getInternalDisplayNameOrFallback() {
-    if (internalDisplayName != null && !internalDisplayName.isBlank()) {
+    return hasInternalDisplayName() ? internalDisplayName : displayName;
+  }
+
+  /**
+   * The same #996 rule for colleague-only lists that show the public name next to it (case handover
+   * candidates, FE#1725): the fallback is the real name, never the public one.
+   *
+   * @return the internal display name, else first + last name, else null
+   */
+  @JsonIgnore
+  public String getInternalDisplayNameOrRealName() {
+    if (hasInternalDisplayName()) {
       return internalDisplayName;
     }
-    return displayName;
+    String realName =
+        Stream.of(firstName, lastName)
+            .filter(part -> part != null && !part.isBlank())
+            .map(String::trim)
+            .collect(Collectors.joining(" "));
+    return realName.isEmpty() ? null : realName;
+  }
+
+  private boolean hasInternalDisplayName() {
+    return internalDisplayName != null && !internalDisplayName.isBlank();
   }
 
   @JsonIgnore
@@ -595,5 +629,33 @@ public class Consultant implements TenantAware, NotificationsAware {
     String getEmail();
 
     LocalDateTime getUpdateDate();
+  }
+
+  /** The days of a planned absence are days in this zone (calendar.zone). */
+  public static final ZoneId ABSENCE_ZONE = ZoneId.of("Europe/Berlin");
+
+  /**
+   * Absent today (ORISO-Frontend#2303): the switch is on and today lies in the planned range, if
+   * any. Every reader of the absence asks this, so a range starts and ends without a scheduler.
+   */
+  public boolean isAbsent() {
+    return isAbsentOn(LocalDate.now(ABSENCE_ZONE));
+  }
+
+  /** Absent on the given day: switched on, and the day within the optional range. */
+  public boolean isAbsentOn(LocalDate day) {
+    return absent
+        && (absenceStart == null || !day.isBefore(absenceStart))
+        && (absenceEnd == null || !day.isAfter(absenceEnd));
+  }
+
+  /** Whether the absence is switched on at all, planned or current, regardless of the date. */
+  public boolean isAbsenceSwitchedOn() {
+    return absent;
+  }
+
+  /** Over: switched off, or past its last day. A planned one that has not begun is not over. */
+  public boolean isAbsenceOverOn(LocalDate day) {
+    return !absent || (absenceEnd != null && day.isAfter(absenceEnd));
   }
 }

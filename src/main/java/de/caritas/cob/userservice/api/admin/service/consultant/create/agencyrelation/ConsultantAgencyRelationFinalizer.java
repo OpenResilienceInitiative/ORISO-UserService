@@ -7,7 +7,6 @@ import de.caritas.cob.userservice.api.model.ConsultantAgencyStatus;
 import de.caritas.cob.userservice.api.model.ConsultantStatus;
 import de.caritas.cob.userservice.api.port.out.ConsultantAgencyRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
-import java.util.List;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -24,43 +23,61 @@ public class ConsultantAgencyRelationFinalizer {
 
   /** Finalizes a relation resolved by consultant and agency. */
   @Transactional
-  public void finalizeConsultantAgencyRelation(Consultant consultant, AgencyDTO agency) {
-    updateConsultantStatus(consultant, agency);
+  public boolean finalizeConsultantAgencyRelation(Consultant consultant, AgencyDTO agency) {
+    return consultantRepository
+        .findFreshActiveByIdForUpdate(consultant.getId())
+        .map(
+            current ->
+                updateConsultantStatus(
+                    current,
+                    agency,
+                    consultantAgencyRepository
+                        .findByConsultantIdAndAgencyIdAndStatusAndDeleteDateIsNull(
+                            consultant.getId(),
+                            agency.getId(),
+                            ConsultantAgencyStatus.IN_PROGRESS)))
+        .orElse(false);
   }
 
-  /** Finalizes a relation that the caller has just persisted without an immediate re-query. */
+  /** Finalizes the exact persisted relation if it is still active. */
   @Transactional
-  public void finalizeConsultantAgencyRelation(
-      Consultant consultant, ConsultantAgency persistedRelation) {
-    updateConsultantStatus(consultant, persistedRelation);
+  public boolean finalizeConsultantAgencyRelation(
+      Consultant consultant, AgencyDTO agency, ConsultantAgency persistedRelation) {
+    return consultantRepository
+        .findFreshActiveByIdForUpdate(consultant.getId())
+        .flatMap(
+            current ->
+                consultantAgencyRepository
+                    .findById(persistedRelation.getId())
+                    .filter(relation -> relation.getDeleteDate() == null)
+                    .filter(relation -> relation.getStatus() == ConsultantAgencyStatus.IN_PROGRESS)
+                    .map(relation -> updateConsultantStatus(current, agency, relation)))
+        .orElse(false);
   }
 
-  private void updateConsultantStatus(Consultant consultant, AgencyDTO agencyDTO) {
-    ConsultantAgency consultantAgency =
-        consultantAgencyRepository.findByConsultantIdAndAgencyIdAndStatusAndDeleteDateIsNull(
-            consultant.getId(), agencyDTO.getId(), ConsultantAgencyStatus.IN_PROGRESS);
-
-    if (consultantAgency == null) {
+  private boolean updateConsultantStatus(
+      Consultant consultant, AgencyDTO agency, ConsultantAgency relation) {
+    if (relation == null) {
       log.warn(
-          "No IN_PROGRESS consultant_agency relation visible for consultant {} and agency {};"
-              + " skipping status finalization",
+          "No active relation to finalize for consultant {} and agency {}",
           consultant.getId(),
-          agencyDTO.getId());
-      return;
+          agency.getId());
+      return false;
     }
+    relation.setStatus(ConsultantAgencyStatus.CREATED);
+    consultantAgencyRepository.save(relation);
 
-    updateConsultantStatus(consultant, consultantAgency);
-  }
-
-  private void updateConsultantStatus(Consultant consultant, ConsultantAgency consultantAgency) {
-    consultantAgency.setStatus(ConsultantAgencyStatus.CREATED);
-    consultantAgencyRepository.save(consultantAgency);
-    List<ConsultantAgency> consultantAgencies =
+    var pending =
         consultantAgencyRepository.findByConsultantIdAndStatusAndDeleteDateIsNull(
             consultant.getId(), ConsultantAgencyStatus.IN_PROGRESS);
-    if (consultantAgencies.size() == 0) {
-      consultant.setStatus(ConsultantStatus.CREATED);
+    var status = pending.isEmpty() ? ConsultantStatus.CREATED : ConsultantStatus.IN_PROGRESS;
+    var teamConsultant =
+        consultant.isTeamConsultant() || Boolean.TRUE.equals(agency.getTeamAgency());
+    if (consultant.getStatus() != status || consultant.isTeamConsultant() != teamConsultant) {
+      consultant.setStatus(status);
+      consultant.setTeamConsultant(teamConsultant);
       consultantRepository.save(consultant);
     }
+    return true;
   }
 }

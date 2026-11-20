@@ -118,6 +118,50 @@ class TopicServiceTest {
   }
 
   @Test
+  void activeManagementTopics_useTheExplicitTenantAndPublicLanguage() {
+    when(topicServiceApiControllerFactory.createScopedControllerApi()).thenReturn(controllerApi);
+    var request = new MockHttpServletRequest();
+    request.addHeader(HttpHeaders.ACCEPT_LANGUAGE, "en");
+    RequestContextHolder.setRequestAttributes(new ServletRequestAttributes(request));
+
+    service.getActiveTopicsForTenant(2L);
+
+    verify(apiClient).addDefaultHeader("tenantId", "2");
+    verify(apiClient).addDefaultHeader(HttpHeaders.COOKIE, "lang=en");
+    verify(tenantHeaderSupplier, never()).addTenantHeader(any());
+    verify(securityHeaderSupplier, never()).getKeycloakAndCsrfHttpHeaders();
+  }
+
+  @Test
+  void managementTopicNames_includeInactiveTopicsFromTheSelectedTenant() {
+    var headers = new HttpHeaders();
+    headers.setBearerAuth("test-token");
+    headers.set("X-CSRF-Token", "test-csrf");
+    when(securityHeaderSupplier.getKeycloakAndCsrfHttpHeaders()).thenReturn(headers);
+    when(topicServiceApiControllerFactory.createScopedControllerApi()).thenReturn(controllerApi);
+    var topic = new TopicDTO().id(99L).name("Schuldenberatung");
+    when(controllerApi.getAllTopics()).thenReturn(List.of(topic));
+
+    assertThat(service.getTopicNamesForTenant(2L)).containsExactlyEntriesOf(Map.of(99L, topic));
+    verify(apiClient).addDefaultHeader("tenantId", "2");
+    verify(apiClient).addDefaultHeader(HttpHeaders.AUTHORIZATION, "Bearer test-token");
+    verify(apiClient).addDefaultHeader("X-CSRF-Token", "test-csrf");
+    verify(apiClient).addDefaultHeader(HttpHeaders.COOKIE, "lang=de");
+    verify(topicServiceApiControllerFactory, never()).createControllerApi();
+    verify(controllerApi, never()).getAllActiveTopics();
+    verify(tenantHeaderSupplier, never()).addTenantHeader(any());
+  }
+
+  @Test
+  void managementTopicNames_returnsAnEmptyMapWhenScopedApiReturnsNoBody() {
+    when(topicServiceApiControllerFactory.createScopedControllerApi()).thenReturn(controllerApi);
+    when(controllerApi.getAllTopics()).thenReturn(null);
+
+    assertThat(service.getTopicNamesForTenant(2L)).isEmpty();
+    verify(topicServiceApiControllerFactory, never()).createControllerApi();
+  }
+
+  @Test
   void getAllTopics_Should_NotAddPublicLanguageCookieToAuthenticatedLookup() {
     service.getAllTopics();
 

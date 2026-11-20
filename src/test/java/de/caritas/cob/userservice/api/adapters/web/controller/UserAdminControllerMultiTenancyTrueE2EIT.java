@@ -37,9 +37,11 @@ import de.caritas.cob.userservice.api.port.out.IdentityPasswordUpdater;
 import de.caritas.cob.userservice.api.port.out.IdentityProfile;
 import de.caritas.cob.userservice.api.port.out.IdentityProfileLookup;
 import de.caritas.cob.userservice.api.port.out.IdentityProfileUpdater;
+import de.caritas.cob.userservice.api.port.out.IdentityReactivator;
 import de.caritas.cob.userservice.api.port.out.IdentityRoleLookup;
 import de.caritas.cob.userservice.api.port.out.IdentityRoleUpdater;
 import de.caritas.cob.userservice.api.port.out.IdentitySecondFactor;
+import de.caritas.cob.userservice.api.port.out.IdentityTenantUpdater;
 import de.caritas.cob.userservice.api.port.out.IdentityUsernameAvailability;
 import de.caritas.cob.userservice.api.port.out.identity.CreatedIdentity;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInvitePurpose;
@@ -127,6 +129,7 @@ class UserAdminControllerMultiTenancyTrueE2EIT extends AccountInactivityPolicyHt
         IdentityAccountStatusLookup.class,
         IdentityAuthentication.class,
         IdentityDeactivator.class,
+        IdentityReactivator.class,
         IdentityDummyEmailUpdater.class,
         IdentityEmailAddressUpdater.class,
         IdentityEmailOwnerLookup.class,
@@ -138,6 +141,7 @@ class UserAdminControllerMultiTenancyTrueE2EIT extends AccountInactivityPolicyHt
         IdentityRoleLookup.class,
         IdentityRoleUpdater.class,
         IdentitySecondFactor.class,
+        IdentityTenantUpdater.class,
         IdentityUsernameAvailability.class
       })
   IdentityClient identityClient;
@@ -161,6 +165,13 @@ class UserAdminControllerMultiTenancyTrueE2EIT extends AccountInactivityPolicyHt
 
   @BeforeEach
   public void setUp() {
+    when(tenantService.getRestrictedTenantDataFresh(Mockito.anyLong()))
+        .thenAnswer(
+            call ->
+                new RestrictedTenantDTO()
+                    .id(call.getArgument(0))
+                    .active(true)
+                    .subdomain("synthetic"));
 
     CreatedIdentity keycloakResponse = new CreatedIdentity();
     createdIdentityId = UUID.randomUUID().toString();
@@ -223,6 +234,7 @@ class UserAdminControllerMultiTenancyTrueE2EIT extends AccountInactivityPolicyHt
       throws Exception {
     // given
     CreateAdminDTO createAdminDTO = new EasyRandom().nextObject(CreateAdminDTO.class);
+    createAdminDTO.setContactEmail(null);
     createAdminDTO.setEmail("agencyadmin@email.com");
     createAdminDTO.setTenantId(95);
     givenCurrentSetupIdentity(createAdminDTO, AccountInviteTargetRole.AGENCY_ADMIN);
@@ -266,6 +278,7 @@ class UserAdminControllerMultiTenancyTrueE2EIT extends AccountInactivityPolicyHt
       throws Exception {
     // given
     CreateAdminDTO createAdminDTO = new EasyRandom().nextObject(CreateAdminDTO.class);
+    createAdminDTO.setContactEmail(null);
     createAdminDTO.setEmail("agencyadmin@email.com");
     createAdminDTO.setTenantId(null);
     givenTenant();
@@ -291,6 +304,7 @@ class UserAdminControllerMultiTenancyTrueE2EIT extends AccountInactivityPolicyHt
       throws Exception {
     // given a tenant super admin whose token carries no tenant
     CreateAdminDTO createAdminDTO = new EasyRandom().nextObject(CreateAdminDTO.class);
+    createAdminDTO.setContactEmail(null);
     createAdminDTO.setEmail("agencyadmin@email.com");
     createAdminDTO.setTenantId(95);
     givenTenant();
@@ -314,6 +328,7 @@ class UserAdminControllerMultiTenancyTrueE2EIT extends AccountInactivityPolicyHt
       throws Exception {
     // given a tenant admin of tenant 95 posting an agency admin for tenant 7
     CreateAdminDTO createAdminDTO = new EasyRandom().nextObject(CreateAdminDTO.class);
+    createAdminDTO.setContactEmail(null);
     createAdminDTO.setEmail("agencyadmin@email.com");
     createAdminDTO.setTenantId(7);
     givenTenant();
@@ -337,6 +352,7 @@ class UserAdminControllerMultiTenancyTrueE2EIT extends AccountInactivityPolicyHt
   void createNewAgencyAdmin_Should_returnOk_When_tenantAdminTargetsOwnTenant() throws Exception {
     // given
     CreateAdminDTO createAdminDTO = new EasyRandom().nextObject(CreateAdminDTO.class);
+    createAdminDTO.setContactEmail(null);
     createAdminDTO.setEmail("agencyadmin@email.com");
     createAdminDTO.setTenantId(95);
     givenCurrentSetupIdentity(createAdminDTO, AccountInviteTargetRole.AGENCY_ADMIN);
@@ -363,6 +379,7 @@ class UserAdminControllerMultiTenancyTrueE2EIT extends AccountInactivityPolicyHt
       throws Exception {
     // given a tenant admin of tenant 95 posting a tenant admin for tenant 7
     CreateAdminDTO createAdminDTO = new EasyRandom().nextObject(CreateAdminDTO.class);
+    createAdminDTO.setContactEmail(null);
     createAdminDTO.setEmail("tenantadmin@email.com");
     createAdminDTO.setTenantId(7);
     givenTenant();
@@ -385,6 +402,7 @@ class UserAdminControllerMultiTenancyTrueE2EIT extends AccountInactivityPolicyHt
   void createNewTenantAdmin_Should_returnOk_When_tenantAdminTargetsOwnTenant() throws Exception {
     // given
     CreateAdminDTO createAdminDTO = new EasyRandom().nextObject(CreateAdminDTO.class);
+    createAdminDTO.setContactEmail(null);
     createAdminDTO.setEmail("tenantadmin@email.com");
     createAdminDTO.setTenantId(95);
     givenCurrentSetupIdentity(createAdminDTO, AccountInviteTargetRole.TENANT_ADMIN);
@@ -411,8 +429,10 @@ class UserAdminControllerMultiTenancyTrueE2EIT extends AccountInactivityPolicyHt
       throws Exception {
     // given
     CreateAdminDTO createAdminDTO = new EasyRandom().nextObject(CreateAdminDTO.class);
+    createAdminDTO.setContactEmail(null);
     createAdminDTO.setEmail("platformadmin@email.com");
     createAdminDTO.setTenantId(0);
+    when(authenticatedUser.getAccessToken()).thenReturn("platform-caller-token");
     givenCurrentSetupIdentity(createAdminDTO, AccountInviteTargetRole.TENANT_ADMIN);
     givenTenant();
     givenPlatformAdmin();
@@ -428,6 +448,7 @@ class UserAdminControllerMultiTenancyTrueE2EIT extends AccountInactivityPolicyHt
                 .content(objectMapper.writeValueAsString(createAdminDTO)))
         .andExpect(status().isOk())
         .andExpect(jsonPath("_embedded.tenantId", is("0")));
+    assertDefaultInactivityPolicy(createdIdentityId);
     assertIssuedSetup(AccountInviteTargetRole.TENANT_ADMIN, 0L);
   }
 

@@ -1,5 +1,6 @@
 package de.caritas.cob.userservice.api.service.email;
 
+import static de.caritas.cob.userservice.api.service.emailsupplier.EmailSupplier.TEMPLATE_ADDON_NOTIFICATION;
 import static de.caritas.cob.userservice.api.service.emailsupplier.EmailSupplier.TEMPLATE_ASSIGN_ENQUIRY_NOTIFICATION;
 import static de.caritas.cob.userservice.api.service.emailsupplier.EmailSupplier.TEMPLATE_DAILY_ENQUIRY_NOTIFICATION;
 import static de.caritas.cob.userservice.api.service.emailsupplier.EmailSupplier.TEMPLATE_INQUIRY_ACCEPTED_NOTIFICATION;
@@ -56,7 +57,8 @@ public class NotificationMailComposer {
                 : PREVIEW_PATH));
 
     var tone = renderer.deliveryTone(toneFor(mail.getLanguage(), mail.getDialect()));
-    if (TEMPLATE_INQUIRY_ACCEPTED_NOTIFICATION.equals(mail.getTemplate())) {
+    if (TEMPLATE_INQUIRY_ACCEPTED_NOTIFICATION.equals(mail.getTemplate())
+        || TEMPLATE_ADDON_NOTIFICATION.equals(mail.getTemplate())) {
       // Only catalogue-authored neutral copy enters the mail; input subject/text and case data do
       // not.
       String configuredPlatformName = values.get("offeringName");
@@ -96,7 +98,7 @@ public class NotificationMailComposer {
       case TEMPLATE_NEW_DIRECT_ENQUIRY_NOTIFICATION -> "direkte-anfrage";
       case TEMPLATE_ASSIGN_ENQUIRY_NOTIFICATION -> "anfrage-zugewiesen";
       case TEMPLATE_DAILY_ENQUIRY_NOTIFICATION -> "tagesuebersicht";
-      case TEMPLATE_INQUIRY_ACCEPTED_NOTIFICATION -> "mitteilung";
+      case TEMPLATE_INQUIRY_ACCEPTED_NOTIFICATION, TEMPLATE_ADDON_NOTIFICATION -> "mitteilung";
       default ->
           throw new IllegalArgumentException("Unsupported notification occasion: " + occasion);
     };

@@ -10,6 +10,7 @@ import static org.mockito.Mockito.when;
 
 import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
 import de.caritas.cob.userservice.api.adapters.matrix.dto.MatrixCreateRoomResponseDTO;
+import de.caritas.cob.userservice.api.admin.service.tenant.TenantService;
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
 import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
@@ -60,6 +61,15 @@ class SessionSupervisorFacadeTest {
   private static final String CLIENT_MXID = "@client:oriso";
 
   @InjectMocks private SessionSupervisorFacade facade;
+
+  @Mock
+  private de.caritas.cob.userservice.api.service.chat.MembersOnlyChatAccess membersOnlyChatAccess;
+
+  @Mock private de.caritas.cob.userservice.api.service.CaseHandoverMatrixRepairService repairs;
+
+  @Mock
+  private de.caritas.cob.userservice.api.service.conversationfeature.ConversationFeatureGate
+      conversationFeatureGate;
 
   @Mock private SessionSupervisorRepository sessionSupervisorRepository;
   @Mock private SessionRepository sessionRepository;
@@ -117,6 +127,68 @@ class SessionSupervisorFacadeTest {
     when(matrixSynapseService.joinRoom(any(), any())).thenReturn(true);
     when(sessionSupervisorRepository.save(any()))
         .thenAnswer(inv -> inv.getArgument(0, SessionSupervisor.class));
+  }
+
+  @Test
+  void addSupervisor_Should_beRefusedBeforeAnyMatrixCall_whenSupervisionIsSwitchedOff() {
+    org.mockito.Mockito.doThrow(
+            new de.caritas.cob.userservice.api.exception.httpresponses
+                .CustomValidationHttpStatusException(
+                de.caritas.cob.userservice.api.exception.httpresponses.customheader
+                    .HttpStatusExceptionReason.FEATURE_DISABLED,
+                org.springframework.http.HttpStatus.FORBIDDEN))
+        .when(conversationFeatureGate)
+        .require(
+            de.caritas.cob.userservice.api.service.conversationfeature.ConversationFeature
+                .SUPERVISION,
+            session);
+
+    org.junit.jupiter.api.Assertions.assertThrows(
+        de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHttpStatusException
+            .class,
+        () -> facade.addSupervisor(SESSION_ID, SUPERVISOR_ID, addedBy, null, "reason"));
+
+    org.mockito.Mockito.verifyNoInteractions(matrixSynapseService);
+    verify(sessionSupervisorRepository, org.mockito.Mockito.never()).save(any());
+  }
+
+  @Test
+  void addSupervisor_Should_notAskTheSwitchesOfAPersonWhoMayNotManageSupervisors() {
+    var stranger = new Consultant();
+    stranger.setId("stranger");
+    stranger.setMatrixUserId("@stranger:oriso");
+
+    org.junit.jupiter.api.Assertions.assertThrows(
+        de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException.class,
+        () -> facade.addSupervisor(SESSION_ID, SUPERVISOR_ID, stranger, null, "reason"));
+
+    org.mockito.Mockito.verifyNoInteractions(conversationFeatureGate);
+  }
+
+  @Test
+  void addSupervisor_Should_refuseAMembersOnlyRoom_whenTheSupervisorIsNotOneOfItsMembers()
+      throws Exception {
+    org.mockito.Mockito.doThrow(
+            new de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException("no"))
+        .when(membersOnlyChatAccess)
+        .requireAccess(session, supervisor);
+
+    org.junit.jupiter.api.Assertions.assertThrows(
+        de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException.class,
+        () -> facade.addSupervisor(SESSION_ID, SUPERVISOR_ID, addedBy, null, "reason"));
+
+    verify(matrixSynapseService, org.mockito.Mockito.never()).inviteUserToRoom(any(), any(), any());
+    verify(matrixSynapseService, org.mockito.Mockito.never()).joinRoom(any(), any());
+    verify(sessionSupervisorRepository, org.mockito.Mockito.never()).save(any());
+  }
+
+  @Test
+  void addSupervisor_Should_acceptAMembersOnlyRoom_whenTheSupervisorIsAlreadyOneOfItsMembers() {
+
+    SessionSupervisor saved =
+        facade.addSupervisor(SESSION_ID, SUPERVISOR_ID, addedBy, null, "reason");
+
+    assertThat(saved).isNotNull();
   }
 
   @Test
@@ -497,6 +569,73 @@ class SessionSupervisorFacadeTest {
     verify(matrixSynapseService, never()).inviteUserToRoom(any(), any(), any());
   }
 
+  @Test
+  void
+      attachStandingSupervisorIfAssigned_Should_neverThrow_andLeaveNothingBehind_whenTheSwitchIsOff()
+          throws Exception {
+    // The accept path rolls back on any exception: a switched-off supervision must leave the case
+    // unsupervised, not block the reply.
+    addedBy.setAssignedSupervisorId(SUPERVISOR_ID);
+    org.mockito.Mockito.doThrow(
+            new de.caritas.cob.userservice.api.exception.httpresponses
+                .CustomValidationHttpStatusException(
+                de.caritas.cob.userservice.api.exception.httpresponses.customheader
+                    .HttpStatusExceptionReason.FEATURE_DISABLED,
+                org.springframework.http.HttpStatus.FORBIDDEN))
+        .when(conversationFeatureGate)
+        .require(
+            de.caritas.cob.userservice.api.service.conversationfeature.ConversationFeature
+                .SUPERVISION,
+            session);
+
+    facade.attachStandingSupervisorIfAssigned(SESSION_ID, addedBy);
+
+    verify(sessionSupervisorRepository, never()).save(any());
+    org.mockito.Mockito.verifyNoInteractions(matrixSynapseService, repairs);
+  }
+
+  @Test
+  void
+      attachStandingSupervisorIfAssigned_Should_neverThrow_andLeaveNothingBehind_whenTheTenantServiceIsDown()
+          throws Exception {
+    // The real gate on top of a TenantService that is down: the reply is still accepted.
+    addedBy.setAssignedSupervisorId(SUPERVISOR_ID);
+    session.setTenantId(9L);
+    var tenantService = org.mockito.Mockito.mock(TenantService.class);
+    when(tenantService.getRestrictedTenantDataFresh(9L))
+        .thenThrow(new org.springframework.web.client.ResourceAccessException("down"));
+    var realGate =
+        new de.caritas.cob.userservice.api.service.conversationfeature.ConversationFeatureGate(
+            tenantService,
+            org.mockito.Mockito.mock(
+                de.caritas.cob.userservice.api.service.agency.EffectiveAgencySettingsLookup.class),
+            org.mockito.Mockito.mock(
+                de.caritas.cob.userservice.api.port.out.ChatAgencyRepository.class),
+            membersOnlyChatAccess);
+    org.mockito.Mockito.doAnswer(
+            invocation -> {
+              realGate.require(
+                  invocation
+                      .<de.caritas.cob.userservice.api.service.conversationfeature
+                              .ConversationFeature>
+                          getArgument(0),
+                  invocation.<Session>getArgument(1));
+              return null;
+            })
+        .when(conversationFeatureGate)
+        .require(
+            any(
+                de.caritas.cob.userservice.api.service.conversationfeature.ConversationFeature
+                    .class),
+            any(Session.class));
+
+    facade.attachStandingSupervisorIfAssigned(SESSION_ID, addedBy);
+
+    verify(tenantService).getRestrictedTenantDataFresh(9L);
+    verify(sessionSupervisorRepository, never()).save(any());
+    org.mockito.Mockito.verifyNoInteractions(matrixSynapseService, repairs);
+  }
+
   // --- setSupervisionOptedOut (client opt-out toggle, grill 2026-07-13) ---
 
   @Test
@@ -519,6 +658,37 @@ class SessionSupervisorFacadeTest {
   }
 
   @Test
+  void setSupervisionOptedOut_Should_queueADurableKick_when_theKickFails() {
+    SessionSupervisor active = activeSupervisorRow(11L);
+    when(sessionSupervisorRepository.findBySessionIdAndIsActiveTrue(SESSION_ID))
+        .thenReturn(List.of(active));
+    when(membersOnlyChatAccess.concerns(session)).thenReturn(true);
+    when(matrixSynapseService.removeUserFromRoom(any(), any(), any())).thenReturn(false);
+
+    facade.setSupervisionOptedOut(SESSION_ID, true);
+
+    assertThat(active.getIsActive()).isFalse();
+    verify(repairs)
+        .enqueueRemovalInCurrentTransaction(
+            SIDE_ROOM, SUPERVISOR_MXID, CONSULTANT_MXID, SESSION_ID);
+  }
+
+  @Test
+  void setSupervisionOptedOut_Should_queueADurableKick_when_theOperatorTokenIsMissing() {
+    SessionSupervisor active = activeSupervisorRow(11L);
+    when(sessionSupervisorRepository.findBySessionIdAndIsActiveTrue(SESSION_ID))
+        .thenReturn(List.of(active));
+    when(matrixSynapseService.loginAsUserAccessToken(CONSULTANT_MXID)).thenReturn(null);
+
+    facade.setSupervisionOptedOut(SESSION_ID, true);
+
+    assertThat(active.getIsActive()).isFalse();
+    verify(repairs)
+        .enqueueRemovalInCurrentTransaction(
+            SIDE_ROOM, SUPERVISOR_MXID, CONSULTANT_MXID, SESSION_ID);
+  }
+
+  @Test
   void setSupervisionOptedOut_Should_clearBlockButNeverReactivate_when_optingBackIn() {
     session.setSupervisionOptedOut(true);
 
@@ -531,6 +701,107 @@ class SessionSupervisorFacadeTest {
     // reactivation) — an explicit re-add is required.
     verify(sessionSupervisorRepository, never()).findBySessionIdAndIsActiveTrue(SESSION_ID);
     verify(matrixSynapseService, never()).loginAsUserAccessToken(any());
+  }
+
+  // --- Codex findings on #1426 (members-only supervision) ---
+
+  private static final String CREATOR_MXID = "@creator:oriso";
+
+  private Consultant membersOnlySessionOfCreatorAndAColleague() {
+    Consultant creator = new Consultant();
+    creator.setId("con-creator");
+    creator.setUsername("creator");
+    creator.setMatrixUserId(CREATOR_MXID);
+    session.setConsultant(creator);
+    // addedBy ("con-1") is a plain participant of the same agency, not the creator.
+    addedBy.setConsultantAgencies(Set.of(ConsultantAgency.builder().agencyId(7L).build()));
+    when(membersOnlyChatAccess.concerns(session)).thenReturn(true);
+    return creator;
+  }
+
+  @Test
+  void addSupervisor_Should_supportAMembersOnlyChat_whoseTechnicalSessionHasPostcode00000()
+      throws Exception {
+    session.setRegistrationType(Session.RegistrationType.REGISTERED);
+    session.setPostcode("00000");
+    when(membersOnlyChatAccess.concerns(session)).thenReturn(true);
+
+    SessionSupervisor saved =
+        facade.addSupervisor(SESSION_ID, SUPERVISOR_ID, addedBy, null, "reason");
+
+    assertThat(saved.getIsActive()).isTrue();
+    verify(matrixSynapseService).inviteUserToRoom(eq(SIDE_ROOM), eq(SUPERVISOR_MXID), any());
+  }
+
+  @Test
+  void getSupervisors_Should_listThem_forAMembersOnlyChat_whoseTechnicalSessionHasPostcode00000() {
+    session.setPostcode("00000");
+    when(membersOnlyChatAccess.concerns(session)).thenReturn(true);
+    SessionSupervisor active = activeSupervisorRow(1L);
+    when(sessionSupervisorRepository.findBySessionIdAndIsActiveTrue(SESSION_ID))
+        .thenReturn(List.of(active));
+
+    assertThat(facade.getSupervisors(SESSION_ID, addedBy)).containsExactly(active);
+  }
+
+  @Test
+  void addSupervisor_Should_cancelPendingRemovalsOfTheSupervisor_whenTheyAreReAdded()
+      throws Exception {
+    facade.addSupervisor(SESSION_ID, SUPERVISOR_ID, addedBy, null, "reason");
+
+    verify(repairs).cancelPendingRemovals(SESSION_ID, SUPERVISOR_MXID);
+  }
+
+  @Test
+  void removeSupervisor_Should_kickWithTheRoomCreator_whenANonCreatorParticipantRemoves() {
+    Consultant creator = membersOnlySessionOfCreatorAndAColleague();
+    SessionSupervisor active = activeSupervisorRow(1L);
+    when(sessionSupervisorRepository.findById(1L)).thenReturn(Optional.of(active));
+    when(matrixSynapseService.loginAsUserAccessToken(CONSULTANT_MXID)).thenReturn("tok-invitee");
+    when(matrixSynapseService.loginAsUserAccessToken(CREATOR_MXID)).thenReturn("tok-creator");
+    // The ordinary invitee has no power to kick in the private room; the creator has.
+    when(matrixSynapseService.removeUserFromRoom(SIDE_ROOM, SUPERVISOR_MXID, "tok-invitee"))
+        .thenReturn(false);
+    when(matrixSynapseService.removeUserFromRoom(SIDE_ROOM, SUPERVISOR_MXID, "tok-creator"))
+        .thenReturn(true);
+
+    facade.removeSupervisor(SESSION_ID, 1L, addedBy);
+
+    verify(matrixSynapseService).removeUserFromRoom(SIDE_ROOM, SUPERVISOR_MXID, "tok-creator");
+    verify(repairs, never()).enqueueRemovalInCurrentTransaction(any(), any(), any(), any());
+    assertThat(active.getIsActive()).isFalse();
+    assertThat(creator.getMatrixUserId()).isEqualTo(CREATOR_MXID);
+  }
+
+  @Test
+  void removeSupervisor_Should_leaveWithTheSupervisorsOwnToken_whenNoOperatorCanKick() {
+    membersOnlySessionOfCreatorAndAColleague();
+    SessionSupervisor active = activeSupervisorRow(1L);
+    when(sessionSupervisorRepository.findById(1L)).thenReturn(Optional.of(active));
+    when(matrixSynapseService.loginAsUserAccessToken(SUPERVISOR_MXID)).thenReturn("tok-sup");
+    when(matrixSynapseService.removeUserFromRoom(any(), any(), any())).thenReturn(false);
+    when(matrixSynapseService.leaveRoom(SIDE_ROOM, "tok-sup")).thenReturn(true);
+
+    facade.removeSupervisor(SESSION_ID, 1L, addedBy);
+
+    verify(matrixSynapseService).leaveRoom(SIDE_ROOM, "tok-sup");
+    verify(repairs, never()).enqueueRemovalInCurrentTransaction(any(), any(), any(), any());
+    assertThat(active.getIsActive()).isFalse();
+  }
+
+  @Test
+  void removeSupervisor_Should_queueTheRetryAsTheRoomCreator_whenNothingWorksNow() {
+    membersOnlySessionOfCreatorAndAColleague();
+    SessionSupervisor active = activeSupervisorRow(1L);
+    when(sessionSupervisorRepository.findById(1L)).thenReturn(Optional.of(active));
+    when(matrixSynapseService.removeUserFromRoom(any(), any(), any())).thenReturn(false);
+    when(matrixSynapseService.leaveRoom(any(), any())).thenReturn(false);
+
+    facade.removeSupervisor(SESSION_ID, 1L, addedBy);
+
+    verify(repairs)
+        .enqueueRemovalInCurrentTransaction(SIDE_ROOM, SUPERVISOR_MXID, CREATOR_MXID, SESSION_ID);
+    assertThat(active.getIsActive()).isFalse();
   }
 
   // --- removeSupervisor ---
@@ -608,13 +879,29 @@ class SessionSupervisorFacadeTest {
   }
 
   @Test
-  void removeSupervisor_Should_logWarn_When_removeFromRoomReturnsFalse() {
-    // ACCEPTED BEHAVIOUR: the supervisor row is always deactivated in the DB even when
-    // the Matrix room-removal call returns false (e.g. the user was already absent from
-    // the room). Matrix cleanup is best-effort; the authoritative access-control record
-    // is the DB row. An operator can re-run Matrix cleanup manually if required.
+  void removeSupervisor_Should_leaveOnlyTheSideRoom_When_theSessionIsAMembersOnlyChat() {
     SessionSupervisor active = activeSupervisorRow(1L);
     when(sessionSupervisorRepository.findById(1L)).thenReturn(Optional.of(active));
+    when(membersOnlyChatAccess.concerns(session)).thenReturn(true);
+    when(matrixSynapseService.loginAsUserAccessToken(CONSULTANT_MXID)).thenReturn("tok");
+    when(matrixSynapseService.removeUserFromRoom(any(), any(), any())).thenReturn(true);
+
+    facade.removeSupervisor(SESSION_ID, 1L, addedBy);
+
+    verify(matrixSynapseService).removeUserFromRoom(SIDE_ROOM, SUPERVISOR_MXID, "tok");
+    // The supervisor is still a selected participant: the main room stays until the chat flow
+    // removes them.
+    verify(matrixSynapseService, never()).removeUserFromRoom(eq(CLIENT_ROOM), any(), any());
+    assertThat(active.getIsActive()).isFalse();
+  }
+
+  @Test
+  void removeSupervisor_Should_queueADurableKick_When_theSideRoomRemovalFails() {
+    // Frank 19.10.2026: a removed supervisor is out. The supervision ends and the counsellor
+    // carries on, but a failed kick is never silent: it is queued in the same transaction.
+    SessionSupervisor active = activeSupervisorRow(1L);
+    when(sessionSupervisorRepository.findById(1L)).thenReturn(Optional.of(active));
+    when(membersOnlyChatAccess.concerns(session)).thenReturn(true);
     when(matrixSynapseService.loginAsUserAccessToken(CONSULTANT_MXID)).thenReturn("tok");
     when(matrixSynapseService.removeUserFromRoom(any(), any(), any())).thenReturn(false);
 
@@ -623,6 +910,55 @@ class SessionSupervisorFacadeTest {
     assertThat(active.getIsActive()).isFalse();
     assertThat(active.getRemovedDate()).isNotNull();
     verify(sessionSupervisorRepository).save(active);
+    verify(repairs)
+        .enqueueRemovalInCurrentTransaction(
+            SIDE_ROOM, SUPERVISOR_MXID, CONSULTANT_MXID, SESSION_ID);
+  }
+
+  @Test
+  void removeSupervisor_Should_queueADurableKick_When_theTokenCannotBeMinted() {
+    SessionSupervisor active = activeSupervisorRow(1L);
+    when(sessionSupervisorRepository.findById(1L)).thenReturn(Optional.of(active));
+    when(membersOnlyChatAccess.concerns(session)).thenReturn(true);
+    when(matrixSynapseService.loginAsUserAccessToken(CONSULTANT_MXID)).thenReturn(null);
+
+    facade.removeSupervisor(SESSION_ID, 1L, addedBy);
+
+    assertThat(active.getIsActive()).isFalse();
+    verify(matrixSynapseService, never()).removeUserFromRoom(any(), any(), any());
+    verify(repairs)
+        .enqueueRemovalInCurrentTransaction(
+            SIDE_ROOM, SUPERVISOR_MXID, CONSULTANT_MXID, SESSION_ID);
+  }
+
+  @Test
+  void removeSupervisor_Should_notQueueAnything_When_theKickSucceeds() {
+    SessionSupervisor active = activeSupervisorRow(1L);
+    when(sessionSupervisorRepository.findById(1L)).thenReturn(Optional.of(active));
+    when(matrixSynapseService.loginAsUserAccessToken(CONSULTANT_MXID)).thenReturn("tok");
+    when(matrixSynapseService.removeUserFromRoom(any(), any(), any())).thenReturn(true);
+
+    facade.removeSupervisor(SESSION_ID, 1L, addedBy);
+
+    verify(repairs, never()).enqueueRemovalInCurrentTransaction(any(), any(), any(), any());
+  }
+
+  @Test
+  void aFormerSupervisor_Should_notGetTheSessionAnyMore_andIsNotReadable() {
+    // After the row is inactive the supervision lookup is empty, so the supervisor who is no
+    // longer the counsellor is refused (and sees no session through the supervision relation).
+    SessionSupervisor active = activeSupervisorRow(1L);
+    when(sessionSupervisorRepository.findById(1L)).thenReturn(Optional.of(active));
+    when(matrixSynapseService.loginAsUserAccessToken(CONSULTANT_MXID)).thenReturn("tok");
+    when(matrixSynapseService.removeUserFromRoom(any(), any(), any())).thenReturn(false);
+    facade.removeSupervisor(SESSION_ID, 1L, addedBy);
+    assertThat(active.getIsActive()).isFalse();
+    when(sessionSupervisorRepository.findBySessionIdAndSupervisorConsultantIdAndIsActiveTrue(
+            SESSION_ID, SUPERVISOR_ID))
+        .thenReturn(Optional.empty());
+
+    assertThatThrownBy(() -> facade.getSupervisors(SESSION_ID, supervisor))
+        .isInstanceOf(ForbiddenException.class);
   }
 
   @Test

@@ -1,0 +1,47 @@
+{
+  "baseHead": "0fe770776b9aa871751c340ebd160e6e814da7ff",
+  "workflowFailures": [
+    "37920796847",
+    "37920849401"
+  ],
+  "attributableCauses": [
+    "New notice session_id signed BIGINT mismatched session.id BIGINT UNSIGNED; MariaDB FK errno150",
+    "New scheduler absent from replica-safety catalog; Python inventory assertion"
+  ],
+  "ciUnitEvidence": {
+    "tests": 6365,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "bothFailingWorkflows": true
+  },
+  "localVerification": {
+    "java": 21,
+    "mariadbVersion": "10.11",
+    "mariadbCiSchemaSelection": {
+      "tests": 92,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "pythonCiContracts": {
+      "tests": 114,
+      "failures": 0
+    },
+    "h2Migration": {
+      "tests": 1,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "spotless": "PASS",
+    "gitDiffCheck": "PASS",
+    "taskDatabaseContainerRemoved": true
+  },
+  "scope": "Migration FK signedness, realistic H2 parent fixture and existing scheduler inventory only; no delivery behavior changes or weakened guards.",
+  "notRun": [
+    "authenticated two-replica load step",
+    "published-head CI rerun",
+    "Dev deployment and browser acceptance"
+  ]
+}

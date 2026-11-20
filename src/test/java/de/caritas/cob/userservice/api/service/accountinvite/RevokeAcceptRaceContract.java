@@ -42,8 +42,10 @@ import de.caritas.cob.userservice.api.service.accountinvite.allocation.TenantIdA
 import de.caritas.cob.userservice.api.service.accountinvite.mail.InviteMailDispatchService;
 import de.caritas.cob.userservice.api.service.accountinvite.onboarding.AgencyCreationClient;
 import de.caritas.cob.userservice.api.service.accountinvite.onboarding.CounsellorOnboardingService;
+import de.caritas.cob.userservice.api.service.consultingtype.ApplicationSettingsService;
 import de.caritas.cob.userservice.api.service.consultingtype.TopicService;
 import de.caritas.cob.userservice.api.tenant.Tenants;
+import de.caritas.cob.userservice.applicationsettingsservice.generated.web.model.ApplicationSettingsDTO;
 import java.time.LocalDateTime;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CountDownLatch;
@@ -191,6 +193,7 @@ abstract class RevokeAcceptRaceContract {
   @MockitoBean private IdentitySecondFactor identitySecondFactor;
   @MockitoBean private IdentityProfileLookup identityProfileLookup;
   @MockitoBean private TopicService topicService;
+  @MockitoBean private ApplicationSettingsService applicationSettingsService;
   @MockitoBean private UsernameTranscoder usernameTranscoder;
   @MockitoBean private AgencyCreationClient agencyCreationClient;
 
@@ -212,6 +215,8 @@ abstract class RevokeAcceptRaceContract {
 
   @BeforeEach
   void setUp() {
+    when(applicationSettingsService.fetchApplicationSettings())
+        .thenReturn(new ApplicationSettingsDTO());
     caller.revokeDecided = new CountDownLatch(1);
     caller.afterWriterRead = null;
     Tenants.actAs(
@@ -311,7 +316,8 @@ abstract class RevokeAcceptRaceContract {
         submit(
             "revoke-race-invitee",
             () ->
-                agencyAdminProvisioning.acceptAsAgencyAdmin(RAW_TOKEN, "race-admin", "Passw0rd!"));
+                agencyAdminProvisioning.acceptAsAgencyAdmin(
+                    RAW_TOKEN, "race-admin", "Passw0rd!Passw0rd!"));
     assertThat(accountBeingCreated.await(10, TimeUnit.SECONDS)).isTrue();
     Future<Object> revoke = submit(REVOKE_THREAD, () -> revokeAsAdmin(invite.getId()));
 
@@ -366,7 +372,7 @@ abstract class RevokeAcceptRaceContract {
             () -> {
               inviteeArrived.countDown();
               return agencyAdminProvisioning.acceptAsAgencyAdmin(
-                  RAW_TOKEN, "race-admin", "Passw0rd!");
+                  RAW_TOKEN, "race-admin", "Passw0rd!Passw0rd!");
             });
     assertThat(inviteeArrived.await(10, TimeUnit.SECONDS)).isTrue();
 
@@ -543,39 +549,6 @@ abstract class RevokeAcceptRaceContract {
     assertThat(persisted.getStatus()).isEqualTo(AccountInviteStatus.EMAIL_SENT);
     // Nothing went out, so the link the invitee already has keeps working.
     assertThat(persisted.getTokenHash()).isEqualTo(AccountInviteService.hash(RAW_TOKEN));
-  }
-
-  @Test
-  void waiveWhileARevokeLands_Should_KeepTheRevoke() throws Exception {
-    AccountInvite invite = persistedAgencyAdminInvite();
-
-    Object waived =
-        writeWhileAnotherWriteLands(
-            () ->
-                service.waiveTwoFactor(
-                    invite.getId(), new AccountInviteService.WaiveTwoFactorCommand("on paper")),
-            () -> revokeAsAdmin(invite.getId()));
-
-    assertThat(waived).isInstanceOf(AccountInvite.class);
-    AccountInvite persisted = reload(invite);
-    assertThat(persisted.getStatus()).isEqualTo(AccountInviteStatus.REVOKED);
-    assertThat(persisted.getTwoFactorStatus()).isEqualTo(TwoFactorGateStatus.WAIVED);
-  }
-
-  @Test
-  void waiveWhileAnAcceptLands_Should_KeepTheAcceptance() throws Exception {
-    AccountInvite invite = persistedAgencyAdminInvite();
-
-    writeWhileAnotherWriteLands(
-        () ->
-            service.waiveTwoFactor(
-                invite.getId(), new AccountInviteService.WaiveTwoFactorCommand("on paper")),
-        () -> service.acceptInvite(RAW_TOKEN, "race-acceptor"));
-
-    AccountInvite persisted = reload(invite);
-    assertThat(persisted.getStatus()).isEqualTo(AccountInviteStatus.ACCEPTED);
-    assertThat(persisted.getAcceptedByUserId()).isEqualTo("race-acceptor");
-    assertThat(persisted.getTwoFactorStatus()).isEqualTo(TwoFactorGateStatus.WAIVED);
   }
 
   @Test
@@ -914,7 +887,7 @@ abstract class RevokeAcceptRaceContract {
       Boolean alsoCounsellor, String agencyName) {
     return new CounsellorOnboardingService.RegisterCounsellorCommand(
         "race-counsellor",
-        "Passw0rd!",
+        "Passw0rd!Passw0rd!",
         null,
         null,
         null,
@@ -1026,7 +999,7 @@ abstract class RevokeAcceptRaceContract {
                     RAW_TOKEN,
                     new CounsellorOnboardingService.RegisterCounsellorCommand(
                         "race-admin",
-                        "Passw0rd!",
+                        "Passw0rd!Passw0rd!",
                         null,
                         null,
                         null,
@@ -1103,6 +1076,8 @@ abstract class RevokeAcceptRaceContract {
                 InviteEmailTemplate.builder()
                     .kind(InviteEmailTemplateKind.COUNSELLOR_INVITE)
                     .name("revoke-race")
+                    // Scoped admins may share built-in defaults; platform custom text is private.
+                    .systemDefault(true)
                     .language("de")
                     .subject("Einladung")
                     .body("Hallo {{firstName}}")

@@ -43,12 +43,55 @@ public interface EventNotificationRepository extends JpaRepository<EventNotifica
       @Param("eventTypes") Collection<String> eventTypes,
       @Param("now") LocalDateTime now);
 
+  /**
+   * Recipients other than {@code keepRecipientUserId} that still hold one of the given enquiry
+   * events for the session (ORISO-Frontend#1472). Read before {@link #deleteOpenEnquiryEvents} so
+   * their clients can be told to refresh the feed.
+   */
+  @Query(
+      "select distinct e.recipientUserId from EventNotification e "
+          + "where e.sourceSessionId = :sessionId and e.eventType in :eventTypes "
+          + "and e.recipientUserId <> :keepRecipientUserId")
+  List<String> findOtherRecipientsOfSessionEvents(
+      @Param("sessionId") Long sessionId,
+      @Param("eventTypes") Collection<String> eventTypes,
+      @Param("keepRecipientUserId") String keepRecipientUserId);
+
+  /**
+   * Removes the given enquiry events of a session for every recipient except {@code
+   * keepRecipientUserId} (ORISO-Frontend#1472): once a colleague has accepted the enquiry, "a new
+   * client request is waiting" is no longer true for anyone else.
+   *
+   * @return number of deleted rows
+   */
+  @Modifying(flushAutomatically = true, clearAutomatically = true)
+  @Query(
+      "delete from EventNotification e "
+          + "where e.sourceSessionId = :sessionId and e.eventType in :eventTypes "
+          + "and e.recipientUserId <> :keepRecipientUserId")
+  int deleteOpenEnquiryEvents(
+      @Param("sessionId") Long sessionId,
+      @Param("eventTypes") Collection<String> eventTypes,
+      @Param("keepRecipientUserId") String keepRecipientUserId);
+
   Optional<EventNotification> findByIdAndRecipientUserId(Long id, String recipientUserId);
 
   List<EventNotification> findByRecipientUserIdAndReadDateIsNull(String recipientUserId);
 
   boolean existsByRecipientUserIdAndDeduplicationKey(
       String recipientUserId, String deduplicationKey);
+
+  Optional<EventNotification> findByRecipientUserIdAndDeduplicationKey(
+      String recipientUserId, String deduplicationKey);
+
+  /** Removes one deduplicated event again, e.g. a marker whose delivery failed (FE#1876). */
+  @Modifying(flushAutomatically = true, clearAutomatically = true)
+  @Query(
+      "delete from EventNotification e where e.recipientUserId = :recipientUserId "
+          + "and e.deduplicationKey = :deduplicationKey")
+  int deleteByRecipientUserIdAndDeduplicationKey(
+      @Param("recipientUserId") String recipientUserId,
+      @Param("deduplicationKey") String deduplicationKey);
 
   /**
    * Removes a recipient's whole notification feed. Used by the user-facing "clear feed" action and
@@ -79,4 +122,11 @@ public interface EventNotificationRepository extends JpaRepository<EventNotifica
   @Modifying(flushAutomatically = true, clearAutomatically = true)
   @Query("delete from EventNotification e where e.createDate < :cutoff")
   int deleteCreatedBefore(@Param("cutoff") LocalDateTime cutoff);
+
+  /** Deletes one notification type after its own retention period, irrespective of read state. */
+  @Modifying(flushAutomatically = true, clearAutomatically = true)
+  @Query(
+      "delete from EventNotification e where e.eventType = :eventType and e.createDate < :cutoff")
+  int deleteByEventTypeCreatedBefore(
+      @Param("eventType") String eventType, @Param("cutoff") LocalDateTime cutoff);
 }

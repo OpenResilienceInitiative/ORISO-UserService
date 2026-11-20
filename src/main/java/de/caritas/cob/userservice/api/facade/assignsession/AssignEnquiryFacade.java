@@ -6,6 +6,7 @@ import static de.caritas.cob.userservice.api.model.Session.SessionStatus.NEW;
 import static java.util.Objects.nonNull;
 import static org.apache.commons.lang3.StringUtils.isBlank;
 
+import de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHttpStatusException;
 import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException;
 import de.caritas.cob.userservice.api.facade.EmailNotificationFacade;
 import de.caritas.cob.userservice.api.facade.SessionSupervisorFacade;
@@ -16,12 +17,16 @@ import de.caritas.cob.userservice.api.helper.UserHelper;
 import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.Session;
+import de.caritas.cob.userservice.api.model.Session.SessionStatus;
 import de.caritas.cob.userservice.api.model.User;
+import de.caritas.cob.userservice.api.port.in.Messaging;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRoomGateway;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
 import de.caritas.cob.userservice.api.service.agency.AgencyMatrixCredentialClient;
 import de.caritas.cob.userservice.api.service.notification.EventNotificationService;
+import de.caritas.cob.userservice.api.service.session.AgencyEnquiryRoomRetirements;
+import de.caritas.cob.userservice.api.service.session.SessionOwnershipService.OwnershipChange;
 import de.caritas.cob.userservice.api.service.session.SessionService;
 import de.caritas.cob.userservice.api.service.statistics.StatisticsService;
 import de.caritas.cob.userservice.api.service.statistics.event.AssignSessionStatisticsEvent;
@@ -58,6 +63,7 @@ public class AssignEnquiryFacade {
   private final @NonNull UsernameTranscoder usernameTranscoder;
   private final @NonNull ConsultantDisplayNameResolver consultantDisplayNameResolver;
   private final @NonNull AgencyMatrixCredentialClient agencyMatrixCredentialClient;
+  private final @NonNull AgencyEnquiryRoomRetirements roomRetirements;
   private final @NonNull EventNotificationService eventNotificationService;
   private final @NonNull AnonymousEnquiryDepartmentResolver anonymousEnquiryDepartmentResolver;
 
@@ -70,6 +76,16 @@ public class AssignEnquiryFacade {
   private final @NonNull SessionSupervisorFacade sessionSupervisorFacade;
 
   private final @NonNull TeamDiscussionFacade teamDiscussionFacade;
+  private final @NonNull de.caritas.cob.userservice.api.service.matrix.InquiryAcceptanceNoticeStore
+      acceptanceNotices;
+  private final @NonNull de.caritas.cob.userservice.api.service.matrix
+          .InquiryAcceptanceNoticeDelivery
+      acceptanceDelivery;
+
+  private final @NonNull de.caritas.cob.userservice.api.service.furthercounselling
+          .TopicDuplicateService
+      topicDuplicateService;
+  private final @NonNull Messaging messaging;
 
   /**
    * Assigns the given {@link Session} to the given {@link Consultant} and removes consultants who
@@ -91,7 +107,14 @@ public class AssignEnquiryFacade {
       boolean skipConsultantAssignmentAndSessionInProgressCheck) {
     var requestURI = httpServletRequest.getRequestURI();
     var requestReferer = httpServletRequest.getHeader(HttpHeaders.REFERER);
+    boolean initialAcceptance = session.getStatus() == INITIAL || session.getStatus() == NEW;
     assignEnquiry(session, consultant, skipConsultantAssignmentAndSessionInProgressCheck);
+    if (initialAcceptance) {
+      acceptanceNotices
+          .recordSuccessfulInitialAcceptance(session)
+          .ifPresent(this::dispatchAcceptanceAfterCommit);
+      noticeTopicDuplicateAfterCommit(session.getId());
+    }
     // The case is now committed to this counsellor (assignEnquiry rolls back and rethrows on any
     // failure), so it is safe to layer standing supervision on top. This call never throws.
     sessionSupervisorFacade.attachStandingSupervisorIfAssigned(session.getId(), consultant);
@@ -99,12 +122,90 @@ public class AssignEnquiryFacade {
     // accepted. Best-effort by the same contract — never blocks the acceptance.
     teamDiscussionFacade.archiveDiscussionIfPresent(session);
     eventNotificationService.createInquiryAcceptedNotification(session, consultant);
+    retireOpenEnquiryNotificationsAfterCommit(session, consultant.getId());
     var event =
         new AssignSessionStatisticsEvent(consultant.getId(), UserRole.CONSULTANT, session.getId());
     event.setRequestUri(requestURI);
     event.setRequestReferer(requestReferer);
     event.setRequestUserId(consultant.getId());
     statisticsService.fireEvent(event);
+  }
+
+  private void dispatchAcceptanceAfterCommit(Long sessionId) {
+    if (!org.springframework.transaction.support.TransactionSynchronizationManager
+        .isSynchronizationActive()) {
+      acceptanceDelivery.dispatchSafely(sessionId);
+      return;
+    }
+    org.springframework.transaction.support.TransactionSynchronizationManager
+        .registerSynchronization(
+            new org.springframework.transaction.support.TransactionSynchronization() {
+              @Override
+              public void afterCommit() {
+                acceptanceDelivery.dispatchSafely(sessionId);
+              }
+            });
+  }
+
+  /**
+   * ORISO-Frontend#1472: removes the other consultants' "New client request" entries only once the
+   * acceptance has committed, in its own transaction. Running it inside the acceptance transaction
+   * would let a failed cleanup mark that transaction rollback-only and undo the acceptance.
+   */
+  private void retireOpenEnquiryNotificationsAfterCommit(Session session, String consultantId) {
+    Runnable retire =
+        () -> {
+          try {
+            eventNotificationService.retireOpenEnquiryNotifications(session, consultantId);
+          } catch (RuntimeException ex) {
+            log.warn(
+                "Could not retire open enquiry notifications for session {}", session.getId(), ex);
+          }
+        };
+    if (!org.springframework.transaction.support.TransactionSynchronizationManager
+        .isSynchronizationActive()) {
+      retire.run();
+      return;
+    }
+    org.springframework.transaction.support.TransactionSynchronizationManager
+        .registerSynchronization(
+            new org.springframework.transaction.support.TransactionSynchronization() {
+              @Override
+              public void afterCommit() {
+                retire.run();
+              }
+            });
+  }
+
+  /**
+   * FE#1876 S5: once the acceptance is committed, tell the asker's older same-topic conversations.
+   * Best-effort — a failed notice never rolls the acceptance back.
+   */
+  private void noticeTopicDuplicateAfterCommit(Long sessionId) {
+    Runnable notice =
+        () -> {
+          try {
+            topicDuplicateService.notifyDuplicateStarted(sessionId);
+          } catch (RuntimeException exception) {
+            log.warn(
+                "Topic duplicate notice for accepted session {} failed ({})",
+                sessionId,
+                exception.getClass().getSimpleName());
+          }
+        };
+    if (!org.springframework.transaction.support.TransactionSynchronizationManager
+        .isSynchronizationActive()) {
+      notice.run();
+      return;
+    }
+    org.springframework.transaction.support.TransactionSynchronizationManager
+        .registerSynchronization(
+            new org.springframework.transaction.support.TransactionSynchronization() {
+              @Override
+              public void afterCommit() {
+                notice.run();
+              }
+            });
   }
 
   /**
@@ -123,6 +224,7 @@ public class AssignEnquiryFacade {
     assignment lock. */
     assignEnquiry(session, consultant, false, true);
     eventNotificationService.createInquiryAcceptedNotification(session, consultant);
+    retireOpenEnquiryNotificationsAfterCommit(session, consultant.getId());
   }
 
   private void assignEnquiry(Session session, Consultant consultant) {
@@ -148,6 +250,7 @@ public class AssignEnquiryFacade {
     }
     sessionToConsultantVerifier.verifyPreconditionsForAssignment(
         consultantSessionDTO, skipConsultantAssignmentAndSessionInProgressChecks);
+    messaging.requireFirstLiveChatEnquiry(session);
 
     // ADR-022 decision 1 / ADR-003: a topic-based anonymous enquiry carries no agency until it is
     // accepted. Bind the accepting counsellor's department here, before the assignment save, so
@@ -158,23 +261,40 @@ public class AssignEnquiryFacade {
           anonymousEnquiryDepartmentResolver.resolveAgencyId(session, consultant).orElse(null);
     }
     if (session.getStatus() == INITIAL || session.getStatus() == NEW) {
-      if (servingAgencyId != null) {
-        dpaPolicy.requireForAgency(servingAgencyId);
-      } else if (bindDepartment) {
-        // A topic queue may have no matching department. The accepting organisation serves it.
-        dpaPolicy.requireForConcreteTenant(consultant.getTenantId());
-      } else {
-        dpaPolicy.requireForAgency((Long) null);
+      try {
+        if (servingAgencyId != null) {
+          dpaPolicy.requireForAgency(servingAgencyId);
+        } else if (bindDepartment) {
+          // A topic queue may have no matching department. The accepting organisation serves it.
+          dpaPolicy.requireForConcreteTenant(consultant.getTenantId());
+        } else {
+          dpaPolicy.requireForAgency((Long) null);
+        }
+      } catch (CustomValidationHttpStatusException refusal) {
+        // #1799: an AVV refusal of the first acceptance was otherwise invisible in the log.
+        log.warn(
+            "AVV refused accepting session {} (agency {}): status={}, reason={}",
+            session.getId(),
+            servingAgencyId,
+            refusal.getHttpStatus(),
+            refusal.getCustomHttpHeaders().getFirst("X-Reason"));
+        throw refusal;
       }
     }
+    boolean replacesHoldingRoom = AgencyEnquiryRoomRetirements.isInitialHoldingRoom(session);
     var departmentBound =
         bindDepartment && session.getAgencyId() == null && servingAgencyId != null;
     if (departmentBound) {
       session.setAgencyId(servingAgencyId);
     }
-    sessionService.updateConsultantAndStatusForSession(session, consultant, IN_PROGRESS);
+    var previousConsultant = session.getConsultant();
+    var previousStatus = session.getStatus();
+    var assignment =
+        sessionService.updateConsultantAndStatusForSession(session, consultant, IN_PROGRESS);
 
     // Create Matrix room and invite user
+    Runnable createReplacement =
+        () -> createNewMatrixRoomOrFail(session, consultant, assignment, replacesHoldingRoom);
     try {
       var user = session.getUser();
       ensureUserMatrixAccount(user);
@@ -206,7 +326,7 @@ public class AssignEnquiryFacade {
               log.warn(
                   "No agency Matrix credentials found for agency {}, falling back to create new room",
                   session.getAgencyId());
-              createNewMatrixRoomOrFail(session, consultant);
+              createReplacement.run();
               return;
             }
 
@@ -215,13 +335,13 @@ public class AssignEnquiryFacade {
               log.warn(
                   "Agency Matrix credentials incomplete for agency {}, falling back to create new room",
                   session.getAgencyId());
-              createNewMatrixRoomOrFail(session, consultant);
+              createReplacement.run();
               return;
             }
 
             if (!MatrixIds.isUserId(agencyCredentials.getMatrixUserId())) {
               log.warn("Invalid agency Matrix user ID, falling back to create new room");
-              createNewMatrixRoomOrFail(session, consultant);
+              createReplacement.run();
               return;
             }
 
@@ -232,22 +352,31 @@ public class AssignEnquiryFacade {
             if (isBlank(agencyToken)) {
               log.error(
                   "Failed to login agency service account for room reuse, falling back to create new room");
-              createNewMatrixRoomOrFail(session, consultant);
+              createReplacement.run();
               return;
             }
 
-            // Use agency token to invite consultant to existing room
-            try {
-              sessionRoomGateway.inviteUser(
-                  existingRoomId, consultant.getMatrixUserId(), agencyToken);
+            // Use agency token to invite consultant to existing room. A counsellor of the
+            // department already sits in it as a silent member (ADR-002); inviting them again only
+            // spends their Matrix invite allowance and can stall the accept for minutes (FE#1799).
+            if (sessionRoomGateway.isJoinedMember(existingRoomId, consultant.getMatrixUserId())) {
               log.info(
-                  "Agency invited consultant {} to existing room {}",
+                  "Consultant {} is already a member of room {}, no invite needed",
                   consultant.getUsername(),
                   existingRoomId);
-            } catch (Exception e) {
-              log.warn(
-                  "Failed to invite consultant to room using agency token: {}", e.getMessage());
-              // Continue anyway - might already be invited
+            } else {
+              try {
+                sessionRoomGateway.inviteUser(
+                    existingRoomId, consultant.getMatrixUserId(), agencyToken);
+                log.info(
+                    "Agency invited consultant {} to existing room {}",
+                    consultant.getUsername(),
+                    existingRoomId);
+              } catch (Exception e) {
+                log.warn(
+                    "Failed to invite consultant to room using agency token: {}", e.getMessage());
+                // Continue anyway - might already be invited
+              }
             }
 
             // Use agency token to set consultant as admin (power level 100)
@@ -273,7 +402,7 @@ public class AssignEnquiryFacade {
               log.warn(
                   "Failed to mint consultant Matrix token for room reuse on session {}, creating new room",
                   session.getId());
-              createNewMatrixRoomOrFail(session, consultant);
+              createReplacement.run();
               return;
             }
 
@@ -285,7 +414,7 @@ public class AssignEnquiryFacade {
                   consultant.getUsername(),
                   existingRoomId,
                   session.getId());
-              createNewMatrixRoomOrFail(session, consultant);
+              createReplacement.run();
               return;
             }
 
@@ -329,13 +458,13 @@ public class AssignEnquiryFacade {
                 e.getMessage(),
                 e);
             // Fall back to creating new room
-            createNewMatrixRoomOrFail(session, consultant);
+            createReplacement.run();
           }
         } else {
           // NO EXISTING ROOM - Create new room (backward compatibility)
           log.info(
               "No existing room found for session {}, creating new Matrix room", session.getId());
-          createNewMatrixRoomOrFail(session, consultant);
+          createReplacement.run();
         }
       } else {
         throw new InternalServerErrorException(
@@ -344,7 +473,8 @@ public class AssignEnquiryFacade {
                 session.getId(), user.getMatrixUserId(), consultant.getMatrixUserId()));
       }
     } catch (Exception e) {
-      rollbackSessionUpdate(session, departmentBound);
+      rollbackSessionUpdate(
+          session, assignment, previousConsultant, previousStatus, departmentBound);
       log.error(
           "Matrix room creation failed for session: {}, rolling back assignment",
           session.getId(),
@@ -357,16 +487,22 @@ public class AssignEnquiryFacade {
     }
 
     emailNotificationFacade.sendInquiryAcceptedNotification(
-        session.getUser(), consultant, TenantContext.getCurrentTenantData());
+        session.getUser(), consultant, TenantContext.getCurrentTenantData(), session);
   }
 
-  private void rollbackSessionUpdate(Session session, boolean departmentBound) {
+  private void rollbackSessionUpdate(
+      Session session,
+      de.caritas.cob.userservice.api.service.session.SessionOwnershipService.OwnershipChange
+          assignment,
+      Consultant previousConsultant,
+      SessionStatus previousStatus,
+      boolean departmentBound) {
     if (nonNull(session)) {
       if (departmentBound) {
-        // The enquiry returns to the queue unaccepted, so it no longer belongs to a department.
         session.setAgencyId(null);
       }
-      sessionService.updateConsultantAndStatusForSession(session, null, NEW);
+      sessionService.compensateConsultantAssignment(
+          session.getId(), assignment, previousConsultant, previousStatus, departmentBound);
     }
   }
 
@@ -376,14 +512,22 @@ public class AssignEnquiryFacade {
    * @param session the session
    * @param consultant the consultant
    */
-  private void createNewMatrixRoomOrFail(Session session, Consultant consultant) {
-    if (!createNewMatrixRoom(session, consultant)) {
+  private void createNewMatrixRoomOrFail(
+      Session session,
+      Consultant consultant,
+      OwnershipChange assignment,
+      boolean replacesHoldingRoom) {
+    if (!createNewMatrixRoom(session, consultant, assignment, replacesHoldingRoom)) {
       throw new InternalServerErrorException(
           String.format("Matrix room creation failed for session %s", session.getId()));
     }
   }
 
-  private boolean createNewMatrixRoom(Session session, Consultant consultant) {
+  private boolean createNewMatrixRoom(
+      Session session,
+      Consultant consultant,
+      OwnershipChange assignment,
+      boolean replacesHoldingRoom) {
     String previousRoomId = session.getMatrixRoomId();
     try {
       var roomName = "Session " + session.getId() + " - " + consultant.getUsername();
@@ -443,8 +587,12 @@ public class AssignEnquiryFacade {
         return false;
       }
 
-      session.setMatrixRoomId(roomId);
-      sessionService.saveSession(session);
+      if (replacesHoldingRoom) {
+        roomRetirements.replaceRoom(session, assignment, roomId);
+      } else {
+        session.setMatrixRoomId(roomId);
+        sessionService.saveSession(session);
+      }
 
       // Best-effort: the notification listener syncs as the technical admin and must
       // be a member of the room to see message events at all.

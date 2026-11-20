@@ -60,7 +60,6 @@ import de.caritas.cob.userservice.topicservice.generated.web.TopicControllerApi;
 import jakarta.servlet.http.Cookie;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.PositiveOrZero;
-import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
@@ -291,7 +290,7 @@ class UserControllerConsultantE2EIT {
                     .cookie(CSRF_COOKIE)
                     .header(CSRF_HEADER, CSRF_VALUE)
                     .accept("application/hal+json")
-                    .param("query", URLEncoder.encode(infix, StandardCharsets.UTF_8)))
+                    .param("query", infix))
             .andExpect(status().isOk())
             .andExpect(jsonPath("total", is(numMatching)))
             .andExpect(jsonPath("_embedded", hasSize(10)))
@@ -411,7 +410,7 @@ class UserControllerConsultantE2EIT {
                     .cookie(CSRF_COOKIE)
                     .header(CSRF_HEADER, CSRF_VALUE)
                     .accept("application/hal+json")
-                    .param("query", URLEncoder.encode(infix, StandardCharsets.UTF_8))
+                    .param("query", infix)
                     .param("page", "3")
                     .param("perPage", "11")
                     .param("field", "LASTNAME")
@@ -530,7 +529,7 @@ class UserControllerConsultantE2EIT {
                     .cookie(CSRF_COOKIE)
                     .header(CSRF_HEADER, CSRF_VALUE)
                     .accept("application/hal+json")
-                    .param("query", URLEncoder.encode(infix, StandardCharsets.UTF_8))
+                    .param("query", infix)
                     .param("page", "3")
                     .param("perPage", "11")
                     .param("field", "LASTNAME")
@@ -623,7 +622,7 @@ class UserControllerConsultantE2EIT {
                 .cookie(CSRF_COOKIE)
                 .header(CSRF_HEADER, CSRF_VALUE)
                 .accept("application/hal+json")
-                .param("query", URLEncoder.encode(infix, StandardCharsets.UTF_8))
+                .param("query", infix)
                 .param("page", "1")
                 .param("perPage", "10")
                 .param("field", "UPDATE_DATE")
@@ -779,7 +778,7 @@ class UserControllerConsultantE2EIT {
                       .cookie(CSRF_COOKIE)
                       .header(CSRF_HEADER, CSRF_VALUE)
                       .accept("application/hal+json")
-                      .param("query", URLEncoder.encode(infix, StandardCharsets.UTF_8))
+                      .param("query", infix)
                       .param("page", String.valueOf(page))
                       .param("perPage", String.valueOf(perPage))
                       .param("field", "FIRSTNAME")
@@ -829,7 +828,7 @@ class UserControllerConsultantE2EIT {
                 .cookie(CSRF_COOKIE)
                 .header(CSRF_HEADER, CSRF_VALUE)
                 .accept("application/hal+json")
-                .param("query", URLEncoder.encode(infix, StandardCharsets.UTF_8))
+                .param("query", infix)
                 .param("page", "1")
                 .param("perPage", "10")
                 .param("field", "UPDATE_DATE")
@@ -956,7 +955,7 @@ class UserControllerConsultantE2EIT {
                     .cookie(CSRF_COOKIE)
                     .header(CSRF_HEADER, CSRF_VALUE)
                     .accept("application/hal+json")
-                    .param("query", URLEncoder.encode(infix, StandardCharsets.UTF_8)))
+                    .param("query", infix))
             .andExpect(status().isOk())
             .andExpect(jsonPath("total", is(numMatching)))
             .andReturn()
@@ -1332,12 +1331,11 @@ class UserControllerConsultantE2EIT {
   }
 
   private void givenAgencyServiceReturningDummyAgencies() {
-    var agencies = new ArrayList<AgencyDTO>();
-
     when(agencyService.getAgenciesWithoutCaching(anyList()))
         .thenAnswer(
             i -> {
               List<Long> agencyIds = i.getArgument(0);
+              var agencies = new ArrayList<AgencyDTO>();
               agencyIds.forEach(
                   agencyId -> {
                     var agency = new AgencyDTO();

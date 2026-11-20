@@ -169,6 +169,7 @@ class AccountInviteUnitQueueIT {
                 InviteEmailTemplate.builder()
                     .kind(InviteEmailTemplateKind.COUNSELLOR_INVITE)
                     .name("queue-it")
+                    .systemDefault(true)
                     .language("de")
                     .subject("Einladung")
                     .body("Hallo {{firstName}}")
@@ -360,6 +361,7 @@ class AccountInviteUnitQueueIT {
     AccountInvite sent = reload(queued.invite());
     assertThat(sent.getStatus()).isEqualTo(AccountInviteStatus.EMAIL_SENT);
     assertThat(sent.getWaitingForUnit()).isNull();
+    assertThat(sent.getQueuedTemplateId()).isNull();
     assertThat(sent.getTokenHash()).isNotNull();
     assertThat(sent.getExpiresAt())
         .isAfter(LocalDateTime.now().plusDays(10).minusMinutes(5))

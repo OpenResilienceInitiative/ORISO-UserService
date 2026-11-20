@@ -26,16 +26,11 @@ class CreateConsultantDTOTest {
   void requiredArgsConstructor_Should_SetRequiredFields() {
     var dto =
         new CreateConsultantDTO(
-            "max.mustermann",
-            "SecurePass123!",
-            "Max",
-            "Mustermann",
-            "max@mustermann.de",
-            true,
-            false);
+            "max.mustermann", "Max", "Mustermann", "max@mustermann.de", true, false);
 
     assertThat(dto.getUsername()).isEqualTo("max.mustermann");
-    assertThat(dto.getPassword()).isEqualTo("SecurePass123!");
+    // #1144: optional, the consultant chooses their own through the setup e-mail.
+    assertThat(dto.getPassword()).isNull();
     assertThat(dto.getFirstname()).isEqualTo("Max");
     assertThat(dto.getLastname()).isEqualTo("Mustermann");
     assertThat(dto.getEmail()).isEqualTo("max@mustermann.de");

@@ -4,6 +4,8 @@ import static org.apache.commons.lang3.StringUtils.isBlank;
 import static org.apache.commons.lang3.StringUtils.isNotBlank;
 
 import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
+import de.caritas.cob.userservice.api.model.CaseHandoverConsentMode;
+import de.caritas.cob.userservice.api.model.CaseHandoverRequest.AccessType;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.User;
@@ -27,9 +29,19 @@ public class MatrixSessionSystemMessageService {
   public static final String USER_LEFT_CHAT_TYPE = "USER_LEFT_CHAT";
   public static final String CASE_HANDOVER_GRANTED_TYPE = "CASE_HANDOVER_GRANTED";
   public static final String FIRST_RESPONSE_TYPE = "FIRST_RESPONSE";
+  public static final String FURTHER_COUNSELLING_RECOMMENDED_TYPE =
+      "FURTHER_COUNSELLING_RECOMMENDED";
+  public static final String TOPIC_DUPLICATE_STARTED_TYPE = "TOPIC_DUPLICATE_STARTED";
+  public static final String TOPIC_DUPLICATE_ENDED_TYPE = "TOPIC_DUPLICATE_ENDED";
 
   private static final com.fasterxml.jackson.databind.ObjectMapper OBJECT_MAPPER =
       new com.fasterxml.jackson.databind.ObjectMapper();
+
+  /** Who ended the chat; sent as {@code endedBy} so clients can show the right text. */
+  public enum EndedBy {
+    CONSULTANT,
+    ADVICE_SEEKER
+  }
 
   private final @NonNull MatrixSynapseService matrixSynapseService;
   private final @NonNull AgencyMatrixCredentialClient agencyMatrixCredentialClient;
@@ -42,6 +54,16 @@ public class MatrixSessionSystemMessageService {
    * @param session the session being finished or deleted
    */
   public void postUserLeftChatMessage(Session session) {
+    postUserLeftChatMessage(session, null);
+  }
+
+  /**
+   * Same as {@link #postUserLeftChatMessage(Session)}, naming who ended the chat.
+   *
+   * @param session the session being finished or deleted
+   * @param endedBy the person who ended it; {@code null} for system ends (omits {@code endedBy})
+   */
+  public void postUserLeftChatMessage(Session session, EndedBy endedBy) {
     if (session == null || session.getId() == null) {
       return;
     }
@@ -60,8 +82,15 @@ public class MatrixSessionSystemMessageService {
     resolveMatrixCredentials(session)
         .ifPresent(
             credentials ->
-                sendUserLeftMessage(session.getId(), roomId, displayUsername, credentials));
+                sendUserLeftMessage(
+                    session.getId(), roomId, displayUsername, endedBy, credentials));
   }
+
+  /**
+   * Event-time metadata only; never reconstruct historical consent from current tenant settings.
+   */
+  public record GrantedAccessMetadata(
+      Long requestId, CaseHandoverConsentMode clientConsent, AccessType accessType) {}
 
   /**
    * Notifies the room that a new counsellor took over the case (case handover GRANTED). The message
@@ -74,6 +103,11 @@ public class MatrixSessionSystemMessageService {
    */
   public void postCaseHandoverGrantedMessage(
       Session session, String newAdvisorName, String description) {
+    postCaseHandoverGrantedMessage(session, newAdvisorName, description, null);
+  }
+
+  public void postCaseHandoverGrantedMessage(
+      Session session, String newAdvisorName, String description, GrantedAccessMetadata metadata) {
     if (session == null || session.getId() == null) {
       return;
     }
@@ -86,7 +120,7 @@ public class MatrixSessionSystemMessageService {
       return;
     }
 
-    var body = buildCaseHandoverGrantedBody(newAdvisorName, description);
+    var body = buildCaseHandoverGrantedBody(newAdvisorName, description, metadata);
     if (body == null) {
       return;
     }
@@ -129,7 +163,36 @@ public class MatrixSessionSystemMessageService {
         .ifPresent(credentials -> sendSystemMessage(session.getId(), roomId, body, credentials));
   }
 
-  private void sendSystemMessage(
+  /**
+   * Posts a prepared [SYSTEM_NOTIFICATION] body into the session's room (FE#1876).
+   *
+   * @param session the session whose room receives the notice
+   * @param body the full body including the prefix
+   * @param asConsultant post strictly as the assigned consultant, never as anyone else; false uses
+   *     the usual asker-first resolution
+   * @return true when Matrix accepted the event
+   */
+  public boolean postSystemMessage(Session session, String body, boolean asConsultant) {
+    if (session == null || session.getId() == null || isBlank(body)) {
+      return false;
+    }
+    var matrixRoomId = session.getMatrixRoomId();
+    if (isBlank(matrixRoomId)) {
+      matrixRoomId =
+          sessionService.getSession(session.getId()).map(Session::getMatrixRoomId).orElse(null);
+    }
+    if (isBlank(matrixRoomId)) {
+      return false;
+    }
+    var roomId = matrixRoomId;
+    var credentials =
+        asConsultant ? consultantMatrixCredentials(session) : resolveMatrixCredentials(session);
+    return credentials
+        .map(value -> sendSystemMessage(session.getId(), roomId, body, value))
+        .orElse(false);
+  }
+
+  private boolean sendSystemMessage(
       Long sessionId, String matrixRoomId, String body, MatrixCredentials credentials) {
     var accessToken = credentials.accessToken(matrixSynapseService);
     if (accessToken == null) {
@@ -137,15 +200,26 @@ public class MatrixSessionSystemMessageService {
           "Skipping Matrix system message for session {} — token unavailable for {}",
           sessionId,
           credentials.principal());
-      return;
+      return false;
     }
     var response = matrixSynapseService.sendMessage(matrixRoomId, body, accessToken);
     if (response != null && response.containsKey("error")) {
       log.warn("Matrix system message for session {} failed: {}", sessionId, response.get("error"));
+      return false;
     }
+    return true;
+  }
+
+  /** Whether the assigned consultant has a Matrix account to post with (FE#1876). */
+  public boolean hasConsultantMatrixIdentity(Session session) {
+    return session != null && consultantMatrixCredentials(session).isPresent();
   }
 
   private Optional<MatrixCredentials> resolveMatrixCredentialsPreferConsultant(Session session) {
+    return consultantMatrixCredentials(session).or(() -> resolveMatrixCredentials(session));
+  }
+
+  private Optional<MatrixCredentials> consultantMatrixCredentials(Session session) {
     Consultant consultant = session.getConsultant();
     if (consultant != null && isNotBlank(consultant.getId())) {
       consultant = consultantService.getConsultant(consultant.getId()).orElse(consultant);
@@ -153,17 +227,25 @@ public class MatrixSessionSystemMessageService {
         return Optional.of(MatrixCredentials.forMatrixUser(consultant.getMatrixUserId()));
       }
     }
-    return resolveMatrixCredentials(session);
+    return Optional.empty();
   }
 
-  private String buildCaseHandoverGrantedBody(String newAdvisorName, String description) {
-    var payload = new java.util.LinkedHashMap<String, String>();
+  private String buildCaseHandoverGrantedBody(
+      String newAdvisorName, String description, GrantedAccessMetadata metadata) {
+    var payload = new java.util.LinkedHashMap<String, Object>();
     payload.put("type", CASE_HANDOVER_GRANTED_TYPE);
     if (isNotBlank(newAdvisorName)) {
       payload.put("username", newAdvisorName);
     }
     if (isNotBlank(description)) {
       payload.put("description", description);
+    }
+    if (metadata != null
+        && metadata.requestId() != null
+        && metadata.requestId() > 0
+        && metadata.clientConsent() != null
+        && metadata.accessType() != null) {
+      payload.put("handover", metadata);
     }
     try {
       return SYSTEM_NOTIFICATION_PREFIX + OBJECT_MAPPER.writeValueAsString(payload);
@@ -174,7 +256,11 @@ public class MatrixSessionSystemMessageService {
   }
 
   private void sendUserLeftMessage(
-      Long sessionId, String matrixRoomId, String displayUsername, MatrixCredentials credentials) {
+      Long sessionId,
+      String matrixRoomId,
+      String displayUsername,
+      EndedBy endedBy,
+      MatrixCredentials credentials) {
     var accessToken = credentials.accessToken(matrixSynapseService);
     if (accessToken == null) {
       log.warn(
@@ -184,7 +270,7 @@ public class MatrixSessionSystemMessageService {
       return;
     }
 
-    var body = buildUserLeftChatBody(displayUsername);
+    var body = buildUserLeftChatBody(displayUsername, endedBy);
     var response = matrixSynapseService.sendMessage(matrixRoomId, body, accessToken);
     if (response != null && response.containsKey("error")) {
       log.warn(
@@ -235,14 +321,16 @@ public class MatrixSessionSystemMessageService {
     return user.getUsername();
   }
 
-  private String buildUserLeftChatBody(String username) {
+  private String buildUserLeftChatBody(String username, EndedBy endedBy) {
     var safeUsername = username == null ? "" : username.replace("\\", "\\\\").replace("\"", "\\\"");
     return SYSTEM_NOTIFICATION_PREFIX
         + "{\"type\":\""
         + USER_LEFT_CHAT_TYPE
         + "\",\"username\":\""
         + safeUsername
-        + "\"}";
+        + "\""
+        + (endedBy == null ? "" : ",\"endedBy\":\"" + endedBy.name() + "\"")
+        + "}";
   }
 
   private static final class MatrixCredentials {

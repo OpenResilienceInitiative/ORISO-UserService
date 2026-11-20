@@ -13,13 +13,16 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import de.caritas.cob.userservice.api.AccountManager;
+import de.caritas.cob.userservice.api.adapters.web.dto.AbsenceDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.GroupSessionListResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.GroupSessionResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.UserSessionListResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.UserSessionResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.mapping.UserDtoMapper;
+import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.service.ConsultantService;
+import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -41,6 +44,20 @@ public class ConsultantDataFacadeTest {
   @Mock private AccountManager accountManager;
   @Mock private UserDtoMapper userDtoMapper;
 
+  @Mock
+  private de.caritas.cob.userservice.api.service.chat.MembersOnlyChatAccess membersOnlyChatAccess;
+
+  @org.junit.jupiter.api.BeforeEach
+  void readsRunDirectly() {
+    org.mockito.Mockito.lenient()
+        .when(
+            membersOnlyChatAccess.readingAcrossTraegerOfChat(
+                org.mockito.ArgumentMatchers.any(),
+                org.mockito.ArgumentMatchers.<java.util.function.Supplier<Object>>any()))
+        .thenAnswer(
+            invocation -> invocation.<java.util.function.Supplier<Object>>getArgument(1).get());
+  }
+
   @Test
   public void updateConsultantAbsent_Should_UpdateAbsenceMessageAndIsAbsence() {
     when(consultantService.saveConsultant(Mockito.any(Consultant.class))).thenReturn(CONSULTANT);
@@ -61,6 +78,58 @@ public class ConsultantDataFacadeTest {
     assertEquals(consultant.isAbsent(), ABSENCE_DTO_WITH_HTML_AND_JS.getAbsent());
     assertNotEquals(consultant.getAbsenceMessage(), ABSENCE_DTO_WITH_HTML_AND_JS.getMessage());
     assertEquals(MESSAGE, consultant.getAbsenceMessage());
+  }
+
+  @Test
+  public void updateConsultantAbsent_Should_StoreThePlannedRange() {
+    var consultant = new Consultant();
+    var absence =
+        new AbsenceDTO()
+            .absent(true)
+            .message("Im Urlaub")
+            .start(LocalDate.of(2026, 12, 21))
+            .end(LocalDate.of(2027, 1, 3));
+
+    consultantDataFacade.updateConsultantAbsent(consultant, absence);
+
+    ArgumentCaptor<Consultant> captor = ArgumentCaptor.forClass(Consultant.class);
+    verify(consultantService).saveConsultant(captor.capture());
+    assertEquals(LocalDate.of(2026, 12, 21), captor.getValue().getAbsenceStart());
+    assertEquals(LocalDate.of(2027, 1, 3), captor.getValue().getAbsenceEnd());
+  }
+
+  @Test
+  public void updateConsultantAbsent_Should_ClearTheRange_WhenSwitchedOff() {
+    var consultant = new Consultant();
+    consultant.setAbsent(true);
+    consultant.setAbsenceStart(LocalDate.of(2026, 12, 21));
+    consultant.setAbsenceEnd(LocalDate.of(2027, 1, 3));
+
+    consultantDataFacade.updateConsultantAbsent(
+        consultant,
+        new AbsenceDTO()
+            .absent(false)
+            .start(LocalDate.of(2026, 12, 21))
+            .end(LocalDate.of(2027, 1, 3)));
+
+    ArgumentCaptor<Consultant> captor = ArgumentCaptor.forClass(Consultant.class);
+    verify(consultantService).saveConsultant(captor.capture());
+    assertNull(captor.getValue().getAbsenceStart());
+    assertNull(captor.getValue().getAbsenceEnd());
+  }
+
+  @Test
+  public void updateConsultantAbsent_Should_Reject_AnEndBeforeTheStart() {
+    var absence =
+        new AbsenceDTO()
+            .absent(true)
+            .start(LocalDate.of(2027, 1, 3))
+            .end(LocalDate.of(2026, 12, 21));
+
+    assertThrows(
+        BadRequestException.class,
+        () -> consultantDataFacade.updateConsultantAbsent(new Consultant(), absence));
+    Mockito.verifyNoInteractions(consultantService);
   }
 
   @Test

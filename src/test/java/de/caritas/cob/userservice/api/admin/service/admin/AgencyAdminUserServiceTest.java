@@ -120,7 +120,7 @@ class AgencyAdminUserServiceTest {
     // given
     Mockito.doThrow(new ForbiddenException("out of reach"))
         .when(adminScope)
-        .assertMay(AdminScope.Target.admin("foreign-admin"));
+        .assertMay(AdminScope.Target.managedAdmin("foreign-admin"));
 
     // when / then
     Assertions.assertThrows(
@@ -136,7 +136,7 @@ class AgencyAdminUserServiceTest {
   void deleteAgencyAdmin_Should_ThrowForbidden_WhenTenantAdminTargetsForeignTenant() {
     Mockito.doThrow(new ForbiddenException("out of reach"))
         .when(adminScope)
-        .assertMay(AdminScope.Target.admin("foreign-agency-admin"));
+        .assertMay(AdminScope.Target.managedAdmin("foreign-agency-admin"));
 
     Assertions.assertThrows(
         ForbiddenException.class,
@@ -144,12 +144,25 @@ class AgencyAdminUserServiceTest {
     Mockito.verify(deleteAdminService, Mockito.never()).deleteAgencyAdmin(Mockito.any());
   }
 
+  /** #1407: a BST admin may not change a colleague agency admin, even in a shared agency. */
+  @Test
+  void updateAgencyAdmin_Should_NotUpdate_When_CallerMayNotManageTheAdmin() {
+    Mockito.doThrow(new ForbiddenException("out of reach"))
+        .when(adminScope)
+        .assertMay(AdminScope.Target.managedAdmin("colleague"));
+
+    Assertions.assertThrows(
+        ForbiddenException.class,
+        () -> agencyAdminUserService.updateAgencyAdmin("colleague", null));
+    Mockito.verifyNoInteractions(updateAdminService);
+  }
+
   @Test
   void deleteAgencyAdmin_Should_CheckTheScopeBeforeDeleting() {
     agencyAdminUserService.deleteAgencyAdmin("agency-admin");
 
     var order = Mockito.inOrder(adminScope, deleteAdminService);
-    order.verify(adminScope).assertMay(AdminScope.Target.admin("agency-admin"));
+    order.verify(adminScope).assertMay(AdminScope.Target.managedAdmin("agency-admin"));
     order.verify(deleteAdminService).deleteAgencyAdmin("agency-admin");
   }
 

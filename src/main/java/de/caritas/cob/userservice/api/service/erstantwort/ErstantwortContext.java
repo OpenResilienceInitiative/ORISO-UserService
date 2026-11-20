@@ -31,6 +31,9 @@ public class ErstantwortContext {
   /** The tenant's existing {@code languageFormal} flag: a Träger writes one German variant. */
   boolean informal;
 
+  /** UI locale at creation time; never used to rewrite delivered events. */
+  String locale;
+
   String dataPrivacyUrl;
   String imprintUrl;
 
@@ -45,6 +48,9 @@ public class ErstantwortContext {
   String freeNoticeByTopic;
   String freeNoticeByAgency;
   String freeNoticeByTenant;
+
+  /** Träger addition to the fixed emergency-numbers sentence: appended, never a replacement. */
+  String emergencyAdditionByTenant;
 
   String closingByTopic;
   String closingByAgency;

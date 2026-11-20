@@ -20,6 +20,7 @@ import de.caritas.cob.userservice.api.model.Session.SessionStatus;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.service.ConsultantAgencyService;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
+import de.caritas.cob.userservice.api.service.consultingtype.ReleaseToggle;
 import de.caritas.cob.userservice.api.service.consultingtype.ReleaseToggleService;
 import de.caritas.cob.userservice.api.service.emailsupplier.TenantTemplateSupplier;
 import de.caritas.cob.userservice.api.service.helper.MailService;
@@ -269,6 +270,58 @@ class EnquiryNotificationServiceTest {
     enquiryNotificationService.sendEmailNotificationsForOpenEnquiries();
 
     verifyNoInteractions(mailService);
+  }
+
+  @Test
+  void digestFollowsTheDailyDigestSwitchNotTheNewEnquirySwitchWithNewNotifications() {
+    when(releaseToggleService.isToggleEnabled(ReleaseToggle.NEW_EMAIL_NOTIFICATIONS))
+        .thenReturn(true);
+    when(sessionRepository.findByStatus(SessionStatus.NEW))
+        .thenReturn(openEnquiriesForAgency(2L, nowInUtc().minusHours(13L), 1));
+    when(agencyService.getAgencies(List.of(2L))).thenReturn(List.of(createAgency(2L, "Agency")));
+    // The profile's "Tagesübersicht" switch saves DAILY_ENQUIRY = notifyEnquiriesRepeating.
+    var digestOffNewEnquiryOn =
+        consultantWithSwitches("digest-off@example.test", false, newEnquirySettings(true));
+    var digestOnNewEnquiryOff =
+        consultantWithSwitches("digest-on@example.test", true, newEnquirySettings(false));
+    when(consultantAgencyService.findConsultantsByAgencyId(2L))
+        .thenReturn(List.of(digestOffNewEnquiryOn, digestOnNewEnquiryOff));
+
+    enquiryNotificationService.sendEmailNotificationsForOpenEnquiries();
+
+    var sent = ArgumentCaptor.forClass(MailsDTO.class);
+    verify(mailService).sendEmailNotification(sent.capture());
+    assertThat(sent.getValue().getMails().stream().map(MailDTO::getEmail).toList())
+        .containsExactly("digest-on@example.test");
+  }
+
+  @Test
+  void digestIsNotSentWhenAllMailsAreSwitchedOffWithNewNotifications() {
+    when(releaseToggleService.isToggleEnabled(ReleaseToggle.NEW_EMAIL_NOTIFICATIONS))
+        .thenReturn(true);
+    when(sessionRepository.findByStatus(SessionStatus.NEW))
+        .thenReturn(openEnquiriesForAgency(2L, nowInUtc().minusHours(13L), 1));
+    when(agencyService.getAgencies(List.of(2L))).thenReturn(List.of(createAgency(2L, "Agency")));
+    var allOff = consultantWithSwitches("all-off@example.test", true, newEnquirySettings(true));
+    allOff.getConsultant().setNotificationsEnabled(false);
+    when(consultantAgencyService.findConsultantsByAgencyId(2L)).thenReturn(List.of(allOff));
+
+    enquiryNotificationService.sendEmailNotificationsForOpenEnquiries();
+
+    verifyNoInteractions(mailService);
+  }
+
+  private ConsultantAgency consultantWithSwitches(
+      String mail, boolean dailyDigest, String notificationsSettings) {
+    var consultantAgency =
+        createConsultantAgencyWithConsultantsMailAddress(mail, "first last", dailyDigest);
+    consultantAgency.getConsultant().setNotificationsEnabled(true);
+    consultantAgency.getConsultant().setNotificationsSettings(notificationsSettings);
+    return consultantAgency;
+  }
+
+  private String newEnquirySettings(boolean initialEnquiryNotificationEnabled) {
+    return "{\"initialEnquiryNotificationEnabled\":" + initialEnquiryNotificationEnabled + "}";
   }
 
   @Test

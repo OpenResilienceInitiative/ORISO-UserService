@@ -1,6 +1,8 @@
 package de.caritas.cob.userservice.api.config;
 
+import com.google.common.net.InternetDomainName;
 import jakarta.annotation.PostConstruct;
+import java.net.URI;
 import java.util.ArrayList;
 import java.util.List;
 import org.springframework.beans.factory.annotation.Value;
@@ -39,6 +41,9 @@ public class ConfigurationValidator {
 
   @Value("${consulting.type.service.api.url:}")
   private String consultingTypeServiceApiUrl;
+
+  @Value("${consulting.type.service.scoped.api.url:}")
+  private String scopedTopicServiceApiUrl;
 
   @Value("${tenant.service.api.url:}")
   private String tenantServiceApiUrl;
@@ -123,6 +128,37 @@ public class ConfigurationValidator {
                       .toArray(String[]::new)));
       throw new IllegalStateException(errorMessage);
     }
+
+    if (scopedTopicServiceApiUrl != null
+        && !scopedTopicServiceApiUrl.isBlank()
+        && !isValidScopedTopicServiceUrl(scopedTopicServiceApiUrl)) {
+      throw new IllegalStateException(
+          "consulting.type.service.scoped.api.url (CONSULTING_TYPE_SERVICE_SCOPED_API_URL)"
+              + " must be an absolute HTTP(S) URL with a short hostname, a valid port if supplied,"
+              + " and no user info, query or fragment");
+    }
+  }
+
+  private static boolean isValidScopedTopicServiceUrl(String value) {
+    URI uri;
+    try {
+      uri = URI.create(value);
+    } catch (IllegalArgumentException malformed) {
+      return false;
+    }
+
+    String host = uri.getHost();
+    int port = uri.getPort();
+    // ConsultingTypeService treats a dotted host as the authoritative tenant subdomain.
+    return ("http".equalsIgnoreCase(uri.getScheme()) || "https".equalsIgnoreCase(uri.getScheme()))
+        && host != null
+        && !host.contains(".")
+        && InternetDomainName.isValid(host)
+        && !uri.getRawAuthority().endsWith(":")
+        && (port == -1 || (port > 0 && port <= 65535))
+        && uri.getRawUserInfo() == null
+        && uri.getRawQuery() == null
+        && uri.getRawFragment() == null;
   }
 
   private boolean isEmpty(String value) {

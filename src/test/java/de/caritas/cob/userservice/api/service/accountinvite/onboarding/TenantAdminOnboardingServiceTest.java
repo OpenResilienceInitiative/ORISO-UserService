@@ -161,7 +161,7 @@ class TenantAdminOnboardingServiceTest {
         "CEO",
         "tenant.admin@example.org",
         "Beispiel gGmbH",
-        "s3cretPassword",
+        "s3cretPassword-16ch",
         RESERVED_TENANT_ID,
         RESERVATION_TOKEN);
   }
@@ -383,7 +383,11 @@ class TenantAdminOnboardingServiceTest {
             .firstName("Erika")
             .lastName("Beispiel")
             .build();
-    when(createAdminService.createNewTenantAdminFromInvite(any())).thenReturn(admin);
+    // A new Träger has no tenant to read the inactivity policy from yet; a joined one has.
+    lenient()
+        .when(createAdminService.createNewTenantAdminForReservedTenant(any()))
+        .thenReturn(admin);
+    lenient().when(createAdminService.createNewTenantAdminFromInvite(any())).thenReturn(admin);
     when(identitySecondFactor.getOtpCredential(anyString())).thenReturn(appSetup);
 
     var result = service.registerTenantAdmin(RAW_TOKEN, validCommand());
@@ -441,7 +445,7 @@ class TenantAdminOnboardingServiceTest {
             .firstName("Erika")
             .lastName("Beispiel")
             .build();
-    when(createAdminService.createNewTenantAdminFromInvite(any())).thenReturn(admin);
+    when(createAdminService.createNewTenantAdminForReservedTenant(any())).thenReturn(admin);
     when(identitySecondFactor.getOtpCredential(anyString()))
         .thenReturn(new IdentityOtpCredential(null, "TOTPSECRET", "QRBASE64", null));
     when(tenantCreationClient.createTenant(any()))
@@ -454,10 +458,10 @@ class TenantAdminOnboardingServiceTest {
     assertEquals("QRBASE64", result.totpQrCodeBase64());
 
     ArgumentCaptor<CreateAdminDTO> adminCaptor = ArgumentCaptor.forClass(CreateAdminDTO.class);
-    verify(createAdminService).createNewTenantAdminFromInvite(adminCaptor.capture());
+    verify(createAdminService).createNewTenantAdminForReservedTenant(adminCaptor.capture());
     assertEquals("tenant.admin@example.org", adminCaptor.getValue().getUsername());
     assertEquals("tenant.admin@example.org", adminCaptor.getValue().getEmail());
-    assertEquals("s3cretPassword", adminCaptor.getValue().getPassword());
+    assertEquals("s3cretPassword-16ch", adminCaptor.getValue().getPassword());
     assertEquals(21, adminCaptor.getValue().getTenantId());
 
     ArgumentCaptor<MultilingualTenantDTO> tenantCaptor =
@@ -492,7 +496,8 @@ class TenantAdminOnboardingServiceTest {
     when(accountInviteRepository.findByTokenHash(TOKEN_HASH)).thenReturn(Optional.of(invite));
     when(accountInviteRepository.claimForAcceptance(eq(7L), isNull(), any())).thenReturn(1);
     when(accountInviteRepository.findById(7L)).thenReturn(Optional.of(invite));
-    when(createAdminService.createNewTenantAdminFromInvite(any())).thenReturn(onboardedAdmin());
+    when(createAdminService.createNewTenantAdminForReservedTenant(any()))
+        .thenReturn(onboardedAdmin());
     when(identitySecondFactor.getOtpCredential(anyString()))
         .thenReturn(new IdentityOtpCredential(null, "TOTPSECRET", null, null));
     when(tenantCreationClient.createTenant(any()))
@@ -527,7 +532,8 @@ class TenantAdminOnboardingServiceTest {
     when(accountInviteRepository.findByTokenHash(TOKEN_HASH)).thenReturn(Optional.of(invite));
     when(accountInviteRepository.claimForAcceptance(eq(7L), isNull(), any())).thenReturn(1);
     when(accountInviteRepository.findById(7L)).thenReturn(Optional.of(invite));
-    when(createAdminService.createNewTenantAdminFromInvite(any())).thenReturn(onboardedAdmin());
+    when(createAdminService.createNewTenantAdminForReservedTenant(any()))
+        .thenReturn(onboardedAdmin());
     when(identitySecondFactor.getOtpCredential(anyString()))
         .thenReturn(new IdentityOtpCredential(null, "TOTPSECRET", null, null));
     when(tenantCreationClient.createTenant(any()))
@@ -578,7 +584,8 @@ class TenantAdminOnboardingServiceTest {
     when(accountInviteRepository.findByTokenHash(TOKEN_HASH)).thenReturn(Optional.of(invite));
     when(accountInviteRepository.claimForAcceptance(eq(7L), isNull(), any())).thenReturn(1);
     when(accountInviteRepository.findById(7L)).thenReturn(Optional.of(invite));
-    when(createAdminService.createNewTenantAdminFromInvite(any())).thenReturn(onboardedAdmin());
+    when(createAdminService.createNewTenantAdminForReservedTenant(any()))
+        .thenReturn(onboardedAdmin());
     when(identitySecondFactor.getOtpCredential(anyString()))
         .thenReturn(new IdentityOtpCredential(null, "TOTPSECRET", null, null));
     when(tenantCreationClient.createTenant(any()))
@@ -593,7 +600,7 @@ class TenantAdminOnboardingServiceTest {
             null,
             null,
             null,
-            "s3cretPassword",
+            "s3cretPassword-16ch",
             RESERVED_TENANT_ID,
             RESERVATION_TOKEN);
 
@@ -626,7 +633,7 @@ class TenantAdminOnboardingServiceTest {
         null,
         null,
         null,
-        "s3cretPassword",
+        "s3cretPassword-16ch",
         RESERVED_TENANT_ID,
         RESERVATION_TOKEN);
   }
@@ -657,7 +664,8 @@ class TenantAdminOnboardingServiceTest {
     when(accountInviteRepository.findByTokenHash(TOKEN_HASH)).thenReturn(Optional.of(invite));
     when(accountInviteRepository.claimForAcceptance(eq(7L), isNull(), any())).thenReturn(1);
     when(accountInviteRepository.findById(7L)).thenReturn(Optional.of(invite));
-    when(createAdminService.createNewTenantAdminFromInvite(any())).thenReturn(onboardedAdmin());
+    when(createAdminService.createNewTenantAdminForReservedTenant(any()))
+        .thenReturn(onboardedAdmin());
     when(identitySecondFactor.getOtpCredential(anyString()))
         .thenReturn(new IdentityOtpCredential(null, "TOTPSECRET", null, null));
     when(tenantCreationClient.createTenant(any()))
@@ -679,7 +687,7 @@ class TenantAdminOnboardingServiceTest {
     when(accountInviteRepository.findByTokenHash(TOKEN_HASH)).thenReturn(Optional.of(invite));
     when(accountInviteRepository.claimForAcceptance(eq(7L), isNull(), any())).thenReturn(1);
     when(accountInviteRepository.findById(7L)).thenReturn(Optional.of(invite));
-    when(createAdminService.createNewTenantAdminFromInvite(any(CreateAdminDTO.class)))
+    when(createAdminService.createNewTenantAdminForReservedTenant(any(CreateAdminDTO.class)))
         .thenReturn(onboardedAdmin());
     when(identitySecondFactor.getOtpCredential(anyString()))
         .thenReturn(new IdentityOtpCredential(null, "TOTPSECRET", "QRBASE64", null));
@@ -699,7 +707,7 @@ class TenantAdminOnboardingServiceTest {
     when(accountInviteRepository.findByTokenHash(TOKEN_HASH)).thenReturn(Optional.of(invite));
     when(accountInviteRepository.claimForAcceptance(eq(7L), isNull(), any())).thenReturn(1);
     when(accountInviteRepository.findById(7L)).thenReturn(Optional.of(invite));
-    when(createAdminService.createNewTenantAdminFromInvite(any(CreateAdminDTO.class)))
+    when(createAdminService.createNewTenantAdminForReservedTenant(any(CreateAdminDTO.class)))
         .thenReturn(onboardedAdmin());
     when(identitySecondFactor.getOtpCredential(anyString()))
         .thenReturn(new IdentityOtpCredential(null, "TOTPSECRET", "QRBASE64", null));
@@ -724,7 +732,7 @@ class TenantAdminOnboardingServiceTest {
     when(accountInviteRepository.findByTokenHash(TOKEN_HASH)).thenReturn(Optional.of(invite));
     when(accountInviteRepository.claimForAcceptance(eq(7L), isNull(), any())).thenReturn(1);
     when(accountInviteRepository.findById(7L)).thenReturn(Optional.of(invite));
-    when(createAdminService.createNewTenantAdminFromInvite(any(CreateAdminDTO.class)))
+    when(createAdminService.createNewTenantAdminForReservedTenant(any(CreateAdminDTO.class)))
         .thenReturn(onboardedAdmin());
     when(identitySecondFactor.getOtpCredential(anyString()))
         .thenReturn(new IdentityOtpCredential(null, "TOTPSECRET", "QRBASE64", null));
@@ -1210,7 +1218,7 @@ class TenantAdminOnboardingServiceTest {
         "CEO",
         "tenant.admin@example.org",
         "Beispiel gGmbH",
-        "s3cretPassword",
+        "s3cretPassword-16ch",
         RESERVED_TENANT_ID,
         RESERVATION_TOKEN,
         legalName,
@@ -1224,7 +1232,8 @@ class TenantAdminOnboardingServiceTest {
     when(accountInviteRepository.findByTokenHash(TOKEN_HASH)).thenReturn(Optional.of(invite));
     when(accountInviteRepository.claimForAcceptance(eq(7L), isNull(), any())).thenReturn(1);
     when(accountInviteRepository.findById(7L)).thenReturn(Optional.of(invite));
-    when(createAdminService.createNewTenantAdminFromInvite(any())).thenReturn(onboardedAdmin());
+    when(createAdminService.createNewTenantAdminForReservedTenant(any()))
+        .thenReturn(onboardedAdmin());
     when(identitySecondFactor.getOtpCredential(anyString()))
         .thenReturn(new IdentityOtpCredential(null, "TOTPSECRET", null, null));
     when(tenantCreationClient.createTenant(any()))
@@ -1283,6 +1292,25 @@ class TenantAdminOnboardingServiceTest {
   }
 
   @Test
+  void registerTenantAdmin_fifteenCharacterPassword_throwsBadRequest() {
+    var command =
+        new RegisterTenantAdminCommand(
+            "Beispiel gGmbH",
+            "beispiel",
+            null,
+            true,
+            null,
+            null,
+            null,
+            null,
+            "123456789012345",
+            RESERVED_TENANT_ID,
+            RESERVATION_TOKEN);
+
+    assertThrows(BadRequestException.class, () -> service.registerTenantAdmin(RAW_TOKEN, command));
+  }
+
+  @Test
   void registerTenantAdmin_shortPassword_throwsBadRequest() {
     var command =
         new RegisterTenantAdminCommand(
@@ -1315,7 +1343,7 @@ class TenantAdminOnboardingServiceTest {
             null,
             null,
             null,
-            "s3cretPassword",
+            "s3cretPassword-16ch",
             RESERVED_TENANT_ID,
             "some-other-token");
 
@@ -1381,7 +1409,7 @@ class TenantAdminOnboardingServiceTest {
             .firstName("Erika")
             .lastName("Beispiel")
             .build();
-    when(createAdminService.createNewTenantAdminFromInvite(any())).thenReturn(admin);
+    when(createAdminService.createNewTenantAdminForReservedTenant(any())).thenReturn(admin);
     when(identitySecondFactor.getOtpCredential(anyString()))
         .thenReturn(new IdentityOtpCredential(null, "TOTPSECRET", null, null));
     when(tenantCreationClient.createTenant(any()))
@@ -1408,7 +1436,7 @@ class TenantAdminOnboardingServiceTest {
             .firstName("Erika")
             .lastName("Beispiel")
             .build();
-    when(createAdminService.createNewTenantAdminFromInvite(any())).thenReturn(admin);
+    when(createAdminService.createNewTenantAdminForReservedTenant(any())).thenReturn(admin);
     when(identitySecondFactor.getOtpCredential(anyString()))
         .thenThrow(new InternalServerErrorException("credential provider unavailable"));
 
@@ -1428,6 +1456,13 @@ class TenantAdminOnboardingServiceTest {
     invite.setAcceptedByUserId("kc-user-1");
     invite.setTotpPendingSecret(null);
     when(accountInviteRepository.findByTokenHash(TOKEN_HASH)).thenReturn(Optional.of(invite));
+    // A DISTINCT instance, as in the app-secret path below: handing back the snapshot would
+    // let the test pass even if the gate were activated on the stale row.
+    AccountInvite lockedRow = tenantAdminInvite(AccountInviteStatus.ACCEPTED);
+    lockedRow.setAcceptedByUserId("kc-user-1");
+    lockedRow.setTotpPendingSecret(null);
+    when(accountInviteRepository.findByIdForUpdate(lockedRow.getId()))
+        .thenReturn(Optional.of(lockedRow));
     when(identityProfileLookup.findById("kc-user-1"))
         .thenReturn(Optional.of(new IdentityProfile("kc-user-1", "enc.user", null, null, null)));
     when(identitySecondFactor.initiateEmailVerification("enc.user", invite.getRecipientEmail()))
@@ -1437,10 +1472,14 @@ class TenantAdminOnboardingServiceTest {
         .thenReturn(
             new de.caritas.cob.userservice.api.identity.IdentityEmailVerification(
                 true, false, true, invite.getRecipientEmail()));
+
     service.startEmailTwoFactor(RAW_TOKEN);
     verify(accountInviteService, never()).markTwoFactorActive(anyString());
     service.activateEmailTwoFactor(RAW_TOKEN, "123456");
+
     verify(accountInviteService).markTwoFactorActive("kc-user-1");
+    verify(accountInviteRepository).save(lockedRow);
+    verify(accountInviteRepository, never()).save(invite);
   }
 
   @Test
@@ -1455,12 +1494,20 @@ class TenantAdminOnboardingServiceTest {
                 new IdentityProfile("kc-user-1", "enc.keycloak-username", null, null, null)));
     when(identitySecondFactor.setUpOtpCredential("enc.keycloak-username", "123456", "TOTPSECRET"))
         .thenReturn(true);
+    // Consuming the gate re-reads the row under its lock instead of merging the snapshot held
+    // across the Keycloak round trip (#1008 review), so the stub hands out a DISTINCT instance.
+    AccountInvite lockedRow = tenantAdminInvite(AccountInviteStatus.ACCEPTED);
+    lockedRow.setAcceptedByUserId("kc-user-1");
+    lockedRow.setTotpPendingSecret("TOTPSECRET");
+    when(accountInviteRepository.findByIdForUpdate(lockedRow.getId()))
+        .thenReturn(Optional.of(lockedRow));
 
     service.activateTwoFactor(RAW_TOKEN, "123456");
 
     verify(accountInviteService).markTwoFactorActive("kc-user-1");
-    assertNull(invite.getTotpPendingSecret());
-    verify(accountInviteRepository).save(invite);
+    assertNull(lockedRow.getTotpPendingSecret());
+    verify(accountInviteRepository).save(lockedRow);
+    verify(accountInviteRepository, never()).save(invite);
   }
 
   @Test

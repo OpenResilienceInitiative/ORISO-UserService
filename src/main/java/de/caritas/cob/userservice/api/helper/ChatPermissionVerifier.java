@@ -1,17 +1,22 @@
 package de.caritas.cob.userservice.api.helper;
 
+import static de.caritas.cob.userservice.api.config.auth.Authority.AuthorityValue.CONSULTANT_DEFAULT;
+
 import de.caritas.cob.userservice.api.config.auth.UserRole;
 import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
+import de.caritas.cob.userservice.api.facade.ChatConverter;
 import de.caritas.cob.userservice.api.model.Chat;
 import de.caritas.cob.userservice.api.model.ChatAgency;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.ConsultantAgency;
+import de.caritas.cob.userservice.api.model.ConversationType;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.model.UserAgency;
 import de.caritas.cob.userservice.api.model.UserChat;
 import de.caritas.cob.userservice.api.service.ConsultantService;
 import de.caritas.cob.userservice.api.service.chat.GroupChatConsultantAccess;
+import de.caritas.cob.userservice.api.service.chat.MembersOnlyChatAccess;
 import de.caritas.cob.userservice.api.service.user.UserService;
 import java.util.Set;
 import java.util.stream.Collectors;
@@ -28,6 +33,7 @@ public class ChatPermissionVerifier {
   private final @NonNull UserService userService;
   private final @NonNull AuthenticatedUser authenticatedUser;
   private final @NonNull GroupChatConsultantAccess groupChatConsultantAccess;
+  private final @NonNull MembersOnlyChatAccess membersOnlyChatAccess;
 
   /**
    * Verifies if the {@link AuthenticatedUser} has access right on given {@link Chat}.
@@ -41,6 +47,24 @@ public class ChatPermissionVerifier {
     }
     if (roles.contains(UserRole.USER.getValue())) {
       this.verifyUserPermissionForChat(chat);
+    }
+  }
+
+  /** An invite assignment grants the circle schedule before the advice seeker joins Matrix. */
+  public void verifyPermissionForChatOccurrences(Chat chat) {
+    var authorities = authenticatedUser.getGrantedAuthorities();
+    if (authorities != null && authorities.contains(CONSULTANT_DEFAULT)) {
+      verifyPermissionForChat(chat);
+      return;
+    }
+
+    if (!authenticatedUser.isAdviceSeeker()
+        || authenticatedUser.isAnonymous()
+        || ChatConverter.conversationTypeOf(chat) != ConversationType.SELF_HELP
+        || membersOnlyChatAccess.concerns(chat)
+        || !hasChatUserAssignment(chat, retrieveAdviceSeeker())) {
+      throw new ForbiddenException(
+          "Current user cannot read occurrences for chat %s", chat.getId());
     }
   }
 
@@ -145,19 +169,24 @@ public class ChatPermissionVerifier {
    * @param chat the {@link Chat}
    */
   private void verifyUserPermissionForChat(Chat chat) {
-    User user =
-        userService
-            .getUserViaAuthenticatedUser(authenticatedUser)
-            .orElseThrow(
-                () ->
-                    new NotFoundException(
-                        "User with id %s not found", authenticatedUser.getUserId()));
+    User user = retrieveAdviceSeeker();
 
-    if (!hasChatUserAssignment(chat, user) && !hasSameAgencyAssigned(chat, user)) {
+    // A members-only chat is a room of colleagues: no advice seeker is ever a member, and sharing
+    // the counselling centre must not open it.
+    if (membersOnlyChatAccess.concerns(chat)
+        || (!hasChatUserAssignment(chat, user) && !hasSameAgencyAssigned(chat, user))) {
       throw new ForbiddenException(
           String.format(
               "User with id %s has no permission for chat with id %s",
               user.getUserId(), chat.getId()));
     }
+  }
+
+  private User retrieveAdviceSeeker() {
+    return userService
+        .getUserViaAuthenticatedUser(authenticatedUser)
+        .orElseThrow(
+            () ->
+                new NotFoundException("User with id %s not found", authenticatedUser.getUserId()));
   }
 }

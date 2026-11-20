@@ -29,8 +29,13 @@ import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantTopicRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.port.out.SessionSupervisorRepository;
-import de.caritas.cob.userservice.api.service.appointment.AppointmentService;
 import de.caritas.cob.userservice.api.service.consultingtype.TopicService;
+import de.caritas.cob.userservice.api.service.lifecycle.LifecycleEventPublisher;
+import de.caritas.cob.userservice.api.service.lifecycle.LifecycleEventPublisher.DeletedSession;
+import de.caritas.cob.userservice.api.service.session.SessionOwnershipService;
+import de.caritas.cob.userservice.api.workflow.delete.model.DeletionAuditOutcome;
+import de.caritas.cob.userservice.api.workflow.delete.model.DeletionAuditTargetType;
+import de.caritas.cob.userservice.api.workflow.delete.service.DeletionAuditService;
 import de.caritas.cob.userservice.api.workflow.delete.service.DeletionLifecycleService;
 import de.caritas.cob.userservice.topicservice.generated.web.model.TopicDTO;
 import java.util.Collections;
@@ -56,15 +61,21 @@ public class ConsultantAdminService {
   private final @NonNull ConsultantPreDeletionService consultantPreDeletionService;
 
   private final @NonNull SessionRepository sessionRepository;
+  private final @NonNull de.caritas.cob.userservice.api.service.chat.MembersOnlyChatAccess
+      membersOnlyChatAccess;
+  private final @NonNull de.caritas.cob.userservice.api.service.chat.MembersOnlyRevocation
+      membersOnlyRevocation;
+  private final @NonNull SessionOwnershipService sessionOwnershipService;
   private final @NonNull CaseHandoverRequestRepository caseHandoverRequestRepository;
   private final @NonNull SessionSupervisorRepository sessionSupervisorRepository;
+  private final @NonNull LifecycleEventPublisher lifecycleEventPublisher;
 
   private final @NonNull AuthenticatedUser authenticatedUser;
 
   private final @NonNull AccountManager accountManager;
 
-  private final @NonNull AppointmentService appointmentService;
   private final @NonNull DeletionLifecycleService deletionLifecycleService;
+  private final @NonNull DeletionAuditService deletionAuditService;
 
   private final @NonNull ConsultantTopicRepository consultantTopicRepository;
   private final @NonNull TopicService topicService;
@@ -188,10 +199,8 @@ public class ConsultantAdminService {
             .includeAdminRemarks(canAccessAdminRemarks())
             .buildResponseDTO();
 
-    this.appointmentService.updateConsultant(consultantAdminResponseDTO);
     // Same public-name contract as findConsultantById: every consultant admin response carries
-    // displayName + publicName (#996 review). After the appointment sync on purpose — the
-    // appointment payload never carried the names before.
+    // displayName + publicName (#996 review).
     enrichWithDisplayName(consultantId, consultantAdminResponseDTO);
     enrichWithTopics(consultantId, consultantAdminResponseDTO);
     return consultantAdminResponseDTO;
@@ -222,11 +231,25 @@ public class ConsultantAdminService {
           consultantId);
     }
 
+    // Private rooms are left now, in this transaction and while the chat account still works.
+    membersOnlyRevocation.revokeAllAccessOf(consultant);
+
     consultant.setDeleteDate(deletedAt);
     deletionLifecycleService.beginConsultantDeletion(consultant, authenticatedUser.getUserId());
     pictureStore.removeForConsultantDeletion(consultantId);
     consultant.setStatus(ConsultantStatus.IN_DELETION);
     this.consultantRepository.save(consultant);
+
+    // Last: Keycloak is not rolled back with this transaction, so the login is only taken away
+    // once nothing that can still fail (the strict leaves of the private rooms) is left.
+    this.consultantPreDeletionService.deactivateIdentity(consultant);
+
+    // After the last fallible step; the log row carries ids only, never the counsellor's name.
+    deletionAuditService.recordAsCurrentActor(
+        DeletionAuditTargetType.CONSULTANT,
+        consultantId,
+        consultant.getTenantId(),
+        DeletionAuditOutcome.SCHEDULED);
   }
 
   public void pauseConsultantDeletion(
@@ -243,19 +266,46 @@ public class ConsultantAdminService {
     this.consultantRepository.save(consultant);
   }
 
+  /**
+   * Cancels a consultant deletion during the safeguard window: clears the deletion state, restores
+   * the agency relations removed with the account and turns the login back on. Not restored
+   * (removed irreversibly by the deletion): private-room memberships, the public slug and the
+   * picture, and sessions deleted with {@code forceDeleteSessions}.
+   */
+  @Transactional
+  public void cancelConsultantDeletion(String consultantId) {
+    var consultant =
+        this.consultantRepository
+            .findPictureOwnerForUpdate(consultantId)
+            .orElseThrow(() -> new NotFoundException("Consultant not found"));
+    var deletedAt = consultant.getDeleteDate();
+    deletionLifecycleService.cancelConsultantDeletion(consultant);
+    consultantPreDeletionService.restoreAgencyRelations(consultant, deletedAt);
+    consultant.setStatus(ConsultantStatus.CREATED);
+    this.consultantRepository.save(consultant);
+    log.info(
+        "Deletion of consultant {} was cancelled by {}",
+        consultantId,
+        authenticatedUser.getUserId());
+
+    // Last: Keycloak is not rolled back with this transaction.
+    this.consultantPreDeletionService.activateIdentity(consultant);
+
+    // Written after this transaction commits, like the SCHEDULED row; ids only.
+    deletionAuditService.recordAsCurrentActor(
+        DeletionAuditTargetType.CONSULTANT,
+        consultantId,
+        consultant.getTenantId(),
+        DeletionAuditOutcome.CANCELLED);
+  }
+
   private void deleteAndUnassignSessions(Consultant consultant) {
     deleteSessionsInProgressOrArchived(consultant);
     unassignNewOrInitialSessions(consultant);
   }
 
   private void unassignNewOrInitialSessions(Consultant consultant) {
-    sessionRepository
-        .findByConsultantAndStatusIn(consultant, Lists.newArrayList(NEW, INITIAL))
-        .forEach(
-            session -> {
-              session.setConsultant(null);
-              sessionRepository.save(session);
-            });
+    sessionOwnershipService.clearOwnerFromSessions(consultant, Lists.newArrayList(NEW, INITIAL));
   }
 
   private void deleteSessionsInProgressOrArchived(Consultant consultant) {
@@ -263,9 +313,18 @@ public class ConsultantAdminService {
         .findByConsultantAndStatusIn(consultant, Lists.newArrayList(IN_PROGRESS, IN_ARCHIVE))
         .forEach(
             session -> {
+              // The case of a members-only chat lives with the chat: it goes to a remaining
+              // participant, or is retired, never deleted under a chat that still exists.
+              if (membersOnlyChatAccess.concerns(session)
+                  && membersOnlyRevocation.keepCaseOnDeletionOf(session, consultant)) {
+                return;
+              }
+              var deletedSession = DeletedSession.of(session);
               caseHandoverRequestRepository.deleteAllBySessionId(session.getId());
               sessionSupervisorRepository.deleteAllBySessionId(session.getId());
               sessionRepository.delete(session);
+              // Sent after this transaction commits, like the asker deletion paths (ADR-034).
+              lifecycleEventPublisher.sessionDeleted(deletedSession);
             });
   }
 }

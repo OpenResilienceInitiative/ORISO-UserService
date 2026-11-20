@@ -29,13 +29,12 @@ class RequiredCiContractTest(unittest.TestCase):
                 "reports = Path('target/surefire-reports')\n"
                 "reports.mkdir(parents=True)\n"
                 "required = [\n"
-                "    'AppointmentControllerE2EIT',\n"
                 "    'ConversationControllerAuthorizationIT',\n"
                 "    'ConversationControllerIT',\n"
                 "    'UserAdminControllerE2EIT',\n"
                 "    'UserControllerE2EIT',\n"
                 "]\n"
-                "classes = required + [f'Integration{i}IT' for i in range(70)]\n"
+                "classes = required + [f'Integration{i}IT' for i in range(71)]\n"
                 "for index, name in enumerate(classes):\n"
                 "    tests = 756 if index == 0 else 1\n"
                 "    skipped = 4 if index == 0 else 0\n"
@@ -189,13 +188,15 @@ class RequiredCiContractTest(unittest.TestCase):
             "ProvisioningCompensationMariaDbIT",
             "ScheduledTaskClaimMariaDbIT",
             "TutorialProgressServiceMariaDbReplicaIT",
-            "OrganizerMariaDbReplicaIT",
             "DeactivateGroupChatSchedulerMariaDbReplicaIT",
             "DeleteUserAccountSchedulerMariaDbReplicaIT",
             "DeleteUsersRegisteredOnlySchedulerMariaDbReplicaIT",
             "SupportRoomMigrationConvergenceIT",
+            "GroupChatMatrixCleanupAdoptionMariaDbIT",
         ):
             self.assertIn(f"!{mariadb_owned_test}", arguments)
+        self.assertIn("-Dtest=**/*IT,", arguments)
+        self.assertNotIn("!GroupChatMatrixCleanupAdoptionIT", arguments)
 
     def test_every_test_excluded_from_the_required_runner_is_run_by_the_mariadb_job(self):
         """No test may fall between the two required jobs.
@@ -243,6 +244,7 @@ class RequiredCiContractTest(unittest.TestCase):
         for match in re.finditer(r"-Dtest=([^\s]+)", mariadb_workflow):
             mariadb_selectors.update(match.group(1).split(","))
 
+        self.assertIn("GroupChatMatrixCleanupAdoptionMariaDbIT", mariadb_selectors)
         self.assertEqual(
             set(),
             excluded - mariadb_selectors,
@@ -258,7 +260,7 @@ class RequiredCiContractTest(unittest.TestCase):
         self.assertNotIn("continue-on-error:", integration)
         self.assertIn(
             "needs: [validate, redis-contract, mariadb-contract, required-integration-tests,"
-            " tenant-filter-on-integration-tests]",
+            " tenant-filter-on-integration-tests, notification-smtp-contract]",
             aggregate,
         )
         self.assertIn("if: always()", aggregate)
@@ -266,13 +268,34 @@ class RequiredCiContractTest(unittest.TestCase):
         self.assertIn("needs.required-integration-tests.result", aggregate)
         self.assertIn("needs.mariadb-contract.result", aggregate)
         self.assertIn("needs.tenant-filter-on-integration-tests.result", aggregate)
+        self.assertIn("needs.notification-smtp-contract.result", aggregate)
+
+    def test_required_aggregate_refuses_failed_skipped_and_cancelled_smtp(self):
+        workflow = (ROOT / ".github/workflows/ci-pull-request.yml").read_text()
+        aggregate = job_block(workflow, "required-ci")
+        script = aggregate.split("      run: |\n", 1)[1].split("\n  #", 1)[0]
+        script = "\n".join(line[8:] for line in script.splitlines())
+        for smtp_result in ("success", "failure", "skipped", "cancelled"):
+            with self.subTest(smtp_result=smtp_result):
+                env = os.environ.copy()
+                for name in ("VALIDATE", "REDIS", "MARIADB", "INTEGRATION", "TENANT_FILTER"):
+                    env[name + "_RESULT"] = "success"
+                env["SMTP_RESULT"] = smtp_result
+                result = subprocess.run(["bash", "-c", script], env=env,
+                                        capture_output=True, text=True, check=False)
+                self.assertEqual(smtp_result == "success", result.returncode == 0)
+                if smtp_result != "success":
+                    self.assertIn("smtp=" + smtp_result, result.stdout)
 
     def test_publish_waits_for_required_integration_tests(self):
         workflow = (ROOT / ".github/workflows/ci-main.yml").read_text()
         publish = job_block(workflow, "publish")
         integration = job_block(workflow, "required-integration-tests")
 
-        self.assertIn("needs: [required-integration-tests, mariadb-contract]", publish)
+        self.assertIn(
+            "needs: [build, required-integration-tests, mariadb-contract, notification-smtp-contract]",
+            publish,
+        )
         self.assertIn("name: required integration tests", integration)
         self.assertNotIn("continue-on-error:", integration)
 
@@ -286,7 +309,6 @@ class RequiredCiContractTest(unittest.TestCase):
         self.assertIn("ProvisioningCompensationMariaDbIT", reusable)
         self.assertIn("ScheduledTaskClaimMariaDbIT", reusable)
         self.assertIn("TutorialProgressServiceMariaDbReplicaIT", reusable)
-        self.assertIn("OrganizerMariaDbReplicaIT", reusable)
         self.assertIn("DeactivateGroupChatSchedulerMariaDbReplicaIT", reusable)
         self.assertIn("DeleteUserAccountSchedulerMariaDbReplicaIT", reusable)
         self.assertIn("DeleteUsersRegisteredOnlySchedulerMariaDbReplicaIT", reusable)
@@ -363,7 +385,6 @@ class RequiredCiContractTest(unittest.TestCase):
         self.assertIn("if skipped:", runner)
 
         for required_e2e in (
-            "AppointmentControllerE2EIT",
             "ConversationControllerAuthorizationIT",
             "ConversationControllerIT",
             "UserAdminControllerE2EIT",

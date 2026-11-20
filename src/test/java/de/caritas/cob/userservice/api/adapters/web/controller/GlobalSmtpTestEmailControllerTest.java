@@ -8,6 +8,7 @@ import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.verify;
 
 import de.caritas.cob.userservice.api.adapters.web.dto.GlobalSmtpTestEmailDTO;
+import de.caritas.cob.userservice.api.service.consultingtype.ApplicationSettingsService.SmtpSettingsUnavailableException;
 import de.caritas.cob.userservice.api.service.email.PlatformSmtpSettingsProvider;
 import de.caritas.cob.userservice.api.service.notification.GlobalSmtpTestEmailService;
 import jakarta.mail.AuthenticationFailedException;
@@ -75,6 +76,23 @@ class GlobalSmtpTestEmailControllerTest {
     assertEquals(HttpStatus.BAD_REQUEST, response.getStatusCode());
     assertEquals(
         "SMTP test mail could not be sent. Please verify your SMTP settings.",
+        ((Map<?, ?>) response.getBody()).get("message"));
+  }
+
+  @Test
+  void sendGlobalSmtpTestEmail_unavailableSavedSettings_returnsSafeNoStoreBadGateway()
+      throws Exception {
+    var dto = validDto();
+    doThrow(new SmtpSettingsUnavailableException())
+        .when(globalSmtpTestEmailService)
+        .sendTestEmail(dto);
+
+    var response = controller.sendGlobalSmtpTestEmail(dto);
+
+    assertEquals(HttpStatus.BAD_GATEWAY, response.getStatusCode());
+    assertEquals("no-store", response.getHeaders().getCacheControl());
+    assertEquals(
+        "Platform SMTP Admin Settings are unavailable. Please retry or contact a platform admin.",
         ((Map<?, ?>) response.getBody()).get("message"));
   }
 

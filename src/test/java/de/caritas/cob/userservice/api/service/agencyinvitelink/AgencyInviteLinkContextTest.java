@@ -38,6 +38,14 @@ class AgencyInviteLinkContextTest {
   @Mock private ConsultingTypeService consultingTypeService;
   @Mock private AgencyService agencyService;
   @Mock private CreateAnonymousEnquiryFacade createAnonymousEnquiryFacade;
+  @Mock private de.caritas.cob.userservice.api.admin.service.tenant.TenantService tenantService;
+
+  @Mock
+  private de.caritas.cob.userservice.api.service.temporaryaccount.TemporaryAccountSettingsService
+      temporaryAccountSettings;
+
+  @Mock private DirectInvitePolicy directInvitePolicy;
+
   @InjectMocks private AgencyInviteLinkService service;
 
   @Mock private de.caritas.cob.userservice.api.admin.service.admin.AdminScope adminScope;

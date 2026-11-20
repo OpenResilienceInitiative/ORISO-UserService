@@ -8,6 +8,7 @@ content into metric dimensions.
 | --- | --- | --- | --- |
 | `oriso.live_chat.routing.decisions` | counter | `stage={availability, eligibility}`; `outcome={available, invalid_topic, no_assignment, no_eligible_consultant, availability_expired, presence_unavailable}` | Separates missing assignment, absent/ineligible consultants, expired activity leases, and unavailable Matrix presence. |
 | `oriso.live_chat.routing.candidates` | distribution summary | same bounded routing tags | Shows the numeric candidate population without consultant identifiers. |
+| `oriso.live_chat.availability.lookup.failures` | counter | `endpoint={anonymous_door, enquiry_details}` | Counts availability lookups that threw in `TopicConsultantAvailabilityController` / `ConversationController` and were answered as "0 available" (a WARN with topic id and exception class accompanies each). Redis read failures reach this counter through `ConsultantActivityRegistry.filterActiveOrThrow`; the endpoint still answers zero. The same read also increments `oriso.live_chat.availability.store.operations{operation=read,outcome=failure}` once. Other registry callers retain the fail-closed `filterActive` API. |
 | `oriso.live_chat.queue.visibility` | counter | `demand={none, present, unknown}`; `outcome={observed, invalid_request}` | Distinguishes observed empty demand, non-empty demand, and invalid requests that cannot answer the demand question. |
 | `oriso.live_chat.queue.depth` | distribution summary | none | Measures pending enquiries ahead of a request. |
 | `oriso.matrix.room.creation` | counter | `encryption={enabled, disabled}`; `outcome={success, failure, skipped}` | Proves encryption posture at the completed Matrix creation request, not from configuration alone. |
@@ -29,6 +30,11 @@ the meter registry fails.
   availability lease remains.
 - `presence_unavailable`: Matrix presence could not be used and the deliberate
   assignment fallback was taken.
+- `oriso.live_chat.availability.lookup.failures` rising: the topic/consultant
+  lookup threw (Redis, database, tenant context) and guests were told nobody is live.
+  Redis read failures also increment
+  `oriso.live_chat.availability.store.operations{operation=read,outcome=failure}`;
+  they must not be mistaken for an expired availability lease.
 - Room-creation `outcome=failure`: Matrix provisioning failed.
 - Successful room creation with `encryption=disabled`: critical security alert.
 - Event or side-effect `outcome=failure`: Matrix processing or notification

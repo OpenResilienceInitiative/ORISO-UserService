@@ -2,6 +2,11 @@ name: UserService PR Validation
 
 on:
   pull_request:
+  merge_group:
+    types: [checks_requested]
+
+permissions:
+  contents: read
 
 env:
   REGISTRY: ghcr.io
@@ -11,22 +16,26 @@ jobs:
   validate:
     name: test, build and Docker validation
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
 
     steps:
     - name: Checkout repository
       uses: actions/checkout@v6
+      with:
+        persist-credentials: false
 
     - name: Run UserService tests and build
       uses: ./.github/actions/maven-build
       with:
         java_version: '21'
+        export_signoz_unit_report: 'true'
 
-    - name: Docker build validation without publishing
+    - name: Docker image security gate without publishing
       uses: ./.github/actions/docker-build-push
       with:
         push_to_ghcr: false
         image_name: oriso-userservice
-        github_token: ${{ secrets.GITHUB_TOKEN }}
 
   redis-contract:
     name: Redis shared-state contracts
@@ -47,6 +56,8 @@ jobs:
     steps:
     - name: Checkout repository
       uses: actions/checkout@v6
+      with:
+        persist-credentials: false
 
     - name: Set up JDK and Maven
       uses: actions/setup-java@v5
@@ -57,7 +68,7 @@ jobs:
 
     - name: Verify Redis-backed cross-instance contracts
       run: >-
-        ./mvnw -B
+        bash scripts/ci/run-maven-with-central-retry.sh -B
         -Dtest=ConsultantActivityRegistryRedisIT,RedisOneTimeTokenStoreIT
         test
 
@@ -82,6 +93,8 @@ jobs:
     steps:
     - name: Checkout repository
       uses: actions/checkout@v6
+      with:
+        persist-credentials: false
 
     - name: Run deterministic integration contract
       uses: ./.github/actions/maven-verify-required
@@ -134,7 +147,7 @@ jobs:
   required-ci:
     name: required PreDev CI
     if: always()
-    needs: [validate, redis-contract, mariadb-contract, required-integration-tests, tenant-filter-on-integration-tests]
+    needs: [validate, redis-contract, mariadb-contract, required-integration-tests, tenant-filter-on-integration-tests, notification-smtp-contract]
     runs-on: ubuntu-latest
 
     steps:
@@ -145,13 +158,14 @@ jobs:
         MARIADB_RESULT: ${{ needs.mariadb-contract.result }}
         INTEGRATION_RESULT: ${{ needs.required-integration-tests.result }}
         TENANT_FILTER_RESULT: ${{ needs.tenant-filter-on-integration-tests.result }}
+        SMTP_RESULT: ${{ needs.notification-smtp-contract.result }}
       run: |
         conclusion=success
-        if [[ "${VALIDATE_RESULT}" != success || "${REDIS_RESULT}" != success || "${MARIADB_RESULT}" != success || "${INTEGRATION_RESULT}" != success || "${TENANT_FILTER_RESULT}" != success ]]; then
+        if [[ "${VALIDATE_RESULT}" != success || "${REDIS_RESULT}" != success || "${MARIADB_RESULT}" != success || "${INTEGRATION_RESULT}" != success || "${TENANT_FILTER_RESULT}" != success || "${SMTP_RESULT}" != success ]]; then
           conclusion=failure
         fi
         if [[ "${conclusion}" != success ]]; then
-          echo "::error::Required CI failed: validate=${VALIDATE_RESULT}, redis=${REDIS_RESULT}, mariadb=${MARIADB_RESULT}, integration=${INTEGRATION_RESULT}, tenant-filter=${TENANT_FILTER_RESULT}"
+          echo "::error::Required CI failed: validate=${VALIDATE_RESULT}, redis=${REDIS_RESULT}, mariadb=${MARIADB_RESULT}, integration=${INTEGRATION_RESULT}, tenant-filter=${TENANT_FILTER_RESULT}, smtp=${SMTP_RESULT}"
           exit 1
         fi
 
@@ -160,6 +174,7 @@ jobs:
   # for now; flip to blocking once the process around intentional breaking
   # changes (version bump / consumer sign-off) is agreed.
   api-contract-diff:
+    if: github.event_name == 'pull_request'
     name: api-contract-diff (non-blocking)
     runs-on: ubuntu-latest
     continue-on-error: true
@@ -167,12 +182,15 @@ jobs:
     steps:
     - name: Checkout PR head
       uses: actions/checkout@v6
+      with:
+        persist-credentials: false
 
     - name: Checkout base branch
       uses: actions/checkout@v6
       with:
         ref: ${{ github.base_ref }}
         path: .base
+        persist-credentials: false
 
     - name: Diff own OpenAPI specs against base (oasdiff breaking)
       shell: bash
@@ -197,3 +215,6 @@ jobs:
           echo "::warning::oasdiff found (formally) breaking API spec changes - report-only; see the log groups above. Flip to a hard failure once the breaking-change process is agreed."
           echo "### api-contract-diff: breaking changes detected (report-only)" >> "$GITHUB_STEP_SUMMARY"
         fi
+
+  notification-smtp-contract:
+    uses: ./.github/workflows/notification-smtp-contract.yml

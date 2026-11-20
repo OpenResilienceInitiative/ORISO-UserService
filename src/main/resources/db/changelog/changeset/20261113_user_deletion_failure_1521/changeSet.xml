@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+  xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-3.2.xsd">
+  <!-- ORISO-Admin#1521: when the nightly job keeps an advice seeker's row, it stores which store
+       failed and why (step and fixed reason text, never message content or personal data), so
+       the admin interface can show it instead of a log line the privacy filter suppresses. -->
+  <changeSet id="20261113-user-deletion-failure-1521" author="oriso">
+    <preConditions onFail="MARK_RAN">
+      <not>
+        <columnExists tableName="user" columnName="deletion_failure_reason"/>
+      </not>
+    </preConditions>
+    <addColumn tableName="user">
+      <column name="deletion_failure_reason" type="VARCHAR(512)"/>
+      <column name="deletion_failed_at" type="DATETIME"/>
+    </addColumn>
+    <rollback>
+      <dropColumn tableName="user" columnName="deletion_failed_at"/>
+      <dropColumn tableName="user" columnName="deletion_failure_reason"/>
+    </rollback>
+  </changeSet>
+</databaseChangeLog>

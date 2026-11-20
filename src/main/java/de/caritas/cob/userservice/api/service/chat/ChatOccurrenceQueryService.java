@@ -31,7 +31,7 @@ public class ChatOccurrenceQueryService {
         chatRepository
             .findByIdWithPermissionRelations(seriesId)
             .orElseThrow(() -> new NotFoundException("Chat Series not found"));
-    chatPermissionVerifier.verifyPermissionForChat(series);
+    chatPermissionVerifier.verifyPermissionForChatOccurrences(series);
     return projector.project(
         series, exceptionRepository.findBySeries_Id(seriesId), from, to, limit);
   }
