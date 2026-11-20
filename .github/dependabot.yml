@@ -8,6 +8,11 @@
 # grouping (their version updates are switched off with limit 0); entries WITH
 # `target-branch: dev` carry the version updates. Apply security fixes that
 # matter onto `dev` by hand.
+#
+# MAJOR VERSIONS: the security entry deliberately has NO `ignore` for
+# semver-major, so a security fix that only exists in the next major still
+# opens a PR (otherwise the alert would stay open without any hint). Only the
+# normal update groups below exclude majors (decision 2026-11-20).
 version: 2
 updates:
     - package-ecosystem: 'maven'
