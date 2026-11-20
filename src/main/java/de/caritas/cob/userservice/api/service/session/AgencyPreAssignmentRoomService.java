@@ -41,6 +41,7 @@ public class AgencyPreAssignmentRoomService {
   private final @NonNull AgencySilentMembershipService agencySilentMembershipService;
   private final @NonNull AgencyDepartmentMembershipBackfill departmentMembershipBackfill;
   private final @NonNull MatrixRateLimitPause rateLimitPause;
+  private final @NonNull AgencyEnquiryRoomAttempts roomAttempts;
 
   public void ensureHoldingRoom(Session session, User user) {
     if (session == null || user == null) {
@@ -111,6 +112,8 @@ public class AgencyPreAssignmentRoomService {
         return;
       }
 
+      var attemptId = roomAttempts.recordCreated(session, roomId);
+
       // Order is load-bearing (ADR-002 §1, #199): the department joins while the asker is not a
       // member yet. The asker's Matrix client discovers the room via /sync the moment they are
       // invited — independent of when this method returns — so inviting the asker first opens a
@@ -126,9 +129,10 @@ public class AgencyPreAssignmentRoomService {
         rateLimitPause.pause(
             Math.min(departmentFanOut.retryAfterMs(), MAX_WAIT_BEFORE_ASKER_INVITE_MS));
       }
+      roomAttempts.markRequesterInvitationStarted(attemptId);
       if (!inviteUser(roomId, user, agencyToken)) {
         log.error(
-            "Asker {} could not be invited to Matrix holding room {} for session {}; room id will not be persisted.",
+            "Asker {} could not be invited to Matrix holding room {} for session {}; room remains unbound.",
             user.getUserId(),
             roomId,
             session.getId());
