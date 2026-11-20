@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
@@ -781,13 +782,14 @@ class AgencyInviteLinkServiceTest {
         .thenReturn(Optional.of(link));
     var createdSession =
         new CreateAnonymousEnquiryResponseDTO().sessionId(9001L).userName("Anonymous-1");
-    when(createAnonymousEnquiryFacade.createAnonymousEnquiry(any(), eq(true)))
+    when(createAnonymousEnquiryFacade.createAnonymousEnquiry(any(), eq(true), isNull()))
         .thenReturn(createdSession);
 
     RedeemContext ctx = service.redeem("live");
 
     var dtoCaptor = org.mockito.ArgumentCaptor.forClass(CreateAnonymousEnquiryDTO.class);
-    verify(createAnonymousEnquiryFacade).createAnonymousEnquiry(dtoCaptor.capture(), eq(true));
+    verify(createAnonymousEnquiryFacade)
+        .createAnonymousEnquiry(dtoCaptor.capture(), eq(true), isNull());
     assertThat(dtoCaptor.getValue().getMainTopicId()).isEqualTo(11L);
     assertThat(dtoCaptor.getValue().getConsultingType()).isEqualTo(1);
     assertThat(ctx.getSession()).isSameAs(createdSession);
@@ -800,6 +802,30 @@ class AgencyInviteLinkServiceTest {
     assertThat(link.getUsedBySessionId()).isNull();
     verify(repository, org.mockito.Mockito.never()).save(link);
     verify(agencyService, org.mockito.Mockito.never()).getAgenciesByConsultingType(anyInt());
+  }
+
+  @Test
+  void redeem_Should_CreateTheGuestUnderTheHandleTheyRolled_When_LinkIsLiveChat() {
+    // The guest's rolled animal handle is the login, not only a display name (FE#2346).
+    AgencyInviteLink link =
+        AgencyInviteLink.builder()
+            .token("live")
+            .status(InviteLinkStatus.ACTIVE.name())
+            .tenantId(83L)
+            .topicId(11L)
+            .consultingTypeId(1)
+            .chatType(InviteLinkChatType.LIVE_CHAT.name())
+            .anonymity(InviteLinkAnonymity.FULL.name())
+            .build();
+    when(repository.findByTokenAndStatus("live", InviteLinkStatus.ACTIVE.name()))
+        .thenReturn(Optional.of(link));
+    var createdSession = new CreateAnonymousEnquiryResponseDTO().sessionId(9002L);
+    when(createAnonymousEnquiryFacade.createAnonymousEnquiry(any(), eq(true), eq("katze_sam_4821")))
+        .thenReturn(createdSession);
+
+    RedeemContext ctx = service.redeemWithContext("live", "katze_sam_4821");
+
+    assertThat(ctx.getSession()).isSameAs(createdSession);
   }
 
   @Test
@@ -823,7 +849,7 @@ class AgencyInviteLinkServiceTest {
     assertThat(ctx.getSession()).isNull();
     assertThat(ctx.getAgencyId()).isEqualTo(5L);
     verify(createAnonymousEnquiryFacade, org.mockito.Mockito.never())
-        .createAnonymousEnquiry(any(), org.mockito.ArgumentMatchers.anyBoolean());
+        .createAnonymousEnquiry(any(), org.mockito.ArgumentMatchers.anyBoolean(), any());
   }
 
   // --- list ---
@@ -925,7 +951,7 @@ class AgencyInviteLinkServiceTest {
     when(repository.findByTokenAndStatus("tok", InviteLinkStatus.ACTIVE.name()))
         .thenReturn(Optional.of(link));
 
-    var ctx = service.redeemWithContext("tok");
+    var ctx = service.redeemWithContext("tok", null);
 
     assertThat(ctx).isNotNull();
     assertThat(ctx.getAgencyId()).isEqualTo(7L);
