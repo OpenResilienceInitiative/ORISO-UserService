@@ -169,16 +169,6 @@ abstract class GroupCounsellingDpaHttpFixture {
                         MediaType.APPLICATION_JSON)
                     .createResponse(request);
               }
-              if (path.startsWith("/_synapse/admin/v1/rooms/") && path.endsWith("/state")) {
-                // The moderator level of named group moderators (ORISO-Frontend#2229) is read from
-                // the room state first: nobody holds it yet in these synthetic rooms.
-                return withSuccess(
-                        "{\"state\":[{\"type\":\"m.room.power_levels\",\"state_key\":\"\","
-                            + "\"content\":{\"users\":{},\"events\":{\"m.room.power_levels\":100},"
-                            + "\"events_default\":0,\"redact\":50}}]}",
-                        MediaType.APPLICATION_JSON)
-                    .createResponse(request);
-              }
               if (path.startsWith("/_matrix/client/r0/rooms/")
                   && path.endsWith("/state/m.room.power_levels")) {
                 // Part of creating the room (passage-blur rule) and of raising named moderators
@@ -306,6 +296,17 @@ abstract class GroupCounsellingDpaHttpFixture {
       // A TenantService that does not know the internal-group-chat recipient scope (#1418).
       return org.springframework.test.web.client.response.MockRestResponseCreators.withSuccess(
               "{\"policies\":{}}", org.springframework.http.MediaType.APPLICATION_JSON)
+          .createResponse(request);
+    }
+    if (path.startsWith("/_synapse/admin/v1/rooms/") && path.endsWith("/state")) {
+      // The moderator level of named group moderators (ORISO-Frontend#2229) is read from the room
+      // state first: nobody holds it yet in these synthetic rooms. A default only: a subclass that
+      // serves its own room state (e.g. a ban) overrides this hook and wins.
+      return org.springframework.test.web.client.response.MockRestResponseCreators.withSuccess(
+              "{\"state\":[{\"type\":\"m.room.power_levels\",\"state_key\":\"\","
+                  + "\"content\":{\"users\":{},\"events\":{\"m.room.power_levels\":100},"
+                  + "\"events_default\":0,\"redact\":50}}]}",
+              org.springframework.http.MediaType.APPLICATION_JSON)
           .createResponse(request);
     }
     throw new AssertionError("Unexpected external HTTP path: " + path);
