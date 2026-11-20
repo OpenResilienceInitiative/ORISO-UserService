@@ -258,6 +258,21 @@ class AgencyLateJoinerMembershipServiceTest {
   }
 
   @Test
+  void aRoomChangedSinceTheSnapshotGetsNoDepartmentGrant() {
+    var consultant = lateJoiner();
+    var selected = openEnquiry(1L, "!original:example.org");
+    var current = openEnquiry(1L, "!replacement:example.org");
+    openEnquiries(selected);
+    entitled(consultant, current);
+    agencyServiceAccountAvailable();
+
+    assertEquals(0, underTest.joinConsultantIntoOpenEnquiryRooms(consultant, AGENCY_ID));
+
+    verify(sessionRepository).findByIdForUpdate(selected.getId());
+    verifyNoInteractions(agencySilentMembershipService);
+  }
+
+  @Test
   void detachedCounsellorIsNotJoinedFromAnOldEvent() {
     var consultant = lateJoiner();
     openEnquiries(openEnquiry(1L, "!one:example.org"));
