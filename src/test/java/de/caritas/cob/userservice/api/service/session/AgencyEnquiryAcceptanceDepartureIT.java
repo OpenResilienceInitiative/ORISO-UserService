@@ -7,6 +7,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
@@ -451,6 +452,8 @@ class AgencyEnquiryAcceptanceDepartureIT {
     readCommitted().executeWithoutResult(status -> stageDeparture());
 
     when(clock.instant()).thenReturn(SAME_INSTANT.plusSeconds(300));
+    assertThatThrownBy(() -> retirements.startExternalWork(accepted, assignment))
+        .isInstanceOf(ConflictException.class);
     revocations.retryDue();
 
     assertAssignedRoom(owner, oldRoom);
@@ -460,17 +463,66 @@ class AgencyEnquiryAcceptanceDepartureIT {
   }
 
   @Test
-  void expiredAndReopenedPreparationCannotStartExternalWork() {
+  void expiredPreparationReopensBeforeReturningTheStartConflict() {
     var accepted = currentSession();
     var assignment = ownership.updateOwnerAndStatus(accepted, owner, SessionStatus.IN_PROGRESS);
-    when(clock.instant()).thenReturn(SAME_INSTANT.plusSeconds(300));
+    readCommitted().executeWithoutResult(status -> stageDeparture());
+    when(clock.instant()).thenReturn(SAME_INSTANT.plusSeconds(120));
 
     assertThatThrownBy(() -> retirements.startExternalWork(accepted, assignment))
         .isInstanceOf(ConflictException.class);
-    revocations.retryDue();
+    var reopened = currentSession();
+    assertThat(reopened.getStatus()).isEqualTo(SessionStatus.NEW);
+    assertThat(reopened.getConsultant()).isNull();
+    assertThat(reopened.getOwnershipRevision()).isGreaterThan(assignment.revision());
+    assertThat(reopened.getMatrixRoomId()).isEqualTo(oldRoom);
+    assertThat(
+            jdbc.queryForObject(
+                "SELECT outcome FROM agency_enquiry_room_decision WHERE session_id = ?",
+                String.class,
+                sessionId))
+        .isEqualTo("REOPENED");
+
+    assertThat(tasks.dueIds(LocalDateTime.now(clock), PageRequest.of(0, 8))).hasSize(1);
+    verify(acceptanceNotices).cancelPreparation(sessionId, assignment.revision());
+
     assertThatThrownBy(() -> retirements.startExternalWork(accepted, assignment))
         .isInstanceOf(ConflictException.class);
-    assertThat(currentSession().getStatus()).isEqualTo(SessionStatus.NEW);
+    assertThat(currentSession().getOwnershipRevision()).isEqualTo(reopened.getOwnershipRevision());
+    verifyNoInteractions(matrix);
+  }
+
+  @Test
+  void failureWhileCancellingTheOldNoticeRollsBackTheWholeReopen() {
+    var accepted = currentSession();
+    var assignment = ownership.updateOwnerAndStatus(accepted, owner, SessionStatus.IN_PROGRESS);
+    readCommitted().executeWithoutResult(status -> stageDeparture());
+    var expiry = SAME_INSTANT.plusSeconds(120);
+    when(clock.instant()).thenReturn(expiry);
+    doThrow(new IllegalStateException("fixture notice failure"))
+        .when(acceptanceNotices)
+        .cancelPreparation(sessionId, assignment.revision());
+
+    assertThatThrownBy(() -> retirements.startExternalWork(accepted, assignment))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("fixture notice failure");
+
+    assertAssignedRoom(owner, oldRoom);
+    assertThat(currentSession().getOwnershipRevision()).isEqualTo(assignment.revision());
+    assertThat(
+            jdbc.queryForObject(
+                "SELECT outcome FROM agency_enquiry_room_decision WHERE session_id = ?",
+                String.class,
+                sessionId))
+        .isEqualTo("PENDING");
+    assertThat(
+            jdbc.queryForObject(
+                "SELECT prepared_until FROM agency_enquiry_room_decision WHERE session_id = ?",
+                LocalDateTime.class,
+                sessionId))
+        .isEqualTo(LocalDateTime.ofInstant(expiry, ZoneOffset.UTC));
+    assertThat(tasks.pendingSessionIds(relationId)).containsExactly(sessionId);
+    assertThat(tasks.dueIds(LocalDateTime.now(clock), PageRequest.of(0, 8))).isEmpty();
     verifyNoInteractions(matrix);
   }
 
@@ -485,6 +537,9 @@ class AgencyEnquiryAcceptanceDepartureIT {
           ownership.updateOwnerAndStatus(currentSession(), nextOwner, SessionStatus.IN_PROGRESS);
       assertThat(next.revision()).isGreaterThan(assignment.revision());
       when(clock.instant()).thenReturn(SAME_INSTANT.plusSeconds(300));
+      assertThatThrownBy(() -> retirements.startExternalWork(accepted, assignment))
+          .isInstanceOf(ConflictException.class);
+      assertAssignedRoom(nextOwner, oldRoom);
       revocations.retryDue();
 
       assertAssignedRoom(nextOwner, oldRoom);

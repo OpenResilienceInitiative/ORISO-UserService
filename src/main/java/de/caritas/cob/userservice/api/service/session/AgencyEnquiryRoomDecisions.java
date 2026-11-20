@@ -50,15 +50,29 @@ public class AgencyEnquiryRoomDecisions {
             accepted, openingStatus, LocalDateTime.now(clock).plus(PREPARATION_LEASE)));
   }
 
-  /** The caller holds the session lock. Commit this boundary before doing Matrix work. */
-  void startExternalWork(Session current) {
-    decisions
-        .lockDecision(current.getId(), current.getOwnershipRevision())
-        .filter(decision -> decision.getOutcome() == Outcome.PENDING && decision.matches(current))
-        .filter(decision -> decision.getPreparedUntil() != null)
-        .filter(decision -> decision.getPreparedUntil().isAfter(LocalDateTime.now(clock)))
-        .orElseThrow(() -> new ConflictException("Enquiry room preparation is no longer current"))
-        .clearPreparation();
+  /** Start the work, or settle an expired preparation and return its original open status. */
+  Optional<SessionStatus> startExternalWork(Session current) {
+    var decision =
+        decisions
+            .lockDecision(current.getId(), current.getOwnershipRevision())
+            .filter(
+                candidate ->
+                    candidate.getOutcome() == Outcome.PENDING && candidate.matches(current))
+            .filter(candidate -> candidate.getPreparedUntil() != null)
+            .orElseThrow(this::preparationChanged);
+    if (decision.getPreparedUntil().isAfter(LocalDateTime.now(clock))) {
+      decision.clearPreparation();
+      return Optional.empty();
+    }
+    if (!hasOpeningStatus(decision)) {
+      throw preparationChanged();
+    }
+    settle(decision, Outcome.REOPENED);
+    return Optional.of(decision.getOpeningStatus());
+  }
+
+  private ConflictException preparationChanged() {
+    return new ConflictException("Enquiry room preparation is no longer current");
   }
 
   @Transactional(
@@ -87,14 +101,18 @@ public class AgencyEnquiryRoomDecisions {
         || current.getStatus() != SessionStatus.IN_PROGRESS
         || current.getConsultant() == null
         || !decision.matches(current)
-        || decision.getOpeningStatus() == null
-        || !AgencyOpenEnquiryMembership.OPEN_STATUSES.contains(decision.getOpeningStatus())) {
+        || !hasOpeningStatus(decision)) {
       // Keep ambiguous rows and their tasks held. They must not block the bounded sweep.
       decision.clearPreparation();
       return Optional.empty();
     }
     settle(decision, Outcome.REOPENED);
     return Optional.of(decision.getOpeningStatus());
+  }
+
+  private boolean hasOpeningStatus(AgencyEnquiryRoomDecision decision) {
+    return decision.getOpeningStatus() != null
+        && AgencyOpenEnquiryMembership.OPEN_STATUSES.contains(decision.getOpeningStatus());
   }
 
   void resolve(Session accepted, Outcome outcome) {

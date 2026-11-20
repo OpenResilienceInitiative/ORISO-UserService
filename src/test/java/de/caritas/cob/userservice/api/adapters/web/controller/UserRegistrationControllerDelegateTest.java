@@ -57,9 +57,11 @@ import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import org.springframework.test.util.ReflectionTestUtils;
+import org.springframework.transaction.IllegalTransactionStateException;
 import org.springframework.transaction.annotation.AnnotationTransactionAttributeSource;
 import org.springframework.transaction.interceptor.TransactionInterceptor;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
+import org.springframework.transaction.support.TransactionTemplate;
 
 @ExtendWith(MockitoExtension.class)
 class UserRegistrationControllerDelegateTest {
@@ -232,7 +234,8 @@ class UserRegistrationControllerDelegateTest {
 
     var dataSource = new DriverManagerDataSource("jdbc:h2:mem:enquiry-acceptance-boundary");
     var transactionAdvice = new TransactionInterceptor();
-    transactionAdvice.setTransactionManager(new DataSourceTransactionManager(dataSource));
+    var transactions = new DataSourceTransactionManager(dataSource);
+    transactionAdvice.setTransactionManager(transactions);
     transactionAdvice.setTransactionAttributeSource(
         new AnnotationTransactionAttributeSource(false));
     var factory = new ProxyFactory(delegate);
@@ -243,6 +246,12 @@ class UserRegistrationControllerDelegateTest {
     var response = transactionAwareDelegate.acceptEnquiry(SESSION_ID);
 
     assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+    assertThatThrownBy(
+            () ->
+                new TransactionTemplate(transactions)
+                    .executeWithoutResult(
+                        status -> transactionAwareDelegate.acceptEnquiry(SESSION_ID)))
+        .isInstanceOf(IllegalTransactionStateException.class);
     verify(assignEnquiryFacade).assignRegisteredEnquiry(session, consultant);
   }
 
