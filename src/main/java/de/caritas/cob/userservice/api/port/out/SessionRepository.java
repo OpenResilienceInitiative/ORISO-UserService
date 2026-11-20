@@ -722,6 +722,29 @@ public interface SessionRepository extends CrudRepository<Session, Long>, Sessio
       """)
   List<SessionRoomRow> findSessionRoomsOfAgencies(@Param("agencyIds") Collection<Long> agencyIds);
 
+  /** The upper ID is fixed before a late-joiner sweep so new sessions do not extend it. */
+  @Query("SELECT MAX(s.id) FROM Session s WHERE s.agencyId = :agencyId")
+  Optional<Long> findAgencySessionUpperId(@Param("agencyId") Long agencyId);
+
+  @Query(
+      """
+      SELECT new de.caritas.cob.userservice.api.port.out.SessionRoomRow(s.id, s.matrixRoomId)
+      FROM Session s
+      WHERE s.agencyId = :agencyId
+        AND s.id > :afterId AND s.id <= :upperId
+        AND s.status IN :openStatuses
+        AND s.consultant IS NULL
+        AND (s.isConsultantDirectlySet IS NULL OR s.isConsultantDirectlySet = false)
+        AND s.matrixRoomId IS NOT NULL AND TRIM(s.matrixRoomId) <> ''
+      ORDER BY s.id
+      """)
+  List<SessionRoomRow> findLateJoinerEnquiryRooms(
+      @Param("agencyId") Long agencyId,
+      @Param("openStatuses") Collection<SessionStatus> openStatuses,
+      @Param("afterId") long afterId,
+      @Param("upperId") long upperId,
+      Pageable page);
+
   /** Every supervision side room of cases of the given centres: the fallback, as above. */
   @Query(
       """
