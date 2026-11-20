@@ -1,6 +1,5 @@
 package de.caritas.cob.userservice.api.service.session;
 
-import static java.util.concurrent.TimeUnit.MILLISECONDS;
 import static java.util.concurrent.TimeUnit.SECONDS;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -45,7 +44,6 @@ import java.time.ZoneOffset;
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
-import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicLong;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -217,7 +215,8 @@ class AgencyEnquiryAcceptanceDepartureIT {
   void retainsPendingDecisionsAndBothKindsOfAccessRemovalWork() {
     long pending = addDecision(1, Outcome.PENDING);
     long parked = addDecision(2, Outcome.REPLACED);
-    long released = addDecision(3, Outcome.REOPENED);
+    long released = addDecision(3, Outcome.REUSED);
+    long reopened = addDecision(4, Outcome.REOPENED);
     addDecisionTask(parked, relationId, AgencyEnquiryRevocationTask.WAITING_FOR_ROOM_DECISION);
     addDecisionTask(released, relationId + 1, LocalDateTime.now(clock).plusMinutes(1));
     eraseCase();
@@ -231,46 +230,62 @@ class AgencyEnquiryAcceptanceDepartureIT {
     revocations.retryDue();
     assertThat(hasDecision(parked)).isTrue();
     assertThat(hasDecision(released)).isFalse();
+    assertThat(hasDecision(reopened)).isTrue();
     assertThat(hasDecision(pending)).isTrue();
   }
 
-  @Test
+  @ParameterizedTest
+  @EnumSource(
+      value = Outcome.class,
+      names = {"REPLACED", "REOPENED"})
   @Timeout(15)
-  void retainsDecisionWhenLockedDepartureAddsAReferenceAfterSelection() throws Exception {
-    long decision = addDecision(1, Outcome.REPLACED);
-    eraseCase();
+  void keepsRoomEvidenceForDepartureBeforeItCanInsertATask(Outcome outcome) throws Exception {
+    var orderAllocated = new CountDownLatch(1);
+    var allowDepartureToRead = new CountDownLatch(1);
+    doAnswer(
+            invocation -> {
+              long order = (long) invocation.callRealMethod();
+              orderAllocated.countDown();
+              await(allowDepartureToRead);
+              return order;
+            })
+        .when(AopTestUtils.<AgencyEnquiryRoomDecisions>getUltimateTargetObject(roomDecisions))
+        .nextEvent();
+
     try (var workers = Executors.newSingleThreadExecutor()) {
-      var sweep =
-          readCommitted()
-              .execute(
-                  status -> {
-                    jdbc.queryForObject(
-                        "SELECT id FROM agency_enquiry_room_decision WHERE id = ? FOR UPDATE",
-                        Long.class,
-                        decision);
-                    var started = new CountDownLatch(1);
-                    var result =
-                        workers.submit(
-                            () -> {
-                              started.countDown();
-                              roomDecisions.purgeErasedBatch(1);
-                            });
-                    await(started);
-                    assertThatThrownBy(() -> result.get(200, MILLISECONDS))
-                        .isInstanceOf(TimeoutException.class);
-                    addDecisionTask(decision, relationId, LocalDateTime.now(clock).plusMinutes(1));
-                    return result;
-                  });
-      assertThat(sweep).isNotNull();
-      sweep.get(5, SECONDS);
+      var departure =
+          workers.submit(
+              () ->
+                  TenantContext.runIn(
+                      TENANT_ID,
+                      () -> readCommitted().executeWithoutResult(status -> stageDeparture())));
+      long decision;
+      try {
+        await(orderAllocated);
+        decision = addDecision(1, outcome);
+        eraseCase();
+        assertThat(tasks.pendingSessionIds(relationId)).isEmpty();
+
+        roomDecisions.purgeErasedBatch(1);
+
+        assertThat(hasDecision(decision)).isTrue();
+      } finally {
+        allowDepartureToRead.countDown();
+      }
+      departure.get(5, SECONDS);
+      assertThat(
+              jdbc.queryForList(
+                  "SELECT room_decision_id FROM agency_enquiry_revocation_task WHERE session_id = ?",
+                  Long.class,
+                  sessionId))
+          .containsExactly(decision);
     }
-    assertThat(hasDecision(decision)).isTrue();
   }
 
   @Test
   void limitsCleanupToTheRequestedNumberOfDecisions() {
-    long earlier = addDecision(1, Outcome.REPLACED);
-    long later = addDecision(2, Outcome.REOPENED);
+    long earlier = addDecision(1, Outcome.REUSED);
+    long later = addDecision(2, Outcome.REUSED);
     eraseCase();
 
     roomDecisions.purgeErasedBatch(1);

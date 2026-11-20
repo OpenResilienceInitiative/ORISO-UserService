@@ -35,9 +35,11 @@ public class AgencyEnquiryRoomDecisions {
 
   static final int SWEEP_TRANSACTION_TIMEOUT_SECONDS = 5;
   private static final Duration PREPARATION_LEASE = Duration.ofMinutes(2);
+  // Departures that already have an event order can still use REPLACED or REOPENED decisions.
+  // REUSED deliberately keeps silent membership, so such a departure cannot select it.
   private static final String ERASABLE =
       """
-      outcome IN ('REUSED', 'REPLACED', 'REOPENED')
+      outcome = 'REUSED'
       AND resolved_order IS NOT NULL
       AND prepared_until IS NULL
       AND NOT EXISTS (
@@ -85,7 +87,7 @@ public class AgencyEnquiryRoomDecisions {
         LocalDateTime.now(clock), PageRequest.of(0, limit));
   }
 
-  /** Remove only finished decisions after physical case erasure and after dependent work ends. */
+  /** Remove reused-room decisions only after physical erasure and dependent task completion. */
   @Transactional(
       propagation = Propagation.REQUIRES_NEW,
       isolation = Isolation.READ_COMMITTED,
