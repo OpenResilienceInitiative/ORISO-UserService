@@ -7,6 +7,7 @@ import de.caritas.cob.userservice.api.model.ConsultantAgency;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.port.out.AgencyEnquiryRevocationTaskRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantAgencyRepository;
+import de.caritas.cob.userservice.api.port.out.ConsultantAgencyRepository.PublicationRevocationCandidate;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRoomGateway;
@@ -15,12 +16,14 @@ import de.caritas.cob.userservice.api.service.session.AgencySilentMembershipServ
 import java.time.Clock;
 import java.time.Duration;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.PageRequest;
@@ -69,7 +72,8 @@ public class AgencyEnquiryRevocations {
             .map(
                 binding ->
                     taskFor(
-                        removed,
+                        removed.getId(),
+                        removed.getAgencyId(),
                         binding.getSessionId(),
                         binding.getRoomId(),
                         consultant.getId(),
@@ -83,37 +87,51 @@ public class AgencyEnquiryRevocations {
   /** The publication transaction holds the roster locks for all of these contacts. */
   @Transactional(propagation = Propagation.MANDATORY)
   public void stageDuringPublication(Session session, List<InitialRoomContact> contacts) {
+    if (contacts.isEmpty()) {
+      return;
+    }
+    var consultantIds =
+        contacts.stream().map(InitialRoomContact::consultantId).collect(Collectors.toSet());
+    var removals =
+        assignments
+            .findPublicationRevocationCandidates(
+                session.getAgencyId(), consultantIds, session.getId())
+            .stream()
+            .collect(
+                Collectors.toMap(
+                    PublicationRevocationCandidate::getConsultantId,
+                    PublicationRevocationCandidate::getRelationId));
+    var pending = new ArrayList<AgencyEnquiryRevocationTask>();
     for (var contact : contacts) {
-      if (assignments.existsByConsultantIdAndAgencyIdAndDeleteDateIsNull(
-          contact.consultantId(), session.getAgencyId())) {
-        continue;
+      // At most one correction per current binding. Keep the first exact Matrix identity.
+      var relationId = removals.remove(contact.consultantId());
+      if (relationId != null) {
+        pending.add(
+            taskFor(
+                relationId,
+                session.getAgencyId(),
+                session.getId(),
+                session.getMatrixRoomId(),
+                contact.consultantId(),
+                contact.matrixUserId()));
       }
-      assignments
-          .findFirstByConsultantIdAndAgencyIdAndDeleteDateIsNotNullOrderByDeleteDateDescIdDesc(
-              contact.consultantId(), session.getAgencyId())
-          .filter(removed -> !tasks.pendingSessionIds(removed.getId()).contains(session.getId()))
-          .ifPresent(
-              removed ->
-                  tasks.save(
-                      taskFor(
-                          removed,
-                          session.getId(),
-                          session.getMatrixRoomId(),
-                          contact.consultantId(),
-                          contact.matrixUserId())));
+    }
+    if (!pending.isEmpty()) {
+      tasks.saveAll(pending);
     }
   }
 
   private AgencyEnquiryRevocationTask taskFor(
-      ConsultantAgency removed,
+      Long relationId,
+      Long agencyId,
       Long sessionId,
       String roomId,
       String consultantId,
       String memberId) {
     return AgencyEnquiryRevocationTask.builder()
-        .consultantAgencyId(removed.getId())
+        .consultantAgencyId(relationId)
         .consultantId(consultantId)
-        .agencyId(removed.getAgencyId())
+        .agencyId(agencyId)
         .sessionId(sessionId)
         .roomId(roomId)
         .memberId(memberId)

@@ -21,12 +21,15 @@ import de.caritas.cob.userservice.api.port.out.UserRepository;
 import de.caritas.cob.userservice.api.service.agency.AgencyMatrixCredentialClient;
 import de.caritas.cob.userservice.api.service.session.AgencySilentMembershipService.InitialRoomContact;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
+import jakarta.persistence.EntityManagerFactory;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
+import org.hibernate.SessionFactory;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -67,6 +70,7 @@ class AgencyEnquiryRoomPublicationDatabaseIT {
   @Autowired private UserRepository users;
   @Autowired private PlatformTransactionManager transactionManager;
   @Autowired private JdbcTemplate jdbc;
+  @Autowired private EntityManagerFactory entityManagerFactory;
 
   @MockitoBean private Clock clock;
   @MockitoBean private SessionService sessionService;
@@ -78,6 +82,7 @@ class AgencyEnquiryRoomPublicationDatabaseIT {
   private String consultantId;
   private String userId;
   private Long relationId;
+  private final List<String> extraConsultantIds = new ArrayList<>();
 
   @DynamicPropertySource
   static void configureMariaDb(DynamicPropertyRegistry registry) {
@@ -115,36 +120,8 @@ class AgencyEnquiryRoomPublicationDatabaseIT {
               var now = LocalDateTime.now(clock);
               consultantId = UUID.randomUUID().toString();
               userId = UUID.randomUUID().toString();
-              var consultant =
-                  consultants.save(
-                      Consultant.builder()
-                          .id(consultantId)
-                          .username(consultantId)
-                          .firstName("Test")
-                          .lastName("Counsellor")
-                          .email(consultantId + "@example.invalid")
-                          .matrixUserId(MEMBER_ID)
-                          .tenantId(TENANT_ID)
-                          .languageCode(LanguageCode.de)
-                          .encourage2fa(false)
-                          .magicLinkLoginEnabled(false)
-                          .notifyEnquiriesRepeating(false)
-                          .notifyNewChatMessageFromAdviceSeeker(false)
-                          .createDate(now)
-                          .updateDate(now)
-                          .build());
-              relationId =
-                  assignments
-                      .save(
-                          ConsultantAgency.builder()
-                              .consultant(consultant)
-                              .status(ConsultantAgencyStatus.CREATED)
-                              .agencyId(AGENCY_ID)
-                              .tenantId(TENANT_ID)
-                              .createDate(now)
-                              .updateDate(now)
-                              .build())
-                      .getId();
+              var consultant = registerConsultant(consultantId, MEMBER_ID);
+              relationId = registerAssignment(consultant, null).getId();
               var user =
                   users.save(
                       User.builder()
@@ -179,11 +156,13 @@ class AgencyEnquiryRoomPublicationDatabaseIT {
   void removeOnlyTheTestData() {
     try {
       if (enquiry != null) {
-        pending().forEach(tasks::delete);
+        tasks.findAll().stream()
+            .filter(task -> enquiry.getId().equals(task.getSessionId()))
+            .forEach(tasks::delete);
         sessions.deleteById(enquiry.getId());
-        assignments.deleteById(relationId);
         users.deleteById(userId);
-        consultants.deleteById(consultantId);
+        deleteConsultantAndAssignments(consultantId);
+        extraConsultantIds.forEach(this::deleteConsultantAndAssignments);
       }
     } finally {
       TenantContext.clear();
@@ -262,6 +241,142 @@ class AgencyEnquiryRoomPublicationDatabaseIT {
     assertThat(sessions.findById(enquiry.getId()).orElseThrow().getMatrixRoomId()).isNull();
     assertThat(pending()).isEmpty();
     verifyNoInteractions(matrix);
+  }
+
+  @Test
+  void assignmentReadUnderPublicationLocksIsConstantForTenActiveContacts() {
+    var active = new ArrayList<>(contacts());
+    var transaction = new TransactionTemplate(transactionManager);
+    transaction.executeWithoutResult(
+        status -> {
+          for (int index = 1; index < 10; index++) {
+            var id = UUID.randomUUID().toString();
+            var member = "@member-" + index + ":example.invalid";
+            extraConsultantIds.add(id);
+            registerAssignment(registerConsultant(id, member), null);
+            active.add(new InitialRoomContact(id, member));
+          }
+        });
+
+    var statistics = entityManagerFactory.unwrap(SessionFactory.class).getStatistics();
+    var wasEnabled = statistics.isStatisticsEnabled();
+    statistics.setStatisticsEnabled(true);
+    try {
+      transaction.executeWithoutResult(
+          status -> {
+            active.stream()
+                .map(InitialRoomContact::consultantId)
+                .sorted()
+                .forEach(consultants::lockConsultant);
+            var locked = sessions.lockFresh(enquiry.getId()).orElseThrow();
+            var before = statistics.getPrepareStatementCount();
+            revocations.stageDuringPublication(locked, active);
+            assertThat(statistics.getPrepareStatementCount() - before).isEqualTo(1);
+          });
+    } finally {
+      statistics.setStatisticsEnabled(wasEnabled);
+    }
+    assertThat(pending()).isEmpty();
+  }
+
+  @Test
+  void choosesLatestDepartureThenHighestIdAndKeepsTheFirstExactMember() {
+    var transaction = new TransactionTemplate(transactionManager);
+    var latestId =
+        transaction.execute(
+            status -> {
+              var relation = assignments.findById(relationId).orElseThrow();
+              var now = LocalDateTime.now(clock);
+              relation.setDeleteDate(now);
+              var latest = registerAssignment(relation.getConsultant(), now);
+              registerAssignment(relation.getConsultant(), now.minusMinutes(1));
+              return latest.getId();
+            });
+
+    var contacted =
+        List.of(
+            new InitialRoomContact(consultantId, MEMBER_ID),
+            new InitialRoomContact(consultantId, "@other:example.invalid"));
+    assertThat(publication.publish(enquiry, ROOM, contacted)).contains(ROOM);
+    transaction.executeWithoutResult(
+        status -> {
+          consultants.lockConsultant(consultantId);
+          var locked = sessions.lockFresh(enquiry.getId()).orElseThrow();
+          revocations.stageDuringPublication(locked, contacted);
+        });
+
+    assertThat(
+            tasks.findAll().stream()
+                .filter(task -> enquiry.getId().equals(task.getSessionId()))
+                .toList())
+        .singleElement()
+        .satisfies(
+            task -> {
+              assertThat(task.getConsultantAgencyId()).isEqualTo(latestId);
+              assertThat(task.getConsultantId()).isEqualTo(consultantId);
+              assertThat(task.getMemberId()).isEqualTo(MEMBER_ID);
+              assertThat(task.getRoomId()).isEqualTo(ROOM);
+            });
+    verifyNoInteractions(matrix);
+  }
+
+  @Test
+  void anActiveRegrantSuppressesCorrectionEvenWithRemovedHistory() {
+    new TransactionTemplate(transactionManager)
+        .executeWithoutResult(
+            status -> {
+              var relation = assignments.findById(relationId).orElseThrow();
+              relation.setDeleteDate(LocalDateTime.now(clock));
+              registerAssignment(relation.getConsultant(), null);
+            });
+
+    assertThat(publication.publish(enquiry, ROOM, contacts())).contains(ROOM);
+    assertThat(
+            tasks.findAll().stream()
+                .filter(task -> enquiry.getId().equals(task.getSessionId()))
+                .toList())
+        .isEmpty();
+    verifyNoInteractions(matrix);
+  }
+
+  private Consultant registerConsultant(String id, String memberId) {
+    var now = LocalDateTime.now(clock);
+    return consultants.save(
+        Consultant.builder()
+            .id(id)
+            .username(id)
+            .firstName("Test")
+            .lastName("Counsellor")
+            .email(id + "@example.invalid")
+            .matrixUserId(memberId)
+            .tenantId(TENANT_ID)
+            .languageCode(LanguageCode.de)
+            .encourage2fa(false)
+            .magicLinkLoginEnabled(false)
+            .notifyEnquiriesRepeating(false)
+            .notifyNewChatMessageFromAdviceSeeker(false)
+            .createDate(now)
+            .updateDate(now)
+            .build());
+  }
+
+  private ConsultantAgency registerAssignment(Consultant consultant, LocalDateTime deleteDate) {
+    var now = LocalDateTime.now(clock);
+    return assignments.save(
+        ConsultantAgency.builder()
+            .consultant(consultant)
+            .status(ConsultantAgencyStatus.CREATED)
+            .agencyId(AGENCY_ID)
+            .tenantId(TENANT_ID)
+            .createDate(now)
+            .updateDate(now)
+            .deleteDate(deleteDate)
+            .build());
+  }
+
+  private void deleteConsultantAndAssignments(String id) {
+    assignments.deleteAll(assignments.findByConsultantId(id));
+    consultants.deleteById(id);
   }
 
   private void detach() {
