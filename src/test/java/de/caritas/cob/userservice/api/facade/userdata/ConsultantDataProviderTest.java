@@ -197,7 +197,11 @@ public class ConsultantDataProviderTest {
       assertFalse(result.isHasAnonymousConversations());
       assertEquals(1L, logs.count(Level.WARN));
       assertNull(logs.events().getFirst().getThrowableProxy());
-      assertFalse(logs.events().getFirst().getFormattedMessage().contains(PRIVATE_DIAGNOSTIC));
+      var message = logs.messages(Level.WARN).getFirst();
+      assertTrue(message.contains("Could not load agencies for consultant"));
+      assertTrue(message.contains(ResourceAccessException.class.getSimpleName()));
+      assertFalse(message.contains(PRIVATE_DIAGNOSTIC));
+      assertFalse(message.contains(CONSULTANT_WITH_AGENCY.getId()));
     }
   }
 
@@ -211,7 +215,11 @@ public class ConsultantDataProviderTest {
       assertFalse(underTest.retrieveData(CONSULTANT_WITH_AGENCY).isHasAnonymousConversations());
       assertEquals(1L, logs.count(Level.WARN));
       assertNull(logs.events().getFirst().getThrowableProxy());
-      assertFalse(logs.events().getFirst().getFormattedMessage().contains(PRIVATE_DIAGNOSTIC));
+      var message = logs.messages(Level.WARN).getFirst();
+      assertTrue(message.contains("Could not resolve consulting type settings"));
+      assertTrue(message.contains(ResourceAccessException.class.getSimpleName()));
+      assertFalse(message.contains(PRIVATE_DIAGNOSTIC));
+      assertFalse(message.contains(CONSULTANT_WITH_AGENCY.getId()));
     }
   }
 

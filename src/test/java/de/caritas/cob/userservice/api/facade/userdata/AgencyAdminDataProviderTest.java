@@ -137,7 +137,13 @@ class AgencyAdminDataProviderTest {
           .isNull();
       assertThat(logs.messages(Level.WARN))
           .singleElement()
-          .satisfies(message -> assertThat(message).doesNotContain(PRIVATE_DIAGNOSTIC));
+          .satisfies(
+              message ->
+                  assertThat(message)
+                      .contains(
+                          "Could not load agencies for agency admin",
+                          ResourceAccessException.class.getSimpleName())
+                      .doesNotContain(PRIVATE_DIAGNOSTIC, ADMIN_ID));
     }
   }
 }
