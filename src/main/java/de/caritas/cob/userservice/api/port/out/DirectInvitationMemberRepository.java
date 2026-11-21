@@ -32,6 +32,16 @@ public interface DirectInvitationMemberRepository
   List<DirectInvitationMember> findByInviteLinkIdAndRemovedAtIsNull(Long inviteLinkId);
 
   /**
+   * The conversations a person is a confirmed member of through a direct invitation (#1747): Matrix
+   * confirmed the join, no removal is due and no join attempt runs. Same states as {@code
+   * DirectInvitationMemberships.isMember}.
+   */
+  @Query(
+      "SELECT m.sessionId FROM DirectInvitationMember m WHERE m.userId = :userId"
+          + " AND m.removedAt IS NULL AND m.revokeDueAt IS NULL AND m.joinAttempt IS NULL")
+  List<Long> findMemberSessionIdsByUserId(@Param("userId") String userId);
+
+  /**
    * Everybody still in a conversation through an invitation, as a locking read: on MariaDB it reads
    * the latest committed rows, not the snapshot of the transaction's first read, so a deletion sees
    * a reservation that committed meanwhile.
