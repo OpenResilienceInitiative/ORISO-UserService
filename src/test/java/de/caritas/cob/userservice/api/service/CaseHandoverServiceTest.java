@@ -3364,11 +3364,13 @@ class CaseHandoverServiceTest {
   @Test
   void reclaim_returnsTheCaseToTheOriginalCounsellorAndRecordsTheAudit() {
     var takeover = givenGrantedTakeover("COUNSELLOR_IS_ILL");
+    session.setOwnershipRevision(7L);
 
     CaseHandoverStatus status = caseHandoverService.reclaim(123L);
 
     assertEquals(previous, session.getConsultant());
-    verify(sessionRepository).save(session);
+    assertEquals(8L, session.getOwnershipRevision());
+    assertThat(status.getOwnershipRevision()).isEqualTo(8L);
     assertEquals(CaseHandoverRequest.Status.RECLAIMED, takeover.getStatus());
     assertEquals("RECLAIMED", takeover.getAuditOutcome());
     assertEquals(LocalDateTime.of(2026, 8, 16, 10, 0), takeover.getResolvedAt());
@@ -3470,6 +3472,20 @@ class CaseHandoverServiceTest {
     assertThrows(ConflictException.class, () -> caseHandoverService.reclaim(123L));
 
     assertEquals(third, session.getConsultant());
+  }
+
+  @Test
+  void reclaim_leavesTheHandoverUnchangedWhenTheOwnershipWriteConflicts() {
+    var takeover = givenGrantedTakeoverInMatrixRoom();
+    when(sessionOwnershipService.updateOwner(eq(session), eq(previous), any(), any()))
+        .thenThrow(new ConflictException("Session ownership changed"));
+
+    assertThrows(ConflictException.class, () -> caseHandoverService.reclaim(123L));
+
+    assertEquals(requester, session.getConsultant());
+    assertEquals(CaseHandoverRequest.Status.GRANTED, takeover.getStatus());
+    verify(caseHandoverRequestRepository, never()).save(takeover);
+    verifyNoInteractions(matrixSynapseService, sessionSupervisorFacade);
   }
 
   @ParameterizedTest
