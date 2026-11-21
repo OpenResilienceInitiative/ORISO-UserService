@@ -307,4 +307,5 @@
   <include file="db/changelog/changeset/20261119_support_room_lifecycle_904/changeSet.xml"/>
   <include file="db/changelog/changeset/20261119_agency_enquiry_binding_index_1692/changeSet.xml"/>
   <include file="db/changelog/changeset/20261120_agency_enquiry_room_attempt_1692/changeSet.xml"/>
+  <include file="db/changelog/changeset/20261121_agency_enquiry_revocation_room_scope_1692/changeSet.xml"/>
 </databaseChangeLog>

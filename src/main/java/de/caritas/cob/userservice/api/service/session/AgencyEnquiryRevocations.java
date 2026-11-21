@@ -62,13 +62,18 @@ public class AgencyEnquiryRevocations {
       return;
     }
 
-    var recorded = new HashSet<>(tasks.pendingSessionIds(removed.getId()));
+    var recorded =
+        tasks.pendingRoomBindings(removed.getId()).stream()
+            .map(binding -> new RoomBinding(binding.getSessionId(), binding.getRoomId()))
+            .collect(Collectors.toCollection(HashSet::new));
     var pending =
         sessions
             .lockOpenEnquiryBindings(
                 removed.getAgencyId(), AgencyOpenEnquiryMembership.OPEN_STATUSES)
             .stream()
-            .filter(binding -> recorded.add(binding.getSessionId()))
+            .filter(
+                binding ->
+                    recorded.add(new RoomBinding(binding.getSessionId(), binding.getRoomId())))
             .map(
                 binding ->
                     taskFor(
@@ -95,7 +100,7 @@ public class AgencyEnquiryRevocations {
     var removals =
         assignments
             .findPublicationRevocationCandidates(
-                session.getAgencyId(), consultantIds, session.getId())
+                session.getAgencyId(), consultantIds, session.getId(), session.getMatrixRoomId())
             .stream()
             .collect(
                 Collectors.toMap(
@@ -120,6 +125,8 @@ public class AgencyEnquiryRevocations {
       tasks.saveAll(pending);
     }
   }
+
+  private record RoomBinding(Long sessionId, String roomId) {}
 
   private AgencyEnquiryRevocationTask taskFor(
       Long relationId,

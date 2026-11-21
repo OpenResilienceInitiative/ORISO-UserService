@@ -388,6 +388,40 @@ class AgencyEnquiryRoomPublicationDatabaseIT {
   }
 
   @Test
+  void publicationKeepsSeparateTasksForExactRooms() {
+    var otherRoom = "!NEW:example.invalid";
+    new TransactionTemplate(transactionManager)
+        .executeWithoutResult(
+            status -> {
+              var relation = assignments.findById(relationId).orElseThrow();
+              var now = LocalDateTime.now(clock);
+              relation.setDeleteDate(now);
+              tasks.saveAndFlush(
+                  AgencyEnquiryRevocationTask.builder()
+                      .consultantAgencyId(relationId)
+                      .consultantId(consultantId)
+                      .agencyId(AGENCY_ID)
+                      .sessionId(enquiry.getId())
+                      .roomId(otherRoom)
+                      .memberId(MEMBER_ID)
+                      .retryAt(now)
+                      .build());
+            });
+
+    assertThat(
+            assignments.findPublicationRevocationCandidates(
+                AGENCY_ID, List.of(consultantId), enquiry.getId(), otherRoom))
+        .isEmpty();
+
+    assertThat(publication.publish(enquiry, ROOM, contacts())).contains(ROOM);
+
+    assertThat(pending())
+        .extracting(AgencyEnquiryRevocationTask::getRoomId)
+        .containsExactlyInAnyOrder(otherRoom, ROOM);
+    verifyNoInteractions(matrix);
+  }
+
+  @Test
   void anActiveRegrantSuppressesCorrectionEvenWithRemovedHistory() {
     new TransactionTemplate(transactionManager)
         .executeWithoutResult(
