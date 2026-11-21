@@ -198,7 +198,11 @@ class AgencyCreationClientTest {
           .isNull();
       assertThat(logs.messages(Level.ERROR))
           .singleElement()
-          .satisfies(message -> assertThat(message).doesNotContain(PRIVATE_DIAGNOSTIC));
+          .satisfies(
+              message ->
+                  assertThat(message)
+                      .contains("Agency creation", ResourceAccessException.class.getSimpleName())
+                      .doesNotContain(PRIVATE_DIAGNOSTIC));
     }
   }
 
