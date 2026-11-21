@@ -789,6 +789,11 @@ public class SecurityConfig {
                 .access(this::isPlatformAdmin)
                 // An admin's own list sorts (#1263): every admin role that sees a user list keeps
                 // its own; the data is always the caller's, so no other access widens.
+                // The platform admin's own Erstantwort texts (Settings → Begrüßung), above the
+                // built-in default. Must precede the generic /useradmin/** rule.
+                .requestMatchers(
+                    "/useradmin/erstantwort/platform", "/service/useradmin/erstantwort/platform")
+                .access(this::isPlatformAdmin)
                 // Platform default Erstantwort texts for the Träger editor (Admin#601); read-only.
                 .requestMatchers(
                     HttpMethod.GET,
@@ -797,6 +802,13 @@ public class SecurityConfig {
                 .hasAnyAuthority(
                     USER_ADMIN, TENANT_ADMIN, SINGLE_TENANT_ADMIN, RESTRICTED_AGENCY_ADMIN)
                 .requestMatchers("/useradmin/list-preferences", "/useradmin/list-preferences/**")
+                .hasAnyAuthority(
+                    USER_ADMIN, TENANT_ADMIN, SINGLE_TENANT_ADMIN, RESTRICTED_AGENCY_ADMIN)
+                // A Beratungsstelle's own Erstantwort texts (ADR-018 §6). Every admin role reaches
+                // it; the controller narrows to the caller's AdminScope.
+                .requestMatchers(
+                    "/useradmin/erstantwort/agencies/{agencyId:[0-9]+}",
+                    "/service/useradmin/erstantwort/agencies/{agencyId:[0-9]+}")
                 .hasAnyAuthority(
                     USER_ADMIN, TENANT_ADMIN, SINGLE_TENANT_ADMIN, RESTRICTED_AGENCY_ADMIN)
                 // Contact person per counselling centre and Träger (ORISO-Admin#1534). Every admin
