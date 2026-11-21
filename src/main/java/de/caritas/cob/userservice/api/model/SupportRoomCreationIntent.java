@@ -56,6 +56,10 @@ public class SupportRoomCreationIntent {
   @Column(name = "retry_at", nullable = false)
   private LocalDateTime retryAt;
 
+  @Setter
+  @Column(name = "recovery_probe_failures", nullable = false)
+  private int recoveryProbeFailures;
+
   /** The local part supplied when creating the room. */
   public String getRoomAlias() {
     return "support-" + id;

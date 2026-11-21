@@ -169,6 +169,29 @@ class SupportRoomMigrationConvergenceIT {
     }
   }
 
+  @Test
+  void recoveryBackoffCounterDefaultsToZeroForOlderWriters() throws Exception {
+    updateCanonicalChangelog();
+
+    try (Connection connection = openConnection();
+        Statement statement = connection.createStatement();
+        ResultSet result =
+            statement.executeQuery(
+                """
+                SELECT data_type, is_nullable, column_default
+                FROM information_schema.columns
+                WHERE table_schema = 'userservice'
+                  AND table_name = 'support_room_creation_intent'
+                  AND column_name = 'recovery_probe_failures'
+                """)) {
+      assertThat(result.next()).isTrue();
+      assertThat(result.getString("data_type")).isEqualTo("int");
+      assertThat(result.getString("is_nullable")).isEqualTo("NO");
+      assertThat(result.getInt("column_default")).isZero();
+      assertThat(result.wasNull()).isFalse();
+    }
+  }
+
   private void deleteRepairChangelogRow(Statement statement) throws SQLException {
     int deletedRows =
         statement.executeUpdate(

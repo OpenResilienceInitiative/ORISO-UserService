@@ -340,9 +340,24 @@ class SupportRoomServiceTest {
     supportRoomService.sweepExpired();
 
     verify(provisioning).bindExpiredForCleanup(intent, ROOM_ID);
+    verify(provisioning, never()).deferUnresolvedRecovery(any());
     verify(provisioning, never()).forgetConfirmed(any());
     verify(matrixSynapseService, never()).createSupportRoom(any(), any(), any());
     verify(matrixSynapseService, never()).inviteUserToRoom(any(), any(), any());
+  }
+
+  @Test
+  void expiredRoomRecoveryDefersAnUnreachableProviderWithoutAttemptingCreation() throws Exception {
+    when(provisioning.expiredIds(any(), eq(200))).thenReturn(List.of("hs-1"));
+    when(provisioning.claimExpired("hs-1")).thenReturn(Optional.of(intent));
+    when(matrixSynapseService.resolveRoomAlias(FULL_ALIAS))
+        .thenThrow(new IllegalStateException("synthetic provider failure"));
+
+    supportRoomService.sweepExpired();
+
+    verify(provisioning).deferUnresolvedRecovery(intent);
+    verify(provisioning, never()).bindExpiredForCleanup(any(), any());
+    verify(matrixSynapseService, never()).createSupportRoom(any(), any(), any());
   }
 
   @Test

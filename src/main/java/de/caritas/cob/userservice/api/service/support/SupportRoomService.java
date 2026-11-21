@@ -237,17 +237,25 @@ public class SupportRoomService {
   private void recoverExpiredIntent(SupportRoomCreationIntent intent) {
     try {
       var lookup = matrixSynapseService.resolveRoomAlias(fullAlias(intent));
-      if (lookup == null || !lookup.known() || isBlank(lookup.roomId())) {
-        return; // The provider may still be finishing the original request.
-      }
-      var creatorToken =
-          matrixSynapseService.loginAsUserAccessToken(intent.getSupportAdminMatrixId());
-      if (!isBlank(creatorToken) && hasExpectedOrigin(intent, lookup.roomId(), creatorToken)) {
-        provisioning.bindExpiredForCleanup(intent, lookup.roomId());
+      if (lookup != null && lookup.known() && !isBlank(lookup.roomId())) {
+        var creatorToken =
+            matrixSynapseService.loginAsUserAccessToken(intent.getSupportAdminMatrixId());
+        if (!isBlank(creatorToken) && hasExpectedOrigin(intent, lookup.roomId(), creatorToken)) {
+          provisioning.bindExpiredForCleanup(intent, lookup.roomId());
+          return;
+        }
       }
     } catch (RuntimeException failure) {
       log.warn(
           "Support room creation reconciliation remains pending ({})",
+          failure.getClass().getSimpleName());
+    }
+    try {
+      // An inconclusive lookup gives no evidence that the provider never created the room.
+      provisioning.deferUnresolvedRecovery(intent);
+    } catch (RuntimeException failure) {
+      log.warn(
+          "Support room creation reconciliation retry could not be deferred ({})",
           failure.getClass().getSimpleName());
     }
   }

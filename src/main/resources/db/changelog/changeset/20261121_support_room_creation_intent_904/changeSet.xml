@@ -45,4 +45,16 @@
     <!-- Preserve an attempt's deadline if an older service image is restored. -->
     <rollback/>
   </changeSet>
+  <changeSet id="20261121-support-room-recovery-backoff-904" author="oriso">
+    <preConditions onFail="MARK_RAN">
+      <not><columnExists tableName="support_room_creation_intent" columnName="recovery_probe_failures"/></not>
+    </preConditions>
+    <addColumn tableName="support_room_creation_intent">
+      <column name="recovery_probe_failures" type="INT" defaultValueNumeric="0">
+        <constraints nullable="false"/>
+      </column>
+    </addColumn>
+    <!-- Preserve recovery progress across image rollback. -->
+    <rollback/>
+  </changeSet>
 </databaseChangeLog>

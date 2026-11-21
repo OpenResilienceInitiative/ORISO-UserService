@@ -27,6 +27,7 @@ import org.springframework.transaction.annotation.Transactional;
 class SupportRoomProvisioningLedger {
 
   private static final int PROVISIONING_GRACE_MINUTES = 3;
+  private static final List<Integer> RECOVERY_BACKOFF_MINUTES = List.of(2, 4, 8, 16, 30);
 
   private final SupportRoomCreationIntentRepository intents;
   private final SupportRoomRepository rooms;
@@ -124,14 +125,29 @@ class SupportRoomProvisioningLedger {
     return knownRoom.isEmpty() ? Optional.of(intent) : Optional.empty();
   }
 
+  /** Back off an inconclusive probe while its claim is still current. */
+  @Transactional(propagation = Propagation.REQUIRES_NEW)
+  public void deferUnresolvedRecovery(SupportRoomCreationIntent proof) {
+    var intent = intents.lockByHandshakeId(proof.getHandshakeId()).orElse(null);
+    var now = LocalDateTime.now(clock);
+    if (intent == null
+        || !matchesIntent(intent, proof)
+        || !hasCurrentRecoveryLease(intent, proof, now)) {
+      return;
+    }
+
+    var step = Math.min(intent.getRecoveryProbeFailures(), RECOVERY_BACKOFF_MINUTES.size() - 1);
+    intent.setRecoveryProbeFailures(step + 1);
+    intent.setRetryAt(
+        now.plusMinutes(RECOVERY_BACKOFF_MINUTES.get(step)).truncatedTo(ChronoUnit.MICROS));
+  }
+
   /** Give the existing withdrawal sweep the verified room and retire the creation intent. */
   @Transactional(propagation = Propagation.REQUIRES_NEW)
   public void bindExpiredForCleanup(SupportRoomCreationIntent proof, String matrixRoomId) {
     var intent = requireCurrent(proof);
     var now = LocalDateTime.now(clock);
-    if (intent.getExpiresAt().isAfter(now)
-        || !intent.getRetryAt().isAfter(now)
-        || !intent.getRetryAt().equals(proof.getRetryAt())) {
+    if (!hasCurrentRecoveryLease(intent, proof, now)) {
       throw new IllegalStateException("Support room recovery claim is no longer current");
     }
     bindRoom(intent, matrixRoomId, now);
@@ -155,10 +171,22 @@ class SupportRoomProvisioningLedger {
 
   private SupportRoomCreationIntent requireCurrent(SupportRoomCreationIntent proof) {
     var intent = intents.lockByHandshakeId(proof.getHandshakeId()).orElseThrow();
-    if (!intent.getId().equals(proof.getId()) || !intent.getNonce().equals(proof.getNonce())) {
+    if (!matchesIntent(intent, proof)) {
       throw new IllegalStateException("Support room creation intent changed");
     }
     return intent;
+  }
+
+  private static boolean matchesIntent(
+      SupportRoomCreationIntent intent, SupportRoomCreationIntent proof) {
+    return intent.getId().equals(proof.getId()) && intent.getNonce().equals(proof.getNonce());
+  }
+
+  private static boolean hasCurrentRecoveryLease(
+      SupportRoomCreationIntent intent, SupportRoomCreationIntent proof, LocalDateTime now) {
+    return !intent.getExpiresAt().isAfter(now)
+        && intent.getRetryAt().isAfter(now)
+        && intent.getRetryAt().equals(proof.getRetryAt());
   }
 
   private SupportRoom bindRoom(

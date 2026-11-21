@@ -2,11 +2,17 @@ package de.caritas.cob.userservice.api.service.support;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
+import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
+import de.caritas.cob.userservice.api.adapters.matrix.config.MatrixConfig;
 import de.caritas.cob.userservice.api.model.HandshakeSession;
 import de.caritas.cob.userservice.api.model.HandshakeSession.HandshakeStatus;
 import de.caritas.cob.userservice.api.model.SupportRoom.SupportRoomStatus;
+import de.caritas.cob.userservice.api.model.SupportRoomCreationIntent;
+import de.caritas.cob.userservice.api.port.out.AdminRepository;
+import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.HandshakeSessionRepository;
 import de.caritas.cob.userservice.api.port.out.SupportRoomCreationIntentRepository;
 import de.caritas.cob.userservice.api.port.out.SupportRoomRepository;
@@ -16,6 +22,7 @@ import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.time.temporal.ChronoUnit;
+import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
@@ -31,8 +38,11 @@ import org.springframework.boot.data.jpa.test.autoconfigure.DataJpaTest;
 import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase;
 import org.springframework.context.annotation.Import;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.test.context.DynamicPropertyRegistry;
+import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
@@ -66,6 +76,31 @@ class SupportRoomProvisioningLedgerPersistenceIT {
 
   private final String handshakeId = UUID.randomUUID().toString();
   private String roomId;
+
+  @DynamicPropertySource
+  static void configureMariaDbWhenProvided(DynamicPropertyRegistry registry) {
+    var url = System.getenv("LIQUIBASE_IT_DB_URL");
+    if (url == null || url.isBlank()) {
+      return;
+    }
+    registry.add("spring.datasource.url", () -> url);
+    registry.add(
+        "spring.datasource.username",
+        () -> System.getenv().getOrDefault("LIQUIBASE_IT_DB_USERNAME", "root"));
+    registry.add(
+        "spring.datasource.password",
+        () -> System.getenv().getOrDefault("LIQUIBASE_IT_DB_PASSWORD", "root"));
+    registry.add("spring.datasource.driver-class-name", () -> "org.mariadb.jdbc.Driver");
+    registry.add(
+        "spring.jpa.properties.hibernate.dialect", () -> "org.hibernate.dialect.MariaDBDialect");
+    registry.add("spring.liquibase.enabled", () -> "true");
+    registry.add(
+        "spring.liquibase.change-log", () -> "classpath:db/changelog/userservice-master.xml");
+    registry.add("spring.liquibase.contexts", () -> "dev,seed");
+    registry.add("spring.jpa.hibernate.ddl-auto", () -> "validate");
+    registry.add("spring.jpa.defer-datasource-initialization", () -> "false");
+    registry.add("spring.sql.init.mode", () -> "never");
+  }
 
   @BeforeEach
   void fixClock() {
@@ -287,6 +322,86 @@ class SupportRoomProvisioningLedgerPersistenceIT {
     var claim = ledger.claimExpired(handshakeId).orElseThrow();
 
     assertThat(claim.getRetryAt()).isEqualTo(lockAcquiredAt.plusMinutes(1));
+  }
+
+  @Test
+  void unresolvedSweepSchedulesTheNextProbeBeyondTheOriginalOneMinuteClaim() {
+    var sweepAt = Instant.now().truncatedTo(ChronoUnit.SECONDS);
+    var expiredAt = LocalDateTime.ofInstant(sweepAt.minusSeconds(60), ZoneOffset.UTC);
+    when(clock.instant()).thenReturn(sweepAt.minusSeconds(240));
+    var attempt =
+        ledger
+            .reserve(
+                handshakeId,
+                SUPPORT_ADMIN,
+                SUPPORT_MATRIX,
+                CONSULTANT,
+                CONSULTANT_MATRIX,
+                1L,
+                expiredAt)
+            .intent();
+    roomId = attempt.getId();
+    var matrix = mock(MatrixSynapseService.class);
+    var matrixConfig = mock(MatrixConfig.class);
+    when(matrixConfig.getServerName()).thenReturn("example.org");
+    when(matrix.resolveRoomAlias("#" + attempt.getRoomAlias() + ":example.org"))
+        .thenReturn(new MatrixSynapseService.RoomAliasLookup(true, null));
+    var service =
+        new SupportRoomService(
+            rooms,
+            lifecycle,
+            ledger,
+            mock(AdminRepository.class),
+            mock(ConsultantRepository.class),
+            matrix,
+            matrixConfig);
+    ReflectionTestUtils.setField(service, "sweepBatchSize", 20);
+    when(clock.instant()).thenReturn(sweepAt);
+
+    service.sweepExpired();
+
+    assertThat(intents.findById(handshakeId).orElseThrow().getRetryAt())
+        .isEqualTo(LocalDateTime.ofInstant(sweepAt.plusSeconds(120), ZoneOffset.UTC));
+    assertThat(rooms.findById(roomId)).isEmpty();
+  }
+
+  @Test
+  void unresolvedClaimsPersistCappedBackoffWithoutExtendingTheirExclusiveLease() {
+    roomId = reserve().intent().getId();
+    var nextProbe = DEADLINE.plusSeconds(1);
+    var expectedFailures = 0;
+    SupportRoomCreationIntent precedingClaim = null;
+    for (int delay : List.of(2, 4, 8, 16, 30, 30)) {
+      when(clock.instant()).thenReturn(nextProbe.toInstant(ZoneOffset.UTC));
+      var claim = ledger.claimExpired(handshakeId).orElseThrow();
+      assertThat(claim.getRetryAt()).isEqualTo(nextProbe.plusMinutes(1));
+      assertThat(ledger.claimExpired(handshakeId)).isEmpty();
+
+      if (precedingClaim != null) {
+        ledger.deferUnresolvedRecovery(precedingClaim);
+        var unchanged = intents.findById(handshakeId).orElseThrow();
+        assertThat(unchanged.getRetryAt()).isEqualTo(claim.getRetryAt());
+        assertThat(unchanged.getRecoveryProbeFailures()).isEqualTo(expectedFailures);
+      }
+
+      var resultAt = nextProbe.plusSeconds(15);
+      when(clock.instant()).thenReturn(resultAt.toInstant(ZoneOffset.UTC));
+      ledger.deferUnresolvedRecovery(claim);
+      ledger.deferUnresolvedRecovery(claim);
+      nextProbe = resultAt.plusMinutes(delay);
+      expectedFailures = Math.min(expectedFailures + 1, 5);
+      var persisted = intents.findById(handshakeId).orElseThrow();
+      assertThat(persisted.getRetryAt()).isEqualTo(nextProbe);
+      assertThat(persisted.getRecoveryProbeFailures()).isEqualTo(expectedFailures);
+      assertThat(ledger.expiredIds(nextProbe.minusSeconds(1), 5)).doesNotContain(handshakeId);
+      precedingClaim = claim;
+    }
+
+    when(clock.instant()).thenReturn(nextProbe.toInstant(ZoneOffset.UTC));
+    var current = ledger.claimExpired(handshakeId).orElseThrow();
+    ledger.bindExpiredForCleanup(current, ROOM);
+    assertThat(rooms.findById(roomId)).isPresent();
+    assertThat(intents.findById(handshakeId)).isEmpty();
   }
 
   @Test
