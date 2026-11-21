@@ -1304,6 +1304,9 @@ class EventNotificationServiceTest {
 
     eventNotificationService.markAsRead("user-1", 42L);
 
+    verify(unread)
+        .setReadDate(
+            org.mockito.ArgumentMatchers.argThat(EventNotificationServiceTest::isMidnight));
     verify(eventNotificationRepository).save(unread);
   }
 
@@ -1330,8 +1333,12 @@ class EventNotificationServiceTest {
 
     eventNotificationService.markAllAsRead("user-1");
 
-    verify(n1).setReadDate(any());
-    verify(n2).setReadDate(any());
+    verify(n1)
+        .setReadDate(
+            org.mockito.ArgumentMatchers.argThat(EventNotificationServiceTest::isMidnight));
+    verify(n2)
+        .setReadDate(
+            org.mockito.ArgumentMatchers.argThat(EventNotificationServiceTest::isMidnight));
     verify(eventNotificationRepository).saveAll(any());
   }
 
@@ -1895,8 +1902,8 @@ class EventNotificationServiceTest {
     var item = result.getItems().get(0);
     assertThat(item.getId()).isEqualTo(99L);
     assertThat(item.getEventType()).isEqualTo("message.new");
-    assertThat(item.getReadAt()).isNotNull();
-    assertThat(item.getCreatedAt()).isNotNull();
+    assertThat(item.getReadAt()).isEqualTo("2026-01-01T00:00Z");
+    assertThat(item.getCreatedAt()).isEqualTo("2026-01-01T11:00Z");
   }
 
   @Test
@@ -2474,7 +2481,7 @@ class EventNotificationServiceTest {
             org.mockito.ArgumentMatchers.eq("user-1"),
             org.mockito.ArgumentMatchers.eq(
                 new java.util.TreeSet<>(java.util.Set.of("supervisor.added"))),
-            any(LocalDateTime.class)))
+            org.mockito.ArgumentMatchers.argThat(EventNotificationServiceTest::isMidnight)))
         .thenReturn(2);
 
     int updated =
@@ -2483,6 +2490,10 @@ class EventNotificationServiceTest {
 
     assertThat(updated).isEqualTo(2);
     verify(eventNotificationRepository, never()).saveAll(any());
+  }
+
+  private static boolean isMidnight(LocalDateTime day) {
+    return day != null && day.toLocalTime().equals(java.time.LocalTime.MIDNIGHT);
   }
 
   @Test
