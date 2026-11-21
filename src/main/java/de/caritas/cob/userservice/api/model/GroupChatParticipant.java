@@ -8,6 +8,7 @@ import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
+import jakarta.persistence.Version;
 import java.util.Objects;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
@@ -61,6 +62,10 @@ public class GroupChatParticipant {
   @Enumerated(EnumType.STRING)
   @Column(name = "participant_role", nullable = false)
   private ParticipantRole role = ParticipantRole.PARTICIPANT;
+
+  @Version
+  @Column(name = "roster_version", nullable = false)
+  private long rosterVersion;
 
   public GroupChatParticipant(Long chatId, String consultantId) {
     this.chatId = chatId;

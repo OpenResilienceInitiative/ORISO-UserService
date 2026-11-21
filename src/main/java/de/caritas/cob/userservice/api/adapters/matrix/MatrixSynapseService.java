@@ -1904,6 +1904,10 @@ public class MatrixSynapseService implements MatrixUserClient, MatrixRoomMembers
     return matrixRoomClient.leaveRoom(roomId, accessToken);
   }
 
+  public MatrixRoomClient.LeaveResponse requestRoomDeparture(String roomId, String accessToken) {
+    return matrixRoomClient.requestRoomDeparture(roomId, accessToken);
+  }
+
   /**
    * Makes sure the technical Matrix admin is a member of the room and holds the owner power level
    * there, acting with the token of a member who still holds that level. Called before the room

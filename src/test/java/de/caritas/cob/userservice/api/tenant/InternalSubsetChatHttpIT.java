@@ -2109,9 +2109,37 @@ class InternalSubsetChatHttpIT {
         return withSuccess("{}", MediaType.APPLICATION_JSON).createResponse(request);
       }
       if (path.startsWith("/_synapse/admin/v1/rooms/")
-          && path.endsWith("/members")
+          && (path.endsWith("/members") || path.endsWith("/state"))
           && (failMemberReads || unreadableRooms.stream().anyMatch(room -> path.contains(room)))) {
         return withStatus(HttpStatus.INTERNAL_SERVER_ERROR).createResponse(request);
+      }
+      if (path.startsWith("/_synapse/admin/v1/rooms/") && path.endsWith("/state")) {
+        var roomId =
+            URLDecoder.decode(
+                path.substring(
+                    "/_synapse/admin/v1/rooms/".length(), path.length() - "/state".length()),
+                StandardCharsets.UTF_8);
+        var room = rooms.get(roomId);
+        if (room == null) {
+          return withStatus(HttpStatus.NOT_FOUND)
+              .body("{\"errcode\":\"M_NOT_FOUND\"}")
+              .contentType(MediaType.APPLICATION_JSON)
+              .createResponse(request);
+        }
+        var membership = new LinkedHashMap<String, String>();
+        room.invited.forEach(user -> membership.put(user, "invite"));
+        room.joined.forEach(user -> membership.put(user, "join"));
+        var response = JSON.createObjectNode();
+        var state = response.putArray("state");
+        membership.forEach(
+            (user, status) ->
+                state
+                    .addObject()
+                    .put("type", "m.room.member")
+                    .put("state_key", user)
+                    .putObject("content")
+                    .put("membership", status));
+        return withSuccess(response.toString(), MediaType.APPLICATION_JSON).createResponse(request);
       }
       if (path.startsWith("/_synapse/admin/v1/rooms/") && path.endsWith("/members")) {
         var roomId =

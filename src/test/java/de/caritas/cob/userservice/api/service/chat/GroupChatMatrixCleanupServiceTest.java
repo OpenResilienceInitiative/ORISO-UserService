@@ -44,7 +44,8 @@ class GroupChatMatrixCleanupServiceTest {
             participants,
             matrix,
             membership,
-            Clock.systemUTC());
+            Clock.systemUTC(),
+            org.mockito.Mockito.mock(jakarta.persistence.EntityManager.class));
     owner = new Consultant();
     owner.setId("owner");
     owner.setTenantId(41L);
