@@ -1622,6 +1622,21 @@ public class MatrixSynapseService implements MatrixUserClient, MatrixRoomMembers
         roomName, roomAlias, accessToken, matrixConfig.isEncryptionEnabled());
   }
 
+  public String createSupportRoom(String localAlias, String originNonce, String creatorAccessToken)
+      throws MatrixCreateRoomException {
+    return matrixRoomClient.createSupportRoom(localAlias, originNonce, creatorAccessToken);
+  }
+
+  public boolean verifySupportRoomOrigin(
+      String roomId, String expectedCreator, String originNonce, String creatorAccessToken) {
+    return matrixRoomClient.verifySupportRoomOrigin(
+        roomId, expectedCreator, originNonce, creatorAccessToken);
+  }
+
+  public boolean ensureSupportRoomModeration(String roomId, String creatorAccessToken) {
+    return matrixRoomClient.ensureSupportRoomModeration(roomId, creatorAccessToken);
+  }
+
   /**
    * Invites a user to a Matrix room.
    *
