@@ -87,7 +87,7 @@ public class DraftMessageController {
     } catch (org.springframework.dao.DataAccessException e) {
       // Legacy clients treat autosave as best-effort and re-save on the next keystroke.
       // The protected write endpoint reports conflicts instead.
-      log.warn("Draft upsert conflict for scopeKey {}: {}", scopeKey, e.getMessage());
+      log.warn("Legacy draft autosave failed ({})", e.getClass().getSimpleName());
     }
     return new ResponseEntity<>(HttpStatus.NO_CONTENT);
   }
