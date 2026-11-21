@@ -529,13 +529,14 @@ public class CaseHandoverMatrixRepairService {
    * removed during the join leaves again, so membership never outlives the supervision row.
    */
   private boolean observeWhileStillSupervising(CaseHandoverMatrixRepairTask task) {
-    if (!supervisorIsActive(task)) {
-      return true;
-    }
     String operatorToken =
         isBlank(task.getOperatorId())
             ? null
             : matrixSynapseService.loginAsUserAccessToken(task.getOperatorId());
+    if (!supervisorIsActive(task)) {
+      // An earlier attempt may have invited them before the removal: make sure they are out.
+      return supervisorIsOutOfTheRoom(task, operatorToken);
+    }
     if (isBlank(operatorToken)) {
       return false;
     }
@@ -561,7 +562,33 @@ public class CaseHandoverMatrixRepairService {
     if (isBlank(memberToken) || !matrixSynapseService.joinRoom(task.getRoomId(), memberToken)) {
       return false;
     }
-    return supervisorIsActive(task) || leaveOrConfirmAbsent(task, memberToken);
+    return supervisorIsActive(task) || supervisorIsOutOfTheRoom(task, operatorToken);
+  }
+
+  /**
+   * A supervisor who is no longer active must neither be joined nor hold an open invite. A leave
+   * with their own token also rejects an open invite; a kick by the counsellor also revokes one.
+   * Only when both are refused is "not joined" accepted as absent: Synapse refuses both exactly
+   * when there is no membership and no invite left.
+   */
+  private boolean supervisorIsOutOfTheRoom(
+      CaseHandoverMatrixRepairTask task, String operatorToken) {
+    String memberToken = matrixSynapseService.loginAsUserAccessToken(task.getMemberId());
+    if (!isBlank(memberToken) && matrixSynapseService.leaveRoom(task.getRoomId(), memberToken)) {
+      return true;
+    }
+    if (!isBlank(operatorToken)
+        && matrixSynapseService.removeUserFromRoom(
+            task.getRoomId(), task.getMemberId(), operatorToken)) {
+      return true;
+    }
+    if (isBlank(memberToken) && isBlank(operatorToken)) {
+      return false;
+    }
+    return matrixSynapseService
+        .getRoomMembers(task.getRoomId())
+        .map(current -> !current.contains(task.getMemberId()))
+        .orElse(false);
   }
 
   private boolean supervisorIsActive(CaseHandoverMatrixRepairTask task) {

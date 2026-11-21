@@ -446,12 +446,51 @@ class CaseHandoverMatrixRepairServiceTest {
     when(repository.findById(12L)).thenReturn(Optional.of(task));
     when(repository.findByIdForUpdate(12L)).thenReturn(Optional.of(task));
     supervisorActive(false);
+    when(matrixSynapseService.loginAsUserAccessToken("@counsellor:matrix")).thenReturn("tok-op");
+    when(matrixSynapseService.loginAsUserAccessToken("@sup:matrix")).thenReturn("tok-sup");
+    when(matrixSynapseService.leaveRoom("!client:matrix", "tok-sup")).thenReturn(true);
 
     service.process(12L);
 
     verify(matrixSynapseService, org.mockito.Mockito.never()).inviteUserToRoom(any(), any(), any());
     verify(matrixSynapseService, org.mockito.Mockito.never()).joinRoom(any(), any());
+    // An invite from an earlier attempt is rejected, not left open.
+    verify(matrixSynapseService).leaveRoom("!client:matrix", "tok-sup");
     verify(repository).delete(task);
+  }
+
+  @Test
+  void observationOfARemovedSupervisorRevokesTheInviteWithTheCounsellorsKick() throws Exception {
+    var task = supervisorObservation();
+    when(repository.findById(12L)).thenReturn(Optional.of(task));
+    when(repository.findByIdForUpdate(12L)).thenReturn(Optional.of(task));
+    supervisorActive(false);
+    when(matrixSynapseService.loginAsUserAccessToken("@counsellor:matrix")).thenReturn("tok-op");
+    when(matrixSynapseService.loginAsUserAccessToken("@sup:matrix")).thenReturn(null);
+    when(matrixSynapseService.removeUserFromRoom("!client:matrix", "@sup:matrix", "tok-op"))
+        .thenReturn(true);
+
+    service.process(12L);
+
+    verify(matrixSynapseService).removeUserFromRoom("!client:matrix", "@sup:matrix", "tok-op");
+    verify(repository).delete(task);
+  }
+
+  @Test
+  void observationOfARemovedSupervisorStaysQueuedWhileTheyCannotBeShownOut() throws Exception {
+    var task = supervisorObservation();
+    when(repository.findById(12L)).thenReturn(Optional.of(task));
+    when(repository.findByIdForUpdate(12L)).thenReturn(Optional.of(task));
+    supervisorActive(false);
+    when(matrixSynapseService.loginAsUserAccessToken("@counsellor:matrix")).thenReturn("tok-op");
+    when(matrixSynapseService.loginAsUserAccessToken("@sup:matrix")).thenReturn("tok-sup");
+    when(matrixSynapseService.getRoomMembers("!client:matrix"))
+        .thenReturn(Optional.of(java.util.List.of("@sup:matrix")));
+
+    service.process(12L);
+
+    verify(repository, org.mockito.Mockito.never()).delete(any());
+    assertThat(task.getAttemptCount()).isEqualTo(1);
   }
 
   @Test
@@ -482,8 +521,6 @@ class CaseHandoverMatrixRepairServiceTest {
     when(matrixSynapseService.loginAsUserAccessToken("@counsellor:matrix")).thenReturn("tok-op");
     when(matrixSynapseService.loginAsUserAccessToken("@sup:matrix")).thenReturn("tok-sup");
     when(matrixSynapseService.joinRoom("!client:matrix", "tok-sup")).thenReturn(true);
-    when(matrixSynapseService.getRoomMembers("!client:matrix"))
-        .thenReturn(Optional.of(java.util.List.of("@sup:matrix")));
     when(matrixSynapseService.leaveRoom("!client:matrix", "tok-sup")).thenReturn(true);
 
     service.process(12L);
