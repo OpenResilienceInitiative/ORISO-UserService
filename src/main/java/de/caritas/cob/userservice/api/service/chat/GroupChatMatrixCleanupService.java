@@ -71,6 +71,7 @@ public class GroupChatMatrixCleanupService {
     var ownerId = expected.getChatOwner().getId();
     var room = expected.getMatrixRoomId();
     var occurrence = expected.getCurrentOccurrenceIndex();
+    var timezone = expected.getTimezone();
     lockOwner(expected.getChatOwner());
     var current =
         chats
@@ -80,6 +81,7 @@ public class GroupChatMatrixCleanupService {
     if (!Objects.equals(current.getChatOwner().getId(), ownerId)
         || !Objects.equals(current.getMatrixRoomId(), room)
         || current.getCurrentOccurrenceIndex() != occurrence
+        || !Objects.equals(current.getTimezone(), timezone)
         || Boolean.TRUE.equals(current.isActive()))
       throw new ConflictException("Group changed before updating its roster");
   }
