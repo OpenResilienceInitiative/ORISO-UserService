@@ -66,6 +66,7 @@ mariadb_owned_tests=(
   CaseHandoverStatusHttpMariaDbIT
   AccountInviteRevokeAcceptRaceMariaDbIT
   ConsultantTenantChangeMariaDbIT
+  ConsultantAgencyLateJoinerMembershipMariaDbIT
   CaseHandoverLeaveAdminPowerMariaDbIT
   CaseHandoverTakeoverMatrixMariaDbIT
   MoveThenTakeoverMatrixMariaDbIT
