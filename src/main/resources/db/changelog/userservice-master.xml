@@ -144,7 +144,6 @@
     file="db/changelog/changeset/0083_consultant_personal_info/0083_changeSet.xml" />
   <include
     file="db/changelog/changeset/0084_event_notification_explanation_backfill/0084_changeSet.xml" />
-  <include file="db/changelog/changeset/20261121_event_notification_read_day/changeSet.xml"/>
   <include
     file="db/changelog/changeset/0085_consultant_internal_display_name/0085_changeSet.xml" />
   <!-- 0083_empty_draft_rows shipped without this include (found via PR #1075 review),
@@ -306,4 +305,5 @@
   <include file="db/changelog/changeset/20261118_agency_enquiry_revocation_1692/changeSet.xml"/>
   <include file="db/changelog/changeset/20261118_agency_enquiry_room_retirement_1692/changeSet.xml"/>
   <include file="db/changelog/changeset/20261119_support_room_lifecycle_904/changeSet.xml"/>
+  <include file="db/changelog/changeset/20261121_event_notification_read_day/changeSet.xml"/>
 </databaseChangeLog>
