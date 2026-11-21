@@ -78,7 +78,8 @@ public class ReservationLedger {
     private final Long agencyId;
     private final boolean reservedTenant;
     private final boolean reservedAgency;
-    private final AtomicBoolean undone = new AtomicBoolean();
+    private final AtomicBoolean agencyUndoClaimed = new AtomicBoolean();
+    private final AtomicBoolean tenantUndoClaimed = new AtomicBoolean();
 
     private Held(
         Long tenantId,
@@ -172,6 +173,7 @@ public class ReservationLedger {
       }
       revalidate(held);
     } catch (RuntimeException failure) {
+      undoOnRollback(held);
       undo(held);
       throw failure;
     }
@@ -181,27 +183,46 @@ public class ReservationLedger {
 
   /** Gives back what {@link #reserve} reserved itself; safe to call more than once. */
   public void undo(Held held) {
-    if (held == null || !held.undone.compareAndSet(false, true)) {
+    if (held == null) {
       return;
     }
-    if (held.reservedAgency && held.agencyId != null) {
+    if (held.reservedAgency
+        && held.agencyId != null
+        && held.agencyUndoClaimed.compareAndSet(false, true)) {
       releaseQuietly("agency", () -> agencyIdAllocationClient.release(held.agencyId));
     }
-    if (held.reservedTenant && held.tenantId != null) {
-      try {
-        Long taskId =
-            newTransaction()
-                .execute(
-                    transaction ->
-                        saveTenantReleaseTask(
-                            held.tenantId, held.tenantToken, LocalDateTime.now()));
-        if (taskId != null) {
-          releaseProcessor.processTenant(taskId);
-        }
-      } catch (RuntimeException failure) {
-        logReleaseFailure("tenant", failure);
-      }
+    if (held.reservedTenant
+        && held.tenantId != null
+        && held.tenantUndoClaimed.compareAndSet(false, true)
+        && !undoTenant(held)) {
+      // A rollback callback can try again when neither path confirmed cleanup.
+      held.tenantUndoClaimed.set(false);
     }
+  }
+
+  private boolean undoTenant(Held held) {
+    Long taskId = null;
+    try {
+      taskId =
+          newTransaction()
+              .execute(
+                  transaction ->
+                      saveTenantReleaseTask(held.tenantId, held.tenantToken, LocalDateTime.now()));
+    } catch (RuntimeException failure) {
+      logReleaseFailure("tenant", failure);
+    }
+    if (taskId == null) {
+      return releaseQuietly(
+          "tenant", () -> tenantIdAllocationClient.release(held.tenantId, held.tenantToken));
+    }
+
+    try {
+      releaseProcessor.processTenant(taskId);
+    } catch (RuntimeException failure) {
+      // The committed task will be retried by the scheduler.
+      logReleaseFailure("tenant", failure);
+    }
+    return true;
   }
 
   /**
@@ -478,14 +499,16 @@ public class ReservationLedger {
     }
   }
 
-  private static void releaseQuietly(String type, Supplier<Boolean> release) {
+  private static boolean releaseQuietly(String type, Supplier<Boolean> release) {
     try {
-      if (!Boolean.TRUE.equals(release.get())) {
-        logReleaseFailure(type, new IllegalStateException("release pending"));
+      if (Boolean.TRUE.equals(release.get())) {
+        return true;
       }
+      logReleaseFailure(type, new IllegalStateException("release pending"));
     } catch (RuntimeException releaseFailure) {
       logReleaseFailure(type, releaseFailure);
     }
+    return false;
   }
 
   private static void logReleaseFailure(String type, RuntimeException exception) {
