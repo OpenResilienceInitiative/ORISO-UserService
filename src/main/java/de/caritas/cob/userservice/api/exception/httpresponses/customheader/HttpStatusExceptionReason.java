@@ -99,6 +99,11 @@ public enum HttpStatusExceptionReason {
   /** A moderator banned the caller from this group chat; joining again is refused. */
   USER_BANNED_FROM_CHAT,
   /**
+   * An audio or video self-help circle is entered by knocking: the caller has not been let in from
+   * its waiting room (ORISO-UserService#1747).
+   */
+  GROUP_ADMISSION_REQUIRED,
+  /**
    * A self-help group invite link was refused: unknown or foreign group, not a self-help group, or
    * a wrong token. Says only that the link does not work, never whether the group exists (#1483).
    */
