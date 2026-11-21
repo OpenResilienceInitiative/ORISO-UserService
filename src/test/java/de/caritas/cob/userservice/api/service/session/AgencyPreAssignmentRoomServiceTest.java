@@ -6,11 +6,13 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import de.caritas.cob.userservice.api.exception.matrix.MatrixCreateRoomException;
+import de.caritas.cob.userservice.api.exception.matrix.MatrixCreateRoomRateLimitedException;
 import de.caritas.cob.userservice.api.exception.matrix.MatrixInviteUserException;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.User;
@@ -242,6 +244,162 @@ class AgencyPreAssignmentRoomServiceTest {
 
     verify(sessionService, never()).saveSession(any());
     assertNull(session.getMatrixRoomId());
+  }
+
+  @Test
+  @DisplayName(
+      "US#1737: a rate-limited room creation is retried after the server's delay, then persisted")
+  void ensureHoldingRoom_retriesRateLimitedRoomCreation() throws Exception {
+    when(matrixCredentialClient.fetchMatrixCredentials(AGENCY_ID))
+        .thenReturn(Optional.of(validCredentials()));
+    when(sessionRoomGateway.loginAsUser(AGENCY_MATRIX_ID)).thenReturn(AGENCY_TOKEN);
+    when(sessionRoomGateway.createRoom(anyString(), anyString(), eq(AGENCY_TOKEN)))
+        .thenThrow(new MatrixCreateRoomRateLimitedException("limited", 3_256L))
+        .thenReturn(NEW_ROOM_ID);
+    when(rateLimitPause.pause(3_256L)).thenReturn(true);
+    when(sessionRoomGateway.loginAsUser(USER_MATRIX_ID)).thenReturn(USER_TOKEN);
+    when(sessionRoomGateway.joinRoom(NEW_ROOM_ID, USER_TOKEN)).thenReturn(true);
+
+    underTest.ensureHoldingRoom(session, user);
+
+    verify(rateLimitPause).pause(3_256L);
+    verify(sessionRoomGateway, times(2)).createRoom(anyString(), anyString(), eq(AGENCY_TOKEN));
+    assertEquals(NEW_ROOM_ID, session.getMatrixRoomId());
+    verify(sessionService).saveSession(session);
+  }
+
+  @Test
+  @DisplayName("US#1737: the wait before retrying room creation is capped")
+  void ensureHoldingRoom_capsTheWaitBeforeRetryingRoomCreation() throws Exception {
+    when(matrixCredentialClient.fetchMatrixCredentials(AGENCY_ID))
+        .thenReturn(Optional.of(validCredentials()));
+    when(sessionRoomGateway.loginAsUser(AGENCY_MATRIX_ID)).thenReturn(AGENCY_TOKEN);
+    when(sessionRoomGateway.createRoom(anyString(), anyString(), eq(AGENCY_TOKEN)))
+        .thenThrow(new MatrixCreateRoomRateLimitedException("limited", 600_000L));
+    when(rateLimitPause.pause(AgencyPreAssignmentRoomService.MAX_WAIT_BEFORE_CREATE_ROOM_RETRY_MS))
+        .thenReturn(true);
+
+    underTest.ensureHoldingRoom(session, user);
+
+    verify(sessionRoomGateway, times(AgencyPreAssignmentRoomService.CREATE_ROOM_MAX_ATTEMPTS))
+        .createRoom(anyString(), anyString(), eq(AGENCY_TOKEN));
+    verify(rateLimitPause, times(AgencyPreAssignmentRoomService.CREATE_ROOM_MAX_ATTEMPTS - 1))
+        .pause(AgencyPreAssignmentRoomService.MAX_WAIT_BEFORE_CREATE_ROOM_RETRY_MS);
+    verify(sessionService, never()).saveSession(any());
+    assertNull(session.getMatrixRoomId());
+  }
+
+  @Test
+  @DisplayName("US#1737: the repair provisions the missing room of an open enquiry")
+  void repairHoldingRoom_provisionsTheMissingRoom() throws Exception {
+    when(sessionService.getSession(SESSION_ID)).thenReturn(Optional.of(new Session()));
+    stubHappyPathUntilRoomCreation();
+    when(sessionRoomGateway.loginAsUser(USER_MATRIX_ID)).thenReturn(USER_TOKEN);
+    when(sessionRoomGateway.joinRoom(NEW_ROOM_ID, USER_TOKEN)).thenReturn(true);
+
+    underTest.repairHoldingRoom(session, user);
+
+    assertEquals(NEW_ROOM_ID, session.getMatrixRoomId());
+    verify(sessionService).saveSession(session);
+  }
+
+  @Test
+  @DisplayName("US#1737: the repair adopts a room provisioned meanwhile instead of a second one")
+  void repairHoldingRoom_adoptsARoomProvisionedMeanwhile() throws Exception {
+    var current = new Session();
+    current.setMatrixRoomId("!already:matrix");
+    when(sessionService.getSession(SESSION_ID)).thenReturn(Optional.of(current));
+
+    underTest.repairHoldingRoom(session, user);
+
+    assertEquals("!already:matrix", session.getMatrixRoomId());
+    verify(sessionRoomGateway, never()).createRoom(anyString(), anyString(), anyString());
+    verify(sessionService, never()).saveSession(any());
+  }
+
+  @Test
+  @DisplayName("US#1737: a second repair of the same session within the cooldown does nothing")
+  void repairHoldingRoom_isNotRepeatedWithinTheCooldown() throws Exception {
+    when(sessionService.getSession(SESSION_ID)).thenReturn(Optional.of(new Session()));
+    when(matrixCredentialClient.fetchMatrixCredentials(AGENCY_ID))
+        .thenReturn(Optional.of(validCredentials()));
+    when(sessionRoomGateway.loginAsUser(AGENCY_MATRIX_ID)).thenReturn(AGENCY_TOKEN);
+    when(sessionRoomGateway.createRoom(anyString(), anyString(), eq(AGENCY_TOKEN)))
+        .thenThrow(new MatrixCreateRoomException("refused"));
+    underTest.clock =
+        java.time.Clock.fixed(
+            java.time.Instant.parse("2026-11-21T10:00:00Z"), java.time.ZoneOffset.UTC);
+
+    underTest.repairHoldingRoom(session, user);
+    underTest.repairHoldingRoom(session, user);
+
+    verify(sessionRoomGateway, times(1)).createRoom(anyString(), anyString(), eq(AGENCY_TOKEN));
+
+    underTest.clock =
+        java.time.Clock.fixed(
+            java.time.Instant.parse("2026-11-21T10:00:00Z")
+                .plus(AgencyPreAssignmentRoomService.REPAIR_COOLDOWN)
+                .plusSeconds(1),
+            java.time.ZoneOffset.UTC);
+    underTest.repairHoldingRoom(session, user);
+
+    verify(sessionRoomGateway, times(2)).createRoom(anyString(), anyString(), eq(AGENCY_TOKEN));
+  }
+
+  @Test
+  @DisplayName("US#1737: an interrupted wait stops the retries and provisions nothing")
+  void ensureHoldingRoom_stopsRetryingWhenTheWaitIsInterrupted() throws Exception {
+    when(matrixCredentialClient.fetchMatrixCredentials(AGENCY_ID))
+        .thenReturn(Optional.of(validCredentials()));
+    when(sessionRoomGateway.loginAsUser(AGENCY_MATRIX_ID)).thenReturn(AGENCY_TOKEN);
+    when(sessionRoomGateway.createRoom(anyString(), anyString(), eq(AGENCY_TOKEN)))
+        .thenThrow(new MatrixCreateRoomRateLimitedException("limited", 3_256L))
+        .thenReturn(NEW_ROOM_ID);
+    when(rateLimitPause.pause(3_256L)).thenReturn(false);
+
+    underTest.ensureHoldingRoom(session, user);
+
+    verify(sessionRoomGateway, times(1)).createRoom(anyString(), anyString(), eq(AGENCY_TOKEN));
+    verify(sessionService, never()).saveSession(any());
+    assertNull(session.getMatrixRoomId());
+  }
+
+  @Test
+  @DisplayName("US#1737: a repair already running for the session is not started a second time")
+  void repairHoldingRoom_skipsASecondRepairWhileOneIsRunning() throws Exception {
+    when(sessionService.getSession(SESSION_ID)).thenReturn(Optional.of(new Session()));
+    when(matrixCredentialClient.fetchMatrixCredentials(AGENCY_ID))
+        .thenReturn(Optional.of(validCredentials()));
+    when(sessionRoomGateway.loginAsUser(AGENCY_MATRIX_ID)).thenReturn(AGENCY_TOKEN);
+    var concurrent = new Session();
+    concurrent.setId(SESSION_ID);
+    concurrent.setAgencyId(AGENCY_ID);
+    // While the first repair is creating the room, a second request for the same session arrives.
+    when(sessionRoomGateway.createRoom(anyString(), anyString(), eq(AGENCY_TOKEN)))
+        .thenAnswer(
+            invocation -> {
+              underTest.repairHoldingRoom(concurrent, user);
+              throw new MatrixCreateRoomException("refused");
+            });
+
+    underTest.repairHoldingRoom(session, user);
+
+    verify(sessionRoomGateway, times(1)).createRoom(anyString(), anyString(), eq(AGENCY_TOKEN));
+  }
+
+  @Test
+  @DisplayName("US#1737: a refused room creation that is not a rate limit is not retried")
+  void ensureHoldingRoom_doesNotRetryARefusedRoomCreation() throws Exception {
+    when(matrixCredentialClient.fetchMatrixCredentials(AGENCY_ID))
+        .thenReturn(Optional.of(validCredentials()));
+    when(sessionRoomGateway.loginAsUser(AGENCY_MATRIX_ID)).thenReturn(AGENCY_TOKEN);
+    when(sessionRoomGateway.createRoom(anyString(), anyString(), eq(AGENCY_TOKEN)))
+        .thenThrow(new MatrixCreateRoomException("forbidden"));
+
+    underTest.ensureHoldingRoom(session, user);
+
+    verify(sessionRoomGateway, times(1)).createRoom(anyString(), anyString(), eq(AGENCY_TOKEN));
+    verifyNoInteractions(rateLimitPause);
   }
 
   @Test
