@@ -6,6 +6,22 @@
   "schedulerRegistrationMetric": "userservice.scheduler.registered",
   "components": [
     {
+      "id": "agency-holding-room-repair-guard",
+      "source": "src/main/java/de/caritas/cob/userservice/api/service/session/AgencyPreAssignmentRoomService.java",
+      "kind": "local-state",
+      "owner": "sessions-matrix",
+      "risk": "duplicate-side-effect",
+      "components": [
+        "repairsInFlight",
+        "lastRepairStart"
+      ],
+      "decision": "Retain locally: one holding-room repair per session at a time and a 30 s cooldown per replica (US#1737). Across replicas the session is re-read first, so a room another replica persisted is adopted; a parallel second room stays unpersisted. Externalize with a session row lock before scaling out.",
+      "signals": [
+        "userservice.replica.local_state"
+      ],
+      "status": "bounded"
+    },
+    {
       "id": "matrix-access-token-cache",
       "source": "src/main/java/de/caritas/cob/userservice/api/adapters/matrix/MatrixSynapseService.java",
       "kind": "local-state",
