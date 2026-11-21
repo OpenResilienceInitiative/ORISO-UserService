@@ -2,6 +2,7 @@ package de.caritas.cob.userservice.api.service;
 
 import static org.apache.commons.lang3.StringUtils.isBlank;
 
+import com.google.common.collect.Lists;
 import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
 import de.caritas.cob.userservice.api.adapters.web.dto.AgencyDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantSessionListResponseDTO;
@@ -32,6 +33,7 @@ import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.ConsultantAgency;
 import de.caritas.cob.userservice.api.model.ConsultantTopic;
 import de.caritas.cob.userservice.api.model.ConversationType;
+import de.caritas.cob.userservice.api.model.HandoverCandidate;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.Session.SessionStatus;
 import de.caritas.cob.userservice.api.model.SessionTopic;
@@ -56,6 +58,7 @@ import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -84,6 +87,7 @@ import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
+import org.springframework.transaction.annotation.Isolation;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionSynchronization;
@@ -97,6 +101,7 @@ public class CaseHandoverService {
 
   private static final String ADVICE_NEEDED = CaseHandoverReasonCodes.ADVICE_REQUESTED;
   private static final int DEFAULT_ADVICE_ACCESS_DURATION_MINUTES = 180;
+  private static final int CANDIDATE_TOPIC_BATCH_SIZE = 500;
   private static final String POLICY_AUTHORITY = "platform-admin-default-case-handover-policy";
   private static final String TENANT_POLICY_AUTHORITY = "tenant-service-resolved";
   private static final String OUTCOME_ACTIVE_OWNER = "ACTIVE_OWNER";
@@ -815,11 +820,12 @@ public class CaseHandoverService {
     return consent != CaseHandoverConsentMode.NONE;
   }
 
-  @Transactional(readOnly = true)
+  // The eligibility scan and page hydration must observe the same database snapshot.
+  @Transactional(readOnly = true, isolation = Isolation.REPEATABLE_READ)
   public ConsultantSessionListResponseDTO searchCandidates(
       String query, int offset, int count, boolean archived) {
     Consultant requester = retrieveCurrentConsultant();
-    List<Long> agencyIds = new ArrayList<>(consultantAgencyIds(requester));
+    Set<Long> agencyIds = consultantAgencyIds(requester);
     int safeOffset = Math.max(0, offset);
     int safeCount = Math.max(1, Math.min(count, 200));
 
@@ -831,19 +837,27 @@ public class CaseHandoverService {
         archived
             ? List.of(SessionStatus.IN_ARCHIVE)
             : List.of(SessionStatus.IN_PROGRESS, SessionStatus.DONE);
-    List<Session> candidates =
-        sessionRepository.findByAgencyIdInAndConsultantNotAndStatusInOrderByUpdateDateDesc(
-            agencyIds, requester, statuses);
+    String normalizedQuery = normalizeSearchText(query);
+    List<HandoverCandidate> candidates =
+        sessionRepository.findHandoverCandidates(
+            new ArrayList<>(agencyIds), requester, statuses, !normalizedQuery.isBlank());
 
     var membersOnlyCases = membersOnlyChatAccess.membersOnlySessionIds(candidates);
-    List<Session> matchingCandidates =
-        candidates.stream()
-            .filter(session -> !membersOnlyCases.contains(session.getId()))
-            .filter(session -> isInRequesterDepartment(session, requester))
-            .filter(session -> matchesCandidateQuery(session, query))
-            .collect(Collectors.toList());
-    List<Session> pageSessions =
-        matchingCandidates.stream().skip(safeOffset).limit(safeCount).toList();
+    Set<Long> topicMatches =
+        candidateIdsInTopicScope(candidates, agencyIds, membersOnlyCases, requester);
+    List<Long> pageIds = new ArrayList<>();
+    int total = 0;
+    for (HandoverCandidate candidate : candidates) {
+      if (!topicMatches.contains(candidate.getId())
+          || !matchesCandidateQuery(candidate, normalizedQuery)) {
+        continue;
+      }
+      if (total >= safeOffset && pageIds.size() < safeCount) {
+        pageIds.add(candidate.getId());
+      }
+      total++;
+    }
+    List<Session> pageSessions = loadCandidatePage(pageIds);
     Map<Long, String> agencyNames = candidateAgencyNames(pageSessions);
     List<ConsultantSessionResponseDTO> page =
         pageSessions.stream()
@@ -854,7 +868,56 @@ public class CaseHandoverService {
         .sessions(page)
         .offset(safeOffset)
         .count(page.size())
-        .total(matchingCandidates.size());
+        .total(total);
+  }
+
+  private List<Session> loadCandidatePage(List<Long> pageIds) {
+    if (pageIds.isEmpty()) {
+      return List.of();
+    }
+    Map<Long, Session> byId =
+        sessionRepository.findHandoverCandidatePage(pageIds).stream()
+            .collect(Collectors.toMap(Session::getId, Function.identity()));
+    return pageIds.stream().map(byId::get).filter(Objects::nonNull).toList();
+  }
+
+  private Set<Long> candidateIdsInTopicScope(
+      List<HandoverCandidate> candidates,
+      Set<Long> agencyIds,
+      Set<Long> membersOnlyCases,
+      Consultant requester) {
+    Set<Long> matches = new HashSet<>();
+    Map<Long, Set<Long>> topicsByAgency = new HashMap<>();
+    Map<Long, List<Long>> secondaryTopicCandidates = new HashMap<>();
+    for (HandoverCandidate candidate : candidates) {
+      Long agencyId = candidate.getAgencyId();
+      Long sessionId = candidate.getId();
+      if (agencyId == null
+          || !agencyIds.contains(agencyId)
+          || membersOnlyCases.contains(sessionId)) {
+        continue;
+      }
+      Set<Long> topics =
+          topicsByAgency.computeIfAbsent(agencyId, id -> consultantTopicIds(requester, id));
+      if (topics.isEmpty()) {
+        if (!topicsEnabled) {
+          matches.add(sessionId);
+        }
+      } else if (topics.contains(candidate.getMainTopicId())) {
+        matches.add(sessionId);
+      } else {
+        secondaryTopicCandidates.computeIfAbsent(agencyId, id -> new ArrayList<>()).add(sessionId);
+      }
+    }
+    secondaryTopicCandidates.forEach(
+        (agencyId, sessionIds) -> {
+          for (var batch : Lists.partition(sessionIds, CANDIDATE_TOPIC_BATCH_SIZE)) {
+            matches.addAll(
+                sessionRepository.findSessionIdsWithAnyAdditionalTopic(
+                    batch, topicsByAgency.get(agencyId)));
+          }
+        });
+    return matches;
   }
 
   @Value("${multitenancy.enabled:true}")
@@ -1751,8 +1814,7 @@ public class CaseHandoverService {
         .total(0);
   }
 
-  private boolean matchesCandidateQuery(Session session, String query) {
-    String normalizedQuery = normalizeSearchText(query);
+  private boolean matchesCandidateQuery(HandoverCandidate session, String normalizedQuery) {
     if (normalizedQuery.isBlank()) {
       return true;
     }
@@ -1809,7 +1871,10 @@ public class CaseHandoverService {
         || !consultantAgencyIds(requester).contains(session.getAgencyId())) {
       return false;
     }
-    Set<Long> requesterTopicIds = consultantTopicIds(requester, session.getAgencyId());
+    return isInTopicScope(session, consultantTopicIds(requester, session.getAgencyId()));
+  }
+
+  private boolean isInTopicScope(Session session, Set<Long> requesterTopicIds) {
     if (requesterTopicIds.isEmpty()) {
       return !topicsEnabled;
     }

@@ -105,7 +105,7 @@ class CiDurationTest(unittest.TestCase):
                 ).removeprefix("${").removesuffix("}")
                 self.assertIn(f"-D{property_name}=true", package["run"])
         tests = next(step for step in steps if step["name"] == "Run Maven tests")
-        self.assertIn("./mvnw -B test", tests["run"])
+        self.assertIn("bash scripts/ci/run-maven-with-central-retry.sh -B test", tests["run"])
         self.assertNotIn("-Dskip", tests["run"])
 
     def test_parallel_build_hands_its_jar_to_a_publish_job_blocked_on_all_checks(self):

@@ -157,6 +157,7 @@ class CreateEnquiryMessageFacadeMatrixRoomProvisioningTest {
         new AgencyPreAssignmentRoomService(
             matrixCredentialClient,
             gateway,
+            sessionService,
             new de.caritas.cob.userservice.api.service.session.AgencyEnquiryRoomPublication(
                 consultantRepository,
                 publicationSessions,

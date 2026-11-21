@@ -9,6 +9,7 @@ import de.caritas.cob.userservice.api.adapters.matrix.dto.MatrixInviteUserRespon
 import de.caritas.cob.userservice.api.config.observability.LiveChatDiagnosticMetrics;
 import de.caritas.cob.userservice.api.config.observability.LiveChatDiagnosticMetrics.Outcome;
 import de.caritas.cob.userservice.api.exception.matrix.MatrixCreateRoomException;
+import de.caritas.cob.userservice.api.exception.matrix.MatrixCreateRoomRateLimitedException;
 import de.caritas.cob.userservice.api.exception.matrix.MatrixInviteRateLimitedException;
 import de.caritas.cob.userservice.api.exception.matrix.MatrixInviteUserException;
 import java.net.URI;
@@ -49,6 +50,13 @@ public class MatrixRoomClient {
   private static final String ENDPOINT_ADMIN_MAKE_ROOM_ADMIN =
       "/_synapse/admin/v1/rooms/{roomId}/make_room_admin";
   private static final int MEMBERS_ONLY_INVITE_LEVEL = 100;
+
+  /** The room event that blurs a passage of a message (ORISO-Frontend#2229); position only. */
+  static final String PASSAGE_BLUR_EVENT = "org.oriso.passage_blur";
+
+  /** The Matrix moderator level: room moderators hold it, advice seekers and supervisors do not. */
+  static final int MODERATOR_POWER_LEVEL = 50;
+
   private static final int INVITE_USER_MAX_ATTEMPTS = 3;
   private static final long DEFAULT_INVITE_RETRY_DELAY_MS = 1000L;
   // Invites can run under a session row lock; a server-chosen delay must not hold it for long.
@@ -300,6 +308,64 @@ public class MatrixRoomClient {
     return value;
   }
 
+  /**
+   * Only a room moderator may blur a passage of a message, and every moderator may lift any blur
+   * (ORISO-Frontend#2229). A blur is the room event {@code org.oriso.passage_blur}; lifting it
+   * redacts that event, which for someone else's blur needs the room's {@code redact} level. Both
+   * are set to the Matrix moderator level: the assigned counsellor and a group's owner hold more,
+   * advice seekers (0) and supervisors (10) less.
+   *
+   * <p>Written into the room's current power levels rather than a create-room override: Synapse
+   * merges that override shallowly, so an {@code events} entry there would replace the default
+   * event map ({@code m.room.power_levels: 100}, {@code m.room.encryption: 100}, ...). The blur
+   * level never drops below what the room already demands of it, so a closed room stays closed.
+   * Idempotent; writes nothing when the room already has the rule. Never throws.
+   *
+   * @param roomId the Matrix room ID
+   * @param accessToken token of a member who may change the room's power levels
+   * @return true when the room has the rule afterwards
+   */
+  public boolean requireModeratorForPassageBlur(String roomId, String accessToken) {
+    try {
+      var power = readPowerLevels(roomId, accessToken);
+      var events = new HashMap<String, Object>(objectMap(power.get("events")));
+      int blurLevel =
+          Math.max(
+              MODERATOR_POWER_LEVEL,
+              level(events.getOrDefault(PASSAGE_BLUR_EVENT, power.get("events_default")), 0));
+      int redactLevel = level(power.get("redact"), MODERATOR_POWER_LEVEL);
+      if (level(events.get(PASSAGE_BLUR_EVENT), -1) == blurLevel
+          && redactLevel == MODERATOR_POWER_LEVEL) {
+        return true;
+      }
+      events.put(PASSAGE_BLUR_EVENT, blurLevel);
+      power.put("events", events);
+      power.put("redact", MODERATOR_POWER_LEVEL);
+      restTemplate.put(
+          buildUrl(ENDPOINT_POWER_LEVELS, Map.of("roomId", roomId)),
+          new HttpEntity<>(power, getClientHttpHeaders(accessToken)));
+      return true;
+    } catch (RuntimeException ex) {
+      // Provider bodies can carry Matrix IDs; only the failure kind is logged.
+      log.warn(
+          "Matrix passage-blur rule could not be applied to room {}: {}",
+          roomId,
+          ex.getClass().getSimpleName());
+      return false;
+    }
+  }
+
+  /** A power level as Matrix sends it: a number, or a numeric string in rooms up to version 9. */
+  private static int level(Object raw, int fallback) {
+    if (raw instanceof Number number) {
+      return Math.toIntExact(number.longValue());
+    }
+    if (raw instanceof String text && !text.isBlank()) {
+      return Integer.parseInt(text.trim());
+    }
+    return fallback;
+  }
+
   public ResponseEntity<MatrixCreateRoomResponseDTO> createRoom(
       String roomName, String roomAlias, String accessToken) throws MatrixCreateRoomException {
 
@@ -357,6 +423,10 @@ public class MatrixRoomClient {
           || response.getBody().getRoomId().isBlank()) {
         throw new IllegalStateException("Matrix create-room response did not contain a room ID");
       }
+      // Without the rule an advice seeker's client could blur; such a room is not handed out.
+      if (!requireModeratorForPassageBlur(response.getBody().getRoomId(), accessToken)) {
+        throw new IllegalStateException("Matrix room moderation rules could not be applied");
+      }
 
       diagnosticMetrics.recordRoomCreation(encryptionEnabled, Outcome.SUCCESS);
       log.info(
@@ -372,6 +442,13 @@ public class MatrixRoomClient {
           roomName,
           ex.getStatusCode(),
           ex.getResponseBodyAsString());
+      if (isRateLimited(ex)) {
+        // US#1737: say "try again later" with the server's delay, so a holding room is retried.
+        throw new MatrixCreateRoomRateLimitedException(
+            String.format(
+                "Could not create room (%s) in Matrix: %s", roomName, ex.getResponseBodyAsString()),
+            serverRetryAfterMs(ex));
+      }
       throw new MatrixCreateRoomException(
           String.format(
               "Could not create room (%s) in Matrix: %s", roomName, ex.getResponseBodyAsString()));
@@ -437,6 +514,15 @@ public class MatrixRoomClient {
             roomId,
             ex.getStatusCode(),
             ex.getResponseBodyAsString());
+        if (isRateLimited(ex)) {
+          // Still limited after the short retries: say so, with the server's own delay, so the
+          // caller can defer the invite instead of failing what depends on it (FE#2386).
+          throw new MatrixInviteRateLimitedException(
+              String.format(
+                  "Could not invite user (%s) to room (%s) in Matrix: %s",
+                  userId, roomId, ex.getResponseBodyAsString()),
+              serverRetryAfterMs(ex));
+        }
         throw new MatrixInviteUserException(
             String.format(
                 "Could not invite user (%s) to room (%s) in Matrix: %s",
@@ -871,6 +957,84 @@ public class MatrixRoomClient {
    *
    * @return true when the user is invited or already in the room, false otherwise
    */
+  /** Outcome of {@link #inviteObserverQuietly}. */
+  public enum QuietInvite {
+    /** Invited now, or already invited or joined. */
+    INVITED,
+    /** Synapse answered 429; try again later. */
+    RATE_LIMITED,
+    /** Refused or failed for another reason. */
+    REFUSED
+  }
+
+  /**
+   * Like {@link #inviteUserQuietly}, but tells a rate limit apart from a refusal, so a repair task
+   * can stay queued instead of continuing without the invite (ORISO-Frontend#2386). Logs neither
+   * the user, the room nor the provider body.
+   */
+  public QuietInvite inviteObserverQuietly(String roomId, String userId, String accessToken) {
+    try {
+      var headers = getClientHttpHeaders(accessToken);
+      headers.setContentType(MediaType.APPLICATION_JSON);
+      var inviteRequest = new MatrixInviteUserRequestDTO();
+      inviteRequest.setUserId(userId);
+      var response =
+          restTemplate.postForEntity(
+              buildUrl(ENDPOINT_INVITE_USER, Map.of("roomId", roomId)),
+              new HttpEntity<>(inviteRequest, headers),
+              Map.class);
+      return response.getStatusCode().is2xxSuccessful() ? QuietInvite.INVITED : QuietInvite.REFUSED;
+    } catch (HttpClientErrorException ex) {
+      if (isRateLimited(ex)) {
+        log.warn("Matrix invite into a room was rate limited");
+        return QuietInvite.RATE_LIMITED;
+      }
+      if (ex.getStatusCode().value() == 403
+          && ex.getResponseBodyAsString().contains("already in the room")) {
+        return QuietInvite.INVITED;
+      }
+      log.warn("Matrix invite into a room was refused with status {}", ex.getStatusCode());
+      return QuietInvite.REFUSED;
+    } catch (Exception ex) {
+      log.warn("Matrix invite into a room failed ({})", ex.getClass().getSimpleName());
+      return QuietInvite.REFUSED;
+    }
+  }
+
+  /**
+   * {@link #setUserPowerLevel} for repair queues: same update, but the log names neither the user,
+   * the room nor the provider body (ORISO-Frontend#2386).
+   */
+  public boolean setUserPowerLevelQuietly(
+      String roomId, String userId, int powerLevel, String accessToken) {
+    try {
+      putUserPowerLevel(roomId, userId, powerLevel, accessToken);
+      return true;
+    } catch (HttpClientErrorException ex) {
+      log.warn("Matrix power level could not be set (status {})", ex.getStatusCode());
+      return false;
+    } catch (Exception ex) {
+      log.warn("Matrix power level could not be set ({})", ex.getClass().getSimpleName());
+      return false;
+    }
+  }
+
+  private void putUserPowerLevel(String roomId, String userId, int powerLevel, String accessToken) {
+    var url = buildUrl(ENDPOINT_POWER_LEVELS, Map.of("roomId", roomId));
+    HttpHeaders headers = getClientHttpHeaders(accessToken);
+    ResponseEntity<Map> current =
+        restTemplate.exchange(url, HttpMethod.GET, new HttpEntity<Void>(headers), Map.class);
+    if (current.getBody() == null) {
+      throw new IllegalStateException("power levels unreadable");
+    }
+    @SuppressWarnings("unchecked")
+    Map<String, Object> powerLevels = new HashMap<>(current.getBody());
+    Map<String, Object> updatedUsers = new HashMap<>(extractUsers(powerLevels));
+    updatedUsers.put(userId, powerLevel);
+    powerLevels.put("users", updatedUsers);
+    restTemplate.put(url, new HttpEntity<>(powerLevels, headers));
+  }
+
   public boolean inviteUserQuietly(String roomId, String userId, String accessToken) {
     try {
       var headers = getClientHttpHeaders(accessToken);

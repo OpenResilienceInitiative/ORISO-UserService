@@ -460,6 +460,7 @@ class AgencyPasswordFreeSynapseIT {
     new AgencyPreAssignmentRoomService(
             identities,
             gateway,
+            sessions,
             new AgencyEnquiryRoomPublication(
                 consultants,
                 sessionRepository,

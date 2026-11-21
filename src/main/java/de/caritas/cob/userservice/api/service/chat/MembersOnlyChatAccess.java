@@ -6,6 +6,7 @@ import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.ConversationType;
 import de.caritas.cob.userservice.api.model.GroupChatParticipant;
 import de.caritas.cob.userservice.api.model.Session;
+import de.caritas.cob.userservice.api.model.SessionRoom;
 import de.caritas.cob.userservice.api.port.out.ChatRepository;
 import de.caritas.cob.userservice.api.port.out.GroupChatParticipantRepository;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
@@ -91,7 +92,7 @@ public class MembersOnlyChatAccess {
    * members-only chat. When that chat is gone the case belongs to nobody: the rule fails closed and
    * does not fall back to who the session is assigned to.
    */
-  private static boolean isOrphanedCase(Session session) {
+  private static boolean isOrphanedCase(SessionRoom session) {
     return session.getConversationType() == ConversationType.INTERNAL_GROUP
         && !session.isTeamSession();
   }
@@ -162,7 +163,7 @@ public class MembersOnlyChatAccess {
   }
 
   /** The sessions of {@code sessions} that are the case of a members-only chat. */
-  public Set<Long> membersOnlySessionIds(Collection<Session> sessions) {
+  public Set<Long> membersOnlySessionIds(Collection<? extends SessionRoom> sessions) {
     if (sessions == null || sessions.isEmpty()) {
       return Set.of();
     }
@@ -183,14 +184,14 @@ public class MembersOnlyChatAccess {
     }
     var roomIds =
         candidates.stream()
-            .map(Session::getMatrixRoomId)
+            .map(SessionRoom::getMatrixRoomId)
             .collect(Collectors.toCollection(HashSet::new));
     var membersOnlyRooms = chatRepository.findMembersOnlyMatrixRoomIds(roomIds);
     var possiblyOrphaned =
         candidates.stream()
             .filter(session -> !membersOnlyRooms.contains(session.getMatrixRoomId()))
             .filter(MembersOnlyChatAccess::isOrphanedCase)
-            .map(Session::getMatrixRoomId)
+            .map(SessionRoom::getMatrixRoomId)
             .collect(Collectors.toCollection(HashSet::new));
     var roomsWithAChat =
         possiblyOrphaned.isEmpty()
@@ -202,7 +203,7 @@ public class MembersOnlyChatAccess {
                 membersOnlyRooms.contains(session.getMatrixRoomId())
                     || isOrphanedCase(session)
                         && !roomsWithAChat.contains(session.getMatrixRoomId()))
-        .map(Session::getId)
+        .map(SessionRoom::getId)
         .collect(Collectors.toSet());
   }
 

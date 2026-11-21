@@ -3,6 +3,7 @@ package de.caritas.cob.userservice.api.service.session;
 import static org.apache.commons.lang3.StringUtils.isBlank;
 
 import de.caritas.cob.userservice.api.exception.matrix.MatrixCreateRoomException;
+import de.caritas.cob.userservice.api.exception.matrix.MatrixCreateRoomRateLimitedException;
 import de.caritas.cob.userservice.api.exception.matrix.MatrixInviteUserException;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.User;
@@ -35,13 +36,69 @@ public class AgencyPreAssignmentRoomService {
    */
   static final long MAX_WAIT_BEFORE_ASKER_INVITE_MS = 5_000L;
 
+  /**
+   * US#1737: right after another enquiry, the agency account's invites still run and Synapse
+   * answers the next room creation with 429 for a few seconds. Retry a bounded number of times,
+   * each after the server's delay (capped), instead of leaving the enquiry without a room.
+   */
+  static final int CREATE_ROOM_MAX_ATTEMPTS = 3;
+
+  static final long MAX_WAIT_BEFORE_CREATE_ROOM_RETRY_MS = 5_000L;
+
+  /** A repair for the same session is not started again within this time (US#1737). */
+  static final Duration REPAIR_COOLDOWN = Duration.ofSeconds(30);
+
+  private final java.util.Set<Long> repairsInFlight =
+      java.util.concurrent.ConcurrentHashMap.newKeySet();
+  private final java.util.Map<Long, java.time.Instant> lastRepairStart =
+      new java.util.concurrent.ConcurrentHashMap<>();
+  java.time.Clock clock = java.time.Clock.systemUTC();
+
   private final @NonNull AgencyMatrixCredentialClient matrixCredentialClient;
   private final @NonNull SessionRoomGateway sessionRoomGateway;
+  private final @NonNull SessionService sessionService;
   private final @NonNull AgencyEnquiryRoomPublication publication;
   private final @NonNull AgencySilentMembershipService agencySilentMembershipService;
   private final @NonNull AgencyDepartmentMembershipBackfill departmentMembershipBackfill;
   private final @NonNull MatrixRateLimitPause rateLimitPause;
   private final @NonNull AgencyEnquiryRoomAttempts roomAttempts;
+
+  /**
+   * US#1737: provisions the holding room of an open enquiry that a rate-limited creation left
+   * without one, when its advice seeker opens it. Guarded so the asker cannot multiply rooms or
+   * Matrix calls: one repair per session at a time on this instance, no new start within {@link
+   * #REPAIR_COOLDOWN}, and the session is re-read first so a room provisioned meanwhile (another
+   * request or pod) is adopted instead of creating a second one.
+   */
+  public void repairHoldingRoom(Session session, User user) {
+    if (session == null || session.getId() == null || session.getMatrixRoomId() != null) {
+      return;
+    }
+    Long sessionId = session.getId();
+    if (!repairsInFlight.add(sessionId)) {
+      return;
+    }
+    try {
+      // Checked only while holding the marker: a repair that just finished cannot be followed by
+      // a second start inside the cooldown.
+      var now = clock.instant();
+      lastRepairStart.values().removeIf(started -> started.plus(REPAIR_COOLDOWN).isBefore(now));
+      var last = lastRepairStart.get(sessionId);
+      if (last != null && last.plus(REPAIR_COOLDOWN).isAfter(now)) {
+        return;
+      }
+      lastRepairStart.put(sessionId, now);
+      var current = sessionService.getSession(sessionId);
+      if (current.isPresent() && current.get().getMatrixRoomId() != null) {
+        session.setMatrixRoomId(current.get().getMatrixRoomId());
+        return;
+      }
+      log.info("Repairing the missing agency holding room of session {}", sessionId);
+      ensureHoldingRoom(session, user);
+    } finally {
+      repairsInFlight.remove(sessionId);
+    }
+  }
 
   public void ensureHoldingRoom(Session session, User user) {
     if (session == null || user == null) {
@@ -106,7 +163,7 @@ public class AgencyPreAssignmentRoomService {
     String roomName = buildRoomName(session, credentials.getMatrixUserId());
 
     try {
-      String roomId = sessionRoomGateway.createRoom(roomName, roomAlias, agencyToken);
+      String roomId = createRoomWithRateLimitRetry(roomName, roomAlias, agencyToken);
       if (isBlank(roomId)) {
         log.error("Matrix create room returned empty body for session {}", session.getId());
         return;
@@ -178,6 +235,30 @@ public class AgencyPreAssignmentRoomService {
           "Could not create agency holding room for session {}: {}",
           session.getId(),
           ex.getMessage());
+    }
+  }
+
+  private String createRoomWithRateLimitRetry(String roomName, String roomAlias, String token)
+      throws MatrixCreateRoomException {
+    for (int attempt = 1; ; attempt++) {
+      try {
+        return sessionRoomGateway.createRoom(roomName, roomAlias, token);
+      } catch (MatrixCreateRoomRateLimitedException limited) {
+        if (attempt >= CREATE_ROOM_MAX_ATTEMPTS) {
+          throw limited;
+        }
+        long waitMs =
+            Math.min(Math.max(limited.getRetryAfterMs(), 0L), MAX_WAIT_BEFORE_CREATE_ROOM_RETRY_MS);
+        log.warn(
+            "Agency holding room creation was rate limited; retrying attempt {} of {} after {} ms",
+            attempt + 1,
+            CREATE_ROOM_MAX_ATTEMPTS,
+            waitMs);
+        if (!rateLimitPause.pause(waitMs)) {
+          // Interrupted (shutdown, cancelled request): stop instead of provisioning further.
+          throw limited;
+        }
+      }
     }
   }
 
