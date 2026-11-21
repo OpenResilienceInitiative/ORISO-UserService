@@ -75,6 +75,9 @@ public class SecurityConfig {
   @Value("${keycloak.principal-attribute:preferred_username}")
   private String principalAttribute;
 
+  @Value("${keycloak.config.app-client-id:}")
+  private String appClientId;
+
   private final @Nullable HttpTenantFilter tenantFilter;
   private final @Nullable IpPrivacyHeaderFilter ipPrivacyHeaderFilter;
 
@@ -375,7 +378,9 @@ public class SecurityConfig {
                     CONSULTANT_DEFAULT,
                     SINGLE_TENANT_ADMIN,
                     TENANT_ADMIN,
-                    RESTRICTED_AGENCY_ADMIN)
+                    RESTRICTED_AGENCY_ADMIN,
+                    // Agency admins carry user-admin only; they see the admin tours too.
+                    USER_ADMIN)
                 // Uses the platform SMTP credentials: platform admin only.
                 .requestMatchers("/users/system-notification-emails/platform-settings")
                 .access(this::isPlatformAdmin)
@@ -655,6 +660,10 @@ public class SecurityConfig {
                 .hasAnyAuthority(USER_ADMIN, TENANT_ADMIN, SINGLE_TENANT_ADMIN)
                 .requestMatchers(HttpMethod.GET, "/useradmin/tenantadmins/search")
                 .hasAnyAuthority(TENANT_ADMIN, USER_ADMIN)
+                .requestMatchers(
+                    "/useradmin/tenantadmins/login-emails",
+                    "/service/useradmin/tenantadmins/login-emails")
+                .access(this::isHumanPlatformAdmin)
                 .requestMatchers(
                     "/useradmin/tenantadmins",
                     "/useradmin/tenantadmins/**",
@@ -1126,6 +1135,18 @@ public class SecurityConfig {
             && roles.contains(UserRole.TENANT_ADMIN.getValue());
 
     return new AuthorizationDecision(hasPlatformAdminRoles && isPlatformTenant(jwt));
+  }
+
+  private AuthorizationDecision isHumanPlatformAdmin(
+      Supplier<? extends Authentication> authentication, RequestAuthorizationContext context) {
+    return new AuthorizationDecision(
+        authentication.get() instanceof JwtAuthenticationToken caller
+            && caller.isAuthenticated()
+            && caller.getToken().getClaims().get("azp") instanceof String authorizedParty
+            && !authorizedParty.isBlank()
+            && authorizedParty.equals(appClientId)
+            && hasAnyAuthority(authentication, TENANT_ADMIN)
+            && isPlatformAdmin(authentication, context).isGranted());
   }
 
   private boolean isPlatformTenant(Jwt jwt) {

@@ -101,15 +101,15 @@ class AgencyMembershipSyncListenerTest {
   }
 
   @Test
-  @DisplayName("a committed agency removal revokes the counsellor's open enquiry membership")
+  @DisplayName(
+      "after a committed agency removal, try the staged enquiry tasks and team revocations")
   void onConsultantLeftAgency_resolvesTheConsultantAndRevokesTheOpenEnquiries() {
     when(consultantRepository.findByIdAndDeleteDateIsNull(CONSULTANT_ID))
         .thenReturn(Optional.of(consultant));
 
     underTest.onConsultantLeftAgency(new ConsultantLeftAgencyEvent(CONSULTANT_ID, AGENCY_ID));
 
-    verify(agencyLateJoinerMembershipService)
-        .removeConsultantFromAgencyRooms(consultant, AGENCY_ID);
+    verify(agencyLateJoinerMembershipService).removeConsultantFromTeamRooms(consultant, AGENCY_ID);
   }
 
   @Test
@@ -119,7 +119,7 @@ class AgencyMembershipSyncListenerTest {
         .thenReturn(Optional.of(consultant));
     doThrow(new RuntimeException("synapse is down"))
         .when(agencyLateJoinerMembershipService)
-        .removeConsultantFromAgencyRooms(any(), anyLong());
+        .removeConsultantFromTeamRooms(any(), anyLong());
 
     assertDoesNotThrow(
         () ->

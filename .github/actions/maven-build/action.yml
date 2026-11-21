@@ -39,7 +39,7 @@ runs:
     shell: bash
     run: |
       test_status=0
-      ./mvnw -B test || test_status=$?
+      bash scripts/ci/run-maven-with-central-retry.sh -B test || test_status=$?
       echo "MAVEN_TEST_STATUS=${test_status}" >> "$GITHUB_ENV"
 
   - name: Prepare sanitized SigNoz unit report

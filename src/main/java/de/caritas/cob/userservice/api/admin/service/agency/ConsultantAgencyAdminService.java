@@ -23,6 +23,7 @@ import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantTopicRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
+import de.caritas.cob.userservice.api.service.session.AgencyEnquiryRevocations;
 import de.caritas.cob.userservice.api.service.session.ConsultantLeftAgencyEvent;
 import java.util.List;
 import java.util.Set;
@@ -43,6 +44,7 @@ import org.springframework.transaction.annotation.Transactional;
 public class ConsultantAgencyAdminService {
 
   private final @NonNull ConsultantAgencyRepository consultantAgencyRepository;
+  private final @NonNull AgencyEnquiryRevocations enquiryRevocations;
   private final @NonNull ConsultantRepository consultantRepository;
   private final @NonNull SessionRepository sessionRepository;
   private final @NonNull RemoveConsultantFromSessionRoomsService removeFromSessionRoomsService;
@@ -242,6 +244,7 @@ public class ConsultantAgencyAdminService {
   // One transaction: the relation and its centre's topic rows (#1264) go together or not at all.
   @Transactional
   public void markConsultantAgencyForDeletion(String consultantId, Long agencyId) {
+    consultantRepository.lockConsultant(consultantId);
     List<ConsultantAgency> consultantAgencies =
         this.consultantAgencyRepository.findByConsultantIdAndAgencyIdAndDeleteDateIsNull(
             consultantId, agencyId);
@@ -255,6 +258,7 @@ public class ConsultantAgencyAdminService {
 
   @Transactional
   public void markConsultantAgenciesForDeletion(String consultantId, List<Long> agencyIds) {
+    consultantRepository.lockConsultant(consultantId);
 
     agencyIds.forEach(
         agencyId -> {
@@ -270,6 +274,7 @@ public class ConsultantAgencyAdminService {
     consultantAgency.setDeleteDate(nowInUtc());
     this.consultantAgencyRepository.save(consultantAgency);
     deleteTopicsOfRemovedCentre(consultantAgency);
+    enquiryRevocations.stage(consultantAgency);
     announceDetachedAgency(consultantAgency);
   }
 

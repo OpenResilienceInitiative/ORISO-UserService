@@ -66,7 +66,7 @@ public class AgencyMembershipSyncListener {
         event.consultantId(),
         event.agencyId(),
         consultant ->
-            agencyLateJoinerMembershipService.removeConsultantFromAgencyRooms(
+            agencyLateJoinerMembershipService.removeConsultantFromTeamRooms(
                 consultant, event.agencyId()));
   }
 

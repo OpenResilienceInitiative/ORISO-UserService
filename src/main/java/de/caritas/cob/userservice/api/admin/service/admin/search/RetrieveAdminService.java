@@ -106,4 +106,8 @@ public class RetrieveAdminService {
   public List<Admin> findTenantAdminsByTenantId(Long tenantId) {
     return this.adminRepository.findByTenantIdAndType(tenantId, AdminType.TENANT);
   }
+
+  public List<AdminRepository.LoginEmailByTenant> findTenantAdminLoginEmails(List<Long> tenantIds) {
+    return adminRepository.findLoginEmailsByTenantIdsAndType(tenantIds, AdminType.TENANT);
+  }
 }

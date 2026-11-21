@@ -6,6 +6,22 @@
   "schedulerRegistrationMetric": "userservice.scheduler.registered",
   "components": [
     {
+      "id": "agency-holding-room-repair-guard",
+      "source": "src/main/java/de/caritas/cob/userservice/api/service/session/AgencyPreAssignmentRoomService.java",
+      "kind": "local-state",
+      "owner": "sessions-matrix",
+      "risk": "duplicate-side-effect",
+      "components": [
+        "repairsInFlight",
+        "lastRepairStart"
+      ],
+      "decision": "Retain locally: one holding-room repair per session at a time and a 30 s cooldown per replica (US#1737). Across replicas the session is re-read first, so a room another replica persisted is adopted; a parallel second room stays unpersisted. Externalize with a session row lock before scaling out.",
+      "signals": [
+        "userservice.replica.local_state"
+      ],
+      "status": "bounded"
+    },
+    {
       "id": "matrix-access-token-cache",
       "source": "src/main/java/de/caritas/cob/userservice/api/adapters/matrix/MatrixSynapseService.java",
       "kind": "local-state",
@@ -643,6 +659,22 @@
         "expireCoAccessSchedule"
       ],
       "decision": "The sweep uses a shared lease, technical tenant context and pessimistic row locks; database expiry is saved only after Matrix membership is reconciled.",
+      "signals": [
+        "userservice.scheduler.executions",
+        "userservice.scheduler.duration"
+      ],
+      "status": "bounded"
+    },
+    {
+      "id": "agency-enquiry-access-revocation",
+      "source": "src/main/java/de/caritas/cob/userservice/api/service/session/AgencyEnquiryRevocationScheduler.java",
+      "kind": "scheduler",
+      "owner": "sessions-matrix",
+      "risk": "correctness",
+      "components": [
+        "retryPending"
+      ],
+      "decision": "A dedicated one-worker executor runs short sweeps under a shared lease. Each pending task survives a restart and locks the counsellor and session before checking that an attempt still applies.",
       "signals": [
         "userservice.scheduler.executions",
         "userservice.scheduler.duration"

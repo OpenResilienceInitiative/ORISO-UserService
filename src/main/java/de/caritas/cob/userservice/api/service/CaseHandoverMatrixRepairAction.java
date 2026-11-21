@@ -11,5 +11,10 @@ public enum CaseHandoverMatrixRepairAction {
    */
   LEAVE,
   /** Retry the owner power raise of a takeover whose new owner could not post without it. */
-  POWER_RAISE
+  POWER_RAISE,
+  /**
+   * An active supervisor joins the client room read-only. Queued when Synapse rate-limited that
+   * invite while the supervisor was added (ORISO-Frontend#2386), so the add does not fail.
+   */
+  OBSERVE
 }

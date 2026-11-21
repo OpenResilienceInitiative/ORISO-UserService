@@ -68,7 +68,7 @@ jobs:
 
     - name: Verify Redis-backed cross-instance contracts
       run: >-
-        ./mvnw -B
+        bash scripts/ci/run-maven-with-central-retry.sh -B
         -Dtest=ConsultantActivityRegistryRedisIT,RedisOneTimeTokenStoreIT
         test
 
