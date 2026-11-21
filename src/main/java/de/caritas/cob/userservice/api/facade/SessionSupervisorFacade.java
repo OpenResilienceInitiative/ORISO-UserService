@@ -5,6 +5,7 @@ import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestExceptio
 import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
 import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException;
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
+import de.caritas.cob.userservice.api.exception.matrix.MatrixInviteRateLimitedException;
 import de.caritas.cob.userservice.api.exception.matrix.MatrixInviteUserException;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.model.Consultant;
@@ -292,8 +293,21 @@ public class SessionSupervisorFacade {
             consultantToken);
 
     // Invite supervisor to the CLIENT room as a read-only observer.
-    inviteSupervisorToClientRoom(
-        matrixRoomId, supervisorMatrixUserId, consultantToken, supervisorConsultant, session);
+    boolean invited =
+        inviteSupervisorToClientRoom(
+            matrixRoomId, supervisorMatrixUserId, consultantToken, supervisorConsultant, session);
+    if (!invited) {
+      // ORISO-Frontend#2386: Synapse rate-limited the invite (typically for minutes after the
+      // agency holding room invited every counsellor). The side room already works; the repair
+      // queue invites, powers and joins the supervisor once Synapse allows it, and only while
+      // they are still an active supervisor of this session.
+      matrixRepairService.enqueueSupervisorObservation(
+          matrixRoomId,
+          supervisorMatrixUserId,
+          session.getId(),
+          addedByConsultant.getMatrixUserId());
+      return sideRoomId;
+    }
 
     // Set supervisor power level to 10 (read-only observer)
     boolean powerLevelSet =
@@ -647,7 +661,11 @@ public class SessionSupervisorFacade {
     matrixSynapseService.joinRoom(roomId, userToken);
   }
 
-  private void inviteSupervisorToClientRoom(
+  /**
+   * @return {@code false} when Synapse rate-limited the invite, so the caller defers it; any other
+   *     failure throws
+   */
+  private boolean inviteSupervisorToClientRoom(
       String matrixRoomId,
       String supervisorMatrixUserId,
       String consultantToken,
@@ -660,6 +678,16 @@ public class SessionSupervisorFacade {
           supervisorConsultant.getUsername(),
           matrixRoomId,
           session.getId());
+      return true;
+    } catch (MatrixInviteRateLimitedException e) {
+      log.warn(
+          "Invite of supervisor {} into Matrix room {} for session {} is rate limited (retry after"
+              + " {} ms); deferring it to the repair queue",
+          supervisorConsultant.getUsername(),
+          matrixRoomId,
+          session.getId(),
+          e.getRetryAfterMs());
+      return false;
     } catch (MatrixInviteUserException e) {
       if (e.getMessage() != null && e.getMessage().contains("already in the room")) {
         log.info(
@@ -667,7 +695,7 @@ public class SessionSupervisorFacade {
             supervisorConsultant.getUsername(),
             matrixRoomId,
             session.getId());
-        return;
+        return true;
       }
       log.error(
           "Failed to invite supervisor {} to Matrix room {}: {}",

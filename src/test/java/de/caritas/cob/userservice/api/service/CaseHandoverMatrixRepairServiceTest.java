@@ -383,6 +383,116 @@ class CaseHandoverMatrixRepairServiceTest {
         .build();
   }
 
+  // --- ORISO-Frontend#2386: a supervisor whose client-room invite was rate-limited ---
+
+  private CaseHandoverMatrixRepairTask supervisorObservation() {
+    return CaseHandoverMatrixRepairTask.builder()
+        .id(12L)
+        .action(CaseHandoverMatrixRepairAction.OBSERVE)
+        .roomId("!client:matrix")
+        .memberId("@sup:matrix")
+        .sessionId(123L)
+        .requesterConsultantId(CaseHandoverMatrixRepairService.SUPERVISION_OBSERVE_REQUESTER)
+        .operatorId("@counsellor:matrix")
+        .build();
+  }
+
+  private void supervisorActive(Boolean first, Boolean... next) {
+    when(sessionSupervisorRepository
+            .existsBySessionIdAndIsActiveTrueAndSupervisorConsultantMatrixUserId(
+                123L, "@sup:matrix"))
+        .thenReturn(first, next);
+  }
+
+  @Test
+  void enqueueSupervisorObservationQueuesTheClientRoomInviteForTheSupervisor() {
+    service.enqueueSupervisorObservation(
+        "!client:matrix", "@sup:matrix", 123L, "@counsellor:matrix");
+
+    var captor = ArgumentCaptor.forClass(CaseHandoverMatrixRepairTask.class);
+    verify(repository).saveAndFlush(captor.capture());
+    assertThat(captor.getValue().getAction()).isEqualTo(CaseHandoverMatrixRepairAction.OBSERVE);
+    assertThat(captor.getValue().getRoomId()).isEqualTo("!client:matrix");
+    assertThat(captor.getValue().getMemberId()).isEqualTo("@sup:matrix");
+    assertThat(captor.getValue().getOperatorId()).isEqualTo("@counsellor:matrix");
+    assertThat(captor.getValue().getSessionId()).isEqualTo(123L);
+    assertThat(captor.getValue().getRequesterConsultantId())
+        .isEqualTo(CaseHandoverMatrixRepairService.SUPERVISION_OBSERVE_REQUESTER);
+  }
+
+  @Test
+  void observationInvitesAnActiveSupervisorReadOnlyAndJoinsThem() throws Exception {
+    var task = supervisorObservation();
+    when(repository.findById(12L)).thenReturn(Optional.of(task));
+    when(repository.findByIdForUpdate(12L)).thenReturn(Optional.of(task));
+    supervisorActive(true, true);
+    when(matrixSynapseService.loginAsUserAccessToken("@counsellor:matrix")).thenReturn("tok-op");
+    when(matrixSynapseService.loginAsUserAccessToken("@sup:matrix")).thenReturn("tok-sup");
+    when(matrixSynapseService.setUserPowerLevel("!client:matrix", "@sup:matrix", 10, "tok-op"))
+        .thenReturn(true);
+    when(matrixSynapseService.joinRoom("!client:matrix", "tok-sup")).thenReturn(true);
+
+    service.process(12L);
+
+    verify(matrixSynapseService).inviteUserToRoom("!client:matrix", "@sup:matrix", "tok-op");
+    verify(matrixSynapseService).setUserPowerLevel("!client:matrix", "@sup:matrix", 10, "tok-op");
+    verify(matrixSynapseService).joinRoom("!client:matrix", "tok-sup");
+    verify(repository).delete(task);
+  }
+
+  @Test
+  void observationOfASupervisorWhoIsNoLongerActiveInvitesNobody() throws Exception {
+    var task = supervisorObservation();
+    when(repository.findById(12L)).thenReturn(Optional.of(task));
+    when(repository.findByIdForUpdate(12L)).thenReturn(Optional.of(task));
+    supervisorActive(false);
+
+    service.process(12L);
+
+    verify(matrixSynapseService, org.mockito.Mockito.never()).inviteUserToRoom(any(), any(), any());
+    verify(matrixSynapseService, org.mockito.Mockito.never()).joinRoom(any(), any());
+    verify(repository).delete(task);
+  }
+
+  @Test
+  void observationStaysQueuedWhileMatrixStillRateLimitsTheInvite() throws Exception {
+    var task = supervisorObservation();
+    when(repository.findById(12L)).thenReturn(Optional.of(task));
+    when(repository.findByIdForUpdate(12L)).thenReturn(Optional.of(task));
+    supervisorActive(true);
+    when(matrixSynapseService.loginAsUserAccessToken("@counsellor:matrix")).thenReturn("tok-op");
+    when(matrixSynapseService.inviteUserToRoom("!client:matrix", "@sup:matrix", "tok-op"))
+        .thenThrow(
+            new de.caritas.cob.userservice.api.exception.matrix.MatrixInviteRateLimitedException(
+                "rate limited", 269823L));
+
+    service.process(12L);
+
+    verify(matrixSynapseService, org.mockito.Mockito.never()).joinRoom(any(), any());
+    verify(repository, org.mockito.Mockito.never()).delete(any());
+    assertThat(task.getAttemptCount()).isEqualTo(1);
+  }
+
+  @Test
+  void observationLeavesAgainWhenTheSupervisorWasRemovedDuringTheJoin() throws Exception {
+    var task = supervisorObservation();
+    when(repository.findById(12L)).thenReturn(Optional.of(task));
+    when(repository.findByIdForUpdate(12L)).thenReturn(Optional.of(task));
+    supervisorActive(true, false);
+    when(matrixSynapseService.loginAsUserAccessToken("@counsellor:matrix")).thenReturn("tok-op");
+    when(matrixSynapseService.loginAsUserAccessToken("@sup:matrix")).thenReturn("tok-sup");
+    when(matrixSynapseService.joinRoom("!client:matrix", "tok-sup")).thenReturn(true);
+    when(matrixSynapseService.getRoomMembers("!client:matrix"))
+        .thenReturn(Optional.of(java.util.List.of("@sup:matrix")));
+    when(matrixSynapseService.leaveRoom("!client:matrix", "tok-sup")).thenReturn(true);
+
+    service.process(12L);
+
+    // Never keep a client-room membership on the strength of the check before the join.
+    verify(matrixSynapseService).leaveRoom("!client:matrix", "tok-sup");
+    verify(repository).delete(task);
+  }
+
   @Test
   void cancelPendingRemovalsDeletesTheSupervisionKicksOfThatSupervisorAndSession() {
     service.cancelPendingRemovals(123L, "@sup:matrix");

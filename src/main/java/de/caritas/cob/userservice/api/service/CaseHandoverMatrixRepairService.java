@@ -61,6 +61,12 @@ public class CaseHandoverMatrixRepairService {
   /** Not a consultant id: a supervision kick is never cancelled by a Case Handover grant. */
   public static final String SUPERVISION_REMOVAL_REQUESTER = "supervision-removal";
 
+  /** Not a consultant id: marks the deferred client-room invite of an active supervisor. */
+  public static final String SUPERVISION_OBSERVE_REQUESTER = "supervision-observe";
+
+  /** Read-only observer power, the same level the supervisor add path sets. */
+  static final int SUPERVISOR_OBSERVER_POWER_LEVEL = 10;
+
   @Value("${case.handover.matrix-repair.max-attempts:100}")
   private int maxAttempts;
 
@@ -182,6 +188,25 @@ public class CaseHandoverMatrixRepairService {
   public void cancelPendingRemovals(Long sessionId, String memberId) {
     repository.deleteByActionAndRequesterConsultantIdAndSessionIdAndMemberId(
         CaseHandoverMatrixRepairAction.REMOVE, SUPERVISION_REMOVAL_REQUESTER, sessionId, memberId);
+  }
+
+  /**
+   * ORISO-Frontend#2386: Synapse rate-limited the supervisor's invite into the client room (it does
+   * so for minutes after the agency holding room invited every counsellor). The supervisor stays
+   * added; this task invites them read-only and joins them once Synapse allows it, and only while
+   * they are still an active supervisor of the session.
+   *
+   * @param operatorId Matrix user who may invite into the client room (the adding counsellor)
+   */
+  public void enqueueSupervisorObservation(
+      String clientRoomId, String supervisorMatrixId, Long sessionId, String operatorId) {
+    enqueue(
+        CaseHandoverMatrixRepairAction.OBSERVE,
+        clientRoomId,
+        supervisorMatrixId,
+        operatorId,
+        sessionId,
+        SUPERVISION_OBSERVE_REQUESTER);
   }
 
   public void enqueueJoin(
@@ -440,6 +465,9 @@ public class CaseHandoverMatrixRepairService {
       if (task.getAction() == CaseHandoverMatrixRepairAction.POWER_RAISE) {
         return raisePowerWhileStillOwner(task);
       }
+      if (task.getAction() == CaseHandoverMatrixRepairAction.OBSERVE) {
+        return observeWhileStillSupervising(task);
+      }
       // A LEAVE ends the counsellor's own access; a co-access grant of an earlier time is no
       // reason to keep them in the room of a Träger they left.
       boolean leave = task.getAction() == CaseHandoverMatrixRepairAction.LEAVE;
@@ -472,6 +500,7 @@ public class CaseHandoverMatrixRepairService {
         case POWER_RESTORE ->
             throw new IllegalStateException("Power restore uses the session lock");
         case POWER_RAISE -> throw new IllegalStateException("Power raise is handled above");
+        case OBSERVE -> throw new IllegalStateException("Observation is handled above");
       };
     } catch (RuntimeException exception) {
       log.warn(
@@ -492,6 +521,53 @@ public class CaseHandoverMatrixRepairService {
         task.getSessionId(),
         task.getRequesterConsultantId(),
         () -> matrixSynapseService.makeRoomAdmin(task.getRoomId(), task.getMemberId()));
+  }
+
+  /**
+   * The deferred client-room access of an active supervisor: invite (as the adding counsellor),
+   * read-only power, join (as the supervisor). A supervisor removed meanwhile is not invited; one
+   * removed during the join leaves again, so membership never outlives the supervision row.
+   */
+  private boolean observeWhileStillSupervising(CaseHandoverMatrixRepairTask task) {
+    if (!supervisorIsActive(task)) {
+      return true;
+    }
+    String operatorToken =
+        isBlank(task.getOperatorId())
+            ? null
+            : matrixSynapseService.loginAsUserAccessToken(task.getOperatorId());
+    if (isBlank(operatorToken)) {
+      return false;
+    }
+    try {
+      matrixSynapseService.inviteUserToRoom(task.getRoomId(), task.getMemberId(), operatorToken);
+    } catch (
+        de.caritas.cob.userservice.api.exception.matrix.MatrixInviteRateLimitedException
+            stillLimited) {
+      return false;
+    } catch (
+        de.caritas.cob.userservice.api.exception.matrix.MatrixInviteUserException inviteFailed) {
+      // "already in the room" or an earlier invite that is still open: joining below decides.
+      log.debug(
+          "Supervisor observation invite skipped: {}", inviteFailed.getClass().getSimpleName());
+    }
+    if (!matrixSynapseService.setUserPowerLevel(
+        task.getRoomId(), task.getMemberId(), SUPERVISOR_OBSERVER_POWER_LEVEL, operatorToken)) {
+      log.warn(
+          "Read-only power for the supervisor of session {} could not be set; continuing",
+          task.getSessionId());
+    }
+    String memberToken = matrixSynapseService.loginAsUserAccessToken(task.getMemberId());
+    if (isBlank(memberToken) || !matrixSynapseService.joinRoom(task.getRoomId(), memberToken)) {
+      return false;
+    }
+    return supervisorIsActive(task) || leaveOrConfirmAbsent(task, memberToken);
+  }
+
+  private boolean supervisorIsActive(CaseHandoverMatrixRepairTask task) {
+    return sessionSupervisorRepository
+        .existsBySessionIdAndIsActiveTrueAndSupervisorConsultantMatrixUserId(
+            task.getSessionId(), task.getMemberId());
   }
 
   private boolean reconcileJoin(

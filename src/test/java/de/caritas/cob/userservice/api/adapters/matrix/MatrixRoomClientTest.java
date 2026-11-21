@@ -516,6 +516,34 @@ class MatrixRoomClientTest {
   }
 
   @Test
+  void inviteUserToRoom_ShouldReportTheRateLimit_WhenEveryAttemptIsRateLimited() {
+    when(restTemplate.postForEntity(
+            eq(uri(API_URL + "/_matrix/client/r0/rooms/" + ENCODED_ROOM_ID + "/invite")),
+            org.mockito.ArgumentMatchers.any(HttpEntity.class),
+            eq(MatrixInviteUserResponseDTO.class)))
+        .thenThrow(
+            HttpClientErrorException.create(
+                HttpStatus.TOO_MANY_REQUESTS,
+                "Too Many Requests",
+                null,
+                "{\"errcode\":\"M_LIMIT_EXCEEDED\",\"retry_after_ms\":5}"
+                    .getBytes(StandardCharsets.UTF_8),
+                StandardCharsets.UTF_8));
+
+    // ORISO-Frontend#2386: the caller must be able to tell "try again later" from "refused", so
+    // it can hand the invite to the background instead of dropping what depends on it.
+    assertThatThrownBy(() -> matrixRoomClient.inviteUserToRoom(ROOM_ID, USER_ID, ACCESS_TOKEN))
+        .isInstanceOfSatisfying(
+            de.caritas.cob.userservice.api.exception.matrix.MatrixInviteRateLimitedException.class,
+            ex -> assertThat(ex.getRetryAfterMs()).isEqualTo(5L));
+    verify(restTemplate, times(3))
+        .postForEntity(
+            eq(uri(API_URL + "/_matrix/client/r0/rooms/" + ENCODED_ROOM_ID + "/invite")),
+            org.mockito.ArgumentMatchers.any(HttpEntity.class),
+            eq(MatrixInviteUserResponseDTO.class));
+  }
+
+  @Test
   void inviteUserToRoomOnce_ShouldReportUncappedServerDelayWithoutRetrying() {
     when(restTemplate.postForEntity(
             eq(uri(API_URL + "/_matrix/client/r0/rooms/" + ENCODED_ROOM_ID + "/invite")),

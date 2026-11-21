@@ -506,6 +506,15 @@ public class MatrixRoomClient {
             roomId,
             ex.getStatusCode(),
             ex.getResponseBodyAsString());
+        if (isRateLimited(ex)) {
+          // Still limited after the short retries: say so, with the server's own delay, so the
+          // caller can defer the invite instead of failing what depends on it (FE#2386).
+          throw new MatrixInviteRateLimitedException(
+              String.format(
+                  "Could not invite user (%s) to room (%s) in Matrix: %s",
+                  userId, roomId, ex.getResponseBodyAsString()),
+              serverRetryAfterMs(ex));
+        }
         throw new MatrixInviteUserException(
             String.format(
                 "Could not invite user (%s) to room (%s) in Matrix: %s",
