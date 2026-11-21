@@ -1080,6 +1080,84 @@ class MatrixSynapseServiceTest {
   }
 
   @Test
+  void loginAsUserAccessToken_reusesTheTokenUntilShortlyBeforeSynapseExpiresIt() {
+    // Every Synapse admin login writes an access_tokens row that is never removed; an active
+    // counsellor caused ~50 logins per minute on Dev before the token was reused.
+    var now = new java.util.concurrent.atomic.AtomicLong(1_000_000L);
+    var service = matrixSynapseServiceWithClock(now::get);
+    var loginUri =
+        URI.create(MATRIX_BASE_URL + "/_synapse/admin/v1/users/%40alice%3Aexample.org/login");
+    stubAdminPasswordLoginOnly();
+    when(restTemplate.postForEntity(eq(loginUri), any(HttpEntity.class), eq(Map.class)))
+        .thenReturn(ResponseEntity.ok(Map.of("access_token", "alice-1")))
+        .thenReturn(ResponseEntity.ok(Map.of("access_token", "alice-2")));
+
+    assertThat(service.loginAsUserAccessToken("@alice:example.org")).isEqualTo("alice-1");
+    now.addAndGet(7 * 60 * 1000L);
+    assertThat(service.loginAsUserAccessToken("@alice:example.org")).isEqualTo("alice-1");
+    verify(restTemplate, org.mockito.Mockito.times(1))
+        .postForEntity(eq(loginUri), any(HttpEntity.class), eq(Map.class));
+
+    // 10-minute Synapse validity minus the 2-minute margin: a fresh token after 8 minutes.
+    now.addAndGet(60 * 1000L);
+    assertThat(service.loginAsUserAccessToken("@alice:example.org")).isEqualTo("alice-2");
+    verify(restTemplate, org.mockito.Mockito.times(2))
+        .postForEntity(eq(loginUri), any(HttpEntity.class), eq(Map.class));
+  }
+
+  @Test
+  void loginAsUserAccessToken_isNotCachedWhenSynapseAnswersWithoutAToken() {
+    var service = matrixSynapseService();
+    var loginUri =
+        URI.create(MATRIX_BASE_URL + "/_synapse/admin/v1/users/%40alice%3Aexample.org/login");
+    stubAdminPasswordLoginOnly();
+    when(restTemplate.postForEntity(eq(loginUri), any(HttpEntity.class), eq(Map.class)))
+        .thenReturn(ResponseEntity.ok(Map.of()))
+        .thenReturn(ResponseEntity.ok(Map.of("access_token", "alice-1")));
+
+    assertThat(service.loginAsUserAccessToken("@alice:example.org")).isNull();
+    assertThat(service.loginAsUserAccessToken("@alice:example.org")).isEqualTo("alice-1");
+  }
+
+  @Test
+  void evictUserAccessTokens_forcesAFreshImpersonationLogin() {
+    var service = matrixSynapseService();
+    var loginUri =
+        URI.create(MATRIX_BASE_URL + "/_synapse/admin/v1/users/%40alice%3Aexample.org/login");
+    stubAdminPasswordLoginOnly();
+    when(restTemplate.postForEntity(eq(loginUri), any(HttpEntity.class), eq(Map.class)))
+        .thenReturn(ResponseEntity.ok(Map.of("access_token", "alice-1")))
+        .thenReturn(ResponseEntity.ok(Map.of("access_token", "alice-2")));
+
+    assertThat(service.loginAsUserAccessToken("@alice:example.org")).isEqualTo("alice-1");
+    service.evictUserAccessTokens("@alice:example.org");
+    assertThat(service.loginAsUserAccessToken("@alice:example.org")).isEqualTo("alice-2");
+  }
+
+  @Test
+  void adminPasswordLogin_sendsAStableDeviceIdSoSynapseDoesNotCreateADevicePerLogin() {
+    // Without device_id Synapse created a new device for the technical admin on every
+    // 50-minute token refresh (311 devices on Dev).
+    var loginUri =
+        URI.create(MATRIX_BASE_URL + "/_synapse/admin/v1/users/%40alice%3Aexample.org/login");
+    stubAdminPasswordLoginOnly();
+    when(restTemplate.postForEntity(eq(loginUri), any(HttpEntity.class), eq(Map.class)))
+        .thenReturn(ResponseEntity.ok(Map.of("access_token", "alice-1")));
+    var loginCaptor = ArgumentCaptor.forClass(HttpEntity.class);
+
+    matrixSynapseService().loginAsUserAccessToken("@alice:example.org");
+
+    verify(restTemplate)
+        .postForEntity(
+            eq(MATRIX_BASE_URL + "/_matrix/client/r0/login"), loginCaptor.capture(), eq(Map.class));
+    var login = (MatrixLoginRequestDTO) loginCaptor.getValue().getBody();
+    assertThat(login.getDeviceId())
+        .isEqualTo(MatrixSynapseService.adminDeviceId())
+        .startsWith(MatrixSynapseService.ADMIN_DEVICE_ID_PREFIX)
+        .matches("[A-Za-z0-9._=-]{1,255}");
+  }
+
+  @Test
   void loginAsUser_httpClientError_returnsNull() {
     // Impersonation failures must degrade gracefully for the messaging UI.
     var expectedUri =

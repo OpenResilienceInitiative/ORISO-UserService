@@ -21,6 +21,7 @@ import de.caritas.cob.userservice.api.service.ChatService;
 import de.caritas.cob.userservice.api.service.ConsultantService;
 import de.caritas.cob.userservice.api.service.chat.GroupChatRoleService;
 import de.caritas.cob.userservice.api.service.chat.GroupCounsellingDpaPolicy;
+import de.caritas.cob.userservice.api.service.chat.GroupWaitingRoomService;
 import de.caritas.cob.userservice.api.service.chat.RecurringGroupStopCoordinator;
 import de.caritas.cob.userservice.api.service.matrix.GroupChatMembershipService;
 import de.caritas.cob.userservice.api.service.user.UserService;
@@ -45,6 +46,7 @@ public class JoinAndLeaveChatFacade {
   private final GroupCounsellingDpaPolicy groupCounsellingDpaPolicy;
   private final MatrixSynapseService matrixSynapseService;
   private final RecurringGroupStopCoordinator recurringStops;
+  private final GroupWaitingRoomService groupWaitingRoom;
 
   /**
    * Join a chat.
@@ -61,15 +63,16 @@ public class JoinAndLeaveChatFacade {
           chat,
           locked -> {
             this.chatPermissionVerifier.verifyPermissionForChat(locked);
-            joinCurrentOccurrence(locked, authenticatedUser);
+            joinCurrentOccurrence(locked, authenticatedUser, chatId);
             return null;
           });
       return;
     }
-    joinCurrentOccurrence(chat, authenticatedUser);
+    joinCurrentOccurrence(chat, authenticatedUser, chatId);
   }
 
-  private void joinCurrentOccurrence(Chat chat, AuthenticatedUser authenticatedUser) {
+  private void joinCurrentOccurrence(
+      Chat chat, AuthenticatedUser authenticatedUser, Long requestedChatId) {
     requireMatrixRoom(chat);
     String matrixUserId = retrieveMatrixUserId(authenticatedUser);
     if (!isBlank(matrixUserId)
@@ -91,6 +94,7 @@ public class JoinAndLeaveChatFacade {
       if (joinedMembers.contains(matrixUserId)) {
         return;
       }
+      requireAdmissionToCallCircle(chat, authenticatedUser, requestedChatId);
       groupCounsellingDpaPolicy.requireAuthorizedEnrolment(chat, matrixUserId);
     }
     if (isBlank(matrixUserId)) {
@@ -107,6 +111,23 @@ public class JoinAndLeaveChatFacade {
           String.format(
               "User with id %s could not join the Matrix group chat.",
               authenticatedUser.getUserId()));
+    }
+  }
+
+  /**
+   * ORISO-UserService#1747: in an audio or video self-help circle an advice seeker knocks and a
+   * moderator lets them in (ORISO-Frontend#2237). The client only joins after that, but the server
+   * has to hold the line too: otherwise anyone with the invitation link could call {@code /join}
+   * and skip the waiting room. Counsellors and people already in the room are not affected.
+   */
+  private void requireAdmissionToCallCircle(
+      Chat chat, AuthenticatedUser authenticatedUser, Long requestedChatId) {
+    if (authenticatedUser.isConsultant() || !GroupWaitingRoomService.requiresAdmission(chat)) {
+      return;
+    }
+    if (!groupWaitingRoom.isAdmitted(requestedChatId, authenticatedUser.getUserId())) {
+      throw new CustomValidationHttpStatusException(
+          HttpStatusExceptionReason.GROUP_ADMISSION_REQUIRED, HttpStatus.FORBIDDEN);
     }
   }
 
