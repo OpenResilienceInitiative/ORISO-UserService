@@ -247,11 +247,22 @@ public class SessionSupervisorFacade {
     // immediately.
     // A removal queued earlier must not kick the supervisor who is authorised again from now on.
     matrixRepairService.cancelPendingRemovals(sessionId, supervisorMatrixUserId);
-    String sideRoomId =
+    ProvisionedRooms rooms =
         provisionSupervisorRooms(
             session, addedByConsultant, supervisorConsultant, supervisorMatrixUserId, matrixRoomId);
     SessionSupervisor saved =
-        sessionSupervisorRepository.save(builder.isActive(true).matrixRoomId(sideRoomId).build());
+        sessionSupervisorRepository.save(
+            builder.isActive(true).matrixRoomId(rooms.sideRoomId()).build());
+    if (rooms.clientRoomInviteDeferred()) {
+      // ORISO-Frontend#2386: Synapse rate-limited the client-room invite. Queue it only once the
+      // active supervision row is committed, so the repair worker can never see the task first and
+      // complete it as "supervisor no longer active".
+      String operatorMatrixUserId = addedByConsultant.getMatrixUserId();
+      afterCommit(
+          () ->
+              matrixRepairService.enqueueSupervisorObservation(
+                  matrixRoomId, supervisorMatrixUserId, sessionId, operatorMatrixUserId));
+    }
     log.info(
         "Added supervisor {} to session {} by consultant {}",
         supervisorConsultant.getUsername(),
@@ -267,7 +278,27 @@ public class SessionSupervisorFacade {
    *
    * @return the supervision side room id the supervisor was placed in
    */
-  private String provisionSupervisorRooms(
+  /** The side room the supervisor was placed in, and whether the client-room invite is deferred. */
+  private record ProvisionedRooms(String sideRoomId, boolean clientRoomInviteDeferred) {}
+
+  /** Runs after the surrounding transaction commits, or at once when there is none. */
+  private static void afterCommit(Runnable action) {
+    if (!org.springframework.transaction.support.TransactionSynchronizationManager
+        .isSynchronizationActive()) {
+      action.run();
+      return;
+    }
+    org.springframework.transaction.support.TransactionSynchronizationManager
+        .registerSynchronization(
+            new org.springframework.transaction.support.TransactionSynchronization() {
+              @Override
+              public void afterCommit() {
+                action.run();
+              }
+            });
+  }
+
+  private ProvisionedRooms provisionSupervisorRooms(
       Session session,
       Consultant addedByConsultant,
       Consultant supervisorConsultant,
@@ -298,15 +329,9 @@ public class SessionSupervisorFacade {
             matrixRoomId, supervisorMatrixUserId, consultantToken, supervisorConsultant, session);
     if (!invited) {
       // ORISO-Frontend#2386: Synapse rate-limited the invite (typically for minutes after the
-      // agency holding room invited every counsellor). The side room already works; the repair
-      // queue invites, powers and joins the supervisor once Synapse allows it, and only while
-      // they are still an active supervisor of this session.
-      matrixRepairService.enqueueSupervisorObservation(
-          matrixRoomId,
-          supervisorMatrixUserId,
-          session.getId(),
-          addedByConsultant.getMatrixUserId());
-      return sideRoomId;
+      // agency holding room invited every counsellor). The side room already works; the caller
+      // queues the client-room invite once the supervision row is committed.
+      return new ProvisionedRooms(sideRoomId, true);
     }
 
     // Set supervisor power level to 10 (read-only observer)
@@ -336,7 +361,7 @@ public class SessionSupervisorFacade {
             matrixRoomId);
       }
     }
-    return sideRoomId;
+    return new ProvisionedRooms(sideRoomId, false);
   }
 
   /**
