@@ -216,6 +216,11 @@ class SessionServiceTest {
       rejectionReadAccess;
 
   @Mock private SessionOwnershipService sessionOwnershipService;
+
+  @Mock
+  private de.caritas.cob.userservice.api.port.out.DirectInvitationMemberRepository
+      directInvitationMembers;
+
   @Mock private AgencyService agencyService;
   @Mock private ConsultantService consultantService;
   @Mock private ConsultingTypeManager consultingTypeManager;
