@@ -225,8 +225,8 @@ class SessionServiceAccessTest {
   void getSessionsByUserAndSessionIds_ShouldOpenSharedConversation_WhenAskerIsConfirmedMember() {
     var session = sessionOwnedBy(OWNER_ID);
     when(sessionRepository.findAllById(Set.of(SESSION_ID))).thenReturn(java.util.List.of(session));
-    when(directInvitationMembers.findBySessionIdAndUserId(SESSION_ID, OTHER_USER_ID))
-        .thenReturn(Optional.of(memberRow(null, null)));
+    when(directInvitationMembers.findByUserIdAndSessionIdIn(OTHER_USER_ID, Set.of(SESSION_ID)))
+        .thenReturn(java.util.List.of(memberRow(null, null)));
 
     var result =
         sessionService.getSessionsByUserAndSessionIds(
@@ -241,8 +241,8 @@ class SessionServiceAccessTest {
     var session = sessionOwnedBy(OWNER_ID);
     when(sessionRepository.findByMatrixRoomIdIn(Set.of("!room:matrix")))
         .thenReturn(java.util.List.of(session));
-    when(directInvitationMembers.findBySessionIdAndUserId(SESSION_ID, OTHER_USER_ID))
-        .thenReturn(Optional.of(memberRow(null, null)));
+    when(directInvitationMembers.findByUserIdAndSessionIdIn(OTHER_USER_ID, Set.of(SESSION_ID)))
+        .thenReturn(java.util.List.of(memberRow(null, null)));
 
     var result =
         sessionService.getSessionsByUserAndRoomIds(
@@ -255,8 +255,8 @@ class SessionServiceAccessTest {
   void getSessionsByUserAndSessionIds_ShouldRefuse_WhenAskerIsNeitherOwnerNorMember() {
     var session = sessionOwnedBy(OWNER_ID);
     when(sessionRepository.findAllById(Set.of(SESSION_ID))).thenReturn(java.util.List.of(session));
-    when(directInvitationMembers.findBySessionIdAndUserId(SESSION_ID, OTHER_USER_ID))
-        .thenReturn(Optional.empty());
+    when(directInvitationMembers.findByUserIdAndSessionIdIn(OTHER_USER_ID, Set.of(SESSION_ID)))
+        .thenReturn(java.util.List.of());
 
     assertThrows(
         ForbiddenException.class,
@@ -269,8 +269,8 @@ class SessionServiceAccessTest {
   void getSessionsByUserAndSessionIds_ShouldRefuse_WhenMembershipIsBeingRemoved() {
     var session = sessionOwnedBy(OWNER_ID);
     when(sessionRepository.findAllById(Set.of(SESSION_ID))).thenReturn(java.util.List.of(session));
-    when(directInvitationMembers.findBySessionIdAndUserId(SESSION_ID, OTHER_USER_ID))
-        .thenReturn(Optional.of(memberRow(java.time.LocalDateTime.now(), null)));
+    when(directInvitationMembers.findByUserIdAndSessionIdIn(OTHER_USER_ID, Set.of(SESSION_ID)))
+        .thenReturn(java.util.List.of(memberRow(java.time.LocalDateTime.now(), null)));
 
     assertThrows(
         ForbiddenException.class,
@@ -283,8 +283,8 @@ class SessionServiceAccessTest {
   void getSessionsByUserAndSessionIds_ShouldRefuse_WhenMemberWasRemoved() {
     var session = sessionOwnedBy(OWNER_ID);
     when(sessionRepository.findAllById(Set.of(SESSION_ID))).thenReturn(java.util.List.of(session));
-    when(directInvitationMembers.findBySessionIdAndUserId(SESSION_ID, OTHER_USER_ID))
-        .thenReturn(Optional.of(memberRow(null, java.time.LocalDateTime.now())));
+    when(directInvitationMembers.findByUserIdAndSessionIdIn(OTHER_USER_ID, Set.of(SESSION_ID)))
+        .thenReturn(java.util.List.of(memberRow(null, java.time.LocalDateTime.now())));
 
     assertThrows(
         ForbiddenException.class,
@@ -298,8 +298,8 @@ class SessionServiceAccessTest {
     var session = sessionOwnedBy(OWNER_ID);
     when(sessionRepository.findById(SESSION_ID)).thenReturn(Optional.of(session));
     lenient()
-        .when(directInvitationMembers.findBySessionIdAndUserId(SESSION_ID, OTHER_USER_ID))
-        .thenReturn(Optional.of(memberRow(null, null)));
+        .when(directInvitationMembers.findByUserIdAndSessionIdIn(OTHER_USER_ID, Set.of(SESSION_ID)))
+        .thenReturn(java.util.List.of(memberRow(null, null)));
 
     assertThrows(
         ForbiddenException.class,
@@ -328,6 +328,71 @@ class SessionServiceAccessTest {
         .thenReturn(java.util.List.of());
 
     assertEquals(0, sessionService.getInvitationMemberSessionsForUserId(OTHER_USER_ID).size());
+  }
+
+  @Test
+  void getSessionsByUserAndSessionIds_ShouldRefuse_WhenTheJoinIsStillPending() {
+    var session = sessionOwnedBy(OWNER_ID);
+    var pending = memberRow(null, null);
+    pending.setJoinAttempt("attempt-1");
+    when(sessionRepository.findAllById(Set.of(SESSION_ID))).thenReturn(java.util.List.of(session));
+    when(directInvitationMembers.findByUserIdAndSessionIdIn(OTHER_USER_ID, Set.of(SESSION_ID)))
+        .thenReturn(java.util.List.of(pending));
+
+    assertThrows(
+        ForbiddenException.class,
+        () ->
+            sessionService.getSessionsByUserAndSessionIds(
+                OTHER_USER_ID, Set.of(SESSION_ID), Set.of(UserRole.USER.getValue())));
+  }
+
+  // #1747 review: a later person must never receive the first person's identity or postcode.
+  @Test
+  void aMemberNeverReceivesTheOwnersIdentityOrPostcode() {
+    var session = sessionOwnedBy(OWNER_ID);
+    session.setPostcode("10965");
+    when(sessionRepository.findAllById(Set.of(SESSION_ID))).thenReturn(java.util.List.of(session));
+    when(sessionRepository.findByMatrixRoomIdIn(Set.of("!room:matrix")))
+        .thenReturn(java.util.List.of(session));
+    when(directInvitationMembers.findByUserIdAndSessionIdIn(OTHER_USER_ID, Set.of(SESSION_ID)))
+        .thenReturn(java.util.List.of(memberRow(null, null)));
+    when(directInvitationMembers.findMemberSessionIdsByUserId(OTHER_USER_ID))
+        .thenReturn(java.util.List.of(SESSION_ID));
+
+    var askerRoles = Set.of(UserRole.USER.getValue());
+    var views =
+        java.util.List.of(
+            sessionService
+                .getSessionsByUserAndSessionIds(OTHER_USER_ID, Set.of(SESSION_ID), askerRoles)
+                .get(0),
+            sessionService
+                .getSessionsByUserAndRoomIds(OTHER_USER_ID, Set.of("!room:matrix"), askerRoles)
+                .get(0),
+            sessionService.getInvitationMemberSessionsForUserId(OTHER_USER_ID).get(0));
+
+    for (var view : views) {
+      assertEquals(SESSION_ID, view.getSession().getId());
+      org.junit.jupiter.api.Assertions.assertNull(view.getUser(), "no owner alias for a member");
+      org.junit.jupiter.api.Assertions.assertNull(
+          view.getSession().getPostcode(), "no owner postcode for a member");
+    }
+  }
+
+  @Test
+  void theOwnerStillReceivesTheirOwnIdentityAndPostcode() {
+    var session = sessionOwnedBy(OWNER_ID);
+    session.setPostcode("10965");
+    when(sessionRepository.findAllById(Set.of(SESSION_ID))).thenReturn(java.util.List.of(session));
+
+    var view =
+        sessionService
+            .getSessionsByUserAndSessionIds(
+                OWNER_ID, Set.of(SESSION_ID), Set.of(UserRole.USER.getValue()))
+            .get(0);
+
+    assertEquals(OWNER_ID, view.getUser().getId());
+    assertEquals("10965", view.getSession().getPostcode());
+    org.mockito.Mockito.verifyNoInteractions(directInvitationMembers);
   }
 
   private de.caritas.cob.userservice.api.model.DirectInvitationMember memberRow(

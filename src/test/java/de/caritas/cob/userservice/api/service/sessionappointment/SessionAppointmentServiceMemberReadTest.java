@@ -65,8 +65,20 @@ class SessionAppointmentServiceMemberReadTest {
   void list_ShouldAnswer_WhenCallerIsConfirmedMemberOfTheSharedConversation() {
     when(invitationMembers.findBySessionIdAndUserId(SESSION_ID, MEMBER_ID))
         .thenReturn(Optional.of(member(null)));
+    var appointment = new de.caritas.cob.userservice.api.model.SessionAppointment();
+    appointment.setId(java.util.UUID.fromString("56707845-9ba3-47f8-9836-f47090b02d65"));
+    appointment.setSession(sessions.findById(SESSION_ID).orElseThrow());
+    appointment.setStatus(de.caritas.cob.userservice.api.model.SessionAppointment.Status.SCHEDULED);
+    appointment.setStartTime(java.time.Instant.parse("2026-11-21T20:50:00Z"));
+    appointment.setEndTime(java.time.Instant.parse("2026-11-21T21:50:00Z"));
+    when(appointments.findNewestOfSession(eq(SESSION_ID), any())).thenReturn(List.of(appointment));
 
-    assertThat(service.list(SESSION_ID)).isEmpty();
+    var listed = service.list(SESSION_ID);
+
+    assertThat(listed).hasSize(1);
+    assertThat(listed.get(0).getId()).isEqualTo(appointment.getId());
+    assertThat(listed.get(0).getSessionId()).isEqualTo(SESSION_ID);
+    assertThat(listed.get(0).getStartTime().toInstant()).isEqualTo(appointment.getStartTime());
   }
 
   @Test

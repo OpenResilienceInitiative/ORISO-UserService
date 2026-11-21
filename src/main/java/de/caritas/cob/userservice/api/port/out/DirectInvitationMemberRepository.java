@@ -41,6 +41,10 @@ public interface DirectInvitationMemberRepository
           + " AND m.removedAt IS NULL AND m.revokeDueAt IS NULL AND m.joinAttempt IS NULL")
   List<Long> findMemberSessionIdsByUserId(@Param("userId") String userId);
 
+  /** A person's invitation rows in the given conversations, read once per request (#1747). */
+  List<DirectInvitationMember> findByUserIdAndSessionIdIn(
+      String userId, java.util.Collection<Long> sessionIds);
+
   /**
    * Everybody still in a conversation through an invitation, as a locking read: on MariaDB it reads
    * the latest committed rows, not the snapshot of the transaction's first read, so a deletion sees
