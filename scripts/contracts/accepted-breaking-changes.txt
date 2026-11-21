@@ -8,7 +8,7 @@
 # Reviewers confirm every entry in the pull request that adds it.
 # An entry can be deleted once the change has reached every long-lived branch.
 
-# ORISO-UserService#1697: the public guest-creation endpoint had no caller in any ORISO repository.
+# ADR-038 / ORISO-UserService#1697: the public guest-creation endpoint had no caller in any ORISO repository.
 POST /conversations/askers/anonymous/new api path removed without deprecation
 # ADR-032 / ORISO-UserService#1650: the cal.com notification lookup is removed.
 GET /users/notifications api path removed without deprecation
