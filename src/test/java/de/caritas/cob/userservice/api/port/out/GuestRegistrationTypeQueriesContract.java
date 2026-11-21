@@ -70,7 +70,9 @@ abstract class GuestRegistrationTypeQueriesContract {
         session(
             user(new UsernameTranscoder().encodeUsername("eule_mia_1203")),
             ANONYMOUS,
-            "00000",
+            // Not 00000: only the registration type marks this guest, so a postcode-only
+            // predicate would drop it.
+            "12345",
             null);
     counterGuest = session(user("anon_7"), ANONYMOUS, "00000", null);
     timestampGuest = session(user("Anonymous-1700000000000"), REGISTERED, "00000", null);
@@ -133,7 +135,13 @@ abstract class GuestRegistrationTypeQueriesContract {
   /** The deletion seeds from registration type ANONYMOUS: animal and counter guests alike. */
   @Test
   void theDeletion_Should_pickUpAnimalGuestsExactlyLikeCounterGuests() {
-    for (var session : List.of(animalGuest, animalGuestWithoutModality, counterGuest)) {
+    // The regular asker is DONE too, so only the registration type keeps it out.
+    for (var session :
+        List.of(
+            animalGuest,
+            animalGuestWithoutModality,
+            counterGuest,
+            regularAskerWithGuestLookingName)) {
       session.setStatus(DONE);
       sessionRepository.save(session);
     }

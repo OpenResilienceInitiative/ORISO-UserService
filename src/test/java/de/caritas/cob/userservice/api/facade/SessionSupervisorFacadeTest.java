@@ -411,6 +411,24 @@ class SessionSupervisorFacadeTest {
   }
 
   @Test
+  void addSupervisor_ShouldAcceptRegisteredSessionWithAnonymousLookingUsername() throws Exception {
+    // ORISO-UserService#1697: a guest is decided by the stored session, never by the name.
+    session.setRegistrationType(Session.RegistrationType.REGISTERED);
+    session.setPostcode("12345");
+    User registeredUser = new User();
+    registeredUser.setUserId("registered-user-id");
+    registeredUser.setUsername("Anonymous-4711");
+    session.setUser(registeredUser);
+
+    SessionSupervisor saved =
+        facade.addSupervisor(
+            SESSION_ID, SUPERVISOR_ID, addedBy, "CLINICAL_OVERSIGHT", "stuck case");
+
+    assertThat(saved.getIsActive()).isTrue();
+    verify(matrixSynapseService).inviteUserToRoom(eq(CLIENT_ROOM), eq(SUPERVISOR_MXID), any());
+  }
+
+  @Test
   void addSupervisor_Should_computeNotRequiredConsent_for_peerSupport() {
     SessionSupervisor saved =
         facade.addSupervisor(
