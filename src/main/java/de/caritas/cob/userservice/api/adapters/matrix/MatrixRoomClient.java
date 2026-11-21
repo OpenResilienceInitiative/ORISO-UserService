@@ -11,6 +11,7 @@ import de.caritas.cob.userservice.api.adapters.matrix.dto.MatrixInviteUserRespon
 import de.caritas.cob.userservice.api.config.observability.LiveChatDiagnosticMetrics;
 import de.caritas.cob.userservice.api.config.observability.LiveChatDiagnosticMetrics.Outcome;
 import de.caritas.cob.userservice.api.exception.matrix.MatrixCreateRoomException;
+import de.caritas.cob.userservice.api.exception.matrix.MatrixCreateRoomRateLimitedException;
 import de.caritas.cob.userservice.api.exception.matrix.MatrixInviteRateLimitedException;
 import de.caritas.cob.userservice.api.exception.matrix.MatrixInviteUserException;
 import java.net.URI;
@@ -526,6 +527,13 @@ public class MatrixRoomClient {
           roomName,
           ex.getStatusCode(),
           ex.getResponseBodyAsString());
+      if (isRateLimited(ex)) {
+        // US#1737: say "try again later" with the server's delay, so a holding room is retried.
+        throw new MatrixCreateRoomRateLimitedException(
+            String.format(
+                "Could not create room (%s) in Matrix: %s", roomName, ex.getResponseBodyAsString()),
+            serverRetryAfterMs(ex));
+      }
       throw new MatrixCreateRoomException(
           String.format(
               "Could not create room (%s) in Matrix: %s", roomName, ex.getResponseBodyAsString()));
@@ -597,6 +605,15 @@ public class MatrixRoomClient {
             roomId,
             ex.getStatusCode(),
             ex.getResponseBodyAsString());
+        if (isRateLimited(ex)) {
+          // Still limited after the short retries: say so, with the server's own delay, so the
+          // caller can defer the invite instead of failing what depends on it (FE#2386).
+          throw new MatrixInviteRateLimitedException(
+              String.format(
+                  "Could not invite user (%s) to room (%s) in Matrix: %s",
+                  userId, roomId, ex.getResponseBodyAsString()),
+              serverRetryAfterMs(ex));
+        }
         throw new MatrixInviteUserException(
             String.format(
                 "Could not invite user (%s) to room (%s) in Matrix: %s",
@@ -1031,6 +1048,84 @@ public class MatrixRoomClient {
    *
    * @return true when the user is invited or already in the room, false otherwise
    */
+  /** Outcome of {@link #inviteObserverQuietly}. */
+  public enum QuietInvite {
+    /** Invited now, or already invited or joined. */
+    INVITED,
+    /** Synapse answered 429; try again later. */
+    RATE_LIMITED,
+    /** Refused or failed for another reason. */
+    REFUSED
+  }
+
+  /**
+   * Like {@link #inviteUserQuietly}, but tells a rate limit apart from a refusal, so a repair task
+   * can stay queued instead of continuing without the invite (ORISO-Frontend#2386). Logs neither
+   * the user, the room nor the provider body.
+   */
+  public QuietInvite inviteObserverQuietly(String roomId, String userId, String accessToken) {
+    try {
+      var headers = getClientHttpHeaders(accessToken);
+      headers.setContentType(MediaType.APPLICATION_JSON);
+      var inviteRequest = new MatrixInviteUserRequestDTO();
+      inviteRequest.setUserId(userId);
+      var response =
+          restTemplate.postForEntity(
+              buildUrl(ENDPOINT_INVITE_USER, Map.of("roomId", roomId)),
+              new HttpEntity<>(inviteRequest, headers),
+              Map.class);
+      return response.getStatusCode().is2xxSuccessful() ? QuietInvite.INVITED : QuietInvite.REFUSED;
+    } catch (HttpClientErrorException ex) {
+      if (isRateLimited(ex)) {
+        log.warn("Matrix invite into a room was rate limited");
+        return QuietInvite.RATE_LIMITED;
+      }
+      if (ex.getStatusCode().value() == 403
+          && ex.getResponseBodyAsString().contains("already in the room")) {
+        return QuietInvite.INVITED;
+      }
+      log.warn("Matrix invite into a room was refused with status {}", ex.getStatusCode());
+      return QuietInvite.REFUSED;
+    } catch (Exception ex) {
+      log.warn("Matrix invite into a room failed ({})", ex.getClass().getSimpleName());
+      return QuietInvite.REFUSED;
+    }
+  }
+
+  /**
+   * {@link #setUserPowerLevel} for repair queues: same update, but the log names neither the user,
+   * the room nor the provider body (ORISO-Frontend#2386).
+   */
+  public boolean setUserPowerLevelQuietly(
+      String roomId, String userId, int powerLevel, String accessToken) {
+    try {
+      putUserPowerLevel(roomId, userId, powerLevel, accessToken);
+      return true;
+    } catch (HttpClientErrorException ex) {
+      log.warn("Matrix power level could not be set (status {})", ex.getStatusCode());
+      return false;
+    } catch (Exception ex) {
+      log.warn("Matrix power level could not be set ({})", ex.getClass().getSimpleName());
+      return false;
+    }
+  }
+
+  private void putUserPowerLevel(String roomId, String userId, int powerLevel, String accessToken) {
+    var url = buildUrl(ENDPOINT_POWER_LEVELS, Map.of("roomId", roomId));
+    HttpHeaders headers = getClientHttpHeaders(accessToken);
+    ResponseEntity<Map> current =
+        restTemplate.exchange(url, HttpMethod.GET, new HttpEntity<Void>(headers), Map.class);
+    if (current.getBody() == null) {
+      throw new IllegalStateException("power levels unreadable");
+    }
+    @SuppressWarnings("unchecked")
+    Map<String, Object> powerLevels = new HashMap<>(current.getBody());
+    Map<String, Object> updatedUsers = new HashMap<>(extractUsers(powerLevels));
+    updatedUsers.put(userId, powerLevel);
+    powerLevels.put("users", updatedUsers);
+    restTemplate.put(url, new HttpEntity<>(powerLevels, headers));
+  }
+
   public boolean inviteUserQuietly(String roomId, String userId, String accessToken) {
     try {
       var headers = getClientHttpHeaders(accessToken);
