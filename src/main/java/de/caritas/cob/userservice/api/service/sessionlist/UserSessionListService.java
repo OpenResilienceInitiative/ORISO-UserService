@@ -39,7 +39,18 @@ public class UserSessionListService {
   private SessionTopicEnrichmentService sessionTopicEnrichmentService;
 
   public List<UserSessionResponseDTO> retrieveSessionsForAuthenticatedUser(String userId) {
-    var sessions = sessionService.getSessionsForUserId(userId);
+    var sessions = new ArrayList<>(sessionService.getSessionsForUserId(userId));
+    // #1747: a later person of an appointment invitation is a member, not the owner.
+    var ownSessionIds =
+        sessions.stream()
+            .map(UserSessionResponseDTO::getSession)
+            .filter(java.util.Objects::nonNull)
+            .map(session -> session.getId())
+            .collect(Collectors.toSet());
+    sessionService.getInvitationMemberSessionsForUserId(userId).stream()
+        .filter(member -> member.getSession() != null)
+        .filter(member -> !ownSessionIds.contains(member.getSession().getId()))
+        .forEach(sessions::add);
     var chats = chatService.getChatsForUserId(userId);
 
     var mergedSessions = mergeUserSessionsAndChats(userId, sessions, chats);
