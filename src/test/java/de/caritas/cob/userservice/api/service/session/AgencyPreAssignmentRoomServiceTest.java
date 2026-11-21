@@ -287,6 +287,63 @@ class AgencyPreAssignmentRoomServiceTest {
   }
 
   @Test
+  @DisplayName("US#1737: the repair provisions the missing room of an open enquiry")
+  void repairHoldingRoom_provisionsTheMissingRoom() throws Exception {
+    when(sessionService.getSession(SESSION_ID)).thenReturn(Optional.of(new Session()));
+    stubHappyPathUntilRoomCreation();
+    when(sessionRoomGateway.loginAsUser(USER_MATRIX_ID)).thenReturn(USER_TOKEN);
+    when(sessionRoomGateway.joinRoom(NEW_ROOM_ID, USER_TOKEN)).thenReturn(true);
+
+    underTest.repairHoldingRoom(session, user);
+
+    assertEquals(NEW_ROOM_ID, session.getMatrixRoomId());
+    verify(sessionService).saveSession(session);
+  }
+
+  @Test
+  @DisplayName("US#1737: the repair adopts a room provisioned meanwhile instead of a second one")
+  void repairHoldingRoom_adoptsARoomProvisionedMeanwhile() throws Exception {
+    var current = new Session();
+    current.setMatrixRoomId("!already:matrix");
+    when(sessionService.getSession(SESSION_ID)).thenReturn(Optional.of(current));
+
+    underTest.repairHoldingRoom(session, user);
+
+    assertEquals("!already:matrix", session.getMatrixRoomId());
+    verify(sessionRoomGateway, never()).createRoom(anyString(), anyString(), anyString());
+    verify(sessionService, never()).saveSession(any());
+  }
+
+  @Test
+  @DisplayName("US#1737: a second repair of the same session within the cooldown does nothing")
+  void repairHoldingRoom_isNotRepeatedWithinTheCooldown() throws Exception {
+    when(sessionService.getSession(SESSION_ID)).thenReturn(Optional.of(new Session()));
+    when(matrixCredentialClient.fetchMatrixCredentials(AGENCY_ID))
+        .thenReturn(Optional.of(validCredentials()));
+    when(sessionRoomGateway.loginAsUser(AGENCY_MATRIX_ID)).thenReturn(AGENCY_TOKEN);
+    when(sessionRoomGateway.createRoom(anyString(), anyString(), eq(AGENCY_TOKEN)))
+        .thenThrow(new MatrixCreateRoomException("refused"));
+    underTest.clock =
+        java.time.Clock.fixed(
+            java.time.Instant.parse("2026-11-21T10:00:00Z"), java.time.ZoneOffset.UTC);
+
+    underTest.repairHoldingRoom(session, user);
+    underTest.repairHoldingRoom(session, user);
+
+    verify(sessionRoomGateway, times(1)).createRoom(anyString(), anyString(), eq(AGENCY_TOKEN));
+
+    underTest.clock =
+        java.time.Clock.fixed(
+            java.time.Instant.parse("2026-11-21T10:00:00Z")
+                .plus(AgencyPreAssignmentRoomService.REPAIR_COOLDOWN)
+                .plusSeconds(1),
+            java.time.ZoneOffset.UTC);
+    underTest.repairHoldingRoom(session, user);
+
+    verify(sessionRoomGateway, times(2)).createRoom(anyString(), anyString(), eq(AGENCY_TOKEN));
+  }
+
+  @Test
   @DisplayName("US#1737: a refused room creation that is not a rate limit is not retried")
   void ensureHoldingRoom_doesNotRetryARefusedRoomCreation() throws Exception {
     when(matrixCredentialClient.fetchMatrixCredentials(AGENCY_ID))

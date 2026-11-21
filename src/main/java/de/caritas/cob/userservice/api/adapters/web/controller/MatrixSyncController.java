@@ -55,7 +55,8 @@ public class MatrixSyncController {
       if (session.getMatrixRoomId() == null && isOwnOpenEnquiry(session)) {
         // US#1737: a rate-limited room creation left this enquiry without its agency holding
         // room. The asker opening it is the repair point: provision it now (idempotent).
-        agencyPreAssignmentRoomService.ensureHoldingRoom(session, session.getUser());
+        // Guarded: one repair per session at a time, with a cooldown (see repairHoldingRoom).
+        agencyPreAssignmentRoomService.repairHoldingRoom(session, session.getUser());
       }
 
       if (session.getMatrixRoomId() == null) {

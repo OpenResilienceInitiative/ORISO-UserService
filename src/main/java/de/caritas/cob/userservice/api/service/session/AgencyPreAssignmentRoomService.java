@@ -45,12 +45,56 @@ public class AgencyPreAssignmentRoomService {
 
   static final long MAX_WAIT_BEFORE_CREATE_ROOM_RETRY_MS = 5_000L;
 
+  /** A repair for the same session is not started again within this time (US#1737). */
+  static final Duration REPAIR_COOLDOWN = Duration.ofSeconds(30);
+
+  private final java.util.Set<Long> repairsInFlight =
+      java.util.concurrent.ConcurrentHashMap.newKeySet();
+  private final java.util.Map<Long, java.time.Instant> lastRepairStart =
+      new java.util.concurrent.ConcurrentHashMap<>();
+  java.time.Clock clock = java.time.Clock.systemUTC();
+
   private final @NonNull AgencyMatrixCredentialClient matrixCredentialClient;
   private final @NonNull SessionRoomGateway sessionRoomGateway;
   private final @NonNull SessionService sessionService;
   private final @NonNull AgencySilentMembershipService agencySilentMembershipService;
   private final @NonNull AgencyDepartmentMembershipBackfill departmentMembershipBackfill;
   private final @NonNull MatrixRateLimitPause rateLimitPause;
+
+  /**
+   * US#1737: provisions the holding room of an open enquiry that a rate-limited creation left
+   * without one, when its advice seeker opens it. Guarded so the asker cannot multiply rooms or
+   * Matrix calls: one repair per session at a time on this instance, no new start within {@link
+   * #REPAIR_COOLDOWN}, and the session is re-read first so a room provisioned meanwhile (another
+   * request or pod) is adopted instead of creating a second one.
+   */
+  public void repairHoldingRoom(Session session, User user) {
+    if (session == null || session.getId() == null || session.getMatrixRoomId() != null) {
+      return;
+    }
+    Long sessionId = session.getId();
+    var now = clock.instant();
+    lastRepairStart.values().removeIf(started -> started.plus(REPAIR_COOLDOWN).isBefore(now));
+    var last = lastRepairStart.get(sessionId);
+    if (last != null && last.plus(REPAIR_COOLDOWN).isAfter(now)) {
+      return;
+    }
+    if (!repairsInFlight.add(sessionId)) {
+      return;
+    }
+    try {
+      lastRepairStart.put(sessionId, now);
+      var current = sessionService.getSession(sessionId);
+      if (current.isPresent() && current.get().getMatrixRoomId() != null) {
+        session.setMatrixRoomId(current.get().getMatrixRoomId());
+        return;
+      }
+      log.info("Repairing the missing agency holding room of session {}", sessionId);
+      ensureHoldingRoom(session, user);
+    } finally {
+      repairsInFlight.remove(sessionId);
+    }
+  }
 
   public void ensureHoldingRoom(Session session, User user) {
     if (session == null || user == null) {

@@ -297,12 +297,12 @@ class MatrixSyncControllerTest {
               return null;
             })
         .when(agencyPreAssignmentRoomService)
-        .ensureHoldingRoom(enquiry, enquiry.getUser());
+        .repairHoldingRoom(enquiry, enquiry.getUser());
 
     var response = controller.registerRoomForSync(SESSION_ID);
 
     assertEquals(HttpStatus.OK, response.getStatusCode());
-    verify(agencyPreAssignmentRoomService).ensureHoldingRoom(enquiry, enquiry.getUser());
+    verify(agencyPreAssignmentRoomService).repairHoldingRoom(enquiry, enquiry.getUser());
     verify(matrixEventListenerService).registerRoom(eq(SESSION_ID), eq(MATRIX_ROOM_ID), anySet());
   }
 
@@ -316,7 +316,7 @@ class MatrixSyncControllerTest {
     var response = controller.registerRoomForSync(SESSION_ID);
 
     assertEquals(HttpStatus.NOT_FOUND, response.getStatusCode());
-    verify(agencyPreAssignmentRoomService).ensureHoldingRoom(enquiry, enquiry.getUser());
+    verify(agencyPreAssignmentRoomService).repairHoldingRoom(enquiry, enquiry.getUser());
     verifyNoInteractions(matrixEventListenerService);
   }
 
