@@ -59,6 +59,8 @@ public class ChatReCreator {
   private final SessionRepository sessionRepository;
   private final GroupChatMatrixCleanupService matrixCleanup;
   private final MatrixIdentifierRedactor redactor;
+  private final de.caritas.cob.userservice.api.service.matrix.GroupModeratorPowerService
+      moderatorPower;
 
   /**
    * Resets the given chat to its next occurrence: the new Matrix room id becomes the canonical room
@@ -137,6 +139,8 @@ public class ChatReCreator {
       }
     }
     reconcileNextRoom(chat, oldRoomId, newRoomId, humanMembers);
+    // The new room starts with its creator as the only moderator (ORISO-Frontend#2229).
+    moderatorPower.grantModeratorsOf(chat, newRoomId);
     if (ChatConverter.conversationTypeOf(chat) == ConversationType.SELF_HELP) {
       roomHistory.markMembersCarried(
           chat.getId(),

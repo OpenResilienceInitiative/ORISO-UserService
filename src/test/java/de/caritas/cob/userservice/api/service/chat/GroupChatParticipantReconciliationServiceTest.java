@@ -1,6 +1,7 @@
 package de.caritas.cob.userservice.api.service.chat;
 
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
@@ -38,6 +39,9 @@ class GroupChatParticipantReconciliationServiceTest {
 
   @Mock private MembersOnlyRevocation revocation;
 
+  @Mock
+  private de.caritas.cob.userservice.api.service.matrix.GroupModeratorPowerService moderatorPower;
+
   private GroupChatParticipantReconciliationService service;
   private Chat series;
   private GroupChatParticipant owner;
@@ -54,7 +58,8 @@ class GroupChatParticipantReconciliationServiceTest {
             consultantMembership,
             groupPolicy,
             matrixCleanup,
-            revocation);
+            revocation,
+            moderatorPower);
     Mockito.lenient()
         .when(membershipService.removeLeavingMemberFromRoomAndConfirm(Mockito.any(), Mockito.any()))
         .thenReturn(true);
@@ -223,7 +228,8 @@ class GroupChatParticipantReconciliationServiceTest {
             consultantMembership,
             admission,
             matrixCleanup,
-            revocation);
+            revocation,
+            moderatorPower);
 
     org.junit.jupiter.api.Assertions.assertSame(
         refusal,
@@ -255,7 +261,8 @@ class GroupChatParticipantReconciliationServiceTest {
             consultantMembership,
             admission,
             matrixCleanup,
-            revocation);
+            revocation,
+            moderatorPower);
 
     guarded.reconcile(series, List.of("returning", "newcomer"));
 
@@ -271,6 +278,69 @@ class GroupChatParticipantReconciliationServiceTest {
 
     verifyNoInteractions(
         participantRepository, consultantRepository, membershipService, consultantMembership);
+  }
+
+  /** ORISO-Frontend#2229: every selected colleague is a co-moderator and may blur passages. */
+  @Test
+  void reconcile_ShouldRaiseEverySelectedColleagueToTheMatrixModeratorLevel() {
+    var returning = participant(7L, "returning", ParticipantRole.PARTICIPANT);
+    var newcomer = consultant("newcomer", "@newcomer:matrix");
+    Mockito.lenient().when(series.getMatrixRoomId()).thenReturn("!group:matrix");
+    when(participantRepository.findBySeriesIdForUpdate(42L)).thenReturn(List.of(owner, returning));
+    var returningAccount = consultant("returning", "@returning:matrix");
+    when(consultantRepository.findByIdAndDeleteDateIsNull("returning"))
+        .thenReturn(Optional.of(returningAccount));
+    when(consultantRepository.findByIdAndDeleteDateIsNull("newcomer"))
+        .thenReturn(Optional.of(newcomer));
+    when(membershipService.addMemberToRoom(series, "@returning:matrix")).thenReturn(true);
+    when(membershipService.addMemberToRoom(series, "@newcomer:matrix")).thenReturn(true);
+
+    service.reconcile(series, List.of("owner", "returning", "newcomer"));
+
+    var order = Mockito.inOrder(participantRepository, moderatorPower);
+    order.verify(participantRepository, Mockito.atLeastOnce()).save(Mockito.any());
+    order
+        .verify(moderatorPower)
+        .grantModerators(
+            "!group:matrix", "@owner:matrix", List.of("@returning:matrix", "@newcomer:matrix"));
+  }
+
+  @Test
+  void reconcile_ShouldTakeTheMatrixModeratorLevelFromADeselectedCoModeratorBeforeRemoval() {
+    var removed = participant(7L, "removed", ParticipantRole.CO_MODERATOR);
+    when(participantRepository.findBySeriesIdForUpdate(42L)).thenReturn(List.of(owner, removed));
+    var removedAccount = consultant("removed", "@removed:matrix");
+    when(consultantRepository.findById("removed")).thenReturn(Optional.of(removedAccount));
+
+    service.reconcile(series, List.of());
+
+    var order = Mockito.inOrder(moderatorPower, membershipService);
+    order.verify(moderatorPower).reconcileOrFail(series, "@removed:matrix", null);
+    order
+        .verify(membershipService)
+        .removeLeavingMemberFromRoomAndConfirm(series, "@removed:matrix");
+  }
+
+  @Test
+  void reconcile_ShouldKeepADeselectedCoModeratorWhenMatrixKeepsTheModeratorLevel() {
+    var removed = participant(7L, "removed", ParticipantRole.CO_MODERATOR);
+    when(participantRepository.findBySeriesIdForUpdate(42L)).thenReturn(List.of(owner, removed));
+    var removedAccount = consultant("removed", "@removed:matrix");
+    when(consultantRepository.findById("removed")).thenReturn(Optional.of(removedAccount));
+    var refused =
+        new de.caritas.cob.userservice.api.exception.httpresponses
+            .CustomValidationHttpStatusException(
+            de.caritas.cob.userservice.api.exception.httpresponses.customheader
+                .HttpStatusExceptionReason.INTERNAL_CHAT_MEMBERSHIP_FAILED,
+            org.springframework.http.HttpStatus.BAD_GATEWAY);
+    doThrow(refused).when(moderatorPower).reconcileOrFail(series, "@removed:matrix", null);
+
+    var thrown = assertThrows(RuntimeException.class, () -> service.reconcile(series, List.of()));
+
+    org.junit.jupiter.api.Assertions.assertSame(refused, thrown);
+    verify(membershipService, never())
+        .removeLeavingMemberFromRoomAndConfirm(series, "@removed:matrix");
+    verify(participantRepository, never()).delete(removed);
   }
 
   @Test

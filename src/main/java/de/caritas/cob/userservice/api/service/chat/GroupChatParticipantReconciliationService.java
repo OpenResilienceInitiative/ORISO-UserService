@@ -34,6 +34,8 @@ public class GroupChatParticipantReconciliationService {
   private final GroupCounsellingDpaPolicy groupCounsellingDpaPolicy;
   private final GroupChatMatrixCleanupService matrixCleanup;
   private final MembersOnlyRevocation revocation;
+  private final de.caritas.cob.userservice.api.service.matrix.GroupModeratorPowerService
+      moderatorPower;
 
   /**
    * Reconciles co-moderators only when the client explicitly supplies {@code consultantIds}. A null
@@ -96,6 +98,7 @@ public class GroupChatParticipantReconciliationService {
         new GroupChatMatrixCleanupService.GroupOwner(
             series.getId(), ownerId, series.getChatOwner().getTenantId());
     var cleanupTasks = new java.util.ArrayList<Long>();
+    var selectedMatrixUserIds = new java.util.ArrayList<String>();
     try {
       // Existing database rows do not prove Matrix membership: retry the join too.
       // Complete joins before removals; journal only confirmed new remote access.
@@ -119,6 +122,7 @@ public class GroupChatParticipantReconciliationService {
           throw new InternalServerErrorException(
               "Consultant " + consultantId + " could not join the Matrix room");
         }
+        selectedMatrixUserIds.add(matrixUserId);
       }
 
       for (var consultantId : desiredIds) {
@@ -154,6 +158,9 @@ public class GroupChatParticipantReconciliationService {
                       () -> consultantRepository.findById(existing.getConsultantId()))
                   .map(Consultant::getMatrixUserId)
                   .orElse(null);
+          // Deselecting a co-moderator is a demotion. It does not finish while Matrix still
+          // holds their moderator level.
+          moderatorPower.reconcileOrFail(series, leavingMatrixUserId, null);
           if (leavingMatrixUserId != null
               && !leavingMatrixUserId.isBlank()
               && !membershipService.removeLeavingMemberFromRoomAndConfirm(
@@ -164,6 +171,10 @@ public class GroupChatParticipantReconciliationService {
           participantRepository.delete(existing);
         }
       }
+      // Every selected colleague is a co-moderator (or owner) and may blur passages
+      // (ORISO-Frontend#2229).
+      moderatorPower.grantModerators(
+          series.getMatrixRoomId(), series.getChatOwner().getMatrixUserId(), selectedMatrixUserIds);
       cleanupTasks.forEach(matrixCleanup::clear);
     } catch (RuntimeException failure) {
       cleanupTasks.forEach(matrixCleanup::compensate);
