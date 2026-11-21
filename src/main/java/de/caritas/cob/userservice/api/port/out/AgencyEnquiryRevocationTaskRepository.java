@@ -8,6 +8,7 @@ import java.util.Optional;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Lock;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 
 public interface AgencyEnquiryRevocationTaskRepository
@@ -26,6 +27,22 @@ public interface AgencyEnquiryRevocationTaskRepository
       WHERE t.retryAt <= :now ORDER BY t.retryAt, t.id
       """)
   List<Long> dueIds(LocalDateTime now, Pageable limit);
+
+  @Modifying
+  @Query(
+      """
+      UPDATE AgencyEnquiryRevocationTask t SET t.retryAt = :now
+      WHERE t.roomDecisionId = :decisionId AND t.retryAt = :waitingSince
+      """)
+  void releaseRoomDecisionTasks(Long decisionId, LocalDateTime waitingSince, LocalDateTime now);
+
+  @Modifying
+  @Query(
+      """
+      DELETE FROM AgencyEnquiryRevocationTask t
+      WHERE t.roomDecisionId = :decisionId AND t.retryAt = :waitingSince
+      """)
+  void discardRoomDecisionTasks(Long decisionId, LocalDateTime waitingSince);
 
   @Lock(LockModeType.PESSIMISTIC_WRITE)
   @Query("SELECT t FROM AgencyEnquiryRevocationTask t WHERE t.id = :id")

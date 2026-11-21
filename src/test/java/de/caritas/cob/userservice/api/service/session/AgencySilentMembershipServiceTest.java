@@ -27,6 +27,8 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -213,6 +215,8 @@ class AgencySilentMembershipServiceTest {
     assertEquals(54, fanOut.deferred().size());
     assertEquals("c10", fanOut.deferred().get(0).getId());
     assertEquals(3_300L, fanOut.retryAfterMs());
+    assertEquals(10, fanOut.contacts().size());
+    assertEquals("c9", fanOut.contacts().getLast().consultantId());
     // Eleven invite attempts, not 64 — and never the retrying invite that sleeps on the request.
     verify(sessionRoomGateway, org.mockito.Mockito.times(11))
         .inviteUserOnce(eq(ROOM_ID), anyString(), eq(AGENCY_TOKEN));
@@ -236,7 +240,34 @@ class AgencySilentMembershipServiceTest {
     assertEquals(0, fanOut.joined());
     assertEquals(consultants, fanOut.deferred());
     assertEquals(0L, fanOut.retryAfterMs());
+    assertEquals(List.of(), fanOut.contacts());
     verifyNoInteractions(sessionRoomGateway);
+  }
+
+  @ParameterizedTest
+  @ValueSource(booleans = {false, true})
+  void ambiguousMembershipStillCarriesTheContactForReconciliation(boolean inviteFailed)
+      throws Exception {
+    var consultant = consultantWithAccount("a", "@a:example.org");
+    when(consultantRepository.findByConsultantAgenciesAgencyIdAndDeleteDateIsNull(AGENCY_ID))
+        .thenReturn(List.of(consultant));
+    if (inviteFailed) {
+      doThrow(new MatrixInviteUserException("indeterminate invite"))
+          .when(sessionRoomGateway)
+          .inviteUserOnce(ROOM_ID, "@a:example.org", AGENCY_TOKEN);
+    }
+    when(sessionRoomGateway.loginAsUser("@a:example.org")).thenReturn("consultant-token");
+    when(sessionRoomGateway.joinRoom(ROOM_ID, "consultant-token")).thenReturn(false);
+
+    var fanOut =
+        underTest.joinAgencyConsultantsWithoutWaiting(
+            AGENCY_ID, ROOM_ID, AGENCY_TOKEN, Duration.ofSeconds(10));
+
+    assertEquals(0, fanOut.joined());
+    assertEquals(List.of(consultant), fanOut.deferred());
+    assertEquals(
+        List.of(new AgencySilentMembershipService.InitialRoomContact("a", "@a:example.org")),
+        fanOut.contacts());
   }
 
   @Test

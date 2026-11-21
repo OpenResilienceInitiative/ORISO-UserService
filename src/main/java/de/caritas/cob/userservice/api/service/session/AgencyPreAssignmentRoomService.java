@@ -56,6 +56,7 @@ public class AgencyPreAssignmentRoomService {
 
   private final @NonNull AgencyMatrixCredentialClient matrixCredentialClient;
   private final @NonNull SessionRoomGateway sessionRoomGateway;
+  private final @NonNull AgencyEnquiryRoomPublication publication;
   private final @NonNull SessionService sessionService;
   private final @NonNull AgencySilentMembershipService agencySilentMembershipService;
   private final @NonNull AgencyDepartmentMembershipBackfill departmentMembershipBackfill;
@@ -191,8 +192,24 @@ public class AgencyPreAssignmentRoomService {
         return;
       }
 
-      session.setMatrixRoomId(roomId);
-      sessionService.saveSession(session);
+      var binding = publication.publish(session, roomId, departmentFanOut.contacts());
+      if (binding.isEmpty()) {
+        log.warn(
+            "Matrix holding room {} was not bound to session {} because publication was refused",
+            roomId,
+            session.getId());
+        return;
+      }
+      var confirmedRoomId = binding.get();
+      session.setMatrixRoomId(confirmedRoomId);
+      if (!roomId.equals(confirmedRoomId)) {
+        log.warn(
+            "Matrix holding room {} was not bound to session {} because publication returned confirmed room {}",
+            roomId,
+            session.getId(),
+            confirmedRoomId);
+        return;
+      }
 
       log.info(
           "Configured agency holding Matrix room {} for session {} (agency {}).",

@@ -292,6 +292,10 @@ public class AssignEnquiryFacade {
     var assignment =
         sessionService.updateConsultantAndStatusForSession(session, consultant, IN_PROGRESS);
 
+    if (replacesHoldingRoom) {
+      roomRetirements.startExternalWork(session, assignment);
+    }
+
     // Create Matrix room and invite user
     Runnable createReplacement =
         () -> createNewMatrixRoomOrFail(session, consultant, assignment, replacesHoldingRoom);
@@ -444,9 +448,6 @@ public class AssignEnquiryFacade {
                   agencyCredentials.getMatrixUserId(),
                   existingRoomId);
             }
-
-            // DON'T overwrite session.matrixRoomId - keep existing room ID
-            // No need to save session since matrixRoomId hasn't changed
           } catch (Exception e) {
             if (e instanceof InternalServerErrorException) {
               throw (InternalServerErrorException) e;
@@ -457,8 +458,11 @@ public class AssignEnquiryFacade {
                 session.getId(),
                 e.getMessage(),
                 e);
-            // Fall back to creating new room
+            // Fall back to creating new room.
             createReplacement.run();
+          }
+          if (replacesHoldingRoom && existingRoomId.equals(session.getMatrixRoomId())) {
+            roomRetirements.reuseRoom(session, assignment);
           }
         } else {
           // NO EXISTING ROOM - Create new room (backward compatibility)

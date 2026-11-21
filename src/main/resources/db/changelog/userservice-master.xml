@@ -306,4 +306,7 @@
   <include file="db/changelog/changeset/20261118_agency_enquiry_room_retirement_1692/changeSet.xml"/>
   <include file="db/changelog/changeset/20261119_support_room_lifecycle_904/changeSet.xml"/>
   <include file="db/changelog/changeset/20261119_journey_storage_1689/changeSet.xml"/>
+  <include file="db/changelog/changeset/20261119_agency_enquiry_binding_index_1692/changeSet.xml"/>
+  <include file="db/changelog/changeset/20261119_agency_enquiry_room_decision_1692/changeSet.xml"/>
+  <include file="db/changelog/changeset/20261119_agency_enquiry_room_preparation_1692/changeSet.xml"/>
 </databaseChangeLog>
