@@ -2,52 +2,71 @@ package de.caritas.cob.userservice.api.admin.service.user.anonymous;
 
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.CONSULTANT;
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.USER;
-import static org.hamcrest.CoreMatchers.is;
-import static org.hamcrest.CoreMatchers.sameInstance;
-import static org.hamcrest.MatcherAssert.assertThat;
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
-import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
-import static org.springframework.test.util.ReflectionTestUtils.getField;
-import static org.springframework.test.util.ReflectionTestUtils.setField;
 
 import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
 import de.caritas.cob.userservice.api.conversation.service.user.anonymous.AnonymousUsernameRegistry;
+import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
+import de.caritas.cob.userservice.api.exception.httpresponses.ConflictException;
+import de.caritas.cob.userservice.api.exception.httpresponses.ServiceUnavailableException;
 import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
 import de.caritas.cob.userservice.api.port.out.IdentityUsernameAvailability;
 import de.caritas.cob.userservice.api.service.ConsultantService;
+import de.caritas.cob.userservice.api.service.GeneratedPseudonyms;
+import de.caritas.cob.userservice.api.service.identity.GuestIdentityCatalog;
+import de.caritas.cob.userservice.api.service.identity.GuestIdentitySuggestion;
 import de.caritas.cob.userservice.api.service.user.UserService;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
 import de.caritas.cob.userservice.api.tenant.TenantData;
-import java.util.LinkedList;
-import java.util.List;
 import java.util.Optional;
+import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.mockito.ArgumentCaptor;
-import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoSettings;
+import org.mockito.quality.Strictness;
 
-@MockitoSettings(strictness = org.mockito.quality.Strictness.LENIENT)
+/**
+ * Anonymous guests get an animal User-ID from the one global identity catalog, never a counter name
+ * such as {@code anon_7} (ORISO-Frontend#2346). The namespace is global: a name is free only when
+ * the database (across tenants), Keycloak and Matrix all agree.
+ */
+@MockitoSettings(strictness = Strictness.LENIENT)
 class AnonymousUsernameRegistryTest {
 
-  @InjectMocks private AnonymousUsernameRegistry anonymousUsernameRegistry;
+  private static final String CHOSEN = "katze_sam_4821";
+
   @Mock private UserService userService;
   @Mock private ConsultantService consultantService;
   @Mock private IdentityUsernameAvailability identityUsernameAvailability;
   @Mock private MatrixSynapseService matrixSynapseService;
-  @Mock private UsernameTranscoder usernameTranscoder;
+  @Mock private GuestIdentityCatalog guestIdentityCatalog;
+
+  private final UsernameTranscoder transcoder = new UsernameTranscoder();
+  private AnonymousUsernameRegistry registry;
 
   @BeforeEach
   void setUp() {
-    setField(anonymousUsernameRegistry, "usernameTranscoder", usernameTranscoder);
-    setField(anonymousUsernameRegistry, "usernamePrefix", "Ratsuchende_r ");
-    // By default every candidate username is free in Keycloak; individual tests override this.
+    registry =
+        new AnonymousUsernameRegistry(
+            userService,
+            consultantService,
+            identityUsernameAvailability,
+            matrixSynapseService,
+            guestIdentityCatalog,
+            new GeneratedPseudonyms());
     when(identityUsernameAvailability.isUsernameAvailable(anyString())).thenReturn(true);
+    when(userService.findUserByUsername(any())).thenReturn(Optional.empty());
+    when(consultantService.getConsultantByUsername(any())).thenReturn(Optional.empty());
+    when(guestIdentityCatalog.next(any()))
+        .thenReturn(suggestion("eule_robin_1111"), suggestion("biene_noa_2222"));
   }
 
   @AfterEach
@@ -56,25 +75,35 @@ class AnonymousUsernameRegistryTest {
   }
 
   @Test
-  void
-      generateUniqueUsername_Should_GenerateUsernameWithMissingIdOfList_When_MissingUserIdNotExistingInDb() {
-    LinkedList<Integer> idRegistryListWithoutThree = new LinkedList<>(List.of(1, 2, 4, 5));
-    setIdRegistryField(idRegistryListWithoutThree);
-    when(userService.findUserByUsername(any())).thenReturn(Optional.empty());
+  void generateUniqueUsername_Should_ReturnAnAnimalHandle_NeverACounterName() {
+    var username = transcoder.decodeUsername(registry.generateUniqueUsername());
 
-    anonymousUsernameRegistry.generateUniqueUsername();
-
-    ArgumentCaptor<String> argumentCaptor = ArgumentCaptor.forClass(String.class);
-    verify(usernameTranscoder, times(1)).encodeUsername(argumentCaptor.capture());
-    assertThat(argumentCaptor.getValue(), is("Ratsuchende_r 3"));
+    assertThat(username).isEqualTo("eule_robin_1111").doesNotStartWith("anon_");
   }
 
   @Test
-  void generateUniqueUsername_Should_CheckUsernamesAcrossTenants_AndRestoreTheCallersTenantData() {
-    setIdRegistryField(new LinkedList<>());
+  void generateUniqueUsername_Should_SkipAHandleTakenInAnotherTenant() {
+    TenantContext.setCurrentTenant(83L);
+    // Simulates the Hibernate tenant filter: the first handle is visible only cross-tenant.
+    when(userService.findUserByUsername(any()))
+        .thenAnswer(
+            call ->
+                TenantContext.isTechnicalOrSuperAdminContext()
+                        && "eule_robin_1111".equals(call.getArgument(0))
+                    ? Optional.of(USER)
+                    : Optional.empty());
+
+    var username = transcoder.decodeUsername(registry.generateUniqueUsername());
+
+    assertThat(username).isEqualTo("biene_noa_2222");
+    assertThat(TenantContext.getCurrentTenant()).isEqualTo(83L);
+  }
+
+  @Test
+  void generateUniqueUsername_Should_CheckAcrossTenants_AndRestoreTheCallersTenantData() {
     var callers = new TenantData(null, "synthetic");
     TenantContext.setCurrentTenantData(callers);
-    var lookedUpIn = new java.util.concurrent.atomic.AtomicReference<Long>();
+    var lookedUpIn = new AtomicReference<Long>();
     when(userService.findUserByUsername(any()))
         .thenAnswer(
             call -> {
@@ -82,251 +111,95 @@ class AnonymousUsernameRegistryTest {
               return Optional.empty();
             });
 
-    anonymousUsernameRegistry.generateUniqueUsername();
+    registry.generateUniqueUsername();
 
-    assertThat(lookedUpIn.get(), is(TenantContext.TECHNICAL_TENANT_ID));
-    assertThat(TenantContext.getCurrentTenantData(), is(sameInstance(callers)));
-  }
-
-  @SuppressWarnings("unchecked")
-  private void setIdRegistryField(LinkedList<Integer> idRegistryListWithoutThree) {
-    // ID_REGISTRY is a static final mutable LinkedList that is never reassigned in production, so
-    // instead of replacing the field reference (impossible on JDK 17) we clear and repopulate the
-    // existing list to control the registry contents for the test.
-    LinkedList<Integer> idRegistry =
-        (LinkedList<Integer>) getField(AnonymousUsernameRegistry.class, "ID_REGISTRY");
-    idRegistry.clear();
-    idRegistry.addAll(idRegistryListWithoutThree);
+    assertThat(lookedUpIn.get()).isEqualTo(TenantContext.TECHNICAL_TENANT_ID);
+    assertThat(TenantContext.getCurrentTenantData()).isSameAs(callers);
   }
 
   @Test
-  void
-      generateUniqueUsername_Should_GenerateUsernameWithSecondMissingIdOfList_When_FirstMissingUserIdIsExistingInDb() {
-    LinkedList<Integer> idRegistryListWithoutThree = new LinkedList<>(List.of(1, 2, 4, 6));
-    setIdRegistryField(idRegistryListWithoutThree);
-    when(userService.findUserByUsername("Ratsuchende_r 3")).thenReturn(Optional.of(USER));
-    when(userService.findUserByUsername("Ratsuchende_r 5")).thenReturn(Optional.empty());
+  void generateUniqueUsername_Should_SkipAHandleStillPresentInKeycloak() {
+    when(identityUsernameAvailability.isUsernameAvailable("eule_robin_1111")).thenReturn(false);
 
-    anonymousUsernameRegistry.generateUniqueUsername();
-
-    ArgumentCaptor<String> argumentCaptor = ArgumentCaptor.forClass(String.class);
-    verify(usernameTranscoder, times(1)).encodeUsername(argumentCaptor.capture());
-    assertThat(argumentCaptor.getValue(), is("Ratsuchende_r 5"));
+    assertThat(transcoder.decodeUsername(registry.generateUniqueUsername()))
+        .isEqualTo("biene_noa_2222");
   }
 
   @Test
-  void
-      generateUniqueUsername_Should_GenerateUsernameWithIdOne_When_ListIsEmptyAndUserNotExistingInDb() {
-    LinkedList<Integer> idRegistryListWithoutThree = new LinkedList<>();
-    setIdRegistryField(idRegistryListWithoutThree);
-    when(userService.findUserByUsername(any())).thenReturn(Optional.empty());
-
-    anonymousUsernameRegistry.generateUniqueUsername();
-
-    ArgumentCaptor<String> argumentCaptor = ArgumentCaptor.forClass(String.class);
-    verify(usernameTranscoder, times(1)).encodeUsername(argumentCaptor.capture());
-    assertThat(argumentCaptor.getValue(), is("Ratsuchende_r 1"));
-  }
-
-  @Test
-  void
-      generateUniqueUsername_Should_GenerateUsernameWithIdGreaterThanBiggestListId_When_ListContainsContiguousIdsAndUserNotExistingInDb() {
-    LinkedList<Integer> idRegistryListWithoutThree = new LinkedList<>(List.of(1, 2, 3, 4, 5));
-    setIdRegistryField(idRegistryListWithoutThree);
-    when(userService.findUserByUsername(any())).thenReturn(Optional.empty());
-
-    anonymousUsernameRegistry.generateUniqueUsername();
-
-    ArgumentCaptor<String> argumentCaptor = ArgumentCaptor.forClass(String.class);
-    verify(usernameTranscoder, times(1)).encodeUsername(argumentCaptor.capture());
-    assertThat(argumentCaptor.getValue(), is("Ratsuchende_r 6"));
-  }
-
-  @Test
-  void
-      generateUniqueUsername_Should_GenerateUsernameWithIdGreaterThanBiggestListId_When_MissingIdsOfListHaveExistingUsersInDb() {
-    LinkedList<Integer> idRegistryListWithoutThree = new LinkedList<>(List.of(1, 2, 4, 6));
-    setIdRegistryField(idRegistryListWithoutThree);
-    when(userService.findUserByUsername("Ratsuchende_r 3")).thenReturn(Optional.of(USER));
-    when(userService.findUserByUsername("Ratsuchende_r 5")).thenReturn(Optional.of(USER));
-    when(userService.findUserByUsername("Ratsuchende_r 7")).thenReturn(Optional.empty());
-
-    anonymousUsernameRegistry.generateUniqueUsername();
-
-    ArgumentCaptor<String> argumentCaptor = ArgumentCaptor.forClass(String.class);
-    verify(usernameTranscoder, times(1)).encodeUsername(argumentCaptor.capture());
-    assertThat(argumentCaptor.getValue(), is("Ratsuchende_r 7"));
-  }
-
-  @Test
-  void
-      generateUniqueUsername_Should_GenerateUsernameWithIdGreaterThanBiggestListId_When_MissingIdsOfListHaveExistingConsultantsInDb() {
-    LinkedList<Integer> idRegistryListWithoutThree = new LinkedList<>(List.of(1, 2, 4, 6));
-    setIdRegistryField(idRegistryListWithoutThree);
-    when(consultantService.getConsultantByUsername("Ratsuchende_r 3"))
+  void generateUniqueUsername_Should_SkipAHandleOwnedByAConsultant() {
+    when(consultantService.getConsultantByUsername("eule_robin_1111"))
         .thenReturn(Optional.of(CONSULTANT));
-    when(consultantService.getConsultantByUsername("Ratsuchende_r 5"))
-        .thenReturn(Optional.of(CONSULTANT));
-    when(consultantService.getConsultantByUsername("Ratsuchende_r 7")).thenReturn(Optional.empty());
 
-    anonymousUsernameRegistry.generateUniqueUsername();
-
-    ArgumentCaptor<String> argumentCaptor = ArgumentCaptor.forClass(String.class);
-    verify(usernameTranscoder, times(1)).encodeUsername(argumentCaptor.capture());
-    assertThat(argumentCaptor.getValue(), is("Ratsuchende_r 7"));
+    assertThat(transcoder.decodeUsername(registry.generateUniqueUsername()))
+        .isEqualTo("biene_noa_2222");
   }
 
   @Test
-  void generateUniqueUsername_Should_SkipUsernamesStillPresentInKeycloak_When_NotInLocalDb() {
-    LinkedList<Integer> idRegistry = new LinkedList<>(List.of(1, 2, 4, 6));
-    setIdRegistryField(idRegistry);
-    when(userService.findUserByUsername(any())).thenReturn(Optional.empty());
-    when(consultantService.getConsultantByUsername(any())).thenReturn(Optional.empty());
-    // 3 and 5 are gone from the local DB but still exist in Keycloak -> must be skipped.
-    when(identityUsernameAvailability.isUsernameAvailable("Ratsuchende_r 3")).thenReturn(false);
-    when(identityUsernameAvailability.isUsernameAvailable("Ratsuchende_r 5")).thenReturn(false);
-    when(identityUsernameAvailability.isUsernameAvailable("Ratsuchende_r 7")).thenReturn(true);
+  void generateUniqueUsername_Should_SkipAHandleOrphanedInMatrix_InEitherLocalpartForm() {
+    when(matrixSynapseService.userExists(transcoder.encodeUsername("eule_robin_1111")))
+        .thenReturn(true);
 
-    anonymousUsernameRegistry.generateUniqueUsername();
-
-    ArgumentCaptor<String> argumentCaptor = ArgumentCaptor.forClass(String.class);
-    verify(usernameTranscoder, times(1)).encodeUsername(argumentCaptor.capture());
-    assertThat(argumentCaptor.getValue(), is("Ratsuchende_r 7"));
+    assertThat(transcoder.decodeUsername(registry.generateUniqueUsername()))
+        .isEqualTo("biene_noa_2222");
   }
 
   @Test
-  void
-      removeRegistryIdByUsername_Should_RemoveIdFromRegistry_When_UsernameMatchesUsernamePattern() {
-    String usernameToDelete = "Ratsuchende_r 2";
+  void generateUniqueUsername_Should_FailRetryably_When_NoFreeHandleIsFound() {
+    when(identityUsernameAvailability.isUsernameAvailable(anyString())).thenReturn(false);
 
-    LinkedList<Integer> idRegistryListWithoutThree = new LinkedList<>(List.of(1, 2, 4, 5));
-    setIdRegistryField(idRegistryListWithoutThree);
-    when(userService.findUserByUsername(any())).thenReturn(Optional.empty());
-    when(usernameTranscoder.decodeUsername(anyString())).thenReturn(usernameToDelete);
-
-    anonymousUsernameRegistry.removeRegistryIdByUsername(usernameToDelete);
-
-    List<Integer> resultingRegistry = getIdRegistryField();
-    assertThat(resultingRegistry, is(List.of(1, 4, 5)));
-    verify(usernameTranscoder, times(1)).decodeUsername(usernameToDelete);
-  }
-
-  @SuppressWarnings("unchecked")
-  private List<Integer> getIdRegistryField() {
-    return (List<Integer>) getField(AnonymousUsernameRegistry.class, "ID_REGISTRY");
+    assertThatThrownBy(registry::generateUniqueUsername)
+        .isInstanceOf(ServiceUnavailableException.class);
   }
 
   @Test
-  void
-      removeRegistryIdByUsername_Should_NotModifyTheRegistry_When_UsernameDoesNotMatchUsernamePattern() {
-    String usernameNotMatchingPattern = "something else";
+  void claimChosenUsername_Should_KeepTheHandleTheGuestRolled() {
+    var username = transcoder.decodeUsername(registry.claimChosenUsername(CHOSEN));
 
-    LinkedList<Integer> idRegistryListWithoutThree = new LinkedList<>(List.of(1, 2, 4, 5));
-    setIdRegistryField(idRegistryListWithoutThree);
-    when(userService.findUserByUsername(any())).thenReturn(Optional.empty());
-    when(usernameTranscoder.decodeUsername(anyString())).thenReturn(usernameNotMatchingPattern);
-
-    anonymousUsernameRegistry.removeRegistryIdByUsername(usernameNotMatchingPattern);
-
-    List<Integer> resultingRegistry = getIdRegistryField();
-    assertThat(resultingRegistry, is(idRegistryListWithoutThree));
-    verify(usernameTranscoder, times(1)).decodeUsername(usernameNotMatchingPattern);
+    assertThat(username).isEqualTo(CHOSEN);
+    verify(guestIdentityCatalog, never()).next(any());
   }
 
   @Test
-  void
-      removeRegistryIdByUsername_Should_NotModifyTheRegistry_When_UsernameDoesMatchUsernamePatternButHasNotExistingNumber() {
-    String usernameWithNotExistingId = "Ratsuchende_r 3";
-
-    LinkedList<Integer> idRegistryListWithoutThree = new LinkedList<>(List.of(1, 2, 4, 5));
-    setIdRegistryField(idRegistryListWithoutThree);
-    when(userService.findUserByUsername(any())).thenReturn(Optional.empty());
-    when(usernameTranscoder.decodeUsername(anyString())).thenReturn(usernameWithNotExistingId);
-
-    anonymousUsernameRegistry.removeRegistryIdByUsername(usernameWithNotExistingId);
-
-    List<Integer> resultingRegistry = getIdRegistryField();
-    assertThat(resultingRegistry, is(idRegistryListWithoutThree));
-    verify(usernameTranscoder, times(1)).decodeUsername(usernameWithNotExistingId);
+  void claimChosenUsername_Should_RefuseANameTheGeneratorCannotProduce() {
+    // Anonymity rests on the dice: a typed name such as a real name must never become the login.
+    for (var typed : new String[] {"max_mustermann", "anon_7", "katze_sam_12", "Katze_Sam_4821"}) {
+      assertThatThrownBy(() -> registry.claimChosenUsername(typed))
+          .as(typed)
+          .isInstanceOf(BadRequestException.class);
+    }
   }
 
   @Test
-  void removeRegistryIdByUsername_Should_NotModifyTheRegistry_When_EmptyValuePassed() {
-    LinkedList<Integer> idRegistryListWithoutThree = new LinkedList<>(List.of(1, 2, 4, 5));
-    setIdRegistryField(idRegistryListWithoutThree);
-    when(userService.findUserByUsername(any())).thenReturn(Optional.empty());
+  void claimChosenUsername_Should_ReportACollision_So_TheGuestCanRollAgain() {
+    when(identityUsernameAvailability.isUsernameAvailable(CHOSEN)).thenReturn(false);
 
-    List<String> emptyStrings = List.of("", "   ");
-    emptyStrings.forEach(
-        emptyValue -> {
-          when(usernameTranscoder.decodeUsername(anyString())).thenReturn(emptyValue);
-          anonymousUsernameRegistry.removeRegistryIdByUsername(emptyValue);
-          List<Integer> resultingRegistry = getIdRegistryField();
-          assertThat(resultingRegistry, is(idRegistryListWithoutThree));
-        });
+    assertThatThrownBy(() -> registry.claimChosenUsername(CHOSEN))
+        .isInstanceOf(ConflictException.class);
   }
 
   @Test
-  void removeRegistryIdByUsername_Should_NotModifyTheRegistry_When_NullPassed() {
-    LinkedList<Integer> idRegistryListWithoutThree = new LinkedList<>(List.of(1, 2, 4, 5));
-    setIdRegistryField(idRegistryListWithoutThree);
-    when(userService.findUserByUsername(any())).thenReturn(Optional.empty());
-
-    anonymousUsernameRegistry.removeRegistryIdByUsername(null);
-    List<Integer> resultingRegistry = getIdRegistryField();
-    assertThat(resultingRegistry, is(idRegistryListWithoutThree));
-  }
-
-  @Test
-  void generateUniqueUsername_Should_TreatUsernameOfAnotherTenantAsOccupied() {
-    // The anonymous username namespace is global: Matrix user IDs are global and the anonymous
-    // live-chat queue is deliberately cross-tenant. The DB lookups are tenant-filtered, so a
-    // caller in tenant 83 must still see an anon user that belongs to tenant 1 - otherwise the
-    // name is handed out again and Matrix rejects it with M_USER_IN_USE (500 on invite redeem).
+  void claimChosenUsername_Should_ReportACollision_When_TheHandleLivesInAnotherTenant() {
     TenantContext.setCurrentTenant(83L);
-    setIdRegistryField(new LinkedList<>());
-    // Simulate the Hibernate tenantFilter: "Ratsuchende_r 1" is only visible cross-tenant.
     when(userService.findUserByUsername(any()))
         .thenAnswer(
-            invocation ->
-                TenantContext.isTechnicalOrSuperAdminContext()
-                        && "Ratsuchende_r 1".equals(invocation.getArgument(0))
+            call ->
+                TenantContext.isTechnicalOrSuperAdminContext() && CHOSEN.equals(call.getArgument(0))
                     ? Optional.of(USER)
                     : Optional.empty());
 
-    anonymousUsernameRegistry.generateUniqueUsername();
-
-    ArgumentCaptor<String> argumentCaptor = ArgumentCaptor.forClass(String.class);
-    verify(usernameTranscoder, times(1)).encodeUsername(argumentCaptor.capture());
-    assertThat(argumentCaptor.getValue(), is("Ratsuchende_r 2"));
+    assertThatThrownBy(() -> registry.claimChosenUsername(CHOSEN))
+        .isInstanceOf(ConflictException.class);
+    assertThat(TenantContext.getCurrentTenant()).isEqualTo(83L);
   }
 
   @Test
-  void generateUniqueUsername_Should_TreatUsernameOrphanedInMatrixAsOccupied() {
-    // A localpart can survive in Matrix while absent from MariaDB and Keycloak (a rolled-back or
-    // externally cleaned-up anonymous account). Matrix user IDs are global, so such an orphan must
-    // be skipped - otherwise createUser fails with M_USER_IN_USE and, because the generator is
-    // deterministic, every redeem retry collides on the same id (invite redeem 500 forever).
-    setIdRegistryField(new LinkedList<>());
-    when(userService.findUserByUsername(any())).thenReturn(Optional.empty());
-    when(consultantService.getConsultantByUsername(any())).thenReturn(Optional.empty());
-    when(matrixSynapseService.userExists("Ratsuchende_r 1")).thenReturn(true);
-
-    anonymousUsernameRegistry.generateUniqueUsername();
-
-    ArgumentCaptor<String> argumentCaptor = ArgumentCaptor.forClass(String.class);
-    verify(usernameTranscoder, times(1)).encodeUsername(argumentCaptor.capture());
-    assertThat(argumentCaptor.getValue(), is("Ratsuchende_r 2"));
+  void removeRegistryIdByUsername_Should_AcceptAnyName_WithoutFailingTheDeletionWorkflow() {
+    registry.removeRegistryIdByUsername(transcoder.encodeUsername(CHOSEN));
+    registry.removeRegistryIdByUsername(transcoder.encodeUsername("anon_12"));
+    registry.removeRegistryIdByUsername(null);
   }
 
-  @Test
-  void generateUniqueUsername_Should_RestoreCallerTenantAfterTheCrossTenantLookup() {
-    TenantContext.setCurrentTenant(83L);
-    setIdRegistryField(new LinkedList<>());
-    when(userService.findUserByUsername(any())).thenReturn(Optional.empty());
-
-    anonymousUsernameRegistry.generateUniqueUsername();
-
-    assertThat(TenantContext.getCurrentTenant(), is(83L));
+  private static GuestIdentitySuggestion suggestion(String username) {
+    return new GuestIdentitySuggestion(username, username, "owl.svg");
   }
 }

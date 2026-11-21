@@ -24,6 +24,7 @@ import de.caritas.cob.userservice.api.service.ConsultantAgencyService;
 import de.caritas.cob.userservice.api.service.agency.AgencyMatrixCredentialClient;
 import de.caritas.cob.userservice.api.service.agency.dto.AgencyMatrixCredentialsDTO;
 import de.caritas.cob.userservice.api.service.consultingtype.TopicConsultantRoutingService;
+import de.caritas.cob.userservice.api.service.session.AgencyEnquiryRoomAttempts;
 import de.caritas.cob.userservice.api.service.session.AgencyPreAssignmentRoomService;
 import de.caritas.cob.userservice.api.service.session.SessionService;
 import jakarta.servlet.http.HttpServletRequest;
@@ -151,16 +152,19 @@ class CreateEnquiryMessageFacadeMatrixRoomProvisioningTest {
     var pause = new de.caritas.cob.userservice.api.service.session.MatrixRateLimitPause();
     var publicationSessions =
         org.mockito.Mockito.mock(de.caritas.cob.userservice.api.port.out.SessionRepository.class);
+    var roomAttempts = Mockito.mock(AgencyEnquiryRoomAttempts.class);
     var realRoomService =
         new AgencyPreAssignmentRoomService(
             matrixCredentialClient,
             gateway,
+            sessionService,
             new de.caritas.cob.userservice.api.service.session.AgencyEnquiryRoomPublication(
                 consultantRepository,
                 publicationSessions,
                 sessionService,
                 org.mockito.Mockito.mock(
-                    de.caritas.cob.userservice.api.service.session.AgencyEnquiryRevocations.class)),
+                    de.caritas.cob.userservice.api.service.session.AgencyEnquiryRevocations.class),
+                roomAttempts),
             silentMembership,
             // Runs deferred counsellors inline, so the test sees the same membership end state.
             new de.caritas.cob.userservice.api.service.session.AgencyDepartmentMembershipBackfill(
@@ -174,7 +178,8 @@ class CreateEnquiryMessageFacadeMatrixRoomProvisioningTest {
                 gateway,
                 pause,
                 Runnable::run),
-            pause);
+            pause,
+            roomAttempts);
     setField(createEnquiryMessageFacade, "agencyPreAssignmentRoomService", realRoomService);
 
     user = new User();

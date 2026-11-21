@@ -2942,6 +2942,18 @@ public class MatrixSynapseService implements MatrixUserClient, MatrixRoomMembers
     return matrixRoomClient.setUserPowerLevel(roomId, userId, powerLevel, accessToken);
   }
 
+  /** Repair-queue variant: no user, room or provider body in the log. Never throws. */
+  public boolean setUserPowerLevelQuietly(
+      String roomId, String userId, int powerLevel, String accessToken) {
+    return matrixRoomClient.setUserPowerLevelQuietly(roomId, userId, powerLevel, accessToken);
+  }
+
+  /** Repair-queue invite that reports a rate limit separately and logs no identifiers. */
+  public MatrixRoomClient.QuietInvite inviteObserverQuietly(
+      String roomId, String userId, String accessToken) {
+    return matrixRoomClient.inviteObserverQuietly(roomId, userId, accessToken);
+  }
+
   /**
    * Raises the room-wide {@code events_default} power level so ordinary members can no longer post
    * (protocol-level read-only, US#473 team-discussion archive).

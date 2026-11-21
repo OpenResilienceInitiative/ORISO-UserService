@@ -68,18 +68,21 @@ public class AgencyEnquiryRevocations {
 
     // Record the departure before the session query can wait on an accepting transaction.
     Long departureOrder = removed.getTenantId() == null ? null : roomDecisions.nextEvent();
-    var recorded = new HashSet<>(tasks.pendingSessionIds(removed.getId()));
+    var recorded =
+        tasks.pendingRoomBindings(removed.getId()).stream()
+            .map(binding -> new RoomBinding(binding.getSessionId(), binding.getRoomId()))
+            .collect(Collectors.toCollection(HashSet::new));
     var pending = new ArrayList<AgencyEnquiryRevocationTask>();
     for (var binding :
         sessions.lockOpenEnquiryBindings(
             removed.getAgencyId(), AgencyOpenEnquiryMembership.OPEN_STATUSES)) {
-      if (recorded.add(binding.getSessionId())) {
+      if (recorded.add(new RoomBinding(binding.getSessionId(), binding.getRoomId()))) {
         pending.add(taskFor(removed, binding.getSessionId(), binding.getRoomId(), null));
       }
     }
     if (departureOrder != null) {
       for (var decision : roomDecisions.affectedBy(removed, departureOrder)) {
-        if (recorded.add(decision.getSessionId())) {
+        if (recorded.add(new RoomBinding(decision.getSessionId(), decision.getRoomId()))) {
           pending.add(taskFor(removed, decision.getSessionId(), decision.getRoomId(), decision));
         }
       }
@@ -100,7 +103,7 @@ public class AgencyEnquiryRevocations {
     var removals =
         assignments
             .findPublicationRevocationCandidates(
-                session.getAgencyId(), consultantIds, session.getId())
+                session.getAgencyId(), consultantIds, session.getId(), session.getMatrixRoomId())
             .stream()
             .collect(
                 Collectors.toMap(
@@ -127,6 +130,8 @@ public class AgencyEnquiryRevocations {
       tasks.saveAll(pending);
     }
   }
+
+  private record RoomBinding(Long sessionId, String roomId) {}
 
   private AgencyEnquiryRevocationTask taskFor(
       ConsultantAgency removed, Long sessionId, String roomId, AgencyEnquiryRoomDecision decision) {
