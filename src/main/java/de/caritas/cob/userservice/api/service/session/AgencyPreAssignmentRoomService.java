@@ -3,6 +3,7 @@ package de.caritas.cob.userservice.api.service.session;
 import static org.apache.commons.lang3.StringUtils.isBlank;
 
 import de.caritas.cob.userservice.api.exception.matrix.MatrixCreateRoomException;
+import de.caritas.cob.userservice.api.exception.matrix.MatrixCreateRoomRateLimitedException;
 import de.caritas.cob.userservice.api.exception.matrix.MatrixInviteUserException;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.User;
@@ -34,6 +35,15 @@ public class AgencyPreAssignmentRoomService {
    * meet the same limit; waiting the server's delay first (bounded) lets it land on the first try.
    */
   static final long MAX_WAIT_BEFORE_ASKER_INVITE_MS = 5_000L;
+
+  /**
+   * US#1737: right after another enquiry, the agency account's invites still run and Synapse
+   * answers the next room creation with 429 for a few seconds. Retry a bounded number of times,
+   * each after the server's delay (capped), instead of leaving the enquiry without a room.
+   */
+  static final int CREATE_ROOM_MAX_ATTEMPTS = 3;
+
+  static final long MAX_WAIT_BEFORE_CREATE_ROOM_RETRY_MS = 5_000L;
 
   private final @NonNull AgencyMatrixCredentialClient matrixCredentialClient;
   private final @NonNull SessionRoomGateway sessionRoomGateway;
@@ -105,7 +115,7 @@ public class AgencyPreAssignmentRoomService {
     String roomName = buildRoomName(session, credentials.getMatrixUserId());
 
     try {
-      String roomId = sessionRoomGateway.createRoom(roomName, roomAlias, agencyToken);
+      String roomId = createRoomWithRateLimitRetry(roomName, roomAlias, agencyToken);
       if (isBlank(roomId)) {
         log.error("Matrix create room returned empty body for session {}", session.getId());
         return;
@@ -158,6 +168,27 @@ public class AgencyPreAssignmentRoomService {
           "Could not create agency holding room for session {}: {}",
           session.getId(),
           ex.getMessage());
+    }
+  }
+
+  private String createRoomWithRateLimitRetry(String roomName, String roomAlias, String token)
+      throws MatrixCreateRoomException {
+    for (int attempt = 1; ; attempt++) {
+      try {
+        return sessionRoomGateway.createRoom(roomName, roomAlias, token);
+      } catch (MatrixCreateRoomRateLimitedException limited) {
+        if (attempt >= CREATE_ROOM_MAX_ATTEMPTS) {
+          throw limited;
+        }
+        long waitMs =
+            Math.min(Math.max(limited.getRetryAfterMs(), 0L), MAX_WAIT_BEFORE_CREATE_ROOM_RETRY_MS);
+        log.warn(
+            "Agency holding room creation was rate limited; retrying attempt {} of {} after {} ms",
+            attempt + 1,
+            CREATE_ROOM_MAX_ATTEMPTS,
+            waitMs);
+        rateLimitPause.pause(waitMs);
+      }
     }
   }
 

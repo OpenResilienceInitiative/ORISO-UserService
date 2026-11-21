@@ -44,6 +44,10 @@ class MatrixSyncControllerTest {
   @Mock private SessionService sessionService;
   @Mock private AuthenticatedUser authenticatedUser;
 
+  @Mock
+  private de.caritas.cob.userservice.api.service.session.AgencyPreAssignmentRoomService
+      agencyPreAssignmentRoomService;
+
   @InjectMocks private MatrixSyncController controller;
 
   @Test
@@ -278,6 +282,67 @@ class MatrixSyncControllerTest {
         .matrixRoomId(MATRIX_ROOM_ID)
         .teamSession(false)
         .build();
+  }
+
+  @Test
+  void registerRoomForSync_ShouldProvisionTheMissingHoldingRoom_WhenTheAskerOpensTheEnquiry() {
+    // US#1737: a rate-limited room creation left the enquiry without a room; opening it repairs.
+    var enquiry = sessionWithoutMatrixRoom();
+    enquiry.setStatus(Session.SessionStatus.NEW);
+    when(sessionService.assertUserHasAccess(SESSION_ID, authenticatedUser)).thenReturn(enquiry);
+    when(authenticatedUser.getUserId()).thenReturn(USER_ID);
+    org.mockito.Mockito.doAnswer(
+            invocation -> {
+              invocation.getArgument(0, Session.class).setMatrixRoomId(MATRIX_ROOM_ID);
+              return null;
+            })
+        .when(agencyPreAssignmentRoomService)
+        .ensureHoldingRoom(enquiry, enquiry.getUser());
+
+    var response = controller.registerRoomForSync(SESSION_ID);
+
+    assertEquals(HttpStatus.OK, response.getStatusCode());
+    verify(agencyPreAssignmentRoomService).ensureHoldingRoom(enquiry, enquiry.getUser());
+    verify(matrixEventListenerService).registerRoom(eq(SESSION_ID), eq(MATRIX_ROOM_ID), anySet());
+  }
+
+  @Test
+  void registerRoomForSync_ShouldStillAnswerNotFound_WhenTheRepairCannotProvisionTheRoom() {
+    var enquiry = sessionWithoutMatrixRoom();
+    enquiry.setStatus(Session.SessionStatus.NEW);
+    when(sessionService.assertUserHasAccess(SESSION_ID, authenticatedUser)).thenReturn(enquiry);
+    when(authenticatedUser.getUserId()).thenReturn(USER_ID);
+
+    var response = controller.registerRoomForSync(SESSION_ID);
+
+    assertEquals(HttpStatus.NOT_FOUND, response.getStatusCode());
+    verify(agencyPreAssignmentRoomService).ensureHoldingRoom(enquiry, enquiry.getUser());
+    verifyNoInteractions(matrixEventListenerService);
+  }
+
+  @Test
+  void registerRoomForSync_ShouldNotProvisionARoom_ForSomeoneOtherThanTheAsker() {
+    var enquiry = sessionWithoutMatrixRoom();
+    enquiry.setStatus(Session.SessionStatus.NEW);
+    when(sessionService.assertUserHasAccess(SESSION_ID, authenticatedUser)).thenReturn(enquiry);
+    when(authenticatedUser.getUserId()).thenReturn(CONSULTANT_ID);
+
+    var response = controller.registerRoomForSync(SESSION_ID);
+
+    assertEquals(HttpStatus.NOT_FOUND, response.getStatusCode());
+    verifyNoInteractions(agencyPreAssignmentRoomService);
+  }
+
+  @Test
+  void registerRoomForSync_ShouldNotProvisionARoom_ForAnAcceptedCase() {
+    // Only an open enquiry gets the agency holding room; an accepted case keeps its own room.
+    when(sessionService.assertUserHasAccess(SESSION_ID, authenticatedUser))
+        .thenReturn(sessionWithoutMatrixRoom());
+
+    var response = controller.registerRoomForSync(SESSION_ID);
+
+    assertEquals(HttpStatus.NOT_FOUND, response.getStatusCode());
+    verifyNoInteractions(agencyPreAssignmentRoomService);
   }
 
   private Session sessionWithoutMatrixRoom() {

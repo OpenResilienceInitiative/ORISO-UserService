@@ -9,6 +9,7 @@ import de.caritas.cob.userservice.api.adapters.matrix.dto.MatrixInviteUserRespon
 import de.caritas.cob.userservice.api.config.observability.LiveChatDiagnosticMetrics;
 import de.caritas.cob.userservice.api.config.observability.LiveChatDiagnosticMetrics.Outcome;
 import de.caritas.cob.userservice.api.exception.matrix.MatrixCreateRoomException;
+import de.caritas.cob.userservice.api.exception.matrix.MatrixCreateRoomRateLimitedException;
 import de.caritas.cob.userservice.api.exception.matrix.MatrixInviteRateLimitedException;
 import de.caritas.cob.userservice.api.exception.matrix.MatrixInviteUserException;
 import java.net.URI;
@@ -441,6 +442,13 @@ public class MatrixRoomClient {
           roomName,
           ex.getStatusCode(),
           ex.getResponseBodyAsString());
+      if (isRateLimited(ex)) {
+        // US#1737: say "try again later" with the server's delay, so a holding room is retried.
+        throw new MatrixCreateRoomRateLimitedException(
+            String.format(
+                "Could not create room (%s) in Matrix: %s", roomName, ex.getResponseBodyAsString()),
+            serverRetryAfterMs(ex));
+      }
       throw new MatrixCreateRoomException(
           String.format(
               "Could not create room (%s) in Matrix: %s", roomName, ex.getResponseBodyAsString()));

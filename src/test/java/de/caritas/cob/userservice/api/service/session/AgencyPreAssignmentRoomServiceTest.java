@@ -6,11 +6,13 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import de.caritas.cob.userservice.api.exception.matrix.MatrixCreateRoomException;
+import de.caritas.cob.userservice.api.exception.matrix.MatrixCreateRoomRateLimitedException;
 import de.caritas.cob.userservice.api.exception.matrix.MatrixInviteUserException;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.User;
@@ -242,6 +244,61 @@ class AgencyPreAssignmentRoomServiceTest {
 
     verify(sessionService, never()).saveSession(any());
     assertNull(session.getMatrixRoomId());
+  }
+
+  @Test
+  @DisplayName(
+      "US#1737: a rate-limited room creation is retried after the server's delay, then persisted")
+  void ensureHoldingRoom_retriesRateLimitedRoomCreation() throws Exception {
+    when(matrixCredentialClient.fetchMatrixCredentials(AGENCY_ID))
+        .thenReturn(Optional.of(validCredentials()));
+    when(sessionRoomGateway.loginAsUser(AGENCY_MATRIX_ID)).thenReturn(AGENCY_TOKEN);
+    when(sessionRoomGateway.createRoom(anyString(), anyString(), eq(AGENCY_TOKEN)))
+        .thenThrow(new MatrixCreateRoomRateLimitedException("limited", 3_256L))
+        .thenReturn(NEW_ROOM_ID);
+    when(sessionRoomGateway.loginAsUser(USER_MATRIX_ID)).thenReturn(USER_TOKEN);
+    when(sessionRoomGateway.joinRoom(NEW_ROOM_ID, USER_TOKEN)).thenReturn(true);
+
+    underTest.ensureHoldingRoom(session, user);
+
+    verify(rateLimitPause).pause(3_256L);
+    verify(sessionRoomGateway, times(2)).createRoom(anyString(), anyString(), eq(AGENCY_TOKEN));
+    assertEquals(NEW_ROOM_ID, session.getMatrixRoomId());
+    verify(sessionService).saveSession(session);
+  }
+
+  @Test
+  @DisplayName("US#1737: the wait before retrying room creation is capped")
+  void ensureHoldingRoom_capsTheWaitBeforeRetryingRoomCreation() throws Exception {
+    when(matrixCredentialClient.fetchMatrixCredentials(AGENCY_ID))
+        .thenReturn(Optional.of(validCredentials()));
+    when(sessionRoomGateway.loginAsUser(AGENCY_MATRIX_ID)).thenReturn(AGENCY_TOKEN);
+    when(sessionRoomGateway.createRoom(anyString(), anyString(), eq(AGENCY_TOKEN)))
+        .thenThrow(new MatrixCreateRoomRateLimitedException("limited", 600_000L));
+
+    underTest.ensureHoldingRoom(session, user);
+
+    verify(sessionRoomGateway, times(AgencyPreAssignmentRoomService.CREATE_ROOM_MAX_ATTEMPTS))
+        .createRoom(anyString(), anyString(), eq(AGENCY_TOKEN));
+    verify(rateLimitPause, times(AgencyPreAssignmentRoomService.CREATE_ROOM_MAX_ATTEMPTS - 1))
+        .pause(AgencyPreAssignmentRoomService.MAX_WAIT_BEFORE_CREATE_ROOM_RETRY_MS);
+    verify(sessionService, never()).saveSession(any());
+    assertNull(session.getMatrixRoomId());
+  }
+
+  @Test
+  @DisplayName("US#1737: a refused room creation that is not a rate limit is not retried")
+  void ensureHoldingRoom_doesNotRetryARefusedRoomCreation() throws Exception {
+    when(matrixCredentialClient.fetchMatrixCredentials(AGENCY_ID))
+        .thenReturn(Optional.of(validCredentials()));
+    when(sessionRoomGateway.loginAsUser(AGENCY_MATRIX_ID)).thenReturn(AGENCY_TOKEN);
+    when(sessionRoomGateway.createRoom(anyString(), anyString(), eq(AGENCY_TOKEN)))
+        .thenThrow(new MatrixCreateRoomException("forbidden"));
+
+    underTest.ensureHoldingRoom(session, user);
+
+    verify(sessionRoomGateway, times(1)).createRoom(anyString(), anyString(), eq(AGENCY_TOKEN));
+    verifyNoInteractions(rateLimitPause);
   }
 
   @Test

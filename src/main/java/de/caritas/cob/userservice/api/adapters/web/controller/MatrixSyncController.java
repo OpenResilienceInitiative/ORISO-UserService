@@ -2,7 +2,9 @@ package de.caritas.cob.userservice.api.adapters.web.controller;
 
 import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
+import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.service.matrix.MatrixEventListenerService;
+import de.caritas.cob.userservice.api.service.session.AgencyPreAssignmentRoomService;
 import de.caritas.cob.userservice.api.service.session.SessionService;
 import java.util.HashSet;
 import java.util.Map;
@@ -28,6 +30,7 @@ public class MatrixSyncController {
   private final @NonNull MatrixSynapseService matrixSynapseService;
   private final @NonNull SessionService sessionService;
   private final @NonNull AuthenticatedUser authenticatedUser;
+  private final @NonNull AgencyPreAssignmentRoomService agencyPreAssignmentRoomService;
 
   /**
    * Register a Matrix room for real-time event listening. When messages arrive in this room, the
@@ -48,6 +51,12 @@ public class MatrixSyncController {
 
     try {
       log.info("📡 Registering Matrix room for session {}", sessionId);
+
+      if (session.getMatrixRoomId() == null && isOwnOpenEnquiry(session)) {
+        // US#1737: a rate-limited room creation left this enquiry without its agency holding
+        // room. The asker opening it is the repair point: provision it now (idempotent).
+        agencyPreAssignmentRoomService.ensureHoldingRoom(session, session.getUser());
+      }
 
       if (session.getMatrixRoomId() == null) {
         log.error("Session {} has no Matrix room", sessionId);
@@ -132,5 +141,14 @@ public class MatrixSyncController {
       return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
           .body(Map.of("error", "Internal server error"));
     }
+  }
+
+  /** The caller is the session's advice seeker and the session is still an open enquiry. */
+  private boolean isOwnOpenEnquiry(Session session) {
+    return session.getUser() != null
+        && session.getUser().getUserId() != null
+        && session.getUser().getUserId().equals(authenticatedUser.getUserId())
+        && (session.getStatus() == Session.SessionStatus.INITIAL
+            || session.getStatus() == Session.SessionStatus.NEW);
   }
 }

@@ -94,6 +94,29 @@ class MatrixRoomClientTest {
   }
 
   @Test
+  void createRoom_ShouldReportARateLimitWithTheServersDelay() {
+    // US#1737: the holding room of a new enquiry must be retried, not dropped, on a 429.
+    when(restTemplate.postForEntity(
+            eq(uri(API_URL + "/_matrix/client/r0/createRoom")),
+            org.mockito.ArgumentMatchers.any(HttpEntity.class),
+            eq(MatrixCreateRoomResponseDTO.class)))
+        .thenThrow(
+            HttpClientErrorException.create(
+                HttpStatus.TOO_MANY_REQUESTS,
+                "Too Many Requests",
+                null,
+                "{\"errcode\":\"M_LIMIT_EXCEEDED\",\"retry_after_ms\":3256}"
+                    .getBytes(StandardCharsets.UTF_8),
+                StandardCharsets.UTF_8));
+
+    assertThatThrownBy(() -> matrixRoomClient.createRoom("Room name", "room-alias", ACCESS_TOKEN))
+        .isInstanceOfSatisfying(
+            de.caritas.cob.userservice.api.exception.matrix.MatrixCreateRoomRateLimitedException
+                .class,
+            ex -> assertThat(ex.getRetryAfterMs()).isEqualTo(3256L));
+  }
+
+  @Test
   void createRoom_ShouldSendPrivateRoomCreationRequest() throws Exception {
     var responseBody = new MatrixCreateRoomResponseDTO();
     responseBody.setRoomId(ROOM_ID);
