@@ -669,6 +669,14 @@ public class MatrixRoomClient {
    * @return true when the user is not in the room afterwards, false when the leave failed
    */
   public boolean leaveRoom(String roomId, String accessToken) {
+    var outcome = requestRoomDeparture(roomId, accessToken);
+    return outcome == LeaveResponse.ACCEPTED || outcome == LeaveResponse.FORBIDDEN_OR_MISSING;
+  }
+
+  /**
+   * Retains how the homeserver answered so a caller can distinguish rejection from a lost reply.
+   */
+  public LeaveResponse requestRoomDeparture(String roomId, String accessToken) {
     try {
       var headers = getClientHttpHeaders(accessToken);
       headers.setContentType(MediaType.APPLICATION_JSON);
@@ -682,28 +690,41 @@ public class MatrixRoomClient {
 
       if (response.getStatusCode().is2xxSuccessful()) {
         log.info("Successfully left Matrix room: {}", roomId);
-        return true;
+        return LeaveResponse.ACCEPTED;
       }
       log.warn("Failed to leave Matrix room: {}. Status: {}", roomId, response.getStatusCode());
-      return false;
+      return classifyFailedLeave(response.getStatusCode().value());
     } catch (HttpClientErrorException ex) {
       if (ex.getStatusCode().value() == 403 || ex.getStatusCode().value() == 404) {
         log.info(
             "User was not in Matrix room {} (status {}); nothing to leave",
             roomId,
             ex.getStatusCode());
-        return true;
+        return LeaveResponse.FORBIDDEN_OR_MISSING;
       }
       log.error(
           "Matrix Error: Could not leave room ({}). Status: {}, Response: {}",
           roomId,
           ex.getStatusCode(),
           ex.getResponseBodyAsString());
-      return false;
+      return classifyFailedLeave(ex.getStatusCode().value());
     } catch (Exception ex) {
       log.error("Matrix Error: Could not leave room ({}). Reason: {}", roomId, ex.getMessage());
-      return false;
+      return LeaveResponse.UNCERTAIN;
     }
+  }
+
+  private static LeaveResponse classifyFailedLeave(int status) {
+    return status >= 400 && status < 500 && status != 408
+        ? LeaveResponse.REJECTED
+        : LeaveResponse.UNCERTAIN;
+  }
+
+  public enum LeaveResponse {
+    ACCEPTED,
+    FORBIDDEN_OR_MISSING,
+    REJECTED,
+    UNCERTAIN
   }
 
   /**

@@ -23,6 +23,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.function.Consumer;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
@@ -62,18 +63,38 @@ public class MembersOnlyRevocation {
    * nothing for an ordinary chat.
    */
   public void revokeAccessOf(Chat series, GroupChatParticipant leaving) {
+    revokeForRoster(series, leaving, this::leaveSideRoom);
+  }
+
+  /** Journal the exact side-room exit before applying it in a roster edit. */
+  SessionSupervisor revokeForRoster(
+      Chat series, GroupChatParticipant leaving, Consumer<SessionSupervisor> sideRoomExit) {
     if (series == null
         || !series.isMembersOnly()
         || leaving == null
         || leaving.getChatId() == null) {
-      return;
+      return null;
     }
-    TenantContext.supplyAcrossTenants(
+    return TenantContext.supplyAcrossTenants(
         () -> {
-          endSupervisionBy(leaving);
+          var supervision = activeSupervisionOf(leaving).orElse(null);
+          if (supervision != null) {
+            endLocally(supervision);
+            sideRoomExit.accept(supervision);
+          }
           handOverSessionFrom(series, leaving);
-          return null;
+          return supervision;
         });
+  }
+
+  void handOverAfterVerifiedGroupDeparture(Chat series, GroupChatParticipant leaving) {
+    if (series.isMembersOnly() && leaving.getChatId() != null) {
+      TenantContext.supplyAcrossTenants(
+          () -> {
+            handOverSessionFrom(series, leaving);
+            return null;
+          });
+    }
   }
 
   /**
@@ -289,18 +310,20 @@ public class MembersOnlyRevocation {
    * A participant who was added as supervisor of the session reads it through that relation as
    * well; it ends with the participation.
    */
-  private void endSupervisionBy(GroupChatParticipant leaving) {
-    supervisorRepository
-        .findBySessionIdAndSupervisorConsultantIdAndIsActiveTrue(
-            leaving.getChatId(), leaving.getConsultantId())
-        .ifPresent(this::end);
+  private Optional<SessionSupervisor> activeSupervisionOf(GroupChatParticipant leaving) {
+    return supervisorRepository.findBySessionIdAndSupervisorConsultantIdAndIsActiveTrue(
+        leaving.getChatId(), leaving.getConsultantId());
   }
 
   private void end(SessionSupervisor supervision) {
+    endLocally(supervision);
+    leaveSideRoom(supervision);
+  }
+
+  void endLocally(SessionSupervisor supervision) {
     supervision.setIsActive(false);
     supervision.setRemovedDate(LocalDateTime.now());
     supervisorRepository.save(supervision);
-    leaveSideRoom(supervision);
   }
 
   /**

@@ -1,12 +1,14 @@
 package de.caritas.cob.userservice.api.port.out;
 
 import de.caritas.cob.userservice.api.model.SessionSupervisor;
+import jakarta.persistence.LockModeType;
 import java.time.LocalDateTime;
 import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 import org.springframework.data.jpa.repository.EntityGraph;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
@@ -78,6 +80,14 @@ public interface SessionSupervisorRepository extends JpaRepository<SessionSuperv
    */
   Optional<SessionSupervisor> findBySessionIdAndSupervisorConsultantIdAndIsActiveTrue(
       Long sessionId, String consultantId);
+
+  @Lock(LockModeType.PESSIMISTIC_WRITE)
+  @Query(
+      "select supervisor from SessionSupervisor supervisor "
+          + "where supervisor.session.id = :sessionId "
+          + "and supervisor.supervisorConsultant.id = :consultantId and supervisor.isActive = true")
+  Optional<SessionSupervisor> findActiveForUpdate(
+      @Param("sessionId") Long sessionId, @Param("consultantId") String consultantId);
 
   /**
    * Whether the Matrix account currently supervises the session. A single boolean read that needs
