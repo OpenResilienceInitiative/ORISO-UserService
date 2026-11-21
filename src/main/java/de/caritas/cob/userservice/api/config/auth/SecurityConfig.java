@@ -378,7 +378,9 @@ public class SecurityConfig {
                     CONSULTANT_DEFAULT,
                     SINGLE_TENANT_ADMIN,
                     TENANT_ADMIN,
-                    RESTRICTED_AGENCY_ADMIN)
+                    RESTRICTED_AGENCY_ADMIN,
+                    // Agency admins carry user-admin only; they see the admin tours too.
+                    USER_ADMIN)
                 // Uses the platform SMTP credentials: platform admin only.
                 .requestMatchers("/users/system-notification-emails/platform-settings")
                 .access(this::isPlatformAdmin)
