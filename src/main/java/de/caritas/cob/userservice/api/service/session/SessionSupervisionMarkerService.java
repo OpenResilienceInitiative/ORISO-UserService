@@ -149,10 +149,9 @@ public class SessionSupervisionMarkerService {
 
   private boolean isEligibleForSupervision(ConsultantSessionResponseDTO entry) {
     var session = entry.getSession();
-    String username = nonNull(entry.getUser()) ? entry.getUser().getUsername() : null;
     return nonNull(session)
         && nonNull(session.getId())
         && !AnonymousSessionRegistration.matches(
-            session.getRegistrationType(), session.getPostcode(), username);
+            session.getRegistrationType(), session.getPostcode());
   }
 }

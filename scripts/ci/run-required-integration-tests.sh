@@ -72,6 +72,7 @@ mariadb_owned_tests=(
   IdentityReactivationSagaMariaDbIT
   UserHardDeleteClaimMariaDbIT
   StatisticsRetentionMariaDbIT
+  GuestRegistrationTypeQueriesMariaDbIT
 )
 required_test_pattern="**/*IT"
 for mariadb_owned_test in "${mariadb_owned_tests[@]}"; do

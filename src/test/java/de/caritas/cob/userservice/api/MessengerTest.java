@@ -491,6 +491,47 @@ class MessengerTest {
         .countPendingEnquiriesAheadOf(any(), any(), any(), any(), any(), any(), any(), any());
   }
 
+  /** ORISO-UserService#1697: an animal guest from before the stored modality is still queued. */
+  @Test
+  void requireFirstLiveChatEnquiry_Should_Refuse_When_LegacyAnimalGuestHasAnEarlierGuest() {
+    when(liveChatQueuePolicy.freeChoiceEnabled()).thenReturn(false);
+    when(sessionRepository.countPendingEnquiriesAheadOf(
+            any(), any(), any(), any(), any(), any(), any(), any()))
+        .thenReturn(1L);
+    var guest = waitingLiveChatGuest();
+    guest.setConversationType(null);
+    guest.setRegistrationType(Session.RegistrationType.REGISTERED);
+    guest.setPostcode("00000");
+    var user = new de.caritas.cob.userservice.api.model.User();
+    user.setUsername("katze_sam_4821");
+    guest.setUser(user);
+
+    var refusal =
+        org.assertj.core.api.Assertions.catchThrowableOfType(
+            de.caritas.cob.userservice.api.exception.httpresponses
+                .CustomValidationHttpStatusException.class,
+            () -> messenger.requireFirstLiveChatEnquiry(guest));
+
+    assertThat(refusal).isNotNull();
+  }
+
+  /** ORISO-UserService#1697: a guest-looking User-ID alone does not put a session in the queue. */
+  @Test
+  void requireFirstLiveChatEnquiry_Should_NotQueue_When_OnlyTheUsernameLooksAnonymous() {
+    var asker = waitingLiveChatGuest();
+    asker.setConversationType(null);
+    asker.setRegistrationType(Session.RegistrationType.REGISTERED);
+    asker.setPostcode("12345");
+    var user = new de.caritas.cob.userservice.api.model.User();
+    user.setUsername("Anonymous-1700000000000");
+    asker.setUser(user);
+
+    messenger.requireFirstLiveChatEnquiry(asker);
+
+    verify(sessionRepository, never())
+        .countPendingEnquiriesAheadOf(any(), any(), any(), any(), any(), any(), any(), any());
+  }
+
   private static Session waitingLiveChatGuest() {
     var session = new Session();
     session.setId(7L);
