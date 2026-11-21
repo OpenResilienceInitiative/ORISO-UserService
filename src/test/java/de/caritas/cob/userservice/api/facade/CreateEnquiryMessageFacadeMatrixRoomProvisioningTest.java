@@ -161,6 +161,7 @@ class CreateEnquiryMessageFacadeMatrixRoomProvisioningTest {
                 sessionService,
                 org.mockito.Mockito.mock(
                     de.caritas.cob.userservice.api.service.session.AgencyEnquiryRevocations.class)),
+            sessionService,
             silentMembership,
             // Runs deferred counsellors inline, so the test sees the same membership end state.
             new de.caritas.cob.userservice.api.service.session.AgencyDepartmentMembershipBackfill(

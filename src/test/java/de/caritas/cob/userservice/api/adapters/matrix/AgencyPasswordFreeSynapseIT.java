@@ -460,6 +460,7 @@ class AgencyPasswordFreeSynapseIT {
             gateway,
             new AgencyEnquiryRoomPublication(
                 consultants, sessionRepository, sessions, mock(AgencyEnquiryRevocations.class)),
+            sessions,
             silentMembership,
             new AgencyDepartmentMembershipBackfill(
                 new AgencyOpenEnquiryMembership(

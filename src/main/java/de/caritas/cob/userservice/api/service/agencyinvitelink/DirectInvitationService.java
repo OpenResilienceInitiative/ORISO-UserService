@@ -38,6 +38,7 @@ import java.util.stream.Collectors;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.hibernate.Hibernate;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
@@ -210,7 +211,10 @@ public class DirectInvitationService {
     if (appointment.getStatus() == SessionAppointment.Status.CANCELLED) {
       throw new DirectLinkInactiveException();
     }
-    var session = appointment.getSession();
+    /* Loaded here, not a lazy reference: the caller reads the room after this transaction ended
+    (open-in-view is off), and a reference answered every return visit with HTTP 500
+    (ORISO-UserService#1694). */
+    var session = (Session) Hibernate.unproxy(appointment.getSession());
     if (session == null) {
       var created = newConversation.get();
       if (created == null

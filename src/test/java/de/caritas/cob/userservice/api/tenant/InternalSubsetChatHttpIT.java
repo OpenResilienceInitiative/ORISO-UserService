@@ -1948,6 +1948,8 @@ class InternalSubsetChatHttpIT {
       final Set<String> invited = new LinkedHashSet<>();
       final Set<String> joined = new LinkedHashSet<>();
       boolean encrypted;
+      String creator;
+      String powerLevels;
     }
 
     private static void pause(int millis) {
@@ -2035,6 +2037,7 @@ class InternalSubsetChatHttpIT {
         var room = new Room();
         var roomId = "!room" + (++numbering) + ":" + SERVER;
         room.joined.add(actor);
+        room.creator = actor;
         var initialState = node.path("initial_state");
         for (JsonNode event : initialState) {
           if ("m.room.encryption".equals(event.path("type").asText())) {
@@ -2045,6 +2048,31 @@ class InternalSubsetChatHttpIT {
         created.incrementAndGet();
         return withSuccess("{\"room_id\":\"" + roomId + "\"}", MediaType.APPLICATION_JSON)
             .createResponse(request);
+      }
+      if (path.startsWith("/_matrix/client/r0/rooms/")
+          && path.endsWith("/state/m.room.power_levels")) {
+        // The passage-blur rule (ORISO-Frontend#2229) is written right after creation.
+        var room = rooms.get(roomOf(path, "/state/m.room.power_levels"));
+        if (room == null || !room.joined.contains(actor)) {
+          return withStatus(HttpStatus.FORBIDDEN)
+              .body("{\"errcode\":\"M_FORBIDDEN\"}")
+              .contentType(MediaType.APPLICATION_JSON)
+              .createResponse(request);
+        }
+        if (HttpMethod.PUT.equals(method)) {
+          room.powerLevels = body;
+          return withSuccess("{\"event_id\":\"$power\"}", MediaType.APPLICATION_JSON)
+              .createResponse(request);
+        }
+        var current =
+            room.powerLevels != null
+                ? room.powerLevels
+                : "{\"users\":{\""
+                    + room.creator
+                    + "\":100},\"users_default\":0,"
+                    + "\"events\":{\"m.room.power_levels\":100},\"events_default\":0,"
+                    + "\"state_default\":50,\"redact\":50,\"invite\":0}";
+        return withSuccess(current, MediaType.APPLICATION_JSON).createResponse(request);
       }
       if (path.startsWith("/_matrix/client/r0/rooms/") && path.endsWith("/invite")) {
         var room = rooms.get(roomOf(path, "/invite"));
