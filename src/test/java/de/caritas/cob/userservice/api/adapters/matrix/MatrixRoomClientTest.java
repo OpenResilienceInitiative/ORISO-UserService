@@ -9,6 +9,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import ch.qos.logback.classic.Level;
+import ch.qos.logback.classic.Logger;
 import de.caritas.cob.userservice.api.adapters.matrix.config.MatrixConfig;
 import de.caritas.cob.userservice.api.adapters.matrix.dto.MatrixCreateRoomRequestDTO;
 import de.caritas.cob.userservice.api.adapters.matrix.dto.MatrixCreateRoomResponseDTO;
@@ -29,6 +30,7 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.Captor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
@@ -786,6 +788,9 @@ class MatrixRoomClientTest {
         .thenReturn(ResponseEntity.ok(Map.of()));
 
     var roomId = "!Synthetic:one.invalid";
+    var logger = (Logger) LoggerFactory.getLogger(MatrixRoomClient.class);
+    var previousLevel = logger.getLevel();
+    logger.setLevel(Level.INFO);
     try (var logs = LogbackCaptor.forClass(MatrixRoomClient.class)) {
       assertThat(matrixRoomClient.joinRoom(roomId, ACCESS_TOKEN)).isTrue();
       assertThat(matrixRoomClient.joinRoom(roomId, ACCESS_TOKEN)).isTrue();
@@ -802,6 +807,8 @@ class MatrixRoomClientTest {
                   assertThat(message)
                       .matches(".*mx-room#[0-9a-f]{12}")
                       .doesNotContain("Synthetic", "synthetic", ".invalid"));
+    } finally {
+      logger.setLevel(previousLevel);
     }
     assertThat(redactor.roomPseudonym("!opaque").substring("mx-room#".length()))
         .isNotEqualTo(redactor.pseudonym("!opaque").substring("mx#".length()));
