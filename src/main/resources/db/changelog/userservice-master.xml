@@ -171,6 +171,7 @@
     file="db/changelog/changeset/0091_account_invite_active_recipient/0091_changeSet.xml" />
   <include
     file="db/changelog/changeset/0092_id_reservation_release_task/0092_changeSet.xml" />
+  <include file="db/changelog/changeset/20261121_tenant_reservation_release_1052/changeSet.xml"/>
   <include
     file="db/changelog/changeset/0093_team_agency_session_modality/0093_changeSet.xml" />
   <include

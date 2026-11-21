@@ -89,12 +89,21 @@ class IdReservationReleaseSchedulerTest {
               assertThat(TechnicalAccessTokenContext.get()).contains("token");
               return true;
             });
+    when(processor.pendingTenantTaskIds()).thenReturn(List.of(3L));
+    org.mockito.Mockito.doAnswer(
+            invocation -> {
+              assertThat(TechnicalAccessTokenContext.get()).contains("token");
+              return null;
+            })
+        .when(processor)
+        .processTenant(3L);
 
     scheduler.retryPendingReleases();
 
     verify(tenantContextProvider).setTechnicalContextIfMultiTenancyIsEnabled();
     verify(processor).process(1L);
     verify(processor).process(2L);
+    verify(processor).processTenant(3L);
     verify(taskClaimService).release(lease);
     assertThat(TechnicalAccessTokenContext.get()).isEmpty();
     assertThat(TenantContext.contextIsSet()).isFalse();

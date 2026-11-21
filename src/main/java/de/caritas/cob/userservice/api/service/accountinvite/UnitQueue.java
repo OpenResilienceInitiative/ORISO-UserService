@@ -53,6 +53,9 @@ public class UnitQueue {
       // AUTO: no admin invite can hold an ID nobody knows yet.
       throw noPendingUnitAdmin();
     }
+    if (unit == InviteUnitType.TENANT) {
+      ledger.lockTenantReservation(unitId);
+    }
     if (ledger.unitExists(unit, unitId)) {
       throw new ConflictException(
           (unit == InviteUnitType.AGENCY
@@ -60,10 +63,20 @@ public class UnitQueue {
                   : "tenantId " + unitId + " already exists; invite with tenantIdAllocationMode")
               + " EXISTING");
     }
-    AccountInvite admin =
-        pendingUnitAdmins(unit, unitId, target.tenantId(), null).stream()
-            .findFirst()
-            .orElseThrow(UnitQueue::noPendingUnitAdmin);
+    List<AccountInvite> admins =
+        unit == InviteUnitType.TENANT
+            ? newTransaction()
+                .execute(transaction -> pendingUnitAdmins(unit, unitId, target.tenantId(), null))
+            : pendingUnitAdmins(unit, unitId, target.tenantId(), null);
+    AccountInvite admin = admins.stream().findFirst().orElseThrow(UnitQueue::noPendingUnitAdmin);
+    if (unit == InviteUnitType.TENANT) {
+      String proof = ledger.findCurrentTenantReservationProof(unitId, admins).orElse(null);
+      if (proof == null && admins.stream().anyMatch(a -> a.getTenantIdReservationToken() != null)) {
+        throw noPendingUnitAdmin();
+      }
+      ledger.assertNoPendingTenantRelease(unitId, proof);
+      invite.setWaitingTenantReservationToken(proof);
+    }
     if (invite.getTenantId() == null) {
       invite.setTenantId(admin.getTenantId());
     }

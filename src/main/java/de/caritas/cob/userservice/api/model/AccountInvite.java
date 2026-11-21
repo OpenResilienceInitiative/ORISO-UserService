@@ -54,6 +54,7 @@ import lombok.ToString;
     exclude = {
       "tokenHash",
       "tenantIdReservationToken",
+      "waitingTenantReservationToken",
       "totpPendingSecret",
       "initialPasswordVerifier"
     })
@@ -104,6 +105,10 @@ public class AccountInvite {
    */
   @Column(name = "tenant_id_reservation_token", length = 36)
   private String tenantIdReservationToken;
+
+  /** Proof associated with the founding reservation when this invite joined the queue. */
+  @Column(name = "waiting_tenant_reservation_token", length = 36)
+  private String waitingTenantReservationToken;
 
   @Column(name = "department_id")
   private Long departmentId;

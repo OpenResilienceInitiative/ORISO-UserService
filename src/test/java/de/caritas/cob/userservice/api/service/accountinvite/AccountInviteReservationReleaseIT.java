@@ -14,9 +14,11 @@ import de.caritas.cob.userservice.api.admin.service.tenant.TenantService;
 import de.caritas.cob.userservice.api.config.auth.UserRole;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.model.AccountInvite;
+import de.caritas.cob.userservice.api.model.TenantReservationReleaseTask;
 import de.caritas.cob.userservice.api.port.out.AccountInviteRepository;
 import de.caritas.cob.userservice.api.port.out.IdReservationReleaseTaskRepository;
 import de.caritas.cob.userservice.api.port.out.IdentityEmailOwnerLookup;
+import de.caritas.cob.userservice.api.port.out.TenantReservationReleaseTaskRepository;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteService.CreateAccountInviteCommand;
 import de.caritas.cob.userservice.api.service.accountinvite.allocation.AgencyIdAllocationClient;
 import de.caritas.cob.userservice.api.service.accountinvite.allocation.IdAllocationMode;
@@ -30,6 +32,7 @@ import de.caritas.cob.userservice.api.tenant.WithTenant;
 import java.time.LocalDateTime;
 import java.util.Optional;
 import java.util.UUID;
+import org.apache.commons.codec.digest.DigestUtils;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -72,6 +75,7 @@ class AccountInviteReservationReleaseIT {
   private static final long FOREIGN_RESERVED_AGENCY = 501L;
   private static final long EXISTING_AGENCY = 1L;
   private static final long NEW_TENANT = 900L;
+  private static final String TENANT_RESERVATION_PROOF = "reservation-token-900";
 
   @TestConfiguration
   static class CallerConfig {
@@ -87,6 +91,8 @@ class AccountInviteReservationReleaseIT {
   private AccountInviteRepository accountInviteRepository;
 
   @Autowired private IdReservationReleaseTaskRepository releaseTaskRepository;
+  @Autowired private TenantReservationReleaseTaskRepository tenantReleaseTaskRepository;
+  @Autowired private IdReservationReleaseProcessor releaseProcessor;
   @Autowired private AuthenticatedUser caller;
 
   @MockitoBean private ExistingAccountSetupIssuer existingAccountSetupIssuer;
@@ -128,8 +134,10 @@ class AccountInviteReservationReleaseIT {
     when(tenantIdAllocationClient.getAvailability(NEW_TENANT))
         .thenReturn(IdAllocationStatus.RESERVED);
     when(tenantIdAllocationClient.reserve(NEW_TENANT))
-        .thenReturn(new TenantIdReservation(NEW_TENANT, "reservation-token-900"));
-    when(tenantIdAllocationClient.release(anyLong())).thenReturn(true);
+        .thenReturn(new TenantIdReservation(NEW_TENANT, TENANT_RESERVATION_PROOF));
+    when(tenantIdAllocationClient.hasReservationProof(NEW_TENANT, TENANT_RESERVATION_PROOF))
+        .thenReturn(true);
+    when(tenantIdAllocationClient.release(anyLong(), anyString())).thenReturn(true);
     actAsTenantAdmin();
   }
 
@@ -137,6 +145,7 @@ class AccountInviteReservationReleaseIT {
   void cleanUp() {
     accountInviteRepository.deleteAll();
     releaseTaskRepository.deleteAll();
+    tenantReleaseTaskRepository.deleteAll();
   }
 
   // --- revoke -----------------------------------------------------------------------------------
@@ -190,7 +199,7 @@ class AccountInviteReservationReleaseIT {
     service.revokeInvite(invite.getId());
 
     verify(agencyIdAllocationClient, never()).release(anyLong());
-    verify(tenantIdAllocationClient, never()).release(anyLong());
+    verify(tenantIdAllocationClient, never()).release(anyLong(), any());
   }
 
   @Test
@@ -221,16 +230,82 @@ class AccountInviteReservationReleaseIT {
   }
 
   @Test
-  void revokingTheOnlyAdminInviteOfANewTraeger_Should_ReleaseItsNumber() {
+  void revokingTheLastAdminInviteOfANewTraeger_Should_ReleaseItsNumber() {
     actAsPlatformAdmin();
     AccountInvite first = service.createInvite(newTenantAdmin());
     AccountInvite second = service.createInvite(newTenantAdmin());
 
     service.revokeInvite(first.getId());
-    verify(tenantIdAllocationClient, never()).release(anyLong());
+    verify(tenantIdAllocationClient, never()).release(anyLong(), any());
 
     service.revokeInvite(second.getId());
-    verify(tenantIdAllocationClient, times(1)).release(NEW_TENANT);
+    verify(tenantIdAllocationClient, times(1)).release(NEW_TENANT, TENANT_RESERVATION_PROOF);
+  }
+
+  @Test
+  void revokingTheLastWaitingInvite_Should_ReleaseTheReservationItWasQueuedFor() {
+    actAsPlatformAdmin();
+    AccountInvite admin = service.createInvite(newTenantAdmin());
+    AccountInvite waiting =
+        service.createInvite(
+            command(
+                AccountInviteTargetRole.AGENCY_ADMIN,
+                NEW_TENANT,
+                IdAllocationMode.MANUAL,
+                null,
+                IdAllocationMode.AUTO));
+
+    assertThat(reload(waiting).getWaitingTenantReservationToken())
+        .isEqualTo(TENANT_RESERVATION_PROOF);
+    service.revokeInvite(admin.getId());
+    verify(tenantIdAllocationClient, never()).release(anyLong(), any());
+
+    service.revokeInvite(waiting.getId());
+    verify(tenantIdAllocationClient).release(NEW_TENANT, TENANT_RESERVATION_PROOF);
+  }
+
+  @Test
+  void retryingAFailedTenantRelease_Should_UseTheOriginalProofAfterInviteDeletion() {
+    actAsPlatformAdmin();
+    when(tenantIdAllocationClient.release(NEW_TENANT, TENANT_RESERVATION_PROOF))
+        .thenReturn(false, true);
+    AccountInvite invite = service.createInvite(newTenantAdmin());
+
+    service.revokeInvite(invite.getId());
+
+    var queued = tenantReleaseTaskRepository.findAll();
+    assertThat(queued).hasSize(1);
+    var task = queued.getFirst();
+    assertThat(task.getReservationToken()).isEqualTo(TENANT_RESERVATION_PROOF);
+    assertThat(task.getAttemptCount()).isEqualTo(1);
+    assertThat(releaseTaskRepository.count()).isZero();
+    accountInviteRepository.deleteById(invite.getId());
+
+    releaseProcessor.processTenant(task.getId());
+
+    verify(tenantIdAllocationClient, times(2)).release(NEW_TENANT, TENANT_RESERVATION_PROOF);
+    assertThat(tenantReleaseTaskRepository.count()).isZero();
+  }
+
+  @Test
+  void tenantReleaseRemainsRetryableAfterTheLegacyAttemptLimit() {
+    var originalAttempt = LocalDateTime.now().minusDays(1);
+    var task =
+        new TenantReservationReleaseTask(
+            NEW_TENANT,
+            TENANT_RESERVATION_PROOF,
+            DigestUtils.sha256Hex(TENANT_RESERVATION_PROOF),
+            originalAttempt);
+    for (int attempt = 0; attempt < 12; attempt++) {
+      task.recordFailedAttempt(originalAttempt);
+    }
+    tenantReleaseTaskRepository.saveAndFlush(task);
+
+    assertThat(releaseProcessor.pendingTenantTaskIds()).contains(task.getId());
+    releaseProcessor.processTenant(task.getId());
+
+    verify(tenantIdAllocationClient).release(NEW_TENANT, TENANT_RESERVATION_PROOF);
+    assertThat(tenantReleaseTaskRepository.count()).isZero();
   }
 
   // --- expiry -----------------------------------------------------------------------------------
