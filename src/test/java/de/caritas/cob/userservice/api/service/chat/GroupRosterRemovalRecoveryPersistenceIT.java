@@ -3,6 +3,7 @@ package de.caritas.cob.userservice.api.service.chat;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verifyNoInteractions;
+import static org.mockito.Mockito.when;
 
 import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
 import de.caritas.cob.userservice.api.model.GroupChatParticipant;
@@ -14,7 +15,11 @@ import de.caritas.cob.userservice.api.port.out.GroupChatParticipantRepository;
 import de.caritas.cob.userservice.api.port.out.GroupRosterRemovalIntentRepository;
 import de.caritas.cob.userservice.api.port.out.SessionSupervisorRepository;
 import java.time.Clock;
+import java.time.Instant;
+import java.time.LocalDateTime;
+import java.time.ZoneOffset;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 import liquibase.Contexts;
 import liquibase.Liquibase;
@@ -32,6 +37,7 @@ import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import org.springframework.orm.jpa.JpaTransactionManager;
 import org.springframework.orm.jpa.SharedEntityManagerCreator;
 import org.springframework.orm.jpa.vendor.HibernateJpaDialect;
+import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.annotation.AnnotationTransactionAttributeSource;
 import org.springframework.transaction.interceptor.TransactionInterceptor;
 import org.springframework.transaction.support.TransactionTemplate;
@@ -135,6 +141,76 @@ class GroupRosterRemovalRecoveryPersistenceIT {
       transaction.executeWithoutResult(
           status -> participants.findById(24L).orElseThrow().setRole(ParticipantRole.CO_MODERATOR));
       assertThat(participants.findById(24L).orElseThrow().getRosterVersion()).isEqualTo(2L);
+      verifyNoInteractions(matrix);
+    } finally {
+      StandardServiceRegistryBuilder.destroy(registry);
+    }
+  }
+
+  @Test
+  @Timeout(20)
+  void retryUsesTheCommittedBackoffAfterLockingTheOwner() throws Exception {
+    var data = migratedDataSource();
+    var registry =
+        new StandardServiceRegistryBuilder()
+            .applySetting("hibernate.connection.datasource", data)
+            .applySetting("hibernate.connection.handling_mode", "DELAYED_ACQUISITION_AND_HOLD")
+            .applySetting("hibernate.hbm2ddl.auto", "validate")
+            .build();
+    try (var factory =
+        new MetadataSources(registry)
+            .addAnnotatedClass(GroupRosterRemovalIntent.class)
+            .buildMetadata()
+            .buildSessionFactory()) {
+      var manager = new JpaTransactionManager(factory);
+      manager.setDataSource(data);
+      manager.setJpaDialect(new HibernateJpaDialect());
+      manager.afterPropertiesSet();
+      var repositoryFactory =
+          new JpaRepositoryFactory(SharedEntityManagerCreator.createSharedEntityManager(factory));
+      var repository = repositoryFactory.getRepository(GroupRosterRemovalIntentRepository.class);
+      var consultants = mock(ConsultantRepository.class);
+      var matrix = mock(MatrixSynapseService.class);
+      var clock = Clock.fixed(Instant.parse("2026-11-21T09:00:00Z"), ZoneOffset.UTC);
+      var target =
+          new GroupRosterRemovalRecovery(
+              repository,
+              mock(ChatRepository.class),
+              consultants,
+              mock(GroupChatParticipantRepository.class),
+              mock(SessionSupervisorRepository.class),
+              mock(MembersOnlyRevocation.class),
+              matrix,
+              clock);
+      var proxy = new ProxyFactory(target);
+      proxy.addAdvice(
+          new TransactionInterceptor(manager, new AnnotationTransactionAttributeSource()));
+      var service = (GroupRosterRemovalRecovery) proxy.getProxy();
+      var group = new GroupRosterRemovalRecovery.GroupScope(42L, "owner", 7L, "!group:matrix", 3);
+      var participant = new GroupRosterRemovalRecovery.ParticipantScope(24L, 0L, "consultant");
+      var reservation =
+          service.record(group, participant, group.roomId(), "@consultant:matrix", null, null);
+      var now = LocalDateTime.now(clock);
+      var writer = new TransactionTemplate(manager);
+      writer.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+      writer.executeWithoutResult(
+          status -> repository.findById(reservation.id()).orElseThrow().setRetryAt(now));
+      var nextRetry = now.plusMinutes(4);
+      when(consultants.findPictureOwnerForUpdate("owner"))
+          .thenAnswer(
+              invocation -> {
+                writer.executeWithoutResult(
+                    status ->
+                        repository.findById(reservation.id()).orElseThrow().setRetryAt(nextRetry));
+                return Optional.empty();
+              });
+
+      service.retry(reservation.id());
+
+      assertThat(repository.findById(reservation.id()))
+          .get()
+          .extracting(GroupRosterRemovalIntent::getRetryAt)
+          .isEqualTo(nextRetry);
       verifyNoInteractions(matrix);
     } finally {
       StandardServiceRegistryBuilder.destroy(registry);

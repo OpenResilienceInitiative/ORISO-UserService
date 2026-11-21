@@ -16,6 +16,17 @@ import org.springframework.data.repository.query.Param;
 public interface GroupRosterRemovalIntentRepository
     extends JpaRepository<GroupRosterRemovalIntent, Long> {
 
+  record RetryRoute(String ownerId, Long seriesId) {}
+
+  /** Read only immutable routing values before locking the owner and series. */
+  @Query(
+      """
+      select new de.caritas.cob.userservice.api.port.out.GroupRosterRemovalIntentRepository$RetryRoute(
+          intent.ownerId, intent.seriesId)
+      from GroupRosterRemovalIntent intent where intent.id = :id
+      """)
+  Optional<RetryRoute> findRetryRouteById(@Param("id") Long id);
+
   @Lock(LockModeType.PESSIMISTIC_WRITE)
   @Query("select intent from GroupRosterRemovalIntent intent where intent.id = :id")
   Optional<GroupRosterRemovalIntent> lockById(@Param("id") Long id);

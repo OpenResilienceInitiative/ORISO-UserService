@@ -22,6 +22,7 @@ import de.caritas.cob.userservice.api.port.out.ChatRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.GroupChatParticipantRepository;
 import de.caritas.cob.userservice.api.port.out.GroupRosterRemovalIntentRepository;
+import de.caritas.cob.userservice.api.port.out.GroupRosterRemovalIntentRepository.RetryRoute;
 import de.caritas.cob.userservice.api.port.out.SessionSupervisorRepository;
 import java.time.Clock;
 import java.time.Instant;
@@ -54,6 +55,7 @@ class GroupRosterRemovalRecoveryTest {
   private static final String OWNER_ID = "owner";
   private static final String CONSULTANT_ID = "consultant";
   private static final String MEMBER_ID = "@consultant:matrix";
+  private static final String SUPERVISOR_MEMBER_ID = "@supervisor:matrix";
   private static final String MAIN_ROOM = "!group:matrix";
   private static final String SIDE_ROOM = "!supervision:matrix";
   private static final Clock CLOCK =
@@ -93,8 +95,10 @@ class GroupRosterRemovalRecoveryTest {
     recovery.retry(INTENT_ID);
 
     var order = inOrder(consultants, groups, participants, matrix, revocation, intents);
+    order.verify(intents).findRetryRouteById(INTENT_ID);
     order.verify(consultants).findPictureOwnerForUpdate(OWNER_ID);
     order.verify(groups).findByIdForUpdate(GROUP_ID);
+    order.verify(intents).lockById(INTENT_ID);
     order.verify(participants).findBySeriesIdAndConsultantIdForUpdate(GROUP_ID, CONSULTANT_ID);
     order.verify(matrix).isOutOfRoom(MAIN_ROOM, MEMBER_ID);
     order.verify(revocation).handOverAfterVerifiedGroupDeparture(group, participant);
@@ -105,19 +109,23 @@ class GroupRosterRemovalRecoveryTest {
 
   @Test
   void sideOnlyDepartureEndsTheOriginalSupervisionAndPreservesTheRoster() {
-    var intent = intentFor(SIDE_ROOM).supervisionId(SUPERVISION_ID).build();
+    var intent =
+        intentFor(SIDE_ROOM).supervisionId(SUPERVISION_ID).memberId(SUPERVISOR_MEMBER_ID).build();
     var participant = originalParticipant();
     var supervision = supervision(SUPERVISION_ID, SIDE_ROOM);
+    var supervisor = new Consultant();
+    supervisor.setMatrixUserId(SUPERVISOR_MEMBER_ID);
+    supervision.setSupervisorConsultant(supervisor);
     givenCurrentRoster(intent, participant, OCCURRENCE);
     givenActiveSupervision(supervision);
-    when(matrix.isOutOfRoom(SIDE_ROOM, MEMBER_ID)).thenReturn(Optional.of(true));
+    when(matrix.isOutOfRoom(SIDE_ROOM, SUPERVISOR_MEMBER_ID)).thenReturn(Optional.of(true));
 
     recovery.retry(INTENT_ID);
 
     verify(revocation).endLocally(supervision);
     verify(intents).delete(intent);
     verify(participants).findBySeriesIdAndConsultantIdForUpdate(GROUP_ID, CONSULTANT_ID);
-    verify(matrix).isOutOfRoom(SIDE_ROOM, MEMBER_ID);
+    verify(matrix).isOutOfRoom(SIDE_ROOM, SUPERVISOR_MEMBER_ID);
     verifyNoMoreInteractions(participants, revocation, matrix);
   }
 
@@ -157,16 +165,52 @@ class GroupRosterRemovalRecoveryTest {
     verifyNoMoreInteractions(matrix, revocation);
   }
 
-  @Test
-  void aNewSideSupervisionCannotBeEndedByTheOldIntent() {
+  @ParameterizedTest
+  @EnumSource(UnconfirmedAbsence.class)
+  void aReplacementWithTheSameSideRoomKeepsTheUnsettledDeparture(UnconfirmedAbsence state) {
     var intent = intentFor(SIDE_ROOM).supervisionId(SUPERVISION_ID).build();
     givenCurrentRoster(intent, originalParticipant(), OCCURRENCE);
     givenActiveSupervision(supervision(SUPERVISION_ID + 1, SIDE_ROOM));
+    when(matrix.isOutOfRoom(SIDE_ROOM, MEMBER_ID)).thenReturn(state.result);
 
     recovery.retry(INTENT_ID);
 
+    assertThat(intent.getRetryAt()).isEqualTo(NOW.plusMinutes(1));
+    verify(intents, never()).delete(intent);
+    verify(participants, never()).delete(any());
+    verifyNoInteractions(revocation);
+  }
+
+  @Test
+  void confirmedStaleSideDepartureKeepsTheReplacementSupervision() {
+    var intent = intentFor(SIDE_ROOM).supervisionId(SUPERVISION_ID).build();
+    givenCurrentRoster(intent, originalParticipant(), OCCURRENCE);
+    givenActiveSupervision(supervision(SUPERVISION_ID + 1, SIDE_ROOM));
+    when(matrix.isOutOfRoom(SIDE_ROOM, MEMBER_ID)).thenReturn(Optional.of(true));
+
+    recovery.retry(INTENT_ID);
+
+    verify(matrix).isOutOfRoom(SIDE_ROOM, MEMBER_ID);
     verify(intents).delete(intent);
-    verifyNoInteractions(matrix, revocation);
+    verify(participants, never()).delete(any());
+    verifyNoInteractions(revocation);
+  }
+
+  @Test
+  void aReplacedParticipantKeepsTheUnsettledSideDeparture() {
+    var intent =
+        intentFor(SIDE_ROOM).supervisionId(SUPERVISION_ID).memberId(SUPERVISOR_MEMBER_ID).build();
+    var participant = originalParticipant();
+    participant.setId(PARTICIPANT_ID + 1);
+    givenCurrentRoster(intent, participant, OCCURRENCE);
+    when(matrix.isOutOfRoom(SIDE_ROOM, SUPERVISOR_MEMBER_ID)).thenReturn(Optional.empty());
+
+    recovery.retry(INTENT_ID);
+
+    assertThat(intent.getRetryAt()).isEqualTo(NOW.plusMinutes(1));
+    verify(intents, never()).delete(intent);
+    verify(participants, never()).delete(any());
+    verifyNoInteractions(supervisions, revocation);
   }
 
   @ParameterizedTest
@@ -258,7 +302,7 @@ class GroupRosterRemovalRecoveryTest {
     assertThat(intent.isDispatchSettled()).isFalse();
     assertThat(intent.getRetryAt()).isEqualTo(NOW.plusMinutes(1));
     verify(participants).findBySeriesIdAndConsultantIdForUpdate(GROUP_ID, CONSULTANT_ID);
-    verify(intents).findById(INTENT_ID);
+    verify(intents).findRetryRouteById(INTENT_ID);
     verify(intents).lockById(INTENT_ID);
     verify(matrix).isOutOfRoom(MAIN_ROOM, MEMBER_ID);
     verifyNoMoreInteractions(participants, intents, matrix);
@@ -358,7 +402,8 @@ class GroupRosterRemovalRecoveryTest {
     var owner = new Consultant();
     owner.setId(OWNER_ID);
     owner.setTenantId(TENANT_ID);
-    when(intents.findById(INTENT_ID)).thenReturn(Optional.of(intent));
+    when(intents.findRetryRouteById(INTENT_ID))
+        .thenReturn(Optional.of(new RetryRoute(OWNER_ID, GROUP_ID)));
     when(intents.lockById(INTENT_ID)).thenReturn(Optional.of(intent));
     when(consultants.findPictureOwnerForUpdate(OWNER_ID)).thenReturn(Optional.of(owner));
     when(groups.findByIdForUpdate(GROUP_ID)).thenReturn(Optional.of(group));
@@ -371,9 +416,11 @@ class GroupRosterRemovalRecoveryTest {
   private void givenCurrentRoster(
       GroupRosterRemovalIntent intent, GroupChatParticipant participant, int occurrence) {
     givenGroupAndIntent(intent, occurrence);
-    var member = new Consultant();
-    member.setMatrixUserId(MEMBER_ID);
-    when(consultants.findById(CONSULTANT_ID)).thenReturn(Optional.of(member));
+    if (intent.getSupervisionId() == null) {
+      var member = new Consultant();
+      member.setMatrixUserId(MEMBER_ID);
+      when(consultants.findById(CONSULTANT_ID)).thenReturn(Optional.of(member));
+    }
     when(participants.findBySeriesIdAndConsultantIdForUpdate(GROUP_ID, CONSULTANT_ID))
         .thenReturn(Optional.of(participant));
   }

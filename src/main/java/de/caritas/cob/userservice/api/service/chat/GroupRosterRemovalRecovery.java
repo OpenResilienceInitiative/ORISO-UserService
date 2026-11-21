@@ -8,6 +8,7 @@ import de.caritas.cob.userservice.api.model.Chat;
 import de.caritas.cob.userservice.api.model.GroupChatParticipant;
 import de.caritas.cob.userservice.api.model.GroupChatParticipant.ParticipantRole;
 import de.caritas.cob.userservice.api.model.GroupRosterRemovalIntent;
+import de.caritas.cob.userservice.api.model.SessionSupervisor;
 import de.caritas.cob.userservice.api.port.out.ChatRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.GroupChatParticipantRepository;
@@ -149,13 +150,14 @@ class GroupRosterRemovalRecovery {
 
   @Transactional(propagation = Propagation.REQUIRES_NEW, isolation = Isolation.READ_COMMITTED)
   public void retry(Long id) {
-    var pending = intents.findById(id).orElse(null);
-    if (pending == null) {
+    var route = intents.findRetryRouteById(id).orElse(null);
+    if (route == null) {
       return;
     }
-    // Match roster writers: owner, series, then participants and supervision.
-    var owner = consultants.findPictureOwnerForUpdate(pending.getOwnerId()).orElse(null);
-    var group = groups.findByIdForUpdate(pending.getSeriesId()).orElse(null);
+    // Match roster writers: owner, series, then participants and supervision. Hydrate the intent
+    // only after those first locks so the persistence context cannot reuse an older snapshot.
+    var owner = consultants.findPictureOwnerForUpdate(route.ownerId()).orElse(null);
+    var group = groups.findByIdForUpdate(route.seriesId()).orElse(null);
     var intent = intents.lockById(id).orElse(null);
     if (intent == null || intent.getRetryAt().isAfter(LocalDateTime.now(clock))) {
       return;
@@ -173,13 +175,15 @@ class GroupRosterRemovalRecovery {
         participants
             .findBySeriesIdAndConsultantIdForUpdate(intent.getSeriesId(), intent.getConsultantId())
             .orElse(null);
-    var member = consultants.findById(intent.getConsultantId()).orElse(null);
+    var sideRoomExit = intent.getSupervisionId() != null;
+    var member = sideRoomExit ? null : consultants.findById(intent.getConsultantId()).orElse(null);
     if (participant == null
         || !Objects.equals(participant.getId(), intent.getParticipantId())
         || participant.getRosterVersion() != intent.getParticipantVersion()
         || participant.getRole() != ParticipantRole.CO_MODERATOR
-        || member == null
-        || !Objects.equals(member.getMatrixUserId(), intent.getMemberId())) {
+        || (!sideRoomExit
+            && (member == null
+                || !Objects.equals(member.getMatrixUserId(), intent.getMemberId())))) {
       retireStale(group, intent);
       return;
     }
@@ -190,12 +194,8 @@ class GroupRosterRemovalRecovery {
                 .findActiveForUpdate(participant.getChatId(), participant.getConsultantId())
                 .orElse(null)
             : null;
-    var sideRoomExit = intent.getSupervisionId() != null;
-    if (sideRoomExit
-        && (supervision == null
-            || !Objects.equals(supervision.getId(), intent.getSupervisionId())
-            || !Objects.equals(supervision.getMatrixRoomId(), intent.getRoomId()))) {
-      intents.delete(intent);
+    if (sideRoomExit && !matchesSideExit(supervision, intent)) {
+      retireStale(group, intent);
       return;
     }
     var departed = matrix.isOutOfRoom(intent.getRoomId(), intent.getMemberId());
@@ -224,13 +224,23 @@ class GroupRosterRemovalRecovery {
     intents.delete(intent);
   }
 
+  private static boolean matchesSideExit(
+      SessionSupervisor supervision, GroupRosterRemovalIntent intent) {
+    return supervision != null
+        && Objects.equals(supervision.getId(), intent.getSupervisionId())
+        && Objects.equals(supervision.getMatrixRoomId(), intent.getRoomId())
+        && supervision.getSupervisorConsultant() != null
+        && Objects.equals(
+            supervision.getSupervisorConsultant().getMatrixUserId(), intent.getMemberId());
+  }
+
   private void retireStale(Chat group, GroupRosterRemovalIntent intent) {
-    // A replacement participant can still choose the same physical room. Keep an unresolved
-    // departure as an ordering fence until that request settles, without touching its local rows.
-    if (!intent.isDispatchSettled()
-        && group != null
-        && Objects.equals(group.getMatrixRoomId(), intent.getRoomId())
-        && !hasDeparted(intent)) {
+    // Retain unresolved side exits and departures from the group's current room. A replacement
+    // may use the same Matrix account and room while the old leave is still in flight.
+    var mayBeReused =
+        intent.getSupervisionId() != null
+            || (group != null && Objects.equals(group.getMatrixRoomId(), intent.getRoomId()));
+    if (!intent.isDispatchSettled() && mayBeReused && !hasDeparted(intent)) {
       intent.setRetryAt(nextProbe());
       return;
     }
