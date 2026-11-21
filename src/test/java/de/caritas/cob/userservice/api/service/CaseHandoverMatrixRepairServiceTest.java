@@ -441,8 +441,24 @@ class CaseHandoverMatrixRepairServiceTest {
   }
 
   @Test
-  void observationOfASupervisorWhoIsNoLongerActiveInvitesNobody() throws Exception {
+  void observationOfASupervisorRemovedBeforeTheFirstAttemptTouchesNothing() throws Exception {
     var task = supervisorObservation();
+    when(repository.findById(12L)).thenReturn(Optional.of(task));
+    when(repository.findByIdForUpdate(12L)).thenReturn(Optional.of(task));
+    supervisorActive(false);
+
+    service.process(12L);
+
+    // The add itself was rate-limited, so no invite was ever sent: nothing to take back.
+    verify(matrixSynapseService, org.mockito.Mockito.never()).inviteUserToRoom(any(), any(), any());
+    verify(matrixSynapseService, org.mockito.Mockito.never()).joinRoom(any(), any());
+    verify(repository).delete(task);
+  }
+
+  @Test
+  void observationOfASupervisorRemovedAfterAnEarlierAttemptRejectsTheOpenInvite() throws Exception {
+    var task = supervisorObservation();
+    task.setAttemptCount(1);
     when(repository.findById(12L)).thenReturn(Optional.of(task));
     when(repository.findByIdForUpdate(12L)).thenReturn(Optional.of(task));
     supervisorActive(false);
@@ -453,8 +469,6 @@ class CaseHandoverMatrixRepairServiceTest {
     service.process(12L);
 
     verify(matrixSynapseService, org.mockito.Mockito.never()).inviteUserToRoom(any(), any(), any());
-    verify(matrixSynapseService, org.mockito.Mockito.never()).joinRoom(any(), any());
-    // An invite from an earlier attempt is rejected, not left open.
     verify(matrixSynapseService).leaveRoom("!client:matrix", "tok-sup");
     verify(repository).delete(task);
   }
@@ -462,35 +476,55 @@ class CaseHandoverMatrixRepairServiceTest {
   @Test
   void observationOfARemovedSupervisorRevokesTheInviteWithTheCounsellorsKick() throws Exception {
     var task = supervisorObservation();
+    task.setAttemptCount(1);
     when(repository.findById(12L)).thenReturn(Optional.of(task));
     when(repository.findByIdForUpdate(12L)).thenReturn(Optional.of(task));
     supervisorActive(false);
     when(matrixSynapseService.loginAsUserAccessToken("@counsellor:matrix")).thenReturn("tok-op");
     when(matrixSynapseService.loginAsUserAccessToken("@sup:matrix")).thenReturn(null);
-    when(matrixSynapseService.removeUserFromRoom("!client:matrix", "@sup:matrix", "tok-op"))
+    when(matrixSynapseService.kickUserFromRoom("!client:matrix", "@sup:matrix", "tok-op"))
         .thenReturn(true);
 
     service.process(12L);
 
-    verify(matrixSynapseService).removeUserFromRoom("!client:matrix", "@sup:matrix", "tok-op");
+    verify(matrixSynapseService).kickUserFromRoom("!client:matrix", "@sup:matrix", "tok-op");
     verify(repository).delete(task);
   }
 
   @Test
-  void observationOfARemovedSupervisorStaysQueuedWhileTheyCannotBeShownOut() throws Exception {
+  void observationOfARemovedSupervisorCompletesWhenTheRoomStateShowsThemOut() throws Exception {
     var task = supervisorObservation();
+    task.setAttemptCount(1);
     when(repository.findById(12L)).thenReturn(Optional.of(task));
     when(repository.findByIdForUpdate(12L)).thenReturn(Optional.of(task));
     supervisorActive(false);
     when(matrixSynapseService.loginAsUserAccessToken("@counsellor:matrix")).thenReturn("tok-op");
     when(matrixSynapseService.loginAsUserAccessToken("@sup:matrix")).thenReturn("tok-sup");
-    when(matrixSynapseService.getRoomMembers("!client:matrix"))
-        .thenReturn(Optional.of(java.util.List.of("@sup:matrix")));
+    when(matrixSynapseService.getRoomMembership("!client:matrix", "@sup:matrix", "tok-op"))
+        .thenReturn(Optional.of("leave"));
 
     service.process(12L);
 
+    verify(repository).delete(task);
+  }
+
+  @Test
+  void observationOfARemovedSupervisorStaysQueuedWhileAnInviteIsStillOpen() throws Exception {
+    var task = supervisorObservation();
+    task.setAttemptCount(1);
+    when(repository.findById(12L)).thenReturn(Optional.of(task));
+    when(repository.findByIdForUpdate(12L)).thenReturn(Optional.of(task));
+    supervisorActive(false);
+    when(matrixSynapseService.loginAsUserAccessToken("@counsellor:matrix")).thenReturn("tok-op");
+    when(matrixSynapseService.loginAsUserAccessToken("@sup:matrix")).thenReturn("tok-sup");
+    when(matrixSynapseService.getRoomMembership("!client:matrix", "@sup:matrix", "tok-op"))
+        .thenReturn(Optional.of("invite"));
+
+    service.process(12L);
+
+    // Fails closed: an open invite (or an unreadable state) is never taken for "out".
     verify(repository, org.mockito.Mockito.never()).delete(any());
-    assertThat(task.getAttemptCount()).isEqualTo(1);
+    assertThat(task.getAttemptCount()).isEqualTo(2);
   }
 
   @Test

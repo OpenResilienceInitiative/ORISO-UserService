@@ -534,8 +534,9 @@ public class CaseHandoverMatrixRepairService {
             ? null
             : matrixSynapseService.loginAsUserAccessToken(task.getOperatorId());
     if (!supervisorIsActive(task)) {
-      // An earlier attempt may have invited them before the removal: make sure they are out.
-      return supervisorIsOutOfTheRoom(task, operatorToken);
+      // No earlier attempt of this task: nothing was sent, the add itself was rate-limited.
+      // Otherwise an earlier attempt may have invited them before the removal.
+      return task.getAttemptCount() == 0 || supervisorIsOutOfTheRoom(task, operatorToken);
     }
     if (isBlank(operatorToken)) {
       return false;
@@ -566,10 +567,10 @@ public class CaseHandoverMatrixRepairService {
   }
 
   /**
-   * A supervisor who is no longer active must neither be joined nor hold an open invite. A leave
-   * with their own token also rejects an open invite; a kick by the counsellor also revokes one.
-   * Only when both are refused is "not joined" accepted as absent: Synapse refuses both exactly
-   * when there is no membership and no invite left.
+   * A supervisor who is no longer active must neither be joined nor hold an open invite. Fails
+   * closed: done only after a successful leave with their own token (which also rejects an open
+   * invite), a successful kick by the counsellor (which also retracts one), or when the room state
+   * shows their membership as {@code leave} or {@code ban}. Anything else keeps the task queued.
    */
   private boolean supervisorIsOutOfTheRoom(
       CaseHandoverMatrixRepairTask task, String operatorToken) {
@@ -577,17 +578,16 @@ public class CaseHandoverMatrixRepairService {
     if (!isBlank(memberToken) && matrixSynapseService.leaveRoom(task.getRoomId(), memberToken)) {
       return true;
     }
-    if (!isBlank(operatorToken)
-        && matrixSynapseService.removeUserFromRoom(
-            task.getRoomId(), task.getMemberId(), operatorToken)) {
-      return true;
-    }
-    if (isBlank(memberToken) && isBlank(operatorToken)) {
+    if (isBlank(operatorToken)) {
       return false;
     }
+    if (matrixSynapseService.kickUserFromRoom(
+        task.getRoomId(), task.getMemberId(), operatorToken)) {
+      return true;
+    }
     return matrixSynapseService
-        .getRoomMembers(task.getRoomId())
-        .map(current -> !current.contains(task.getMemberId()))
+        .getRoomMembership(task.getRoomId(), task.getMemberId(), operatorToken)
+        .map(membership -> "leave".equals(membership) || "ban".equals(membership))
         .orElse(false);
   }
 
