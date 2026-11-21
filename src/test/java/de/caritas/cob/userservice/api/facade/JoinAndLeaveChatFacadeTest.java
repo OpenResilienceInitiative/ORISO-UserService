@@ -57,6 +57,12 @@ class JoinAndLeaveChatFacadeTest {
 
   @Mock private RecurringGroupStopCoordinator recurringStops;
 
+  @Mock
+  private de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService matrixSynapseService;
+
+  @Mock
+  private de.caritas.cob.userservice.api.service.chat.GroupWaitingRoomService groupWaitingRoom;
+
   @org.junit.jupiter.api.BeforeEach
   void wireRealDeployedGroupPolicy() {
     org.mockito.Mockito.lenient()
@@ -172,6 +178,106 @@ class JoinAndLeaveChatFacadeTest {
 
     assertThrows(
         InternalServerErrorException.class, () -> facade.joinChat(CHAT_ID, authenticatedUser));
+  }
+
+  // ORISO-UserService#1747: an audio or video circle is entered by knocking. Before this check,
+  // anyone with the invitation link could call /join directly and skip the waiting room.
+  @Test
+  void joinChatShouldRefuseAdviceSeekerOfVideoCircleWhoWasNotLetIn() {
+    Chat chat = selfHelpCircle(Chat.ChatModality.VIDEO);
+    asAdviceSeekerNotYetInRoom();
+    when(groupWaitingRoom.isAdmitted(CHAT_ID, "asker-id")).thenReturn(false);
+
+    var refusal =
+        assertThrows(
+            CustomValidationHttpStatusException.class,
+            () -> facade.joinChat(CHAT_ID, authenticatedUser));
+
+    assertEquals(HttpStatus.FORBIDDEN, refusal.getHttpStatus());
+    assertEquals(
+        HttpStatusExceptionReason.GROUP_ADMISSION_REQUIRED.name(),
+        refusal.getCustomHttpHeaders().getFirst("X-Reason"));
+    verify(groupChatMembershipService, never()).addMemberToRoom(chat, MATRIX_USER_ID);
+  }
+
+  @Test
+  void joinChatShouldLetAdviceSeekerOfAudioCircleInOnceAModeratorAdmittedThem() {
+    Chat chat = selfHelpCircle(Chat.ChatModality.AUDIO);
+    asAdviceSeekerNotYetInRoom();
+    when(groupWaitingRoom.isAdmitted(CHAT_ID, "asker-id")).thenReturn(true);
+    when(groupChatMembershipService.addMemberToRoom(chat, MATRIX_USER_ID)).thenReturn(true);
+
+    facade.joinChat(CHAT_ID, authenticatedUser);
+
+    verify(groupChatMembershipService).addMemberToRoom(chat, MATRIX_USER_ID);
+  }
+
+  @Test
+  void joinChatShouldLeaveAMemberAlreadyInTheVideoCircleAlone() {
+    selfHelpCircle(Chat.ChatModality.VIDEO);
+    User user = matrixUser();
+    when(userService.getUserViaAuthenticatedUser(authenticatedUser)).thenReturn(Optional.of(user));
+    when(matrixSynapseService.getRoomMembers(MATRIX_ROOM_ID))
+        .thenReturn(Optional.of(java.util.List.of(MATRIX_USER_ID)));
+
+    facade.joinChat(CHAT_ID, authenticatedUser);
+
+    verify(groupWaitingRoom, never())
+        .isAdmitted(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any());
+  }
+
+  @Test
+  void joinChatShouldKeepAgreeAndJoinForTextCircles() {
+    Chat chat = selfHelpCircle(Chat.ChatModality.TEXT);
+    asAdviceSeekerNotYetInRoom();
+    when(groupChatMembershipService.addMemberToRoom(chat, MATRIX_USER_ID)).thenReturn(true);
+
+    facade.joinChat(CHAT_ID, authenticatedUser);
+
+    verify(groupChatMembershipService).addMemberToRoom(chat, MATRIX_USER_ID);
+    verify(groupWaitingRoom, never())
+        .isAdmitted(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any());
+  }
+
+  @Test
+  void joinChatShouldNotMakeCounsellorsKnockOnAVideoCircle() {
+    Chat chat = selfHelpCircle(Chat.ChatModality.VIDEO);
+    Consultant consultant = mock(Consultant.class);
+    when(consultant.getMatrixUserId()).thenReturn(MATRIX_USER_ID);
+    when(consultantService.getConsultantViaAuthenticatedUser(authenticatedUser))
+        .thenReturn(Optional.of(consultant));
+    when(authenticatedUser.isConsultant()).thenReturn(true);
+    when(matrixSynapseService.getRoomMembers(MATRIX_ROOM_ID))
+        .thenReturn(Optional.of(java.util.List.of("@other:matrix.example.org")));
+    when(groupChatMembershipService.addMemberToRoom(chat, MATRIX_USER_ID)).thenReturn(true);
+
+    facade.joinChat(CHAT_ID, authenticatedUser);
+
+    verify(groupChatMembershipService).addMemberToRoom(chat, MATRIX_USER_ID);
+    verify(groupWaitingRoom, never())
+        .isAdmitted(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any());
+  }
+
+  private Chat selfHelpCircle(Chat.ChatModality modality) {
+    // The AVV enrolment rule has its own tests; here it only has to let the join through.
+    org.springframework.test.util.ReflectionTestUtils.setField(
+        facade,
+        "groupCounsellingDpaPolicy",
+        mock(de.caritas.cob.userservice.api.service.chat.GroupCounsellingDpaPolicy.class));
+    Chat chat = activeMatrixChat();
+    when(chat.getConversationType())
+        .thenReturn(de.caritas.cob.userservice.api.model.ConversationType.SELF_HELP);
+    org.mockito.Mockito.lenient().when(chat.getChatModality()).thenReturn(modality);
+    when(groupChatMembershipService.resolveMatrixRoomId(chat)).thenReturn(MATRIX_ROOM_ID);
+    return chat;
+  }
+
+  private void asAdviceSeekerNotYetInRoom() {
+    User user = matrixUser();
+    when(userService.getUserViaAuthenticatedUser(authenticatedUser)).thenReturn(Optional.of(user));
+    org.mockito.Mockito.lenient().when(authenticatedUser.getUserId()).thenReturn("asker-id");
+    when(matrixSynapseService.getRoomMembers(MATRIX_ROOM_ID))
+        .thenReturn(Optional.of(java.util.List.of("@other:matrix.example.org")));
   }
 
   @Test
