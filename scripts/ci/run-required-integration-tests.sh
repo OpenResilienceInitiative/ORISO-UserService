@@ -59,6 +59,7 @@ mariadb_owned_tests=(
   DeactivateGroupChatSchedulerMariaDbReplicaIT
   DeleteUserAccountSchedulerMariaDbReplicaIT
   DeleteUsersRegisteredOnlySchedulerMariaDbReplicaIT
+  ReplicaSweepClaimMariaDbIT
   SupportRoomMigrationConvergenceIT
   SessionOwnershipMariaDbIT
   ChatMembersOnlyMariaDbIT
