@@ -91,6 +91,19 @@ public class GroupChatRoleService {
    * (ORISO-Frontend#2229). A demotion is strict: when Matrix cannot take the level back, the role
    * change rolls back.
    */
+  /**
+   * Drops a Matrix moderator level before the person leaves the room. Only a current moderator is
+   * strict: a failed drop rolls the membership change back. A participant already has no level, so
+   * a missed confirmation does not block their removal.
+   */
+  private void dropModeratorLevel(Chat series, String matrixUserId, boolean wasModerator) {
+    if (wasModerator) {
+      moderatorPower.reconcileOrFail(series, matrixUserId, null);
+    } else {
+      moderatorPower.reconcile(series, matrixUserId, null);
+    }
+  }
+
   private void syncModeratorPower(
       Long seriesId, String consultantId, ParticipantRole role, boolean demotion) {
     var series = chatRepository.findById(seriesId);
@@ -171,11 +184,13 @@ public class GroupChatRoleService {
             .findById(seriesId)
             .orElseThrow(() -> new NotFoundException("Chat Series not found"));
     var targetConsultant = participantAccount(targetConsultantId);
+    var wasModerator = GroupModeratorPowerService.isModerator(target.getRole());
 
     revocation.revokeAccessOf(series, target);
     participantRepository.delete(target);
     // Taken back before the leave: a level left behind would return with a later rejoin.
-    moderatorPower.reconcile(series, targetConsultant.getMatrixUserId(), null);
+    // A moderator's level is strict, so removal rolls back when Matrix still holds it.
+    dropModeratorLevel(series, targetConsultant.getMatrixUserId(), wasModerator);
     groupChatMembershipService.removeParticipantFromRoom(
         series, targetConsultant.getMatrixUserId());
   }
@@ -206,11 +221,13 @@ public class GroupChatRoleService {
       }
       revocation.revokeAccessOf(series, leavingParticipant);
       participantRepository.delete(leavingParticipant);
+      var wasModerator = GroupModeratorPowerService.isModerator(leavingParticipant.getRole());
       if (leavingParticipant.getRole() == ParticipantRole.OWNER) {
         // Another owner remains (checked above); the chat must not keep naming the one who left.
         revocation.passOwnershipOn(series, consultant.getId());
       }
-      moderatorPower.reconcile(series, consultant.getMatrixUserId(), null);
+      // A moderator's level is strict, so leaving rolls back when Matrix still holds it.
+      dropModeratorLevel(series, consultant.getMatrixUserId(), wasModerator);
     }
 
     groupChatMembershipService.removeParticipantFromRoom(series, consultant.getMatrixUserId());

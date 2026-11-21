@@ -158,8 +158,14 @@ public class GroupChatAdmissionProcessor {
               .build());
       appointmentEvents.recordMemberJoined(
           series.get(), RecipientRole.COUNSELOR, request.getConsultantId());
-      // A co-moderator may blur passages; a former one admitted as participant may not any more.
-      moderatorPower.reconcile(series.get(), matrixUserId, request.getAdmittedRole());
+      // A co-moderator may blur passages. Admitting someone as a participant is a demotion:
+      // it does not finish while Matrix still holds a moderator level.
+      if (de.caritas.cob.userservice.api.service.matrix.GroupModeratorPowerService.isModerator(
+          request.getAdmittedRole())) {
+        moderatorPower.reconcile(series.get(), matrixUserId, request.getAdmittedRole());
+      } else {
+        moderatorPower.reconcileOrFail(series.get(), matrixUserId, request.getAdmittedRole());
+      }
     }
     request.setStatus(Status.ADMITTED);
     request.setDecidedAt(CustomLocalDateTime.nowInUtc());

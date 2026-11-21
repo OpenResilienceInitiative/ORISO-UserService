@@ -3,6 +3,7 @@ package de.caritas.cob.userservice.api.service.chat;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -148,7 +149,26 @@ class GroupChatAdmissionProcessorTest {
 
     processor.process(7L);
 
-    verify(moderatorPower).reconcile(series, "@r:test", ParticipantRole.PARTICIPANT);
+    verify(moderatorPower).reconcileOrFail(series, "@r:test", ParticipantRole.PARTICIPANT);
+  }
+
+  @Test
+  void aColleagueAdmittedAsParticipantIsNotAdmittedWhenMatrixKeepsTheModeratorLevel() {
+    when(membership.isMemberInRoom(series, "@r:test")).thenReturn(Optional.of(false));
+    when(membership.addMemberToRoom(series, "@r:test")).thenReturn(true);
+    var refused =
+        new de.caritas.cob.userservice.api.exception.httpresponses
+            .CustomValidationHttpStatusException(
+            de.caritas.cob.userservice.api.exception.httpresponses.customheader
+                .HttpStatusExceptionReason.INTERNAL_CHAT_MEMBERSHIP_FAILED,
+            org.springframework.http.HttpStatus.BAD_GATEWAY);
+    doThrow(refused)
+        .when(moderatorPower)
+        .reconcileOrFail(series, "@r:test", ParticipantRole.PARTICIPANT);
+
+    assertThatThrownBy(() -> processor.process(7L)).isSameAs(refused);
+
+    assertThat(request.getStatus()).isEqualTo(Status.ADMITTING);
   }
 
   @Test

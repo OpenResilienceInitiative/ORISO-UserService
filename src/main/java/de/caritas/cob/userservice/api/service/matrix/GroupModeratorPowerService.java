@@ -32,8 +32,9 @@ import org.springframework.stereotype.Service;
  *
  * <p>Call after every role transition: creation, invitation, admission, role change, ownership
  * transfer, removal and leave. Raising is best effort and reported: a missing level only withholds
- * blurring. Taking the level back on a demotion is strict ({@link #reconcileOrFail}), so a demoted
- * moderator never keeps it.
+ * blurring. Taking the level back is strict ({@link #reconcileOrFail}) for a role change, a
+ * removal, a leave, a deselection, and an admission as a participant, so a former moderator never
+ * keeps the level.
  *
  * <p>Logs no Matrix user ID (KDG).
  */

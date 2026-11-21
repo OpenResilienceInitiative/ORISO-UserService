@@ -1,6 +1,7 @@
 package de.caritas.cob.userservice.api.service.chat;
 
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
@@ -314,10 +315,32 @@ class GroupChatParticipantReconciliationServiceTest {
     service.reconcile(series, List.of());
 
     var order = Mockito.inOrder(moderatorPower, membershipService);
-    order.verify(moderatorPower).reconcile(series, "@removed:matrix", null);
+    order.verify(moderatorPower).reconcileOrFail(series, "@removed:matrix", null);
     order
         .verify(membershipService)
         .removeLeavingMemberFromRoomAndConfirm(series, "@removed:matrix");
+  }
+
+  @Test
+  void reconcile_ShouldKeepADeselectedCoModeratorWhenMatrixKeepsTheModeratorLevel() {
+    var removed = participant(7L, "removed", ParticipantRole.CO_MODERATOR);
+    when(participantRepository.findBySeriesIdForUpdate(42L)).thenReturn(List.of(owner, removed));
+    var removedAccount = consultant("removed", "@removed:matrix");
+    when(consultantRepository.findById("removed")).thenReturn(Optional.of(removedAccount));
+    var refused =
+        new de.caritas.cob.userservice.api.exception.httpresponses
+            .CustomValidationHttpStatusException(
+            de.caritas.cob.userservice.api.exception.httpresponses.customheader
+                .HttpStatusExceptionReason.INTERNAL_CHAT_MEMBERSHIP_FAILED,
+            org.springframework.http.HttpStatus.BAD_GATEWAY);
+    doThrow(refused).when(moderatorPower).reconcileOrFail(series, "@removed:matrix", null);
+
+    var thrown = assertThrows(RuntimeException.class, () -> service.reconcile(series, List.of()));
+
+    org.junit.jupiter.api.Assertions.assertSame(refused, thrown);
+    verify(membershipService, never())
+        .removeLeavingMemberFromRoomAndConfirm(series, "@removed:matrix");
+    verify(participantRepository, never()).delete(removed);
   }
 
   @Test

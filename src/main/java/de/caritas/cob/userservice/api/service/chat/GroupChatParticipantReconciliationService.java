@@ -158,7 +158,9 @@ public class GroupChatParticipantReconciliationService {
                       () -> consultantRepository.findById(existing.getConsultantId()))
                   .map(Consultant::getMatrixUserId)
                   .orElse(null);
-          moderatorPower.reconcile(series, leavingMatrixUserId, null);
+          // Deselecting a co-moderator is a demotion. It does not finish while Matrix still
+          // holds their moderator level.
+          moderatorPower.reconcileOrFail(series, leavingMatrixUserId, null);
           if (leavingMatrixUserId != null
               && !leavingMatrixUserId.isBlank()
               && !membershipService.removeLeavingMemberFromRoomAndConfirm(

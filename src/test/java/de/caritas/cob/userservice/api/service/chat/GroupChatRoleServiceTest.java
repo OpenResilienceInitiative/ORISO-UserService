@@ -3,6 +3,7 @@ package de.caritas.cob.userservice.api.service.chat;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -298,9 +299,30 @@ class GroupChatRoleServiceTest {
     roleService.removeParticipant(42L, "owner", "target");
 
     InOrder order = inOrder(moderatorPower, groupChatMembershipService);
-    order.verify(moderatorPower).reconcile(series, "@target:matrix.example", null);
+    order.verify(moderatorPower).reconcileOrFail(series, "@target:matrix.example", null);
     order
         .verify(groupChatMembershipService)
+        .removeParticipantFromRoom(series, "@target:matrix.example");
+  }
+
+  @Test
+  void aRemovedCoModeratorStaysInTheRoomWhenMatrixKeepsTheModeratorLevel() {
+    var actor = participant(42L, "owner", ParticipantRole.OWNER);
+    var target = participant(42L, "target", ParticipantRole.CO_MODERATOR);
+    var series = groupWithRoom();
+    when(participantRepository.findBySeriesIdForUpdate(42L)).thenReturn(List.of(actor, target));
+    when(chatRepository.findById(42L)).thenReturn(java.util.Optional.of(series));
+    when(consultantRepository.findById("target"))
+        .thenReturn(java.util.Optional.of(account("@target:matrix.example")));
+    var refused = matrixKeptTheLevel();
+    doThrow(refused).when(moderatorPower).reconcileOrFail(series, "@target:matrix.example", null);
+
+    var thrown =
+        assertThrows(
+            RuntimeException.class, () -> roleService.removeParticipant(42L, "owner", "target"));
+
+    assertThat(thrown).isSameAs(refused);
+    verify(groupChatMembershipService, never())
         .removeParticipantFromRoom(series, "@target:matrix.example");
   }
 
@@ -317,10 +339,38 @@ class GroupChatRoleServiceTest {
     roleService.leaveSeries(series, consultant);
 
     InOrder order = inOrder(moderatorPower, groupChatMembershipService);
-    order.verify(moderatorPower).reconcile(series, "@co-mod:matrix.example", null);
+    order.verify(moderatorPower).reconcileOrFail(series, "@co-mod:matrix.example", null);
     order
         .verify(groupChatMembershipService)
         .removeParticipantFromRoom(series, "@co-mod:matrix.example");
+  }
+
+  @Test
+  void aCoModeratorWhoLeavesStaysInTheRoomWhenMatrixKeepsTheModeratorLevel() {
+    var coModerator = participant(42L, "co-mod", ParticipantRole.CO_MODERATOR);
+    var series = org.mockito.Mockito.mock(Chat.class);
+    var consultant = org.mockito.Mockito.mock(Consultant.class);
+    when(series.getId()).thenReturn(42L);
+    when(consultant.getId()).thenReturn("co-mod");
+    when(consultant.getMatrixUserId()).thenReturn("@co-mod:matrix.example");
+    when(participantRepository.findBySeriesIdForUpdate(42L)).thenReturn(List.of(coModerator));
+    var refused = matrixKeptTheLevel();
+    doThrow(refused).when(moderatorPower).reconcileOrFail(series, "@co-mod:matrix.example", null);
+
+    var thrown =
+        assertThrows(RuntimeException.class, () -> roleService.leaveSeries(series, consultant));
+
+    assertThat(thrown).isSameAs(refused);
+    verify(groupChatMembershipService, never())
+        .removeParticipantFromRoom(series, "@co-mod:matrix.example");
+  }
+
+  private static RuntimeException matrixKeptTheLevel() {
+    return new de.caritas.cob.userservice.api.exception.httpresponses
+        .CustomValidationHttpStatusException(
+        de.caritas.cob.userservice.api.exception.httpresponses.customheader
+            .HttpStatusExceptionReason.INTERNAL_CHAT_MEMBERSHIP_FAILED,
+        org.springframework.http.HttpStatus.BAD_GATEWAY);
   }
 
   private GroupChatParticipant participant(
