@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+  xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog https://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-latest.xsd">
+  <changeSet id="20261121-enquiry-revocation-room-id-collation-1692" author="oriso" dbms="mariadb,mysql">
+    <!-- Matrix identifiers are case-sensitive. Keep that comparison on rollback too. -->
+    <sql>
+      ALTER TABLE agency_enquiry_revocation_task
+        MODIFY COLUMN room_id VARCHAR(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL
+    </sql>
+    <rollback><sql>SELECT 1</sql></rollback>
+  </changeSet>
+  <changeSet id="20261121-enquiry-revocation-room-key-1692" author="oriso">
+    <preConditions onFail="MARK_RAN" onError="HALT">
+      <not>
+        <or>
+          <indexExists tableName="agency_enquiry_revocation_task"
+            indexName="uk_enquiry_revocation_relation_session_room"/>
+          <uniqueConstraintExists tableName="agency_enquiry_revocation_task"
+            constraintName="uk_enquiry_revocation_relation_session_room"/>
+        </or>
+      </not>
+    </preConditions>
+    <addUniqueConstraint tableName="agency_enquiry_revocation_task"
+      columnNames="consultant_agency_id, session_id, room_id"
+      constraintName="uk_enquiry_revocation_relation_session_room"/>
+    <rollback>
+      <dropUniqueConstraint tableName="agency_enquiry_revocation_task"
+        constraintName="uk_enquiry_revocation_relation_session_room"/>
+    </rollback>
+  </changeSet>
+  <changeSet id="20261121-release-enquiry-revocation-session-key-1692" author="oriso">
+    <preConditions onFail="MARK_RAN" onError="HALT">
+      <!-- MariaDB presents a unique constraint as a named index. H2 names its index separately. -->
+      <or>
+        <indexExists tableName="agency_enquiry_revocation_task"
+          indexName="uk_enquiry_revocation_relation_session"/>
+        <uniqueConstraintExists tableName="agency_enquiry_revocation_task"
+          constraintName="uk_enquiry_revocation_relation_session"/>
+      </or>
+    </preConditions>
+    <dropUniqueConstraint tableName="agency_enquiry_revocation_task"
+      constraintName="uk_enquiry_revocation_relation_session"/>
+    <rollback>
+      <!-- Restore the old constraint before removing the new one. If two pending rooms share the
+           old key, this fails and preserves both tasks and the room-level constraint. -->
+      <addUniqueConstraint tableName="agency_enquiry_revocation_task"
+        columnNames="consultant_agency_id, session_id" constraintName="uk_enquiry_revocation_relation_session"/>
+    </rollback>
+  </changeSet>
+</databaseChangeLog>

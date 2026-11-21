@@ -4,20 +4,26 @@ import static org.apache.commons.lang3.StringUtils.isBlank;
 
 import de.caritas.cob.userservice.api.model.AgencyEnquiryRevocationTask;
 import de.caritas.cob.userservice.api.model.ConsultantAgency;
+import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.port.out.AgencyEnquiryRevocationTaskRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantAgencyRepository;
+import de.caritas.cob.userservice.api.port.out.ConsultantAgencyRepository.PublicationRevocationCandidate;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRoomGateway;
 import de.caritas.cob.userservice.api.service.agency.AgencyMatrixCredentialClient;
+import de.caritas.cob.userservice.api.service.session.AgencySilentMembershipService.InitialRoomContact;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.PageRequest;
@@ -56,34 +62,88 @@ public class AgencyEnquiryRevocations {
       return;
     }
 
-    var recorded = new HashSet<>(tasks.pendingSessionIds(removed.getId()));
-    var now = LocalDateTime.now(clock);
+    var recorded =
+        tasks.pendingRoomBindings(removed.getId()).stream()
+            .map(binding -> new RoomBinding(binding.getSessionId(), binding.getRoomId()))
+            .collect(Collectors.toCollection(HashSet::new));
     var pending =
-        AgencyOpenEnquiryMembership.OPEN_STATUSES.stream()
-            .flatMap(
-                status ->
-                    sessions
-                        .findByAgencyIdAndStatusAndConsultantIsNull(removed.getAgencyId(), status)
-                        .stream())
+        sessions
+            .lockOpenEnquiryBindings(
+                removed.getAgencyId(), AgencyOpenEnquiryMembership.OPEN_STATUSES)
+            .stream()
             .filter(
-                session ->
-                    AgencyOpenEnquiryMembership.isOpenToDepartment(session, removed.getAgencyId()))
-            .filter(session -> recorded.add(session.getId()))
+                binding ->
+                    recorded.add(new RoomBinding(binding.getSessionId(), binding.getRoomId())))
             .map(
-                session ->
-                    AgencyEnquiryRevocationTask.builder()
-                        .consultantAgencyId(removed.getId())
-                        .consultantId(consultant.getId())
-                        .agencyId(removed.getAgencyId())
-                        .sessionId(session.getId())
-                        .roomId(session.getMatrixRoomId())
-                        .memberId(consultant.getMatrixUserId())
-                        .retryAt(now)
-                        .build())
+                binding ->
+                    taskFor(
+                        removed.getId(),
+                        removed.getAgencyId(),
+                        binding.getSessionId(),
+                        binding.getRoomId(),
+                        consultant.getId(),
+                        consultant.getMatrixUserId()))
             .toList();
     if (!pending.isEmpty()) {
       tasks.saveAll(pending);
     }
+  }
+
+  /** The publication transaction holds the roster locks for all of these contacts. */
+  @Transactional(propagation = Propagation.MANDATORY)
+  public void stageDuringPublication(Session session, List<InitialRoomContact> contacts) {
+    if (contacts.isEmpty()) {
+      return;
+    }
+    var consultantIds =
+        contacts.stream().map(InitialRoomContact::consultantId).collect(Collectors.toSet());
+    var removals =
+        assignments
+            .findPublicationRevocationCandidates(
+                session.getAgencyId(), consultantIds, session.getId(), session.getMatrixRoomId())
+            .stream()
+            .collect(
+                Collectors.toMap(
+                    PublicationRevocationCandidate::getConsultantId,
+                    PublicationRevocationCandidate::getRelationId));
+    var pending = new ArrayList<AgencyEnquiryRevocationTask>();
+    for (var contact : contacts) {
+      // At most one correction per current binding. Keep the first exact Matrix identity.
+      var relationId = removals.remove(contact.consultantId());
+      if (relationId != null) {
+        pending.add(
+            taskFor(
+                relationId,
+                session.getAgencyId(),
+                session.getId(),
+                session.getMatrixRoomId(),
+                contact.consultantId(),
+                contact.matrixUserId()));
+      }
+    }
+    if (!pending.isEmpty()) {
+      tasks.saveAll(pending);
+    }
+  }
+
+  private record RoomBinding(Long sessionId, String roomId) {}
+
+  private AgencyEnquiryRevocationTask taskFor(
+      Long relationId,
+      Long agencyId,
+      Long sessionId,
+      String roomId,
+      String consultantId,
+      String memberId) {
+    return AgencyEnquiryRevocationTask.builder()
+        .consultantAgencyId(relationId)
+        .consultantId(consultantId)
+        .agencyId(agencyId)
+        .sessionId(sessionId)
+        .roomId(roomId)
+        .memberId(memberId)
+        .retryAt(LocalDateTime.now(clock))
+        .build();
   }
 
   public void retryDue() {
