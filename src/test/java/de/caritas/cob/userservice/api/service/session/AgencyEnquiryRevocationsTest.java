@@ -15,6 +15,7 @@ import de.caritas.cob.userservice.api.model.ConsultantAgency;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.Session.SessionStatus;
 import de.caritas.cob.userservice.api.port.out.AgencyEnquiryRevocationTaskRepository;
+import de.caritas.cob.userservice.api.port.out.AgencyEnquiryRevocationTaskRepository.PendingRoomBinding;
 import de.caritas.cob.userservice.api.port.out.ConsultantAgencyRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
@@ -93,27 +94,34 @@ class AgencyEnquiryRevocationsTest {
             .consultant(consultant)
             .agencyId(AGENCY_ID)
             .build();
-    var addressed = enquiry(21L, SessionStatus.NEW);
-    addressed.setIsConsultantDirectlySet(true);
-    var other = enquiry(22L, SessionStatus.INITIAL);
-    other.setMatrixRoomId("!other:example.org");
-    var recorded = enquiry(23L, SessionStatus.INITIAL);
-    when(tasks.pendingSessionIds(RELATION_ID)).thenReturn(List.of(recorded.getId()));
-    when(sessions.findByAgencyIdAndStatusAndConsultantIsNull(AGENCY_ID, SessionStatus.NEW))
-        .thenReturn(List.of(enquiry(SESSION_ID, SessionStatus.NEW), addressed));
-    when(sessions.findByAgencyIdAndStatusAndConsultantIsNull(AGENCY_ID, SessionStatus.INITIAL))
-        .thenReturn(List.of(other, recorded));
+    var first = roomBinding(SESSION_ID, ROOM);
+    var other = roomBinding(22L, "!other:example.org");
+    var recorded = roomBinding(23L, "!original:example.org");
+    var replacement = roomBinding(23L, "!replacement:example.org");
+    var pending = org.mockito.Mockito.mock(PendingRoomBinding.class);
+    when(pending.getSessionId()).thenReturn(23L);
+    when(pending.getRoomId()).thenReturn("!original:example.org");
+    when(tasks.pendingRoomBindings(RELATION_ID)).thenReturn(List.of(pending));
+    when(sessions.lockOpenEnquiryBindings(AGENCY_ID, AgencyOpenEnquiryMembership.OPEN_STATUSES))
+        .thenReturn(List.of(first, other, recorded, replacement));
 
     revocations.stage(relation);
 
     verify(tasks).saveAll(staged.capture());
     assertThat(staged.getValue())
-        .extracting(AgencyEnquiryRevocationTask::getSessionId)
-        .containsExactly(SESSION_ID, other.getId());
+        .extracting(AgencyEnquiryRevocationTask::getRoomId)
+        .containsExactly(ROOM, other.getRoomId(), replacement.getRoomId());
     assertThat(staged.getValue())
         .extracting(AgencyEnquiryRevocationTask::getMemberId)
         .containsOnly(MEMBER_ID);
     verifyNoInteractions(rooms, agencyCredentials);
+  }
+
+  private SessionRepository.OpenEnquiryRoomBinding roomBinding(Long sessionId, String roomId) {
+    var binding = org.mockito.Mockito.mock(SessionRepository.OpenEnquiryRoomBinding.class);
+    when(binding.getSessionId()).thenReturn(sessionId);
+    when(binding.getRoomId()).thenReturn(roomId);
+    return binding;
   }
 
   @Test

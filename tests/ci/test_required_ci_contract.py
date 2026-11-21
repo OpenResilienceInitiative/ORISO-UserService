@@ -192,11 +192,14 @@ class RequiredCiContractTest(unittest.TestCase):
             "DeleteUserAccountSchedulerMariaDbReplicaIT",
             "DeleteUsersRegisteredOnlySchedulerMariaDbReplicaIT",
             "SupportRoomMigrationConvergenceIT",
+            "AgencyEnquiryRoomPublicationDatabaseIT",
+            "ConsultantAgencyLateJoinerMembershipMariaDbIT",
             "GroupChatMatrixCleanupAdoptionMariaDbIT",
         ):
             self.assertIn(f"!{mariadb_owned_test}", arguments)
         self.assertIn("-Dtest=**/*IT,", arguments)
         self.assertNotIn("!GroupChatMatrixCleanupAdoptionIT", arguments)
+        self.assertNotIn("!InvitationAppointmentKindMigrationMariaDbIT", arguments)
 
     def test_mariadb_jobs_consume_the_assignment_with_separate_database_settings(self):
         workflow = (ROOT / ".github/workflows/mariadb-contract.yml").read_text()
