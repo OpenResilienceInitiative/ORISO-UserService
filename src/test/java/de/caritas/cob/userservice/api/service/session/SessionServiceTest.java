@@ -1278,10 +1278,22 @@ class SessionServiceTest {
   }
 
   @Test
-  void isAnonymousStyleRegistration_Should_ReturnTrue_When_UsernameStartsWithAnonymous() {
+  void isAnonymousStyleRegistration_Should_ReturnFalse_When_OnlyTheUsernameLooksAnonymous() {
+    // ORISO-UserService#1697: stored registration facts decide, never the User-ID text.
     Session session = easyRandom.nextObject(Session.class);
+    session.setRegistrationType(Session.RegistrationType.REGISTERED);
     session.setPostcode("12345");
     session.getUser().setUsername("Anonymous-abc123");
+
+    assertThat(sessionService.isAnonymousStyleRegistration(session)).isFalse();
+  }
+
+  @Test
+  void isAnonymousStyleRegistration_Should_ReturnTrue_When_AnimalGuestIsRegisteredAsAnonymous() {
+    Session session = easyRandom.nextObject(Session.class);
+    session.setRegistrationType(Session.RegistrationType.ANONYMOUS);
+    session.setPostcode("12345");
+    session.getUser().setUsername("katze_sam_4821");
 
     assertThat(sessionService.isAnonymousStyleRegistration(session)).isTrue();
   }

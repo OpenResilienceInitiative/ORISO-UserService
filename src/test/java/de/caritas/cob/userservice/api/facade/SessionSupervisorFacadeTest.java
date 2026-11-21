@@ -395,10 +395,11 @@ class SessionSupervisorFacadeTest {
   void addSupervisor_ShouldRejectRegisteredAnonymousStyleUserBeforeProvisioningMatrixAccess()
       throws Exception {
     session.setRegistrationType(Session.RegistrationType.REGISTERED);
-    session.setPostcode("12345");
+    session.setPostcode("00000");
     User anonymousStyleUser = new User();
     anonymousStyleUser.setUserId("anonymous-user-id");
-    anonymousStyleUser.setUsername("Anonymous-session-user");
+    // ORISO-UserService#1697: an animal User-ID, recognised by the stored postcode, not its name.
+    anonymousStyleUser.setUsername("katze_sam_4821");
     session.setUser(anonymousStyleUser);
 
     assertThatThrownBy(

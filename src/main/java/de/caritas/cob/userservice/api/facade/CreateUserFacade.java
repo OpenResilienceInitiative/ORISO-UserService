@@ -487,10 +487,10 @@ public class CreateUserFacade {
     }
 
     // Anonymous chat currently registers through /users/askers/new with role USER.
-    // Detect that path by its synthetic postcode / username and clear confirmations
-    // so the first in-chat privacy gate is shown and persisted only after explicit acceptance.
-    return StringUtils.equals("00000", userDTO.getPostcode())
-        || StringUtils.startsWith(userDTO.getUsername(), "Anonymous-");
+    // Detect that path by its synthetic postcode, never by the User-ID text (#1697), and clear
+    // confirmations so the first in-chat privacy gate is shown and persisted only after explicit
+    // acceptance.
+    return StringUtils.equals("00000", userDTO.getPostcode());
   }
 
   /** The alias is stored and shown to counsellors in plain text, so it must not hold a secret. */

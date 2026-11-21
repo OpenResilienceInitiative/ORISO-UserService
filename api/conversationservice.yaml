@@ -160,36 +160,6 @@ paths:
           description: INTERNAL SERVER ERROR - server encountered unexpected condition
       security:
         - Bearer: [ ]
-  /conversations/askers/anonymous/new:
-    post:
-      tags:
-        - conversation-controller
-      summary: 'Creates an anonymous conversation enquiry. [Authorization: all]'
-      operationId: createAnonymousEnquiry
-      requestBody:
-        content:
-          'application/json':
-            schema:
-              $ref: '#/components/schemas/CreateAnonymousEnquiryDTO'
-        required: true
-      responses:
-        201:
-          description: CREATED - Anonymous user and enquiry successfully created.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/CreateAnonymousEnquiryResponseDTO'
-        400:
-          description: BAD REQUEST - invalid/incomplete request or body object or consulting type
-            doesn't provide anonymous conversations
-        401:
-          description: UNAUTHORIZED - no/invalid Keycloak token
-        403:
-          description: FORBIDDEN - no/invalid role/authorization or CSRF token
-        500:
-          description: INTERNAL SERVER ERROR - server encountered unexpected condition
-      security:
-        - Bearer: [ ]
   /conversations/askers/anonymous/{sessionId}/accept:
     put:
       tags:
