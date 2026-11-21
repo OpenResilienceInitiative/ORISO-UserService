@@ -589,6 +589,15 @@ public interface AccountInviteRepository
       @Param("statuses") Collection<AccountInviteStatus> statuses,
       @Param("now") LocalDateTime now);
 
+  @Query(
+      "SELECT DISTINCT i.waitingTenantReservationToken FROM AccountInvite i"
+          + " WHERE i.tenantId = :tenantId AND i.status = :waiting"
+          + " AND i.waitingForUnit ="
+          + " de.caritas.cob.userservice.api.service.accountinvite.InviteUnitType.TENANT"
+          + " AND i.waitingTenantReservationToken IS NOT NULL")
+  List<String> findWaitingTenantReservationProofs(
+      @Param("tenantId") Long tenantId, @Param("waiting") AccountInviteStatus waiting);
+
   /**
    * Ids of elapsed invites the expiry sweep settles, after {@code afterId} in id order:
    *

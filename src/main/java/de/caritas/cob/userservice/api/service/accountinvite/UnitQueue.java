@@ -70,7 +70,11 @@ public class UnitQueue {
             : pendingUnitAdmins(unit, unitId, target.tenantId(), null);
     AccountInvite admin = admins.stream().findFirst().orElseThrow(UnitQueue::noPendingUnitAdmin);
     if (unit == InviteUnitType.TENANT) {
-      String proof = ledger.findCurrentTenantReservationProof(unitId, admins).orElse(null);
+      String proof =
+          ledger
+              .findCurrentTenantReservationProof(
+                  unitId, admins.stream().map(AccountInvite::getTenantIdReservationToken))
+              .orElse(null);
       if (proof == null && admins.stream().anyMatch(a -> a.getTenantIdReservationToken() != null)) {
         throw noPendingUnitAdmin();
       }

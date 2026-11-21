@@ -265,6 +265,29 @@ class AccountInviteReservationReleaseIT {
   }
 
   @Test
+  void replacingARevokedFounderReusesTheReservationHeldByAWaitingInvite() {
+    actAsPlatformAdmin();
+    AccountInvite founder = service.createInvite(newTenantAdmin());
+    AccountInvite waiting =
+        service.createInvite(
+            command(
+                AccountInviteTargetRole.AGENCY_ADMIN,
+                NEW_TENANT,
+                IdAllocationMode.MANUAL,
+                null,
+                IdAllocationMode.AUTO));
+
+    service.revokeInvite(founder.getId());
+    AccountInvite replacement = service.createInvite(newTenantAdmin());
+
+    assertThat(replacement.getTenantIdReservationToken()).isEqualTo(TENANT_RESERVATION_PROOF);
+    assertThat(reload(waiting).getWaitingTenantReservationToken())
+        .isEqualTo(TENANT_RESERVATION_PROOF);
+    verify(tenantIdAllocationClient, times(1)).reserve(NEW_TENANT);
+    verify(tenantIdAllocationClient, never()).release(anyLong(), any());
+  }
+
+  @Test
   void retryingAFailedTenantRelease_Should_UseTheOriginalProofAfterInviteDeletion() {
     actAsPlatformAdmin();
     when(tenantIdAllocationClient.release(NEW_TENANT, TENANT_RESERVATION_PROOF))

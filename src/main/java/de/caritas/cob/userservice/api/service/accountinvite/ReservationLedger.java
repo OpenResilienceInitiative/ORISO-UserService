@@ -23,6 +23,7 @@ import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Supplier;
+import java.util.stream.Stream;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -359,11 +360,21 @@ public class ReservationLedger {
 
   /** Further admins of the same new Träger share the token; whoever registers first creates it. */
   private Optional<TenantIdReservation> findShareableTenantReservation(Long tenantId) {
+    Stream<String> foundingProofs =
+        accountInviteRepository
+            .findPendingTenantAdmins(tenantId, null, PENDING_STATUSES, LocalDateTime.now())
+            .stream()
+            .map(AccountInvite::getTenantIdReservationToken);
     Optional<TenantIdReservation> shared =
-        findCurrentTenantReservationProof(
-                tenantId,
-                accountInviteRepository.findPendingTenantAdmins(
-                    tenantId, null, PENDING_STATUSES, LocalDateTime.now()))
+        findCurrentTenantReservationProof(tenantId, foundingProofs)
+            .or(
+                () ->
+                    findCurrentTenantReservationProof(
+                        tenantId,
+                        accountInviteRepository
+                            .findWaitingTenantReservationProofs(
+                                tenantId, AccountInviteStatus.WAITING_FOR_UNIT)
+                            .stream()))
             .map(proof -> new TenantIdReservation(tenantId, proof));
     if (shared.isEmpty() && pendingTenantAdminExists(tenantId)) {
       throw new ConflictException("tenantId " + tenantId + " is already taken");
@@ -371,9 +382,8 @@ public class ReservationLedger {
     return shared;
   }
 
-  Optional<String> findCurrentTenantReservationProof(Long tenantId, List<AccountInvite> admins) {
-    return admins.stream()
-        .map(AccountInvite::getTenantIdReservationToken)
+  Optional<String> findCurrentTenantReservationProof(Long tenantId, Stream<String> proofs) {
+    return proofs
         .filter(StringUtils::hasText)
         .distinct()
         .filter(proof -> tenantIdAllocationClient.hasReservationProof(tenantId, proof))
