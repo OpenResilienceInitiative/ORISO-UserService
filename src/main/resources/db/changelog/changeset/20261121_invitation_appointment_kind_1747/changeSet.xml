@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+  xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog https://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-latest.xsd">
+  <!-- Appointments of counsellor direct invitations were stored without a kind, so the app showed a
+       camera for chat and phone appointments too. Give them the kind of their link's medium
+       (CHAT / AUDIO / VIDEO -> CHAT / PHONE / VIDEO). Rows that already have a kind stay as they are. -->
+  <changeSet id="20261121-invitation-appointment-kind-1747" author="oriso">
+    <preConditions onFail="MARK_RAN">
+      <and>
+        <columnExists tableName="session_appointment" columnName="kind"/>
+        <columnExists tableName="agency_invite_link" columnName="appointment_id"/>
+      </and>
+    </preConditions>
+    <sql>
+      UPDATE session_appointment
+      SET kind = (
+        SELECT MAX(CASE l.chat_type
+                     WHEN 'CHAT' THEN 'CHAT'
+                     WHEN 'AUDIO' THEN 'PHONE'
+                     WHEN 'VIDEO' THEN 'VIDEO'
+                   END)
+        FROM agency_invite_link l
+        WHERE l.appointment_id = session_appointment.id)
+      WHERE kind IS NULL
+        AND id IN (SELECT appointment_id FROM agency_invite_link
+                   WHERE appointment_id IS NOT NULL AND chat_type IN ('CHAT', 'AUDIO', 'VIDEO'))
+    </sql>
+    <rollback><sql>SELECT 1</sql></rollback>
+  </changeSet>
+</databaseChangeLog>
