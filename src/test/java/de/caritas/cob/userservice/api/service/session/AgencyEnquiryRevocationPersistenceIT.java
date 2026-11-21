@@ -55,6 +55,8 @@ class AgencyEnquiryRevocationPersistenceIT {
   @Autowired private AgencyEnquiryRevocationTaskRepository tasks;
   @Autowired private AgencyEnquiryRevocations revocations;
   @MockitoBean private AgencyEnquiryRoomRetirements retiredRooms;
+  @MockitoBean private AgencyEnquiryRoomDecisions roomDecisions;
+  @MockitoBean private SessionOwnershipService ownership;
   @MockitoBean private Clock clock;
   @MockitoBean private SessionRepository sessions;
   @MockitoBean private ConsultantRepository consultants;
@@ -80,8 +82,11 @@ class AgencyEnquiryRevocationPersistenceIT {
     room.setAgencyId(AGENCY_ID);
     room.setStatus(SessionStatus.NEW);
     room.setMatrixRoomId(ROOM);
-    when(sessions.findByAgencyIdAndStatusAndConsultantIsNull(AGENCY_ID, SessionStatus.NEW))
-        .thenReturn(List.of(room));
+    var binding = org.mockito.Mockito.mock(SessionRepository.OpenEnquiryRoomBinding.class);
+    when(binding.getSessionId()).thenReturn(SESSION_ID);
+    when(binding.getRoomId()).thenReturn(ROOM);
+    when(sessions.lockOpenEnquiryBindings(AGENCY_ID, AgencyOpenEnquiryMembership.OPEN_STATUSES))
+        .thenReturn(List.of(binding));
     when(sessions.findByIdForUpdate(SESSION_ID)).thenReturn(Optional.of(room));
     var operator = new AgencyMatrixCredentialsDTO();
     operator.setMatrixUserId(OPERATOR_ID);
