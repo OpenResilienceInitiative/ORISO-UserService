@@ -102,7 +102,7 @@ class PublicJourneyServiceTest {
     platform(mail("j1"));
     var agency = new AgencyDTO();
     agency.setTenantId(7L);
-    when(agencyService.getAgency(42L)).thenReturn(agency);
+    when(agencyService.getAgencyWithoutCaching(42L)).thenReturn(agency);
     layer(JourneyRecord.TENANT, 7, "j1", List.of(step("t:extra", "message", null)));
     var traeger = service.forRegistration(1, 42L).orElseThrow();
     assertThat(phase(traeger.journey(), "flight").toString()).contains("t:extra");
@@ -153,7 +153,7 @@ class PublicJourneyServiceTest {
     platform(mail("j1"));
     var agency = new AgencyDTO();
     agency.setTenantId(7L);
-    when(agencyService.getAgency(42L)).thenReturn(agency);
+    when(agencyService.getAgencyWithoutCaching(42L)).thenReturn(agency);
     TenantContext.setCurrentTenant(8L);
     assertThatThrownBy(() -> service.forRegistration(1, 42L))
         .isInstanceOf(NoSuchElementException.class);
@@ -162,7 +162,7 @@ class PublicJourneyServiceTest {
   @Test
   void anAgencyServiceOutageIsNotFoundNotAServerError() throws Exception {
     platform(mail("j1"));
-    when(agencyService.getAgency(42L)).thenThrow(new IllegalStateException("down"));
+    when(agencyService.getAgencyWithoutCaching(42L)).thenThrow(new IllegalStateException("down"));
     assertThatThrownBy(() -> service.forRegistration(1, 42L))
         .isInstanceOf(NoSuchElementException.class);
   }
@@ -185,10 +185,14 @@ class PublicJourneyServiceTest {
   @Test
   void anOfflineCentreTakesNoRegistrations() throws Exception {
     platform(mail("j1"));
+    var cached = new AgencyDTO();
+    cached.setTenantId(7L);
+    cached.setOffline(false);
     var agency = new AgencyDTO();
     agency.setTenantId(7L);
     agency.setOffline(true);
-    when(agencyService.getAgency(42L)).thenReturn(agency);
+    when(agencyService.getAgency(42L)).thenReturn(cached);
+    when(agencyService.getAgencyWithoutCaching(42L)).thenReturn(agency);
     assertThatThrownBy(() -> service.forRegistration(1, 42L))
         .isInstanceOf(NoSuchElementException.class);
   }

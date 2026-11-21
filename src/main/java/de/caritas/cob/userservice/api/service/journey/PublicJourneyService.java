@@ -102,12 +102,13 @@ public class PublicJourneyService {
     }
     AgencyDTO agency;
     try {
-      agency = agencyService.getAgency(agencyId);
+      // The cached lookup keeps a centre for hours after it is deleted or taken offline.
+      agency = agencyService.getAgencyWithoutCaching(agencyId);
     } catch (RuntimeException unavailable) {
       // An unknown id or an AgencyService outage: either way no centre to build on.
       throw new NoSuchElementException("agency " + agencyId + " not readable");
     }
-    // Deleted centres do not come back from AgencyService; an offline one takes no registrations.
+    // A deleted centre comes back as nothing; an offline one takes no registrations.
     if (agency == null || Boolean.TRUE.equals(agency.getOffline())) {
       throw new NoSuchElementException("no agency " + agencyId + " taking registrations");
     }
