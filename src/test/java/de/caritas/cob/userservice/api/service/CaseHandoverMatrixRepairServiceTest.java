@@ -656,8 +656,8 @@ class CaseHandoverMatrixRepairServiceTest {
     when(matrixSynapseService.loginAsUserAccessToken("@sup:matrix")).thenReturn("tok-sup");
     when(matrixSynapseService.removeUserFromRoom("!side:matrix", "@sup:matrix", "tok-op"))
         .thenReturn(false);
-    when(matrixSynapseService.getRoomMembers("!side:matrix"))
-        .thenReturn(Optional.of(java.util.List.of("@sup:matrix")));
+    when(matrixSynapseService.isOutOfRoom("!side:matrix", "@sup:matrix"))
+        .thenReturn(Optional.of(false));
     when(matrixSynapseService.leaveRoom("!side:matrix", "tok-sup")).thenReturn(true);
 
     service.process(11L);
@@ -673,8 +673,8 @@ class CaseHandoverMatrixRepairServiceTest {
     when(repository.findByIdForUpdate(11L)).thenReturn(Optional.of(task));
     when(matrixSynapseService.loginAsUserAccessToken("@creator:matrix")).thenReturn(null);
     when(matrixSynapseService.loginAsUserAccessToken("@sup:matrix")).thenReturn("tok-sup");
-    when(matrixSynapseService.getRoomMembers("!side:matrix"))
-        .thenReturn(Optional.of(java.util.List.of("@sup:matrix")));
+    when(matrixSynapseService.isOutOfRoom("!side:matrix", "@sup:matrix"))
+        .thenReturn(Optional.of(false));
     when(matrixSynapseService.leaveRoom("!side:matrix", "tok-sup")).thenReturn(true);
 
     service.process(11L);
@@ -682,6 +682,44 @@ class CaseHandoverMatrixRepairServiceTest {
     verify(matrixSynapseService, org.mockito.Mockito.never())
         .removeUserFromRoom(any(), any(), any());
     verify(matrixSynapseService).leaveRoom("!side:matrix", "tok-sup");
+    verify(repository).delete(task);
+  }
+
+  @Test
+  void supervisionRemovalStaysQueuedWhileAnOpenInviteRemains() {
+    // A deferred observation may have invited the supervisor (ORISO-Frontend#2386). Joined
+    // members do not list an invite, so the removal must read the member state instead.
+    var task = supervisionRemoval();
+    when(repository.findById(11L)).thenReturn(Optional.of(task));
+    when(repository.findByIdForUpdate(11L)).thenReturn(Optional.of(task));
+    when(matrixSynapseService.loginAsUserAccessToken("@creator:matrix")).thenReturn("tok-op");
+    when(matrixSynapseService.loginAsUserAccessToken("@sup:matrix")).thenReturn("tok-sup");
+    when(matrixSynapseService.removeUserFromRoom("!side:matrix", "@sup:matrix", "tok-op"))
+        .thenReturn(false);
+    when(matrixSynapseService.isOutOfRoom("!side:matrix", "@sup:matrix"))
+        .thenReturn(Optional.of(false));
+    when(matrixSynapseService.leaveRoom("!side:matrix", "tok-sup")).thenReturn(false);
+
+    service.process(11L);
+
+    verify(matrixSynapseService, org.mockito.Mockito.never()).getRoomMembers(any());
+    verify(repository, org.mockito.Mockito.never()).delete(any());
+    assertThat(task.getAttemptCount()).isEqualTo(1);
+  }
+
+  @Test
+  void supervisionRemovalCompletesOnceTheMemberStateShowsThemOut() {
+    var task = supervisionRemoval();
+    when(repository.findById(11L)).thenReturn(Optional.of(task));
+    when(repository.findByIdForUpdate(11L)).thenReturn(Optional.of(task));
+    when(matrixSynapseService.loginAsUserAccessToken("@creator:matrix")).thenReturn("tok-op");
+    when(matrixSynapseService.removeUserFromRoom("!side:matrix", "@sup:matrix", "tok-op"))
+        .thenReturn(false);
+    when(matrixSynapseService.isOutOfRoom("!side:matrix", "@sup:matrix"))
+        .thenReturn(Optional.of(true));
+
+    service.process(11L);
+
     verify(repository).delete(task);
   }
 

@@ -805,6 +805,12 @@ public class CaseHandoverMatrixRepairService {
   }
 
   private boolean isAbsent(CaseHandoverMatrixRepairTask task) {
+    if (SUPERVISION_REMOVAL_REQUESTER.equals(task.getRequesterConsultantId())) {
+      // A removed supervisor may still hold an open invite (a deferred observation sent it,
+      // ORISO-Frontend#2386). Joined members alone would miss it: require the member state to be
+      // leave/ban or absent, and keep the task queued while that cannot be read.
+      return matrixSynapseService.isOutOfRoom(task.getRoomId(), task.getMemberId()).orElse(false);
+    }
     return matrixSynapseService
         .getRoomMembers(task.getRoomId())
         .map(members -> !members.contains(task.getMemberId()))
