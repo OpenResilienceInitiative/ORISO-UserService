@@ -23,6 +23,7 @@ import java.util.UUID;
 import java.util.stream.StreamSupport;
 import org.apache.commons.lang3.RandomStringUtils;
 import org.hibernate.SessionFactory;
+import org.hibernate.stat.Statistics;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -181,15 +182,29 @@ class UserRepositoryIT {
       entityManager.clear();
       statistics.clear();
 
-      reportIds();
+      List<String> idsBeforeGrowth = reportIds();
+      assertOnlyOneScalarQuery(statistics);
 
-      assertEquals(1L, statistics.getPrepareStatementCount());
-      assertEquals(0L, statistics.getEntityLoadCount());
-      assertEquals(0L, statistics.getCollectionLoadCount());
+      for (int i = 0; i < 16; i++) {
+        persistSession(persistAsker(1L, null), 1L);
+        entityManager.persist(new UserAgency(persistAsker(1L, null), 10L));
+      }
+      entityManager.flush();
+      entityManager.clear();
+      statistics.clear();
+
+      assertThat(reportIds()).containsExactlyInAnyOrderElementsOf(idsBeforeGrowth);
+      assertOnlyOneScalarQuery(statistics);
     } finally {
       statistics.setStatisticsEnabled(previouslyEnabled);
       entityManager.unwrap(org.hibernate.Session.class).disableFilter(TenantFilter.NAME);
     }
+  }
+
+  private static void assertOnlyOneScalarQuery(Statistics statistics) {
+    assertEquals(1L, statistics.getPrepareStatementCount());
+    assertEquals(0L, statistics.getEntityLoadCount());
+    assertEquals(0L, statistics.getCollectionLoadCount());
   }
 
   private void assertIntegrityReportMatchesLegacyRelationshipTraversal() {
@@ -217,9 +232,13 @@ class UserRepositoryIT {
 
   private void persistSession(User asker, Long tenantId) {
     Session session = new Session(asker, 1, "10115", 10L, SessionStatus.IN_ARCHIVE, false);
+    LocalDateTime savedAt = LocalDateTime.of(2026, 1, 1, 0, 0);
+    session.setCreateDate(savedAt);
+    session.setUpdateDate(savedAt);
     session.setTenantId(tenantId);
     session.setLanguageCode(LanguageCode.de);
     session.setIsConsultantDirectlySet(false);
+    session.setSupervisionOptedOut(false);
     entityManager.persist(session);
   }
 
