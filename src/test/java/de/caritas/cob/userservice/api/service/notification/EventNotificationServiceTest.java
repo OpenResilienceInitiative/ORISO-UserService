@@ -34,7 +34,11 @@ import de.caritas.cob.userservice.api.port.out.TeamDiscussionParticipantReposito
 import de.caritas.cob.userservice.api.port.out.TeamDiscussionRepository;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
 import de.caritas.cob.userservice.api.workflow.delete.service.IdentityTombstoneService;
+import java.time.Clock;
+import java.time.Instant;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
@@ -1302,9 +1306,31 @@ class EventNotificationServiceTest {
     when(eventNotificationRepository.findByIdAndRecipientUserId(42L, "user-1"))
         .thenReturn(Optional.of(unread));
 
+    LocalDate before = LocalDate.now(ZoneOffset.UTC);
     eventNotificationService.markAsRead("user-1", 42L);
 
+    var value = ArgumentCaptor.forClass(LocalDateTime.class);
+    verify(unread).setReadDate(value.capture());
+    assertCurrentUtcReadDay(value.getValue(), before);
     verify(eventNotificationRepository).save(unread);
+  }
+
+  @Test
+  void markAsRead_usesUtcWhenTheServerIsStillOnThePreviousDate() {
+    Clock utc = Clock.fixed(Instant.parse("2026-11-21T00:10:00Z"), ZoneOffset.UTC);
+    Clock local = utc.withZone(ZoneOffset.ofHours(-8));
+    assertThat(LocalDate.now(local)).isEqualTo(LocalDate.of(2026, 11, 20));
+    var unread = new EventNotification();
+    when(eventNotificationRepository.findByIdAndRecipientUserId(42L, "user-1"))
+        .thenReturn(Optional.of(unread));
+
+    try (var clocks = Mockito.mockStatic(Clock.class, Mockito.CALLS_REAL_METHODS)) {
+      clocks.when(() -> Clock.system(ZoneOffset.UTC)).thenReturn(utc);
+      clocks.when(Clock::systemDefaultZone).thenReturn(local);
+      eventNotificationService.markAsRead("user-1", 42L);
+    }
+
+    assertThat(unread.getReadDate()).isEqualTo(LocalDate.of(2026, 11, 21).atStartOfDay());
   }
 
   // ---------------------------------------------------------------------------
@@ -1328,11 +1354,15 @@ class EventNotificationServiceTest {
     when(eventNotificationRepository.findByRecipientUserIdAndReadDateIsNull("user-1"))
         .thenReturn(List.of(n1, n2));
 
+    LocalDate before = LocalDate.now(ZoneOffset.UTC);
     eventNotificationService.markAllAsRead("user-1");
 
-    verify(n1).setReadDate(any());
-    verify(n2).setReadDate(any());
-    verify(eventNotificationRepository).saveAll(any());
+    var value = ArgumentCaptor.forClass(LocalDateTime.class);
+    verify(n1).setReadDate(value.capture());
+    LocalDateTime sameDay = value.getValue();
+    assertCurrentUtcReadDay(sameDay, before);
+    verify(n2).setReadDate(sameDay);
+    verify(eventNotificationRepository).saveAll(List.of(n1, n2));
   }
 
   // ---------------------------------------------------------------------------
@@ -1895,8 +1925,8 @@ class EventNotificationServiceTest {
     var item = result.getItems().get(0);
     assertThat(item.getId()).isEqualTo(99L);
     assertThat(item.getEventType()).isEqualTo("message.new");
-    assertThat(item.getReadAt()).isNotNull();
-    assertThat(item.getCreatedAt()).isNotNull();
+    assertThat(item.getReadAt()).isEqualTo("2026-01-01T00:00Z");
+    assertThat(item.getCreatedAt()).isEqualTo("2026-01-01T11:00Z");
   }
 
   @Test
@@ -2470,19 +2500,33 @@ class EventNotificationServiceTest {
 
   @Test
   void markAsReadByEventTypes_runsOneBulkUpdateAndReportsItsCount() {
+    var types = Set.of("supervisor.added");
     when(eventNotificationRepository.markReadByEventTypes(
             org.mockito.ArgumentMatchers.eq("user-1"),
-            org.mockito.ArgumentMatchers.eq(
-                new java.util.TreeSet<>(java.util.Set.of("supervisor.added"))),
-            any(LocalDateTime.class)))
+            org.mockito.ArgumentMatchers.eq(types),
+            any()))
         .thenReturn(2);
 
+    LocalDate before = LocalDate.now(ZoneOffset.UTC);
     int updated =
         eventNotificationService.markAsReadByEventTypes(
-            "user-1", java.util.Set.of(" supervisor.added ", "supervisor.added"));
+            "user-1", Set.of(" supervisor.added ", "supervisor.added"));
 
+    var value = ArgumentCaptor.forClass(LocalDateTime.class);
+    verify(eventNotificationRepository)
+        .markReadByEventTypes(
+            org.mockito.ArgumentMatchers.eq("user-1"),
+            org.mockito.ArgumentMatchers.eq(types),
+            value.capture());
+    assertCurrentUtcReadDay(value.getValue(), before);
     assertThat(updated).isEqualTo(2);
     verify(eventNotificationRepository, never()).saveAll(any());
+  }
+
+  private static void assertCurrentUtcReadDay(LocalDateTime value, LocalDate before) {
+    assertThat(value).isNotNull();
+    assertThat(value).isEqualTo(value.toLocalDate().atStartOfDay());
+    assertThat(value.toLocalDate()).isBetween(before, LocalDate.now(ZoneOffset.UTC));
   }
 
   @Test
