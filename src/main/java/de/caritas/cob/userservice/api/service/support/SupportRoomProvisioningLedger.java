@@ -43,13 +43,16 @@ class SupportRoomProvisioningLedger {
       Long tenantId,
       LocalDateTime expiresAt) {
     var deadline = expiresAt.truncatedTo(ChronoUnit.MICROS);
-    if (!deadline.isAfter(LocalDateTime.now(clock))
-        || isBlank(supportAdminMatrixId)
+    if (isBlank(supportAdminMatrixId)
         || isBlank(consultantMatrixId)
         || supportAdminMatrixId.equals(consultantMatrixId)) {
       throw new IllegalStateException("Support room creation scope is no longer valid");
     }
     var saved = intents.lockByHandshakeId(handshakeId);
+    var now = LocalDateTime.now(clock).truncatedTo(ChronoUnit.MICROS);
+    if (!deadline.isAfter(now)) {
+      throw new IllegalStateException("Support room creation scope is no longer valid");
+    }
     if (saved.isPresent()) {
       var intent = saved.get();
       if (!intent.getSupportAdminId().equals(supportAdminId)
@@ -63,6 +66,8 @@ class SupportRoomProvisioningLedger {
       return new Reservation(intent, false);
     }
 
+    var graceDeadline = now.plusMinutes(PROVISIONING_GRACE_MINUTES);
+    var provisioningDeadline = deadline.isBefore(graceDeadline) ? deadline : graceDeadline;
     var intent =
         SupportRoomCreationIntent.builder()
             .handshakeId(handshakeId)
@@ -74,23 +79,24 @@ class SupportRoomProvisioningLedger {
             .consultantMatrixId(consultantMatrixId)
             .tenantId(tenantId)
             .expiresAt(deadline)
+            .provisioningDeadline(provisioningDeadline)
             .retryAt(deadline)
             .build();
     return new Reservation(intents.save(intent), true);
   }
 
-  /** Transfer verified room ownership before inviting the consultant. */
+  /**
+   * Record the verified room for withdrawal and report whether it is still eligible for admission.
+   */
   @Transactional(propagation = Propagation.REQUIRES_NEW)
-  public void bindForConfirmation(SupportRoomCreationIntent proof, String matrixRoomId) {
+  public boolean bindForConfirmation(SupportRoomCreationIntent proof, String matrixRoomId) {
     var intent = requireCurrent(proof);
     var now = LocalDateTime.now(clock);
     if (!intent.getExpiresAt().isAfter(now)) {
       throw new IllegalStateException("Support room creation is no longer current");
     }
     var room = bindRoom(intent, matrixRoomId, now);
-    if (!room.getExpiryDate().isAfter(now)) {
-      throw new IllegalStateException("Support room provisioning grace has expired");
-    }
+    return room.getExpiryDate().isAfter(now);
   }
 
   @Transactional(readOnly = true)
@@ -100,8 +106,9 @@ class SupportRoomProvisioningLedger {
 
   /** Lease the recovery probe without holding database locks during Matrix calls. */
   @Transactional(propagation = Propagation.REQUIRES_NEW)
-  public Optional<SupportRoomCreationIntent> claimExpired(String handshakeId, LocalDateTime now) {
+  public Optional<SupportRoomCreationIntent> claimExpired(String handshakeId) {
     var intent = intents.lockByHandshakeId(handshakeId).orElse(null);
+    var now = LocalDateTime.now(clock);
     if (intent == null || intent.getExpiresAt().isAfter(now) || intent.getRetryAt().isAfter(now)) {
       return Optional.empty();
     }
@@ -172,9 +179,8 @@ class SupportRoomProvisioningLedger {
     if (rooms.existsByMatrixRoomId(matrixRoomId)) {
       throw new IllegalStateException("Matrix room is already bound to another support room");
     }
-    var graceDeadline = now.plusMinutes(PROVISIONING_GRACE_MINUTES);
-    var expiry =
-        intent.getExpiresAt().isBefore(graceDeadline) ? intent.getExpiresAt() : graceDeadline;
+    // An older intent has no proof of the grace deadline. Keep its room for withdrawal.
+    var deadline = intent.getProvisioningDeadline();
     return rooms.save(
         SupportRoom.builder()
             .id(intent.getId())
@@ -185,7 +191,7 @@ class SupportRoomProvisioningLedger {
             .consultantId(intent.getConsultantId())
             .status(PROVISIONING)
             .createDate(now)
-            .expiryDate(expiry)
+            .expiryDate(deadline == null ? now : deadline)
             .tenantId(intent.getTenantId())
             .build());
   }

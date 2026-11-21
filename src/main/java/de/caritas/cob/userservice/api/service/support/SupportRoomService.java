@@ -101,7 +101,9 @@ public class SupportRoomService {
               session.getExpiryDate());
       var intent = reservation.intent();
       var matrixRoomId = verifyOrRecoverRoom(reservation, supportAdminToken);
-      provisioning.bindForConfirmation(intent, matrixRoomId);
+      if (!provisioning.bindForConfirmation(intent, matrixRoomId)) {
+        throw new IllegalStateException("Support room provisioning grace has expired");
+      }
 
       if (!matrixSynapseService.isRoomEncrypted(matrixRoomId).orElse(false)) {
         throw new IllegalStateException("Matrix did not confirm support room encryption");
@@ -222,13 +224,13 @@ public class SupportRoomService {
       if (System.nanoTime() - startedAt >= SWEEP_BUDGET.toNanos()) {
         return;
       }
-      lifecycle.claimClosure(roomId, nowInUtc()).ifPresent(this::withdrawAndConfirm);
+      lifecycle.claimClosure(roomId).ifPresent(this::withdrawAndConfirm);
     }
     for (var handshakeId : provisioning.expiredIds(nowInUtc(), sweepBatchSize)) {
       if (System.nanoTime() - startedAt >= SWEEP_BUDGET.toNanos()) {
         return;
       }
-      provisioning.claimExpired(handshakeId, nowInUtc()).ifPresent(this::recoverExpiredIntent);
+      provisioning.claimExpired(handshakeId).ifPresent(this::recoverExpiredIntent);
     }
   }
 

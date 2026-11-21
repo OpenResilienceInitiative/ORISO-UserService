@@ -35,4 +35,14 @@
     </createIndex>
     <rollback/>
   </changeSet>
+  <changeSet id="20261121-support-room-provisioning-deadline-904" author="oriso">
+    <preConditions onFail="MARK_RAN">
+      <not><columnExists tableName="support_room_creation_intent" columnName="provisioning_deadline"/></not>
+    </preConditions>
+    <addColumn tableName="support_room_creation_intent">
+      <column name="provisioning_deadline" type="DATETIME(6)"/>
+    </addColumn>
+    <!-- Preserve an attempt's deadline if an older service image is restored. -->
+    <rollback/>
+  </changeSet>
 </databaseChangeLog>

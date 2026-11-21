@@ -24,10 +24,13 @@ import java.util.concurrent.TimeoutException;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.data.jpa.test.autoconfigure.DataJpaTest;
 import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase;
 import org.springframework.context.annotation.Import;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.transaction.PlatformTransactionManager;
@@ -58,6 +61,7 @@ class SupportRoomProvisioningLedgerPersistenceIT {
   @Autowired private SupportRoomCreationIntentRepository intents;
   @Autowired private SupportRoomRepository rooms;
   @Autowired private PlatformTransactionManager transactionManager;
+  @Autowired private JdbcTemplate jdbc;
   @MockitoBean private Clock clock;
 
   private final String handshakeId = UUID.randomUUID().toString();
@@ -134,9 +138,8 @@ class SupportRoomProvisioningLedgerPersistenceIT {
     assertThat(intents.findById(handshakeId)).isPresent();
 
     when(clock.instant()).thenReturn(START.plusSeconds(181));
-    var afterDeadline = LocalDateTime.now(clock);
-    assertThat(ledger.expiredIds(afterDeadline, 5)).contains(handshakeId);
-    assertThat(ledger.claimExpired(handshakeId, afterDeadline)).isEmpty();
+    assertThat(ledger.expiredIds(LocalDateTime.now(clock), 5)).contains(handshakeId);
+    assertThat(ledger.claimExpired(handshakeId)).isEmpty();
     assertThat(intents.findById(handshakeId)).isEmpty();
     assertThat(rooms.findById(roomId)).isPresent();
   }
@@ -231,9 +234,59 @@ class SupportRoomProvisioningLedgerPersistenceIT {
     assertThat(rooms.findById(roomId).orElseThrow().getExpiryDate()).isEqualTo(DEADLINE);
 
     when(clock.instant()).thenReturn(START.plusSeconds(181));
-    assertThatThrownBy(() -> ledger.bindForConfirmation(created, ROOM))
-        .isInstanceOf(IllegalStateException.class)
-        .hasMessage("Support room provisioning grace has expired");
+    assertThat(ledger.bindForConfirmation(created, ROOM)).isFalse();
+  }
+
+  @ParameterizedTest
+  @ValueSource(ints = {120, 181})
+  void delayedFirstBindingKeepsTheDeadlineFromTheOriginalReservation(int secondsAfterReservation) {
+    var handshakeDeadline = DEADLINE.plusMinutes(2);
+    var created =
+        ledger
+            .reserve(
+                handshakeId,
+                SUPPORT_ADMIN,
+                SUPPORT_MATRIX,
+                CONSULTANT,
+                CONSULTANT_MATRIX,
+                1L,
+                handshakeDeadline)
+            .intent();
+    roomId = created.getId();
+
+    when(clock.instant()).thenReturn(START.plusSeconds(secondsAfterReservation));
+    assertThat(ledger.bindForConfirmation(created, ROOM)).isEqualTo(secondsAfterReservation < 180);
+
+    var room = rooms.findById(roomId).orElseThrow();
+    assertThat(room.getStatus()).isEqualTo(SupportRoomStatus.PROVISIONING);
+    assertThat(room.getExpiryDate()).isEqualTo(DEADLINE);
+  }
+
+  @Test
+  void legacyUnboundIntentKeepsARecoveredRoomOnlyForWithdrawal() {
+    var created = reserve().intent();
+    roomId = created.getId();
+    jdbc.update(
+        "UPDATE support_room_creation_intent SET provisioning_deadline = NULL WHERE handshake_id = ?",
+        handshakeId);
+
+    assertThat(ledger.bindForConfirmation(created, ROOM)).isFalse();
+
+    var room = rooms.findById(roomId).orElseThrow();
+    assertThat(room.getStatus()).isEqualTo(SupportRoomStatus.PROVISIONING);
+    assertThat(room.getExpiryDate()).isEqualTo(LocalDateTime.now(clock));
+  }
+
+  @Test
+  void claimKeepsTheFullLeaseAfterTheClockAdvances() {
+    roomId = reserve().intent().getId();
+    var requestedAt = DEADLINE.plusSeconds(1);
+    var lockAcquiredAt = requestedAt.plusSeconds(25);
+    when(clock.instant()).thenReturn(lockAcquiredAt.toInstant(ZoneOffset.UTC));
+
+    var claim = ledger.claimExpired(handshakeId).orElseThrow();
+
+    assertThat(claim.getRetryAt()).isEqualTo(lockAcquiredAt.plusMinutes(1));
   }
 
   @Test
@@ -243,15 +296,15 @@ class SupportRoomProvisioningLedgerPersistenceIT {
 
     when(clock.instant()).thenReturn(START.plusSeconds(181));
     var firstClaimAt = LocalDateTime.now(clock);
-    var firstClaim = ledger.claimExpired(handshakeId, firstClaimAt).orElseThrow();
-    assertThat(ledger.claimExpired(handshakeId, firstClaimAt)).isEmpty();
+    var firstClaim = ledger.claimExpired(handshakeId).orElseThrow();
+    assertThat(ledger.claimExpired(handshakeId)).isEmpty();
     assertThat(ledger.expiredIds(firstClaimAt, 5)).doesNotContain(handshakeId);
     assertThat(rooms.findById(roomId)).isEmpty();
     assertThatThrownBy(() -> ledger.bindForConfirmation(initial, ROOM))
         .isInstanceOf(IllegalStateException.class);
 
     when(clock.instant()).thenReturn(START.plusSeconds(243));
-    var secondClaim = ledger.claimExpired(handshakeId, LocalDateTime.now(clock)).orElseThrow();
+    var secondClaim = ledger.claimExpired(handshakeId).orElseThrow();
     assertThatThrownBy(() -> ledger.bindExpiredForCleanup(firstClaim, OTHER_ROOM))
         .isInstanceOf(IllegalStateException.class);
     ledger.bindExpiredForCleanup(secondClaim, ROOM);

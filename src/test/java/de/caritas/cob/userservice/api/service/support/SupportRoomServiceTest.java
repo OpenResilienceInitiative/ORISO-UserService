@@ -8,6 +8,7 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.lenient;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -30,6 +31,7 @@ import de.caritas.cob.userservice.api.port.out.HandshakeAuditEventRepository;
 import de.caritas.cob.userservice.api.port.out.HandshakeSessionRepository;
 import de.caritas.cob.userservice.api.port.out.SupportRoomRepository;
 import de.caritas.cob.userservice.api.service.handshake.HandshakePurpose;
+import java.time.Clock;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.util.List;
@@ -72,7 +74,10 @@ class SupportRoomServiceTest {
         new SupportRoomService(
             supportRoomRepository,
             new SupportRoomLifecycle(
-                supportRoomRepository, handshakeAuditEventRepository, handshakeSessionRepository),
+                supportRoomRepository,
+                handshakeAuditEventRepository,
+                handshakeSessionRepository,
+                Clock.systemUTC()),
             provisioning,
             adminRepository,
             consultantRepository,
@@ -138,6 +143,7 @@ class SupportRoomServiceTest {
   private void stubVerifiedRoom() {
     when(matrixSynapseService.verifySupportRoomOrigin(ROOM_ID, GSA_MXID, NONCE, "gsa-token"))
         .thenReturn(true);
+    when(provisioning.bindForConfirmation(intent, ROOM_ID)).thenReturn(true);
     when(matrixSynapseService.isRoomEncrypted(ROOM_ID)).thenReturn(Optional.of(true));
     when(matrixSynapseService.ensureSupportRoomModeration(ROOM_ID, "gsa-token")).thenReturn(true);
   }
@@ -273,9 +279,58 @@ class SupportRoomServiceTest {
   }
 
   @Test
+  void aRoomDiscoveredAfterGraceIsNotAdmittedOrActivated() throws Exception {
+    stubAuthorizedReservation(false);
+    when(matrixSynapseService.resolveRoomAlias(FULL_ALIAS))
+        .thenReturn(new MatrixSynapseService.RoomAliasLookup(true, ROOM_ID));
+    when(matrixSynapseService.verifySupportRoomOrigin(ROOM_ID, GSA_MXID, NONCE, "gsa-token"))
+        .thenReturn(true);
+
+    assertThatThrownBy(() -> supportRoomService.createForConfirmedHandshake(confirmedSession()))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("Support room provisioning grace has expired");
+
+    verify(provisioning).bindForConfirmation(intent, ROOM_ID);
+    verify(provisioning, never()).forgetConfirmed(any());
+    verify(matrixSynapseService, never()).inviteUserToRoom(any(), any(), any());
+    verifyNoInteractions(supportRoomRepository, handshakeAuditEventRepository);
+  }
+
+  @Test
+  void closureClaimRechecksDueTimeAndStartsTheLeaseAfterLocking() {
+    var beforeLock = nowInUtc();
+    var afterLock = beforeLock.plusSeconds(25);
+    var room = activeRoom();
+    room.setStatus(SupportRoom.SupportRoomStatus.PROVISIONING);
+    room.setExpiryDate(beforeLock.plusSeconds(10));
+    var clock = mock(Clock.class);
+    when(clock.getZone()).thenReturn(ZoneOffset.UTC);
+    when(supportRoomRepository.findHandshakeIdByRoomIdAndStatus(
+            room.getId(), SupportRoom.SupportRoomStatus.PROVISIONING))
+        .thenReturn(Optional.of(room.getHandshakeId()));
+    when(supportRoomRepository.lockById(room.getId()))
+        .thenAnswer(
+            invocation -> {
+              when(clock.instant()).thenReturn(afterLock.toInstant(ZoneOffset.UTC));
+              return Optional.of(room);
+            });
+    var lifecycle =
+        new SupportRoomLifecycle(
+            supportRoomRepository,
+            handshakeAuditEventRepository,
+            handshakeSessionRepository,
+            clock);
+
+    assertThat(lifecycle.claimClosure(room.getId())).isPresent();
+
+    verify(handshakeSessionRepository).findByIdForUpdate(room.getHandshakeId());
+    assertThat(room.getRetryAt()).isEqualTo(afterLock.plusMinutes(1));
+  }
+
+  @Test
   void expiredRoomRecoveryOnlyTransfersVerifiedOwnershipToTheWithdrawalSweep() throws Exception {
     when(provisioning.expiredIds(any(), eq(200))).thenReturn(List.of("hs-1"));
-    when(provisioning.claimExpired(eq("hs-1"), any())).thenReturn(Optional.of(intent));
+    when(provisioning.claimExpired("hs-1")).thenReturn(Optional.of(intent));
     when(matrixSynapseService.resolveRoomAlias(FULL_ALIAS))
         .thenReturn(new MatrixSynapseService.RoomAliasLookup(true, ROOM_ID));
     when(matrixSynapseService.loginAsUserAccessToken(GSA_MXID)).thenReturn("gsa-token");

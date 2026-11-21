@@ -156,14 +156,15 @@ class SupportRoomMigrationConvergenceIT {
                 FROM information_schema.columns
                 WHERE table_schema = 'userservice'
                   AND table_name = 'support_room_creation_intent'
-                  AND column_name IN ('expires_at', 'retry_at')
+                  AND column_name IN ('expires_at', 'provisioning_deadline', 'retry_at')
                 ORDER BY column_name
                 """)) {
-      for (var column : List.of("expires_at", "retry_at")) {
+      for (var column : List.of("expires_at", "provisioning_deadline", "retry_at")) {
         assertThat(result.next()).as("%s column exists", column).isTrue();
         assertThat(result.getString("column_name")).isEqualTo(column);
         assertThat(result.getInt("datetime_precision")).isEqualTo(6);
-        assertThat(result.getString("is_nullable")).isEqualTo("NO");
+        assertThat(result.getString("is_nullable"))
+            .isEqualTo(column.equals("provisioning_deadline") ? "YES" : "NO");
       }
     }
   }
