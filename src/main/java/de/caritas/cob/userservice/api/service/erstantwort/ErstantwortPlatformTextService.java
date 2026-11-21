@@ -117,7 +117,17 @@ public class ErstantwortPlatformTextService {
       Long agencyId, Map<String, Map<String, String>> changes, String actor) {
     var validated = new LinkedHashMap<String, Map<String, String>>();
     changes.forEach(
-        (baustein, texts) -> validated.put(baustein, validated(baustein, texts, AGENCY_EDITABLE)));
+        (baustein, texts) -> {
+          var clean = validated(baustein, texts, AGENCY_EDITABLE);
+          // whoReadsAlong is a claim about people. Without a source language, pickStated drops it
+          // for every reader, so saving it would look successful and send nothing.
+          if ("whoReadsAlong".equals(baustein)
+              && !clean.isEmpty()
+              && ErstantwortTenantTextResolver.pickStated(clean, "de", false) == null) {
+            throw new IllegalArgumentException("whoReadsAlong needs its source language");
+          }
+          validated.put(baustein, clean);
+        });
     validated.forEach(
         (baustein, texts) -> {
           if (texts.keySet().stream().allMatch(key -> key.endsWith(META_SUFFIX))) {

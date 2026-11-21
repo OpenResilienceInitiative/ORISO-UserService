@@ -56,15 +56,23 @@ class ErstantwortAgencyTextsControllerAuthorizationIT {
   @BeforeEach
   void stub() {
     when(service.readAgencyTexts(5L)).thenReturn(Map.of("greeting", Map.of("de", "<p>Hallo</p>")));
-    when(agencyService.getAgency(5L)).thenReturn(new AgencyDTO());
+    when(agencyService.getAgencyWithoutCaching(5L)).thenReturn(new AgencyDTO());
   }
 
   @Test
   void textsOfACentreThatDoesNotExistAreNotStored() throws Exception {
-    when(agencyService.getAgency(5L)).thenReturn(null);
+    when(agencyService.getAgencyWithoutCaching(5L)).thenReturn(null);
     var token = jwt().authorities(new SimpleGrantedAuthority(RESTRICTED_AGENCY_ADMIN));
     mvc.perform(update().with(token)).andExpect(status().isNotFound());
     verify(service, never()).replaceAgencyTexts(anyLong(), anyMap(), any());
+  }
+
+  @Test
+  void readingACentreThatDoesNotExistIs404() throws Exception {
+    when(agencyService.getAgencyWithoutCaching(5L)).thenReturn(null);
+    var token = jwt().authorities(new SimpleGrantedAuthority(RESTRICTED_AGENCY_ADMIN));
+    mvc.perform(get(PATH).with(token)).andExpect(status().isNotFound());
+    verify(service, never()).readAgencyTexts(anyLong());
   }
 
   @Test

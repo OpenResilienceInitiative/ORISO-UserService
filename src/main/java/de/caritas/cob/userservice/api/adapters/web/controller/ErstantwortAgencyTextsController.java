@@ -42,6 +42,7 @@ public class ErstantwortAgencyTextsController {
   @GetMapping
   public ResponseEntity<AgencyTexts> read(@PathVariable Long agencyId) {
     adminScope.assertMay(Target.agencies(List.of(agencyId)));
+    requireCentre(agencyId);
     return ResponseEntity.ok(new AgencyTexts(service.readAgencyTexts(agencyId)));
   }
 
@@ -54,15 +55,22 @@ public class ErstantwortAgencyTextsController {
     if (request == null || request.texts() == null) {
       throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "texts missing");
     }
-    // Texts of a centre that does not exist would be stored for nobody.
-    if (agencyService.getAgency(agencyId) == null) {
-      throw new ResponseStatusException(HttpStatus.NOT_FOUND);
-    }
+    requireCentre(agencyId);
     try {
       service.replaceAgencyTexts(agencyId, request.texts(), jwt == null ? null : jwt.getSubject());
     } catch (IllegalArgumentException invalid) {
       throw new ResponseStatusException(HttpStatus.BAD_REQUEST, invalid.getMessage());
     }
     return ResponseEntity.ok(new AgencyTexts(service.readAgencyTexts(agencyId)));
+  }
+
+  /**
+   * Uncached: agency deletion happens in another service, and a cached hit would store texts for a
+   * centre that is already gone.
+   */
+  private void requireCentre(Long agencyId) {
+    if (agencyService.getAgencyWithoutCaching(agencyId) == null) {
+      throw new ResponseStatusException(HttpStatus.NOT_FOUND);
+    }
   }
 }

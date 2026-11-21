@@ -10,6 +10,7 @@ import static org.mockito.Mockito.when;
 import de.caritas.cob.userservice.api.model.ErstantwortTextOverride;
 import de.caritas.cob.userservice.api.port.out.ErstantwortTextOverrideRepository;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.BeforeEach;
@@ -144,6 +145,24 @@ class ErstantwortPlatformTextServiceTest {
   }
 
   @Test
+  void aValidEntryFollowedByAnInvalidOneStoresNothing() {
+    var platform = new LinkedHashMap<String, Map<String, String>>();
+    platform.put("greeting", Map.of("de", "Hallo"));
+    platform.put("whoReadsAlong", Map.of("de", "x"));
+    assertThatThrownBy(() -> service.replacePlatformTexts(platform, "a"))
+        .isInstanceOf(IllegalArgumentException.class);
+
+    var centre = new LinkedHashMap<String, Map<String, String>>();
+    centre.put("greeting", Map.of("de", "Hallo"));
+    centre.put("emergencyNumbers", Map.of("de", "112"));
+    assertThatThrownBy(() -> service.replaceAgencyTexts(5L, centre, "a"))
+        .isInstanceOf(IllegalArgumentException.class);
+
+    verify(repository, never()).save(any());
+    verify(repository, never()).deleteById(any());
+  }
+
+  @Test
   void anOverlongTextIsRejected() {
     var tooLong = "a".repeat(ErstantwortPlatformTextService.MAX_TEXT_LENGTH + 1);
     assertThatThrownBy(
@@ -175,6 +194,35 @@ class ErstantwortPlatformTextServiceTest {
     assertThat(captor.getValue().getScope()).isEqualTo(ErstantwortTextOverride.AGENCY);
     assertThat(captor.getValue().getScopeId()).isEqualTo(5L);
     assertThat(captor.getValue().textsAsMap()).containsEntry("de", "<p>Team A</p>");
+  }
+
+  @Test
+  void aCentreWhoReadsAlongWithoutASourceLanguageIsRejected() {
+    assertThatThrownBy(
+            () ->
+                service.replaceAgencyTexts(
+                    5L, Map.of("whoReadsAlong", Map.of("en", "Team A")), "a"))
+        .isInstanceOf(IllegalArgumentException.class);
+    verify(repository, never()).save(any());
+    verify(repository, never()).deleteById(any());
+  }
+
+  @Test
+  void aCentreWhoReadsAlongInEnglishIsSentWhenEnglishIsTheSource() {
+    service.replaceAgencyTexts(
+        5L,
+        Map.of("whoReadsAlong", Map.of("en", "<p>Team A</p>", "en__meta", "{\"src\":\"en\"}")),
+        "a");
+    verify(repository).save(any());
+
+    when(repository.findByScopeAndScopeId(ErstantwortTextOverride.AGENCY, 5L))
+        .thenReturn(
+            List.of(
+                agencyRow(
+                    "whoReadsAlong",
+                    Map.of("en", "<p>Team A</p>", "en__meta", "{\"src\":\"en\"}"))));
+
+    assertThat(service.resolveAgencyTexts(5L, "de", false).getWhoReadsAlong()).isEqualTo("Team A");
   }
 
   @Test
