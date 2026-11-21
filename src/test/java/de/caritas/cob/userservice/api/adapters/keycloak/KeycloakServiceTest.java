@@ -3101,7 +3101,12 @@ public class KeycloakServiceTest {
     when(usersResource.create(any())).thenReturn(conflict, created);
     when(keycloakClient.getUsersResource()).thenReturn(usersResource);
     var orphanResource =
-        givenExistingIdentity(usersResource, "orphan-id", null, 5, "default-roles-online-beratung");
+        givenExistingIdentity(
+            usersResource,
+            "orphan-id",
+            Map.of("registrationPending", List.of("true")),
+            10,
+            "default-roles-online-beratung");
     givenPostCreateAttributeUpdate(usersResource, created, USER_ID);
 
     var identity = keycloakService.createUser(userDTO);
@@ -3141,7 +3146,12 @@ public class KeycloakServiceTest {
     when(usersResource.create(any())).thenReturn(conflict);
     when(keycloakClient.getUsersResource()).thenReturn(usersResource);
     var existing =
-        givenExistingIdentity(usersResource, "old-id", null, 90, "default-roles-online-beratung");
+        givenExistingIdentity(
+            usersResource,
+            "old-id",
+            Map.of("registrationPending", List.of("true")),
+            90,
+            "default-roles-online-beratung");
 
     assertThrows(
         CustomValidationHttpStatusException.class, () -> keycloakService.createUser(userDTO));
@@ -3157,7 +3167,53 @@ public class KeycloakServiceTest {
     var conflict = usernameConflictResponse();
     when(usersResource.create(any())).thenReturn(conflict);
     when(keycloakClient.getUsersResource()).thenReturn(usersResource);
-    var existing = givenExistingIdentity(usersResource, "admin-id", null, 5, "tenant-admin");
+    var existing =
+        givenExistingIdentity(
+            usersResource,
+            "admin-id",
+            Map.of("registrationPending", List.of("true")),
+            10,
+            "tenant-admin");
+
+    assertThrows(
+        CustomValidationHttpStatusException.class, () -> keycloakService.createUser(userDTO));
+
+    verify(existing, never()).remove();
+  }
+
+  @Test
+  void createUser_ShouldKeepTheConflict_WhenTheIdentityMayStillBeBeingCreated() {
+    var userDTO = new EasyRandom().nextObject(UserDTO.class);
+    userDTO.setUsername("giraffe_yael_3313");
+    var usersResource = mock(UsersResource.class);
+    var conflict = usernameConflictResponse();
+    when(usersResource.create(any())).thenReturn(conflict);
+    when(keycloakClient.getUsersResource()).thenReturn(usersResource);
+    var existing =
+        givenExistingIdentity(
+            usersResource,
+            "fresh-id",
+            Map.of("registrationPending", List.of("true")),
+            1,
+            "default-roles-online-beratung");
+
+    assertThrows(
+        CustomValidationHttpStatusException.class, () -> keycloakService.createUser(userDTO));
+
+    verify(existing, never()).remove();
+  }
+
+  @Test
+  void createUser_ShouldKeepTheConflict_WhenTheIdentityWasNotMarkedAsAPendingRegistration() {
+    var userDTO = new EasyRandom().nextObject(UserDTO.class);
+    userDTO.setUsername("giraffe_yael_3313");
+    var usersResource = mock(UsersResource.class);
+    var conflict = usernameConflictResponse();
+    when(usersResource.create(any())).thenReturn(conflict);
+    when(keycloakClient.getUsersResource()).thenReturn(usersResource);
+    var existing =
+        givenExistingIdentity(
+            usersResource, "console-id", null, 10, "default-roles-online-beratung");
 
     assertThrows(
         CustomValidationHttpStatusException.class, () -> keycloakService.createUser(userDTO));
@@ -3192,15 +3248,14 @@ public class KeycloakServiceTest {
         .thenReturn(List.of(existing));
     var resource = mock(UserResource.class);
     var roleMappings = mock(org.keycloak.admin.client.resource.RoleMappingResource.class);
-    var realmRoles = mock(org.keycloak.admin.client.resource.RoleScopeResource.class);
     var roleRepresentation = new org.keycloak.representations.idm.RoleRepresentation();
     roleRepresentation.setName(role);
+    var mappings = new org.keycloak.representations.idm.MappingsRepresentation();
+    mappings.setRealmMappings(List.of(roleRepresentation));
     org.mockito.Mockito.lenient().when(usersResource.get(id)).thenReturn(resource);
     org.mockito.Mockito.lenient().when(resource.roles()).thenReturn(roleMappings);
-    org.mockito.Mockito.lenient().when(roleMappings.realmLevel()).thenReturn(realmRoles);
-    org.mockito.Mockito.lenient()
-        .when(realmRoles.listAll())
-        .thenReturn(List.of(roleRepresentation));
+    org.mockito.Mockito.lenient().when(roleMappings.getAll()).thenReturn(mappings);
+    org.mockito.Mockito.lenient().when(resource.groups()).thenReturn(List.of());
     return resource;
   }
 }

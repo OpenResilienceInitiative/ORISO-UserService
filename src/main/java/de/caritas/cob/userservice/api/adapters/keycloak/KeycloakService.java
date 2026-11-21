@@ -126,6 +126,7 @@ public class KeycloakService
   private static final String LOCALE = "locale";
   private static final String TENANT_ID_ATTRIBUTE = "tenantId";
   private static final String USER_ID_ATTRIBUTE = "userId";
+  static final String REGISTRATION_PENDING_ATTRIBUTE = "registrationPending";
   private static final String USERNAME_ATTRIBUTE = "username";
   private static final String LEGACY_USERNAME_ATTRIBUTE = "userName";
 
@@ -493,6 +494,8 @@ public class KeycloakService
     var locale =
         isNull(user.getPreferredLanguage()) ? "de" : user.getPreferredLanguage().toString();
     var kcUser = getUserRepresentation(user, firstName, lastName, locale);
+    // #1747: marks the identity until its creation completed; only a marked leftover is reclaimed.
+    kcUser.singleAttribute(REGISTRATION_PENDING_ATTRIBUTE, "true");
     boolean sessionRefreshed = false;
     boolean abandonedIdentityReclaimed = false;
     while (true) {
@@ -537,6 +540,12 @@ public class KeycloakService
 
   /** Maximum age of an identity that a failed registration left behind and may be reclaimed. */
   static final long ABANDONED_REGISTRATION_MAX_AGE_MILLIS = 60L * 60L * 1000L;
+
+  /**
+   * Minimum age: a creation in progress finishes its attribute write within milliseconds, so an
+   * identity still marked pending after this long is not being created any more.
+   */
+  static final long ABANDONED_REGISTRATION_MIN_AGE_MILLIS = 5L * 60L * 1000L;
 
   /** How often a rollback deletion is tried before it is given up and logged. */
   static final int ROLLBACK_ATTEMPTS = 3;
@@ -601,27 +610,47 @@ public class KeycloakService
     }
   }
 
+  /**
+   * Fails closed: only an identity that carries the pending marker written at creation, never got
+   * the {@code userId} attribute that completes it, is between 5 minutes and an hour old, and has
+   * no role (realm or client), no group and no federation link.
+   */
   private boolean isAbandonedRegistration(UserRepresentation existing) {
     var attributes = existing.getAttributes();
-    if (attributes != null && attributes.containsKey(USER_ID_ATTRIBUTE)) {
+    if (attributes == null
+        || !attributes.containsKey(REGISTRATION_PENDING_ATTRIBUTE)
+        || attributes.containsKey(USER_ID_ATTRIBUTE)
+        || existing.getFederationLink() != null) {
       return false;
     }
     var created = existing.getCreatedTimestamp();
-    if (created == null
-        || nowMillis.getAsLong() - created > ABANDONED_REGISTRATION_MAX_AGE_MILLIS) {
+    if (created == null) {
       return false;
     }
-    var roles =
-        keycloakClient.getUsersResource().get(existing.getId()).roles().realmLevel().listAll();
-    return roles == null
-        || roles.stream()
-            .map(RoleRepresentation::getName)
-            .allMatch(
-                name ->
-                    name == null
-                        || name.startsWith("default-roles-")
-                        || "offline_access".equals(name)
-                        || "uma_authorization".equals(name));
+    long age = nowMillis.getAsLong() - created;
+    if (age < ABANDONED_REGISTRATION_MIN_AGE_MILLIS
+        || age > ABANDONED_REGISTRATION_MAX_AGE_MILLIS) {
+      return false;
+    }
+    var resource = keycloakClient.getUsersResource().get(existing.getId());
+    var mappings = resource.roles().getAll();
+    if (mappings == null) {
+      return false;
+    }
+    boolean onlyDefaultRealmRoles =
+        mappings.getRealmMappings() == null
+            || mappings.getRealmMappings().stream()
+                .map(RoleRepresentation::getName)
+                .allMatch(
+                    name ->
+                        name != null
+                            && (name.startsWith("default-roles-")
+                                || "offline_access".equals(name)
+                                || "uma_authorization".equals(name)));
+    boolean noClientRoles =
+        mappings.getClientMappings() == null || mappings.getClientMappings().isEmpty();
+    var groups = resource.groups();
+    return onlyDefaultRealmRoles && noClientRoles && (groups == null || groups.isEmpty());
   }
 
   /**
@@ -797,6 +826,7 @@ public class KeycloakService
             : new LinkedHashMap<>(representation.getAttributes());
 
     attributes.put(USER_ID_ATTRIBUTE, Collections.singletonList(keycloakUserId));
+    attributes.remove(REGISTRATION_PENDING_ATTRIBUTE);
     var decodedUsername = usernameTranscoder.decodeUsername(userDTO.getUsername());
     attributes.put(USERNAME_ATTRIBUTE, Collections.singletonList(decodedUsername));
     attributes.put(LEGACY_USERNAME_ATTRIBUTE, Collections.singletonList(decodedUsername));
