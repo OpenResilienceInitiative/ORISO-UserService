@@ -3049,4 +3049,158 @@ public class KeycloakServiceTest {
     verify(userResource, never()).removeCredential(any());
     verify(userResource, never()).credentials();
   }
+
+  // ---------------------------------------------------------------------------
+  // ORISO-UserService#1747: a failed registration must not leave its identity behind.
+  // ---------------------------------------------------------------------------
+
+  @Test
+  void rollbackUser_ShouldTryAgain_WhenKeycloakFailsBriefly() {
+    keycloakService.setRollbackBackoffMillis(0);
+    var usersResource = mock(UsersResource.class);
+    var userResource = mock(UserResource.class);
+    when(keycloakClient.getUsersResource()).thenReturn(usersResource);
+    when(usersResource.get("orphan-id")).thenReturn(userResource);
+    org.mockito.Mockito.doThrow(new jakarta.ws.rs.ProcessingException("timeout"))
+        .doThrow(new jakarta.ws.rs.ProcessingException("timeout"))
+        .doNothing()
+        .when(userResource)
+        .remove();
+
+    keycloakService.rollbackUser("orphan-id");
+
+    verify(userResource, times(3)).remove();
+    assertFalse(logCaptor.contains(Level.ERROR, "could not be removed/rolled back"));
+  }
+
+  @Test
+  void rollbackUser_ShouldGiveUpAfterThreeAttemptsAndSaySo() {
+    keycloakService.setRollbackBackoffMillis(0);
+    var usersResource = mock(UsersResource.class);
+    var userResource = mock(UserResource.class);
+    when(keycloakClient.getUsersResource()).thenReturn(usersResource);
+    when(usersResource.get("orphan-id")).thenReturn(userResource);
+    org.mockito.Mockito.doThrow(new jakarta.ws.rs.ProcessingException("down"))
+        .when(userResource)
+        .remove();
+
+    keycloakService.rollbackUser("orphan-id");
+
+    verify(userResource, times(3)).remove();
+    assertTrue(logCaptor.contains(Level.ERROR, "(after 3 attempts)"));
+  }
+
+  @Test
+  void createUser_ShouldReclaimAnIdentityAFailedRegistrationLeftBehind_AndCreateAgain() {
+    var userDTO = new EasyRandom().nextObject(UserDTO.class);
+    userDTO.setUsername("giraffe_yael_3313");
+    var usersResource = mock(UsersResource.class);
+    var conflict = usernameConflictResponse();
+    var created = mock(Response.class);
+    when(created.getStatus()).thenReturn(HttpStatus.CREATED.value());
+    when(usersResource.create(any())).thenReturn(conflict, created);
+    when(keycloakClient.getUsersResource()).thenReturn(usersResource);
+    var orphanResource =
+        givenExistingIdentity(usersResource, "orphan-id", null, 5, "default-roles-online-beratung");
+    givenPostCreateAttributeUpdate(usersResource, created, USER_ID);
+
+    var identity = keycloakService.createUser(userDTO);
+
+    assertThat(identity.getUserId(), is(USER_ID));
+    verify(orphanResource).remove();
+    verify(usersResource, times(2)).create(any());
+  }
+
+  @Test
+  void createUser_ShouldKeepTheConflict_WhenTheExistingIdentityCompletedItsCreation() {
+    var userDTO = new EasyRandom().nextObject(UserDTO.class);
+    userDTO.setUsername("giraffe_yael_3313");
+    var usersResource = mock(UsersResource.class);
+    var conflict = usernameConflictResponse();
+    when(usersResource.create(any())).thenReturn(conflict);
+    when(keycloakClient.getUsersResource()).thenReturn(usersResource);
+    var existing =
+        givenExistingIdentity(
+            usersResource, "real-id", Map.of("userId", List.of("real-id")), 5, "user");
+
+    var refusal =
+        assertThrows(
+            CustomValidationHttpStatusException.class, () -> keycloakService.createUser(userDTO));
+
+    assertThat(
+        refusal.getCustomHttpHeaders().get("X-Reason").get(0), is(USERNAME_NOT_AVAILABLE.name()));
+    verify(existing, never()).remove();
+  }
+
+  @Test
+  void createUser_ShouldKeepTheConflict_WhenTheIdentityIsOlderThanAnHour() {
+    var userDTO = new EasyRandom().nextObject(UserDTO.class);
+    userDTO.setUsername("giraffe_yael_3313");
+    var usersResource = mock(UsersResource.class);
+    var conflict = usernameConflictResponse();
+    when(usersResource.create(any())).thenReturn(conflict);
+    when(keycloakClient.getUsersResource()).thenReturn(usersResource);
+    var existing =
+        givenExistingIdentity(usersResource, "old-id", null, 90, "default-roles-online-beratung");
+
+    assertThrows(
+        CustomValidationHttpStatusException.class, () -> keycloakService.createUser(userDTO));
+
+    verify(existing, never()).remove();
+  }
+
+  @Test
+  void createUser_ShouldKeepTheConflict_WhenTheIdentityHoldsARole() {
+    var userDTO = new EasyRandom().nextObject(UserDTO.class);
+    userDTO.setUsername("giraffe_yael_3313");
+    var usersResource = mock(UsersResource.class);
+    var conflict = usernameConflictResponse();
+    when(usersResource.create(any())).thenReturn(conflict);
+    when(keycloakClient.getUsersResource()).thenReturn(usersResource);
+    var existing = givenExistingIdentity(usersResource, "admin-id", null, 5, "tenant-admin");
+
+    assertThrows(
+        CustomValidationHttpStatusException.class, () -> keycloakService.createUser(userDTO));
+
+    verify(existing, never()).remove();
+  }
+
+  private Response usernameConflictResponse() {
+    givenADuplicatedEmailErrorMessage();
+    var usernameError = givenADuplicatedUserErrorMessage();
+    var conflict = mock(Response.class);
+    when(conflict.getStatus()).thenReturn(HttpStatus.CONFLICT.value());
+    when(conflict.readEntity(String.class)).thenReturn(usernameError);
+    return conflict;
+  }
+
+  private UserResource givenExistingIdentity(
+      UsersResource usersResource,
+      String id,
+      Map<String, List<String>> attributes,
+      int ageMinutes,
+      String role) {
+    long now = 1_800_000_000_000L;
+    keycloakService.setNowMillis(() -> now);
+    var existing = new UserRepresentation();
+    existing.setId(id);
+    existing.setUsername("giraffe_yael_3313");
+    existing.setAttributes(attributes);
+    existing.setCreatedTimestamp(now - ageMinutes * 60_000L);
+    org.mockito.Mockito.lenient()
+        .when(usersResource.search(anyString()))
+        .thenReturn(List.of(existing));
+    var resource = mock(UserResource.class);
+    var roleMappings = mock(org.keycloak.admin.client.resource.RoleMappingResource.class);
+    var realmRoles = mock(org.keycloak.admin.client.resource.RoleScopeResource.class);
+    var roleRepresentation = new org.keycloak.representations.idm.RoleRepresentation();
+    roleRepresentation.setName(role);
+    org.mockito.Mockito.lenient().when(usersResource.get(id)).thenReturn(resource);
+    org.mockito.Mockito.lenient().when(resource.roles()).thenReturn(roleMappings);
+    org.mockito.Mockito.lenient().when(roleMappings.realmLevel()).thenReturn(realmRoles);
+    org.mockito.Mockito.lenient()
+        .when(realmRoles.listAll())
+        .thenReturn(List.of(roleRepresentation));
+    return resource;
+  }
 }
