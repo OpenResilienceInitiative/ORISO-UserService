@@ -337,7 +337,23 @@ class SessionConsentServiceTest {
     assertThat(creator.isConsentGiven()).isTrue();
     assertThat(creator.getConsentedLegalVersionId()).isNull();
     verify(members).save(creator);
-    verify(sessionRepository, never()).save(any());
+    assertThat(sessionConsentService.consentRequired(shared, "asker-1")).isFalse();
+  }
+
+  @Test
+  void recordConsent_Should_DropAnEarlierPointerVersion_WhenTheFirstParticipantAgreesWithoutOne() {
+    var shared = sharedConversation(42L, "asker-1", 6L);
+    var creator = memberRow(42L, "asker-1");
+    when(sessionRepository.findById(42L)).thenReturn(Optional.of(shared));
+    when(members.findBySessionIdAndUserIdForUpdate(42L, "asker-1"))
+        .thenReturn(Optional.of(creator));
+    when(members.findBySessionIdAndUserId(42L, "asker-1")).thenReturn(Optional.of(creator));
+
+    sessionConsentService.recordConsent(42L, askerWithId("asker-1"), null);
+
+    assertThat(shared.getConsentedLegalVersionId()).as("overwritten, never kept").isNull();
+    verify(sessionRepository).save(shared);
+    assertThat(creator.isConsentGiven()).isTrue();
     assertThat(sessionConsentService.consentRequired(shared, "asker-1")).isFalse();
   }
 

@@ -84,6 +84,10 @@ public class SessionConsentService {
         participant: "agreed, no version" on their own member row. */
         var creatorRow = sharedConversationMemberRow(session, adviceSeeker);
         if (creatorRow.isPresent()) {
+          /* Overwrite, never append: an earlier version on the pointer must not keep reading as
+          the owner's current agreement. */
+          session.setConsentedLegalVersionId(null);
+          sessionRepository.save(session);
           agree(creatorRow.get(), null);
           return;
         }
