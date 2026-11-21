@@ -44,16 +44,28 @@ public class TutorialProgressService {
    */
   @Value(
       "${tutorial.tours.frontend:consultant-walkthrough,consultant-mail-counselling,"
-          + "consultant-practice-accept,consultant-practice-supervision}")
+          + "consultant-practice-accept,consultant-practice-supervision,"
+          + "consultant-case-handover,consultant-calendar,consultant-group-circle,"
+          + "consultant-profile,consultant-live-chat,consultant-timeline,"
+          + "consultant-video-call,asker-first-steps,asker-settings}")
   private String[] frontendTours = {
     "consultant-walkthrough",
     "consultant-mail-counselling",
     "consultant-practice-accept",
-    "consultant-practice-supervision"
+    "consultant-practice-supervision",
+    "consultant-case-handover",
+    "consultant-calendar",
+    "consultant-group-circle",
+    "consultant-profile",
+    "consultant-live-chat",
+    "consultant-timeline",
+    "consultant-video-call",
+    "asker-first-steps",
+    "asker-settings"
   };
 
-  @Value("${tutorial.tours.admin:}")
-  private String[] adminTours = {};
+  @Value("${tutorial.tours.admin:admin-introduction}")
+  private String[] adminTours = {"admin-introduction"};
 
   /**
    * Upper bound of progress rows a single account may own. Rows are only ever created by their own
