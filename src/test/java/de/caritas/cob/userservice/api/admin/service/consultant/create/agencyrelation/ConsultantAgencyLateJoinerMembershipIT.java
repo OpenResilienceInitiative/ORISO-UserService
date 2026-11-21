@@ -1,5 +1,6 @@
 package de.caritas.cob.userservice.api.admin.service.consultant.create.agencyrelation;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
@@ -21,6 +22,7 @@ import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestExceptio
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.manager.consultingtype.ConsultingTypeManager;
 import de.caritas.cob.userservice.api.model.Consultant;
+import de.caritas.cob.userservice.api.model.ConsultantStatus;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.Session.RegistrationType;
 import de.caritas.cob.userservice.api.model.Session.SessionStatus;
@@ -29,6 +31,7 @@ import de.caritas.cob.userservice.api.model.UserAgency;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRoomGateway;
+import de.caritas.cob.userservice.api.port.out.SessionRoomRow;
 import de.caritas.cob.userservice.api.port.out.UserAgencyRepository;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
 import de.caritas.cob.userservice.api.service.agency.AgencyMatrixCredentialClient;
@@ -37,8 +40,11 @@ import de.caritas.cob.userservice.api.service.agency.dto.AgencyMatrixCredentials
 import de.caritas.cob.userservice.api.tenant.Tenants;
 import de.caritas.cob.userservice.api.tenant.WithTenant;
 import de.caritas.cob.userservice.consultingtypeservice.generated.web.model.ExtendedConsultingTypeResponseDTO;
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
+import java.util.UUID;
+import java.util.concurrent.atomic.AtomicLong;
 import org.jeasy.random.EasyRandom;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -47,6 +53,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase;
 import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase.Replace;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.test.annotation.DirtiesContext;
 import org.springframework.test.annotation.DirtiesContext.ClassMode;
 import org.springframework.test.context.TestPropertySource;
@@ -71,7 +78,7 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
  * committed, and a test-managed transaction that never commits would silently swallow it.
  */
 @SpringBootTest(classes = UserServiceApplication.class)
-@TestPropertySource(properties = "spring.profiles.active=testing")
+@TestPropertySource(properties = {"spring.profiles.active=testing", "multitenancy.enabled=true"})
 @AutoConfigureTestDatabase(replace = Replace.NONE)
 @DirtiesContext(classMode = ClassMode.BEFORE_EACH_TEST_METHOD)
 @WithTenant(ConsultantAgencyLateJoinerMembershipIT.TENANT)
@@ -80,8 +87,7 @@ class ConsultantAgencyLateJoinerMembershipIT {
   /** The Träger whose admin adds the counsellor; its enquiries are the only ones in reach. */
   static final long TENANT = 1L;
 
-  private static final Long AGENCY_ID = 91015L;
-  private static final Long OTHER_AGENCY_ID = 91016L;
+  private static final AtomicLong NEXT_FIXTURE_AGENCY_ID = new AtomicLong(91100L);
   private static final Long UNKNOWN_AGENCY_ID = 91099L;
   private static final String ENQUIRY_ROOM_ID = "!existing-enquiry:example.org";
   private static final String OTHER_AGENCY_ROOM_ID = "!other-agency-enquiry:example.org";
@@ -89,7 +95,10 @@ class ConsultantAgencyLateJoinerMembershipIT {
   private static final String AGENCY_TOKEN = "agency-service-account-token";
   private static final String CONSULTANT_TOKEN = "late-joiner-token";
   private static final String ROLE_SET_KEY = "valid-role-set";
+  private static final LocalDateTime FIXTURE_DATE = LocalDateTime.of(2026, 1, 1, 12, 0);
 
+  private final long agencyId = NEXT_FIXTURE_AGENCY_ID.getAndIncrement();
+  private final long otherAgencyId = NEXT_FIXTURE_AGENCY_ID.getAndIncrement();
   private final EasyRandom easyRandom = new EasyRandom();
 
   @Autowired private ConsultantAdminFacade consultantAdminFacade;
@@ -117,8 +126,8 @@ class ConsultantAgencyLateJoinerMembershipIT {
   @BeforeEach
   void setUp() {
     Tenants.actAs(caller, "tenant-admin", TENANT, UserRole.TENANT_ADMIN, UserRole.USER_ADMIN);
-    givenAgencyExists(AGENCY_ID);
-    givenAgencyExists(OTHER_AGENCY_ID);
+    givenAgencyExists(agencyId);
+    givenAgencyExists(otherAgencyId);
     givenConsultingTypeSettings();
     givenAgencyServiceAccount();
     when(sessionRoomGateway.loginAsUser(CONSULTANT_MATRIX_USER_ID)).thenReturn(CONSULTANT_TOKEN);
@@ -129,9 +138,9 @@ class ConsultantAgencyLateJoinerMembershipIT {
   @DisplayName("a counsellor added after the enquiry arrived is joined into its existing room")
   void addingAConsultantToAnAgencyWithAnExistingOpenEnquiry_joinsThemIntoThatRoom() {
     var consultant = givenConsultantWithoutAgency();
-    givenOpenEnquiry(AGENCY_ID, ENQUIRY_ROOM_ID);
+    givenOpenEnquiry(agencyId, ENQUIRY_ROOM_ID);
 
-    consultantAdminFacade.createNewConsultantAgency(consultant.getId(), agencyRelation(AGENCY_ID));
+    consultantAdminFacade.createNewConsultantAgency(consultant.getId(), agencyRelation(agencyId));
 
     verify(sessionRoomGateway).joinRoom(ENQUIRY_ROOM_ID, CONSULTANT_TOKEN);
   }
@@ -140,10 +149,10 @@ class ConsultantAgencyLateJoinerMembershipIT {
   @DisplayName("the admin panel's agency editor joins the counsellor into the new agency's rooms")
   void replacingAConsultantsAgencies_joinsThemIntoTheNewAgencysOpenEnquiryRooms() {
     var consultant = givenConsultantWithoutAgency();
-    givenOpenEnquiry(AGENCY_ID, ENQUIRY_ROOM_ID);
+    givenOpenEnquiry(agencyId, ENQUIRY_ROOM_ID);
 
     consultantAdminFacade.setConsultantAgencies(
-        consultant.getId(), List.of(agencyRelation(AGENCY_ID)));
+        consultant.getId(), List.of(agencyRelation(agencyId)));
 
     verify(sessionRoomGateway).joinRoom(ENQUIRY_ROOM_ID, CONSULTANT_TOKEN);
   }
@@ -152,13 +161,58 @@ class ConsultantAgencyLateJoinerMembershipIT {
   @DisplayName("the backfill stays inside the assigned agency and never leaks another one's rooms")
   void addingAConsultantToAnAgency_leavesOtherAgenciesEnquiryRoomsAlone() {
     var consultant = givenConsultantWithoutAgency();
-    givenOpenEnquiry(AGENCY_ID, ENQUIRY_ROOM_ID);
-    givenOpenEnquiry(OTHER_AGENCY_ID, OTHER_AGENCY_ROOM_ID);
+    givenOpenEnquiry(agencyId, ENQUIRY_ROOM_ID);
+    givenOpenEnquiry(otherAgencyId, OTHER_AGENCY_ROOM_ID);
 
-    consultantAdminFacade.createNewConsultantAgency(consultant.getId(), agencyRelation(AGENCY_ID));
+    consultantAdminFacade.createNewConsultantAgency(consultant.getId(), agencyRelation(agencyId));
 
     verify(sessionRoomGateway).joinRoom(ENQUIRY_ROOM_ID, CONSULTANT_TOKEN);
     verify(sessionRoomGateway, never()).joinRoom(eq(OTHER_AGENCY_ROOM_ID), anyString());
+  }
+
+  @Test
+  void candidateQueryPagesOnlyEligibleRoomsUpToTheStartingId() {
+    var first = givenOpenEnquiry(agencyId, "!new:example.org");
+    givenEnquiry(agencyId, "!direct:example.org", SessionStatus.NEW, true, null);
+    givenEnquiry(
+        agencyId,
+        "!assigned:example.org",
+        SessionStatus.NEW,
+        false,
+        givenConsultantWithoutAgency());
+    givenEnquiry(agencyId, "!closed:example.org", SessionStatus.DONE, false, null);
+    givenOpenEnquiry(agencyId, null);
+    givenOpenEnquiry(agencyId, "  ");
+    givenOpenEnquiry(otherAgencyId, OTHER_AGENCY_ROOM_ID);
+    Tenants.in(
+        2L,
+        () ->
+            givenEnquiry(
+                agencyId, "!other-tenant:example.org", SessionStatus.NEW, false, null, 2L));
+    var second = givenEnquiry(agencyId, "!initial:example.org", SessionStatus.INITIAL, false, null);
+    Tenants.in(
+        2L,
+        () ->
+            givenEnquiry(
+                agencyId, "!other-tenant-later:example.org", SessionStatus.NEW, false, null, 2L));
+    long upperId = sessionRepository.findAgencySessionUpperId(agencyId).orElseThrow();
+    assertThat(upperId).isEqualTo(second.getId());
+    givenOpenEnquiry(agencyId, "!after-sweep-began:example.org");
+
+    var statuses = List.of(SessionStatus.NEW, SessionStatus.INITIAL);
+    var page = PageRequest.ofSize(1);
+    assertThat(
+            sessionRepository.findLateJoinerEnquiryRooms(
+                agencyId, statuses, Long.MIN_VALUE, upperId, page))
+        .containsExactly(new SessionRoomRow(first.getId(), first.getMatrixRoomId()));
+    assertThat(
+            sessionRepository.findLateJoinerEnquiryRooms(
+                agencyId, statuses, first.getId(), upperId, page))
+        .containsExactly(new SessionRoomRow(second.getId(), second.getMatrixRoomId()));
+    assertThat(
+            sessionRepository.findLateJoinerEnquiryRooms(
+                agencyId, statuses, second.getId(), upperId, page))
+        .isEmpty();
   }
 
   @Test
@@ -173,7 +227,7 @@ class ConsultantAgencyLateJoinerMembershipIT {
         UserRole.AGENCY_ADMIN,
         UserRole.USER_ADMIN);
     var consultant = givenConsultantWithoutAgency();
-    givenOpenEnquiry(AGENCY_ID, ENQUIRY_ROOM_ID);
+    givenOpenEnquiry(agencyId, ENQUIRY_ROOM_ID);
     when(agencyService.getAgency(UNKNOWN_AGENCY_ID)).thenReturn(null);
 
     assertThrows(
@@ -181,7 +235,7 @@ class ConsultantAgencyLateJoinerMembershipIT {
         () ->
             consultantAdminFacade.setConsultantAgencies(
                 consultant.getId(),
-                List.of(agencyRelation(AGENCY_ID), agencyRelation(UNKNOWN_AGENCY_ID))));
+                List.of(agencyRelation(agencyId), agencyRelation(UNKNOWN_AGENCY_ID))));
 
     verifyNoInteractions(sessionRoomGateway);
   }
@@ -217,24 +271,53 @@ class ConsultantAgencyLateJoinerMembershipIT {
   }
 
   private Consultant givenConsultantWithoutAgency() {
-    var consultant = easyRandom.nextObject(Consultant.class);
-    consultant.setConsultantAgencies(null);
-    consultant.setSessions(null);
-    consultant.setConsultantMobileTokens(null);
-    consultant.setConsultantTopics(null);
+    var consultant = new Consultant();
+    consultant.setId(UUID.randomUUID().toString());
+    consultant.setUsername("late-joiner-" + consultant.getId());
+    consultant.setFirstName("Synthetic");
+    consultant.setLastName("Counsellor");
+    consultant.setEmail(consultant.getId() + "@example.org");
     consultant.setTenantId(TENANT);
     consultant.setMatrixUserId(CONSULTANT_MATRIX_USER_ID);
-    consultant.setDeleteDate(null);
-    consultant.setLanguages(null);
+    consultant.setEncourage2fa(true);
+    consultant.setMagicLinkLoginEnabled(false);
+    consultant.setNotifyEnquiriesRepeating(false);
+    consultant.setNotifyNewChatMessageFromAdviceSeeker(false);
+    consultant.setCreateDate(FIXTURE_DATE);
+    consultant.setUpdateDate(FIXTURE_DATE);
+    consultant.setStatus(ConsultantStatus.CREATED);
+    consultant.setLanguageCode(LanguageCode.de);
     return consultantRepository.save(consultant);
   }
 
-  private void givenOpenEnquiry(Long agencyId, String matrixRoomId) {
-    var user = easyRandom.nextObject(User.class);
-    user.setSessions(null);
-    user.setUserMobileTokens(null);
-    user.setUserAgencies(null);
-    user.setTenantId(TENANT);
+  private Session givenOpenEnquiry(Long agencyId, String matrixRoomId) {
+    return givenEnquiry(agencyId, matrixRoomId, SessionStatus.NEW, false, null);
+  }
+
+  private Session givenEnquiry(
+      Long agencyId,
+      String matrixRoomId,
+      SessionStatus status,
+      boolean directlyAddressed,
+      Consultant consultant) {
+    return givenEnquiry(agencyId, matrixRoomId, status, directlyAddressed, consultant, TENANT);
+  }
+
+  private Session givenEnquiry(
+      Long agencyId,
+      String matrixRoomId,
+      SessionStatus status,
+      boolean directlyAddressed,
+      Consultant consultant,
+      long tenantId) {
+    var user = new User();
+    user.setUserId(UUID.randomUUID().toString());
+    user.setUsername("asker-" + user.getUserId());
+    user.setEmail(user.getUserId() + "@example.org");
+    user.setTenantId(tenantId);
+    user.setLanguageCode(LanguageCode.de);
+    user.setEncourage2fa(false);
+    user.setMagicLinkLoginEnabled(false);
     userRepository.save(user);
 
     var userAgency = new UserAgency();
@@ -243,18 +326,20 @@ class ConsultantAgencyLateJoinerMembershipIT {
     userAgencyRepository.save(userAgency);
 
     var session = new Session();
-    session.setStatus(SessionStatus.NEW);
+    session.setCreateDate(FIXTURE_DATE);
+    session.setUpdateDate(FIXTURE_DATE);
+    session.setStatus(status);
     session.setRegistrationType(RegistrationType.REGISTERED);
     session.setPostcode("12345");
-    session.setConsultant(null);
+    session.setConsultant(consultant);
     session.setUser(user);
     session.setAgencyId(agencyId);
-    session.setTenantId(TENANT);
+    session.setTenantId(tenantId);
     session.setMatrixRoomId(matrixRoomId);
     session.setLanguageCode(LanguageCode.de);
     session.setTeamSession(true);
     session.setSessionTopics(Lists.newArrayList());
-    session.setIsConsultantDirectlySet(false);
-    sessionRepository.save(session);
+    session.setIsConsultantDirectlySet(directlyAddressed);
+    return sessionRepository.save(session);
   }
 }

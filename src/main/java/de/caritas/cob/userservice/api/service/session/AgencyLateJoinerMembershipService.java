@@ -3,21 +3,21 @@ package de.caritas.cob.userservice.api.service.session;
 import static org.apache.commons.lang3.StringUtils.isBlank;
 
 import de.caritas.cob.userservice.api.model.Consultant;
-import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.Session.SessionStatus;
 import de.caritas.cob.userservice.api.model.TeamDiscussion;
 import de.caritas.cob.userservice.api.port.out.ConsultantAgencyRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRoomGateway;
+import de.caritas.cob.userservice.api.port.out.SessionRoomRow;
 import de.caritas.cob.userservice.api.port.out.TeamDiscussionRepository;
 import de.caritas.cob.userservice.api.service.agency.AgencyMatrixCredentialClient;
 import java.time.Duration;
-import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.stream.Stream;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 
 /**
@@ -66,6 +66,8 @@ public class AgencyLateJoinerMembershipService {
           .ScheduledTaskClaimService
       claims;
 
+  static final int ENQUIRY_ROOM_PAGE_SIZE = 100;
+
   public static final String TEAM_ACCESS_REPAIR_TASK = "team-discussion-access-repair";
 
   /**
@@ -77,57 +79,85 @@ public class AgencyLateJoinerMembershipService {
    * @return number of enquiry rooms the counsellor ended up joined into
    */
   public int joinConsultantIntoOpenEnquiryRooms(Consultant consultant, Long agencyId) {
-    var rooms = openEnquiryRooms(consultant, agencyId);
-    if (rooms.isEmpty()) {
+    if (consultant == null || agencyId == null) {
+      return 0;
+    }
+    var upperId = sessionRepository.findAgencySessionUpperId(agencyId).orElse(null);
+    if (upperId == null) {
       return 0;
     }
 
-    var agencyToken = resolveAgencyToken(agencyId);
-    if (isBlank(agencyToken)) {
-      return 0;
-    }
-
+    var page = PageRequest.ofSize(ENQUIRY_ROOM_PAGE_SIZE);
+    long afterId = Long.MIN_VALUE;
+    String agencyToken = null;
+    int candidates = 0;
     int joined = 0;
-    for (Session room : rooms) {
-      try {
+    while (afterId < upperId) {
+      var rooms =
+          sessionRepository.findLateJoinerEnquiryRooms(
+              agencyId, AgencyOpenEnquiryMembership.OPEN_STATUSES, afterId, upperId, page);
+      if (rooms.isEmpty()) {
+        break;
+      }
+      afterId = rooms.getLast().sessionId();
+      for (var room : rooms) {
+        // SQL TRIM handles spaces. Keep the Java blank check for other whitespace.
+        if (isBlank(room.roomId())) {
+          continue;
+        }
+        if (agencyToken == null) {
+          agencyToken = resolveAgencyToken(agencyId);
+          if (isBlank(agencyToken)) {
+            return 0;
+          }
+        }
+        candidates++;
         if (joinOpenEnquiry(consultant.getId(), agencyId, room, agencyToken)) {
           joined++;
         }
-      } catch (RuntimeException ex) {
-        log.warn(
-            "Could not backfill consultant {} into enquiry room {} of agency {}: {}",
-            consultant.getId(),
-            room.getMatrixRoomId(),
-            agencyId,
-            ex.getClass().getSimpleName());
+      }
+      if (rooms.size() < page.getPageSize()) {
+        break;
       }
     }
 
-    log.info(
-        "Backfilled consultant {} into {} of {} open enquiry rooms of agency {}",
-        consultant.getId(),
-        joined,
-        rooms.size(),
-        agencyId);
+    if (candidates > 0) {
+      log.info(
+          "Backfilled consultant {} into {} of {} open enquiry rooms of agency {}",
+          consultant.getId(),
+          joined,
+          candidates,
+          agencyId);
+    }
     return joined;
   }
 
-  private boolean joinOpenEnquiry(String consultantId, Long agencyId, Session room, String token) {
-    // Match the existing Matrix invite cap, with the wait outside the entitlement transaction.
-    for (int attempt = 1; attempt <= 3; attempt++) {
-      var outcome =
-          openEnquiryMembership.joinIfCurrent(
-              consultantId, agencyId, room.getId(), room.getMatrixRoomId(), token);
-      if (outcome.isEmpty()) {
-        return false;
+  private boolean joinOpenEnquiry(
+      String consultantId, Long agencyId, SessionRoomRow room, String token) {
+    try {
+      // Match the existing Matrix invite cap, with the wait outside the entitlement transaction.
+      for (int attempt = 1; attempt <= 3; attempt++) {
+        var outcome =
+            openEnquiryMembership.joinIfCurrent(
+                consultantId, agencyId, room.sessionId(), room.roomId(), token);
+        if (outcome.isEmpty()) {
+          return false;
+        }
+        var result = outcome.get();
+        if (!result.rateLimited()) {
+          return result.joined();
+        }
+        if (attempt == 3 || !rateLimitPause.pause(Math.min(result.retryAfterMs(), 2_000L))) {
+          return false;
+        }
       }
-      var result = outcome.get();
-      if (!result.rateLimited()) {
-        return result.joined();
-      }
-      if (attempt == 3 || !rateLimitPause.pause(Math.min(result.retryAfterMs(), 2_000L))) {
-        return false;
-      }
+    } catch (RuntimeException ex) {
+      log.warn(
+          "Could not backfill consultant {} into enquiry room {} of agency {}: {}",
+          consultantId,
+          room.roomId(),
+          agencyId,
+          ex.getClass().getSimpleName());
     }
     return false;
   }
@@ -208,21 +238,6 @@ public class AgencyLateJoinerMembershipService {
     var token = resolveAgencyToken(agencyId);
     return !isBlank(token)
         && sessionRoomGateway.removeUserFromRoom(roomId, consultant.getMatrixUserId(), token);
-  }
-
-  private List<Session> openEnquiryRooms(Consultant consultant, Long agencyId) {
-    if (consultant == null || agencyId == null) {
-      return List.of();
-    }
-
-    return AgencyOpenEnquiryMembership.OPEN_STATUSES.stream()
-        .flatMap(
-            status ->
-                sessionRepository
-                    .findByAgencyIdAndStatusAndConsultantIsNull(agencyId, status)
-                    .stream())
-        .filter(session -> AgencyOpenEnquiryMembership.isOpenToDepartment(session, agencyId))
-        .toList();
   }
 
   /**
