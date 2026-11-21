@@ -123,10 +123,28 @@ public class DirectInvitationService {
     requireFuture(schedule);
     var appointment = new SessionAppointment();
     appointment.setStatus(SessionAppointment.Status.SCHEDULED);
+    appointment.setKind(kindOf(link));
     appointment.setStartTime(start.toInstant(ZoneOffset.UTC));
     appointment.setEndTime(end.toInstant(ZoneOffset.UTC));
     link.setAppointmentId(appointments.save(appointment).getId());
     apply(link, schedule);
+  }
+
+  /**
+   * How the invitation's appointment takes place, from the link's medium: the app shows a chat,
+   * phone or camera symbol for it. Without a kind it falls back to the camera, so a chat
+   * appointment looked like a video call.
+   */
+  static SessionAppointment.Kind kindOf(AgencyInviteLink link) {
+    if (link.getChatType() == null) {
+      return null;
+    }
+    return switch (link.getChatType()) {
+      case "CHAT" -> SessionAppointment.Kind.CHAT;
+      case "AUDIO" -> SessionAppointment.Kind.PHONE;
+      case "VIDEO" -> SessionAppointment.Kind.VIDEO;
+      default -> null;
+    };
   }
 
   /** An invitation from a 1:1 meets at an appointment of that conversation. */
