@@ -73,16 +73,18 @@ public class AgencyPreAssignmentRoomService {
       return;
     }
     Long sessionId = session.getId();
-    var now = clock.instant();
-    lastRepairStart.values().removeIf(started -> started.plus(REPAIR_COOLDOWN).isBefore(now));
-    var last = lastRepairStart.get(sessionId);
-    if (last != null && last.plus(REPAIR_COOLDOWN).isAfter(now)) {
-      return;
-    }
     if (!repairsInFlight.add(sessionId)) {
       return;
     }
     try {
+      // Checked only while holding the marker: a repair that just finished cannot be followed by
+      // a second start inside the cooldown.
+      var now = clock.instant();
+      lastRepairStart.values().removeIf(started -> started.plus(REPAIR_COOLDOWN).isBefore(now));
+      var last = lastRepairStart.get(sessionId);
+      if (last != null && last.plus(REPAIR_COOLDOWN).isAfter(now)) {
+        return;
+      }
       lastRepairStart.put(sessionId, now);
       var current = sessionService.getSession(sessionId);
       if (current.isPresent() && current.get().getMatrixRoomId() != null) {
@@ -231,7 +233,10 @@ public class AgencyPreAssignmentRoomService {
             attempt + 1,
             CREATE_ROOM_MAX_ATTEMPTS,
             waitMs);
-        rateLimitPause.pause(waitMs);
+        if (!rateLimitPause.pause(waitMs)) {
+          // Interrupted (shutdown, cancelled request): stop instead of provisioning further.
+          throw limited;
+        }
       }
     }
   }

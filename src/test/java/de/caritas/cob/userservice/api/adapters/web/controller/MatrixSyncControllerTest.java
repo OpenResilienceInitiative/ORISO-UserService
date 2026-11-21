@@ -336,8 +336,10 @@ class MatrixSyncControllerTest {
   @Test
   void registerRoomForSync_ShouldNotProvisionARoom_ForAnAcceptedCase() {
     // Only an open enquiry gets the agency holding room; an accepted case keeps its own room.
+    // The caller is the case's own advice seeker, so only the status check can refuse the repair.
     when(sessionService.assertUserHasAccess(SESSION_ID, authenticatedUser))
         .thenReturn(sessionWithoutMatrixRoom());
+    when(authenticatedUser.getUserId()).thenReturn(USER_ID);
 
     var response = controller.registerRoomForSync(SESSION_ID);
 

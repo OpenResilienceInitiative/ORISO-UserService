@@ -256,6 +256,7 @@ class AgencyPreAssignmentRoomServiceTest {
     when(sessionRoomGateway.createRoom(anyString(), anyString(), eq(AGENCY_TOKEN)))
         .thenThrow(new MatrixCreateRoomRateLimitedException("limited", 3_256L))
         .thenReturn(NEW_ROOM_ID);
+    when(rateLimitPause.pause(3_256L)).thenReturn(true);
     when(sessionRoomGateway.loginAsUser(USER_MATRIX_ID)).thenReturn(USER_TOKEN);
     when(sessionRoomGateway.joinRoom(NEW_ROOM_ID, USER_TOKEN)).thenReturn(true);
 
@@ -275,6 +276,8 @@ class AgencyPreAssignmentRoomServiceTest {
     when(sessionRoomGateway.loginAsUser(AGENCY_MATRIX_ID)).thenReturn(AGENCY_TOKEN);
     when(sessionRoomGateway.createRoom(anyString(), anyString(), eq(AGENCY_TOKEN)))
         .thenThrow(new MatrixCreateRoomRateLimitedException("limited", 600_000L));
+    when(rateLimitPause.pause(AgencyPreAssignmentRoomService.MAX_WAIT_BEFORE_CREATE_ROOM_RETRY_MS))
+        .thenReturn(true);
 
     underTest.ensureHoldingRoom(session, user);
 
@@ -341,6 +344,47 @@ class AgencyPreAssignmentRoomServiceTest {
     underTest.repairHoldingRoom(session, user);
 
     verify(sessionRoomGateway, times(2)).createRoom(anyString(), anyString(), eq(AGENCY_TOKEN));
+  }
+
+  @Test
+  @DisplayName("US#1737: an interrupted wait stops the retries and provisions nothing")
+  void ensureHoldingRoom_stopsRetryingWhenTheWaitIsInterrupted() throws Exception {
+    when(matrixCredentialClient.fetchMatrixCredentials(AGENCY_ID))
+        .thenReturn(Optional.of(validCredentials()));
+    when(sessionRoomGateway.loginAsUser(AGENCY_MATRIX_ID)).thenReturn(AGENCY_TOKEN);
+    when(sessionRoomGateway.createRoom(anyString(), anyString(), eq(AGENCY_TOKEN)))
+        .thenThrow(new MatrixCreateRoomRateLimitedException("limited", 3_256L))
+        .thenReturn(NEW_ROOM_ID);
+    when(rateLimitPause.pause(3_256L)).thenReturn(false);
+
+    underTest.ensureHoldingRoom(session, user);
+
+    verify(sessionRoomGateway, times(1)).createRoom(anyString(), anyString(), eq(AGENCY_TOKEN));
+    verify(sessionService, never()).saveSession(any());
+    assertNull(session.getMatrixRoomId());
+  }
+
+  @Test
+  @DisplayName("US#1737: a repair already running for the session is not started a second time")
+  void repairHoldingRoom_skipsASecondRepairWhileOneIsRunning() throws Exception {
+    when(sessionService.getSession(SESSION_ID)).thenReturn(Optional.of(new Session()));
+    when(matrixCredentialClient.fetchMatrixCredentials(AGENCY_ID))
+        .thenReturn(Optional.of(validCredentials()));
+    when(sessionRoomGateway.loginAsUser(AGENCY_MATRIX_ID)).thenReturn(AGENCY_TOKEN);
+    var concurrent = new Session();
+    concurrent.setId(SESSION_ID);
+    concurrent.setAgencyId(AGENCY_ID);
+    // While the first repair is creating the room, a second request for the same session arrives.
+    when(sessionRoomGateway.createRoom(anyString(), anyString(), eq(AGENCY_TOKEN)))
+        .thenAnswer(
+            invocation -> {
+              underTest.repairHoldingRoom(concurrent, user);
+              throw new MatrixCreateRoomException("refused");
+            });
+
+    underTest.repairHoldingRoom(session, user);
+
+    verify(sessionRoomGateway, times(1)).createRoom(anyString(), anyString(), eq(AGENCY_TOKEN));
   }
 
   @Test
