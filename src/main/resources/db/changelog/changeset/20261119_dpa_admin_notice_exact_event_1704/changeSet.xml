@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+  xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog https://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-latest.xsd">
+  <changeSet id="20261119-dpa-admin-notice-exact-event-id-1704" author="oriso">
+    <preConditions onFail="MARK_RAN" onError="HALT">
+      <not>
+        <columnExists tableName="dpa_signed_notice" columnName="admin_source_event_id"/>
+      </not>
+    </preConditions>
+    <addColumn tableName="dpa_signed_notice">
+      <column name="admin_source_event_id" type="BIGINT"/>
+    </addColumn>
+    <rollback><dropColumn tableName="dpa_signed_notice" columnName="admin_source_event_id"/></rollback>
+  </changeSet>
+  <changeSet id="20261119-dpa-admin-notice-exact-signed-time-1704" author="oriso">
+    <preConditions onFail="MARK_RAN" onError="HALT">
+      <not>
+        <columnExists tableName="dpa_signed_notice" columnName="admin_source_signed_at_epoch_millis"/>
+      </not>
+    </preConditions>
+    <addColumn tableName="dpa_signed_notice">
+      <column name="admin_source_signed_at_epoch_millis" type="BIGINT"/>
+    </addColumn>
+    <rollback><dropColumn tableName="dpa_signed_notice" columnName="admin_source_signed_at_epoch_millis"/></rollback>
+  </changeSet>
+  <changeSet id="20261119-dpa-admin-notice-exact-event-unique-1704" author="oriso">
+    <preConditions onFail="MARK_RAN" onError="HALT">
+      <not>
+        <uniqueConstraintExists tableName="dpa_signed_notice" constraintName="uq_dpa_admin_source_event"/>
+      </not>
+    </preConditions>
+    <addUniqueConstraint tableName="dpa_signed_notice" columnNames="admin_source_event_id" constraintName="uq_dpa_admin_source_event"/>
+    <rollback><dropUniqueConstraint tableName="dpa_signed_notice" constraintName="uq_dpa_admin_source_event"/></rollback>
+  </changeSet>
+</databaseChangeLog>

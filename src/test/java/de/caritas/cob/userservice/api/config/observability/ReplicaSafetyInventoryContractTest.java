@@ -41,6 +41,8 @@ class ReplicaSafetyInventoryContractTest {
           "account-invite-reservation-release-scheduler",
           "account-invite-expiry-number-release-scheduler",
           "account-invite-dpa-reconciliation-scheduler",
+          "dpa-signed-notice-admin-recovery",
+          "dpa-signed-notice-exact-outbox",
           "case-handover-policy-cache-refresh",
           "live-chat-queue-policy-refresh",
           "case-handover-co-access-expiry",
