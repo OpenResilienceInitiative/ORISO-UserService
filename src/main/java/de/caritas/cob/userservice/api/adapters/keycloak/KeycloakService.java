@@ -493,9 +493,12 @@ public class KeycloakService
     var locale =
         isNull(user.getPreferredLanguage()) ? "de" : user.getPreferredLanguage().toString();
     var kcUser = getUserRepresentation(user, firstName, lastName, locale);
-    for (int attempt = 0; attempt < 2; attempt++) {
+    boolean sessionRefreshed = false;
+    boolean abandonedIdentityReclaimed = false;
+    while (true) {
       try (var response = keycloakClient.getUsersResource().create(kcUser)) {
-        if (response.getStatus() == HttpStatus.UNAUTHORIZED.value() && attempt == 0) {
+        if (response.getStatus() == HttpStatus.UNAUTHORIZED.value() && !sessionRefreshed) {
+          sessionRefreshed = true;
           log.warn(
               "Keycloak admin session was unauthorized while creating a user, forcing token refresh and retrying once");
           recordRetry("admin-session-refresh");
@@ -520,10 +523,105 @@ public class KeycloakService
           }
           return new CreatedIdentity(createdUserId);
         }
-        throw createUserFailure(user, response);
+        var failure = createUserFailure(user, response);
+        if (!abandonedIdentityReclaimed
+            && isUsernameConflict(failure)
+            && reclaimAbandonedRegistration(user.getUsername())) {
+          abandonedIdentityReclaimed = true;
+          continue;
+        }
+        throw failure;
       }
     }
-    throw new IllegalStateException("Unreachable Keycloak create-user retry state");
+  }
+
+  /** Maximum age of an identity that a failed registration left behind and may be reclaimed. */
+  static final long ABANDONED_REGISTRATION_MAX_AGE_MILLIS = 60L * 60L * 1000L;
+
+  /** How often a rollback deletion is tried before it is given up and logged. */
+  static final int ROLLBACK_ATTEMPTS = 3;
+
+  private long rollbackBackoffMillis = 500L;
+  private java.util.function.LongSupplier nowMillis = System::currentTimeMillis;
+
+  void setRollbackBackoffMillis(long rollbackBackoffMillis) {
+    this.rollbackBackoffMillis = rollbackBackoffMillis;
+  }
+
+  void setNowMillis(java.util.function.LongSupplier nowMillis) {
+    this.nowMillis = nowMillis;
+  }
+
+  private static boolean isUsernameConflict(RuntimeException failure) {
+    return failure instanceof CustomValidationHttpStatusException validation
+        && USERNAME_NOT_AVAILABLE
+            .name()
+            .equals(validation.getCustomHttpHeaders().getFirst("X-Reason"));
+  }
+
+  /**
+   * ORISO-UserService#1747: a registration that failed after Keycloak created the identity, and
+   * whose rollback could not delete it (Keycloak or Matrix was briefly unavailable), left an
+   * identity behind. Retrying with the same User-ID then answered 409 for good. Such an identity is
+   * reclaimed once when it is unmistakably abandoned: it never got the {@code userId} attribute
+   * that a completed creation writes right after the create call, it is less than an hour old, and
+   * it holds no realm role beyond Keycloak's defaults. Anything else stays and the conflict stands.
+   */
+  private boolean reclaimAbandonedRegistration(String username) {
+    try {
+      var matches =
+          Stream.concat(
+                  findByUsername(usernameTranscoder.decodeUsername(username)).stream(),
+                  findByUsername(usernameTranscoder.encodeUsername(username)).stream())
+              .filter(candidate -> doesUsernameMatch(username, candidate))
+              .collect(
+                  java.util.stream.Collectors.toMap(
+                      UserRepresentation::getId,
+                      candidate -> candidate,
+                      (first, second) -> first,
+                      LinkedHashMap::new));
+      if (matches.size() != 1) {
+        return false;
+      }
+      var existing = matches.values().iterator().next();
+      if (!isAbandonedRegistration(existing)) {
+        return false;
+      }
+      deleteUser(existing.getId());
+      recordRetry("abandoned-registration-reclaim");
+      log.warn(
+          "Reclaimed identity {} that a failed registration left behind, creating it again",
+          existing.getId());
+      return true;
+    } catch (RuntimeException exception) {
+      log.warn(
+          "Could not check for an abandoned registration identity: {}",
+          exception.getClass().getSimpleName());
+      return false;
+    }
+  }
+
+  private boolean isAbandonedRegistration(UserRepresentation existing) {
+    var attributes = existing.getAttributes();
+    if (attributes != null && attributes.containsKey(USER_ID_ATTRIBUTE)) {
+      return false;
+    }
+    var created = existing.getCreatedTimestamp();
+    if (created == null
+        || nowMillis.getAsLong() - created > ABANDONED_REGISTRATION_MAX_AGE_MILLIS) {
+      return false;
+    }
+    var roles =
+        keycloakClient.getUsersResource().get(existing.getId()).roles().realmLevel().listAll();
+    return roles == null
+        || roles.stream()
+            .map(RoleRepresentation::getName)
+            .allMatch(
+                name ->
+                    name == null
+                        || name.startsWith("default-roles-")
+                        || "offline_access".equals(name)
+                        || "uma_authorization".equals(name));
   }
 
   /**
@@ -1075,11 +1173,35 @@ public class KeycloakService
    */
   @Override
   public void rollbackUser(String userId) {
+    // #1747: one try was lost whenever Keycloak hiccupped, and the identity stayed behind.
+    for (int attempt = 1; attempt <= ROLLBACK_ATTEMPTS; attempt++) {
+      try {
+        deleteUser(userId);
+        log.debug("User {} has been removed due to rollback", userId);
+        return;
+      } catch (Exception e) {
+        if (attempt == ROLLBACK_ATTEMPTS || !pauseBeforeRollbackRetry(attempt)) {
+          log.error(
+              "Keycloak error: User could not be removed/rolled back: {} (after {} attempts)",
+              userId,
+              attempt);
+          return;
+        }
+        recordRetry("rollback-delete");
+      }
+    }
+  }
+
+  private boolean pauseBeforeRollbackRetry(int attempt) {
+    if (rollbackBackoffMillis <= 0) {
+      return true;
+    }
     try {
-      deleteUser(userId);
-      log.debug("User {} has been removed due to rollback", userId);
-    } catch (Exception e) {
-      log.error("Keycloak error: User could not be removed/rolled back: {}", userId);
+      Thread.sleep(rollbackBackoffMillis * attempt);
+      return true;
+    } catch (InterruptedException interrupted) {
+      Thread.currentThread().interrupt();
+      return false;
     }
   }
 
