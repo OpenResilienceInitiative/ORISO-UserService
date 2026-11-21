@@ -14,8 +14,11 @@ import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
+import org.springframework.util.StringUtils;
 import org.springframework.web.client.HttpClientErrorException;
+import org.springframework.web.client.RestClientException;
 
 /**
  * Server-to-server tenant creation for the PUBLIC tenant-admin onboarding (#569 chain fix). The
@@ -62,6 +65,23 @@ public class TenantCreationClient {
     } catch (HttpClientErrorException.Conflict exception) {
       throw new ConflictException(
           "Tenant creation conflicted — the reserved tenant ID is no longer consumable");
+    }
+  }
+
+  public boolean hasAssignmentProof(long tenantId, String reservationToken) {
+    if (!StringUtils.hasText(reservationToken)) {
+      return false;
+    }
+    try {
+      return HttpStatus.NO_CONTENT.equals(
+          createControllerApi()
+              .checkTenantIdAssignmentProofWithHttpInfo(tenantId, reservationToken)
+              .getStatusCode());
+    } catch (HttpClientErrorException.NotFound | HttpClientErrorException.MethodNotAllowed e) {
+      return false;
+    } catch (RestClientException exception) {
+      throw new RestClientException(
+          "Tenant assignment proof check failed (" + exception.getClass().getSimpleName() + ")");
     }
   }
 
