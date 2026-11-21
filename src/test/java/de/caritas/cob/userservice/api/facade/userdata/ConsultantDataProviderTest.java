@@ -11,6 +11,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.Mockito.when;
 
+import ch.qos.logback.classic.Level;
 import com.neovisionaries.i18n.LanguageCode;
 import de.caritas.cob.userservice.api.adapters.web.dto.AgencyDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.UserDataResponseDTO;
@@ -23,6 +24,8 @@ import de.caritas.cob.userservice.api.model.Language;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
 import de.caritas.cob.userservice.consultingtypeservice.generated.web.model.ExtendedConsultingTypeResponseDTO;
+import de.caritas.cob.userservice.testutils.LogbackCaptor;
+import java.nio.charset.StandardCharsets;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
@@ -30,6 +33,8 @@ import java.util.stream.Collectors;
 import org.jeasy.random.EasyRandom;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.Mockito;
@@ -37,10 +42,12 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.HttpServerErrorException;
+import org.springframework.web.client.ResourceAccessException;
 
 @ExtendWith(MockitoExtension.class)
 public class ConsultantDataProviderTest {
 
+  private static final String PRIVATE_DIAGNOSTIC = "synthetic-private-diagnostic";
   private final EasyRandom easyRandom = new EasyRandom();
 
   @InjectMocks private ConsultantDataProvider underTest;
@@ -148,17 +155,64 @@ public class ConsultantDataProviderTest {
     assertEquals(AGENCY_DTO_SUCHT, result.get(0));
   }
 
-  @Test
-  public void retrieveData_Should_ReturnMinimalProfile_When_AgencyServiceReturnsServerError() {
+  @ParameterizedTest
+  @ValueSource(booleans = {false, true})
+  public void retrieveData_Should_ReturnMinimalProfile_When_AgencyServiceReturnsServerError(
+      boolean withBody) {
     when(agencyService.getAgencies(any()))
-        .thenThrow(new HttpServerErrorException(HttpStatus.INTERNAL_SERVER_ERROR));
+        .thenThrow(
+            HttpServerErrorException.create(
+                HttpStatus.INTERNAL_SERVER_ERROR,
+                "server error",
+                null,
+                withBody ? PRIVATE_DIAGNOSTIC.getBytes(StandardCharsets.UTF_8) : null,
+                StandardCharsets.UTF_8));
 
-    var result = underTest.retrieveData(CONSULTANT_WITH_AGENCY);
+    try (var logs = LogbackCaptor.forClass(ConsultantDataProvider.class)) {
+      var result = underTest.retrieveData(CONSULTANT_WITH_AGENCY);
 
-    assertEquals(CONSULTANT_WITH_AGENCY.getId(), result.getUserId());
-    assertTrue(result.getAgencies().isEmpty());
-    assertFalse(result.isHasAnonymousConversations());
-    Mockito.verifyNoInteractions(consultingTypeManager);
+      assertEquals(CONSULTANT_WITH_AGENCY.getId(), result.getUserId());
+      assertTrue(result.getAgencies().isEmpty());
+      assertFalse(result.isHasAnonymousConversations());
+      Mockito.verifyNoInteractions(consultingTypeManager);
+      assertEquals(1L, logs.count(Level.WARN));
+      var message = logs.messages(Level.WARN).getFirst();
+      assertTrue(message.contains("500"));
+      assertFalse(message.contains(PRIVATE_DIAGNOSTIC));
+      assertFalse(message.contains(CONSULTANT_WITH_AGENCY.getId()));
+      assertNull(logs.events().getFirst().getThrowableProxy());
+    }
+  }
+
+  @Test
+  void agencyTransportFailureKeepsMinimalProfileWithoutLoggingExceptionDetails() {
+    when(agencyService.getAgencies(any()))
+        .thenThrow(new ResourceAccessException(PRIVATE_DIAGNOSTIC));
+
+    try (var logs = LogbackCaptor.forClass(ConsultantDataProvider.class)) {
+      var result = underTest.retrieveData(CONSULTANT_WITH_AGENCY);
+
+      assertEquals(CONSULTANT_WITH_AGENCY.getId(), result.getUserId());
+      assertTrue(result.getAgencies().isEmpty());
+      assertFalse(result.isHasAnonymousConversations());
+      assertEquals(1L, logs.count(Level.WARN));
+      assertNull(logs.events().getFirst().getThrowableProxy());
+      assertFalse(logs.events().getFirst().getFormattedMessage().contains(PRIVATE_DIAGNOSTIC));
+    }
+  }
+
+  @Test
+  void consultingTypeFailureDisablesAnonymousConversationsWithoutLoggingExceptionDetails() {
+    when(agencyService.getAgencies(any())).thenReturn(List.of(new AgencyDTO().consultingType(1)));
+    when(consultingTypeManager.getConsultingTypeSettings(1))
+        .thenThrow(new ResourceAccessException(PRIVATE_DIAGNOSTIC));
+
+    try (var logs = LogbackCaptor.forClass(ConsultantDataProvider.class)) {
+      assertFalse(underTest.retrieveData(CONSULTANT_WITH_AGENCY).isHasAnonymousConversations());
+      assertEquals(1L, logs.count(Level.WARN));
+      assertNull(logs.events().getFirst().getThrowableProxy());
+      assertFalse(logs.events().getFirst().getFormattedMessage().contains(PRIVATE_DIAGNOSTIC));
+    }
   }
 
   @Test

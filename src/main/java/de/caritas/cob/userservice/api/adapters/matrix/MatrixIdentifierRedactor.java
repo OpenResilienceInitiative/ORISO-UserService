@@ -26,8 +26,8 @@ import org.springframework.web.util.UriUtils;
  * name by hashing it. The secret is optional here — unset means a per-process random key, so
  * redaction can never stop the service from starting.
  *
- * <p>Inputs are normalised, so a bare localpart and a full {@code @local:server} id yield the same
- * token and one person stays correlatable across call sites.
+ * <p>User inputs are normalised, so a bare localpart and a full {@code @local:server} id yield the
+ * same token. Room references use the complete identifier in a separate digest domain.
  */
 @Slf4j
 @Component
@@ -36,6 +36,7 @@ public class MatrixIdentifierRedactor {
   private static final String ALGORITHM = "HmacSHA256";
   private static final int TOKEN_HEX_CHARS = 12;
   private static final String PREFIX = "mx#";
+  private static final String ROOM_PREFIX = "mx-room#";
 
   /**
    * Token for a {@code null} identifier; distinguishable from a blank one, and from a real user.
@@ -109,6 +110,17 @@ public class MatrixIdentifierRedactor {
     return pseudonymUnsynchronized(identifier);
   }
 
+  synchronized String roomPseudonym(String roomId) {
+    if (roomId == null) {
+      return ROOM_PREFIX + "null";
+    }
+    if (roomId.isBlank()) {
+      return ROOM_PREFIX + "blank";
+    }
+    // The user domain hashes a localpart without any colon.
+    return ROOM_PREFIX + shortDigest("room:" + roomId);
+  }
+
   /** Callers must already hold this instance's monitor; {@link Mac} is not thread safe. */
   private String pseudonymUnsynchronized(String identifier) {
     if (identifier == null) {
@@ -118,8 +130,12 @@ public class MatrixIdentifierRedactor {
     if (normalised.isEmpty()) {
       return BLANK_TOKEN;
     }
-    var hex = Hex.encodeHexString(mac.doFinal(normalised.getBytes(StandardCharsets.UTF_8)));
-    return PREFIX + hex.substring(0, TOKEN_HEX_CHARS);
+    return PREFIX + shortDigest(normalised);
+  }
+
+  private String shortDigest(String value) {
+    return Hex.encodeHexString(mac.doFinal(value.getBytes(StandardCharsets.UTF_8)))
+        .substring(0, TOKEN_HEX_CHARS);
   }
 
   /**

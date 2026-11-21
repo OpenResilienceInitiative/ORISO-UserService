@@ -26,6 +26,7 @@ import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.HttpClientErrorException;
+import org.springframework.web.client.RestClientResponseException;
 import org.springframework.web.client.RestTemplate;
 
 @Slf4j
@@ -59,6 +60,10 @@ public class MatrixRoomClient {
 
   private static final int INVITE_USER_MAX_ATTEMPTS = 3;
   private static final long DEFAULT_INVITE_RETRY_DELAY_MS = 1000L;
+  private static final String CREATE_FAILURE = "Could not create room in Matrix";
+  private static final String INVITE_FAILURE = "Could not invite user to room in Matrix";
+  private static final String ALREADY_IN_ROOM = "already in the room";
+  private static final String ALREADY_INVITED = "already invited";
   // Invites can run under a session row lock; a server-chosen delay must not hold it for long.
   static final long MAX_INVITE_RETRY_DELAY_MS = 2000L;
   private static final Pattern RETRY_AFTER_MS_PATTERN =
@@ -67,6 +72,7 @@ public class MatrixRoomClient {
   private final MatrixConfig matrixConfig;
   private final RestTemplate restTemplate;
   private final LiveChatDiagnosticMetrics diagnosticMetrics;
+  private final MatrixIdentifierRedactor redactor;
 
   private static final String ENDPOINT_ROOM_STATE = "/_matrix/client/v3/rooms/{roomId}/state";
   private static final long MAX_SAFE_POWER = 9007199254740991L;
@@ -415,7 +421,6 @@ public class MatrixRoomClient {
       HttpEntity<MatrixCreateRoomRequestDTO> request = new HttpEntity<>(roomCreateRequest, headers);
 
       var url = buildUrl(ENDPOINT_CREATE_ROOM);
-      log.info("Creating Matrix room: {} at URL: {}", roomName, url);
 
       var response = restTemplate.postForEntity(url, request, MatrixCreateRoomResponseDTO.class);
       if (response.getBody() == null
@@ -430,33 +435,18 @@ public class MatrixRoomClient {
 
       diagnosticMetrics.recordRoomCreation(encryptionEnabled, Outcome.SUCCESS);
       log.info(
-          "Successfully created Matrix room: {} with ID: {}",
-          roomName,
-          response.getBody().getRoomId());
+          "Successfully created Matrix room {}",
+          redactor.roomPseudonym(response.getBody().getRoomId()));
 
       return response;
-    } catch (HttpClientErrorException ex) {
-      diagnosticMetrics.recordRoomCreation(encryptionEnabled, Outcome.FAILURE);
-      log.error(
-          "Matrix Error: Could not create room ({}) in Matrix. Status: {}, Response: {}",
-          roomName,
-          ex.getStatusCode(),
-          ex.getResponseBodyAsString());
-      if (isRateLimited(ex)) {
-        // US#1737: say "try again later" with the server's delay, so a holding room is retried.
-        throw new MatrixCreateRoomRateLimitedException(
-            String.format(
-                "Could not create room (%s) in Matrix: %s", roomName, ex.getResponseBodyAsString()),
-            serverRetryAfterMs(ex));
-      }
-      throw new MatrixCreateRoomException(
-          String.format(
-              "Could not create room (%s) in Matrix: %s", roomName, ex.getResponseBodyAsString()));
     } catch (Exception ex) {
       diagnosticMetrics.recordRoomCreation(encryptionEnabled, Outcome.FAILURE);
-      log.error("Matrix Error: Could not create room ({}) in Matrix. Reason", roomName, ex);
-      throw new MatrixCreateRoomException(
-          String.format("Could not create room (%s) in Matrix", roomName));
+      log.error("{} ({})", CREATE_FAILURE, failureType(ex));
+      if (ex instanceof HttpClientErrorException response && isRateLimited(response)) {
+        throw new MatrixCreateRoomRateLimitedException(
+            CREATE_FAILURE, serverRetryAfterMs(response));
+      }
+      throw new MatrixCreateRoomException(CREATE_FAILURE);
     }
   }
 
@@ -492,54 +482,30 @@ public class MatrixRoomClient {
     HttpEntity<MatrixInviteUserRequestDTO> request = new HttpEntity<>(inviteRequest, headers);
 
     var url = buildUrl(ENDPOINT_INVITE_USER, Map.of("roomId", roomId));
+    var memberRef = redactor.pseudonym(userId);
+    var roomRef = redactor.roomPseudonym(roomId);
 
     for (int attempt = 1; attempt <= INVITE_USER_MAX_ATTEMPTS; attempt++) {
       try {
-        log.info("Inviting Matrix user: {} to room: {} at URL: {}", userId, roomId, url);
-
         var response = restTemplate.postForEntity(url, request, MatrixInviteUserResponseDTO.class);
 
-        log.info("Successfully invited Matrix user: {} to room: {}", userId, roomId);
+        log.info("Successfully invited Matrix user {} to room {}", memberRef, roomRef);
 
         return response;
       } catch (HttpClientErrorException ex) {
-        if (isRateLimited(ex) && attempt < INVITE_USER_MAX_ATTEMPTS) {
-          waitBeforeInviteRetry(userId, roomId, attempt, retryAfterMs(ex));
-          continue;
+        if (!isRateLimited(ex)) {
+          throw inviteFailure(memberRef, roomRef, ex);
         }
-
-        log.error(
-            "Matrix Error: Could not invite user ({}) to room ({}) in Matrix. Status: {}, Response: {}",
-            userId,
-            roomId,
-            ex.getStatusCode(),
-            ex.getResponseBodyAsString());
-        if (isRateLimited(ex)) {
-          // Still limited after the short retries: say so, with the server's own delay, so the
-          // caller can defer the invite instead of failing what depends on it (FE#2386).
-          throw new MatrixInviteRateLimitedException(
-              String.format(
-                  "Could not invite user (%s) to room (%s) in Matrix: %s",
-                  userId, roomId, ex.getResponseBodyAsString()),
-              serverRetryAfterMs(ex));
+        if (attempt == INVITE_USER_MAX_ATTEMPTS) {
+          throw inviteRateLimited(memberRef, roomRef, ex);
         }
-        throw new MatrixInviteUserException(
-            String.format(
-                "Could not invite user (%s) to room (%s) in Matrix: %s",
-                userId, roomId, ex.getResponseBodyAsString()));
+        waitBeforeInviteRetry(memberRef, roomRef, attempt, retryAfterMs(ex));
       } catch (Exception ex) {
-        log.error(
-            "Matrix Error: Could not invite user ({}) to room ({}) in Matrix. Reason",
-            userId,
-            roomId,
-            ex);
-        throw new MatrixInviteUserException(
-            String.format("Could not invite user (%s) to room (%s) in Matrix", userId, roomId));
+        throw inviteFailure(memberRef, roomRef, ex);
       }
     }
 
-    throw new MatrixInviteUserException(
-        String.format("Could not invite user (%s) to room (%s) in Matrix", userId, roomId));
+    throw new MatrixInviteUserException(INVITE_FAILURE);
   }
 
   /**
@@ -557,45 +523,55 @@ public class MatrixRoomClient {
     inviteRequest.setUserId(userId);
 
     var url = buildUrl(ENDPOINT_INVITE_USER, Map.of("roomId", roomId));
+    var memberRef = redactor.pseudonym(userId);
+    var roomRef = redactor.roomPseudonym(roomId);
 
     try {
       var response =
           restTemplate.postForEntity(
               url, new HttpEntity<>(inviteRequest, headers), MatrixInviteUserResponseDTO.class);
-      log.info("Successfully invited Matrix user: {} to room: {}", userId, roomId);
+      log.info("Successfully invited Matrix user {} to room {}", memberRef, roomRef);
       return response;
     } catch (HttpClientErrorException ex) {
       if (isRateLimited(ex)) {
-        var retryAfterMs = serverRetryAfterMs(ex);
-        log.warn(
-            "Matrix invite for user {} to room {} was rate limited; server asks to retry after {} ms",
-            userId,
-            roomId,
-            retryAfterMs);
-        throw new MatrixInviteRateLimitedException(
-            String.format(
-                "Matrix invite for user (%s) to room (%s) was rate limited", userId, roomId),
-            retryAfterMs);
+        throw inviteRateLimited(memberRef, roomRef, ex);
       }
-      log.error(
-          "Matrix Error: Could not invite user ({}) to room ({}) in Matrix. Status: {}, Response: {}",
-          userId,
-          roomId,
-          ex.getStatusCode(),
-          ex.getResponseBodyAsString());
-      throw new MatrixInviteUserException(
-          String.format(
-              "Could not invite user (%s) to room (%s) in Matrix: %s",
-              userId, roomId, ex.getResponseBodyAsString()));
+      throw inviteFailure(memberRef, roomRef, ex);
     } catch (Exception ex) {
-      log.error(
-          "Matrix Error: Could not invite user ({}) to room ({}) in Matrix. Reason",
-          userId,
-          roomId,
-          ex);
-      throw new MatrixInviteUserException(
-          String.format("Could not invite user (%s) to room (%s) in Matrix", userId, roomId));
+      throw inviteFailure(memberRef, roomRef, ex);
     }
+  }
+
+  private MatrixInviteRateLimitedException inviteRateLimited(
+      String memberRef, String roomRef, HttpClientErrorException failure) {
+    var delay = serverRetryAfterMs(failure);
+    log.warn(
+        "Matrix invite for user {} to room {} was rate limited at HTTP {}; retry after {} ms",
+        memberRef,
+        roomRef,
+        failure.getStatusCode().value(),
+        delay);
+    return new MatrixInviteRateLimitedException("Matrix invite was rate limited", delay);
+  }
+
+  private MatrixInviteUserException inviteFailure(
+      String memberRef, String roomRef, Exception failure) {
+    log.error(
+        "Could not invite Matrix user {} to room {} ({})",
+        memberRef,
+        roomRef,
+        failureType(failure));
+    if (failure instanceof HttpClientErrorException response) {
+      var body = response.getResponseBodyAsString();
+      // Some membership callers treat these two responses as successful idempotent invites.
+      if (body.contains(ALREADY_IN_ROOM)) {
+        return new MatrixInviteUserException("Matrix user is " + ALREADY_IN_ROOM);
+      }
+      if (body.contains(ALREADY_INVITED)) {
+        return new MatrixInviteUserException("Matrix user was " + ALREADY_INVITED);
+      }
+    }
+    return new MatrixInviteUserException(INVITE_FAILURE);
   }
 
   private boolean isRateLimited(HttpClientErrorException ex) {
@@ -619,12 +595,13 @@ public class MatrixRoomClient {
     return DEFAULT_INVITE_RETRY_DELAY_MS;
   }
 
-  private void waitBeforeInviteRetry(String userId, String roomId, int attempt, long retryAfterMs)
+  private void waitBeforeInviteRetry(
+      String memberRef, String roomRef, int attempt, long retryAfterMs)
       throws MatrixInviteUserException {
     log.warn(
         "Matrix invite for user {} to room {} was rate limited; retrying attempt {} of {} after {} ms",
-        userId,
-        roomId,
+        memberRef,
+        roomRef,
         attempt + 1,
         INVITE_USER_MAX_ATTEMPTS,
         retryAfterMs);
@@ -632,12 +609,12 @@ public class MatrixRoomClient {
       Thread.sleep(retryAfterMs);
     } catch (InterruptedException ex) {
       Thread.currentThread().interrupt();
-      throw new MatrixInviteUserException(
-          String.format("Interrupted while retrying Matrix invite for user (%s)", userId), ex);
+      throw new MatrixInviteUserException("Interrupted while retrying Matrix invite", ex);
     }
   }
 
   public boolean joinRoom(String roomId, String accessToken) {
+    var roomRef = redactor.roomPseudonym(roomId);
     try {
       var headers = getClientHttpHeaders(accessToken);
       headers.setContentType(MediaType.APPLICATION_JSON);
@@ -645,31 +622,25 @@ public class MatrixRoomClient {
       HttpEntity<String> request = new HttpEntity<>("{}", headers);
 
       var url = buildUrl(ENDPOINT_JOIN_ROOM, Map.of("roomId", roomId));
-      log.info("Accepting room invitation (joining room): {} at URL: {}", roomId, url);
 
       var response = restTemplate.postForEntity(url, request, Map.class);
 
       if (response.getStatusCode().is2xxSuccessful()) {
-        log.info("Successfully joined Matrix room: {}", roomId);
+        log.info("Successfully joined Matrix room {}", roomRef);
         return true;
       } else {
-        log.warn("Failed to join Matrix room: {}. Status: {}", roomId, response.getStatusCode());
+        log.warn(
+            "Failed to join Matrix room {} (HTTP {})", roomRef, response.getStatusCode().value());
         return false;
       }
-    } catch (HttpClientErrorException ex) {
-      if (ex.getStatusCode().value() == 403
-          && ex.getResponseBodyAsString().contains("already in the room")) {
-        log.info("User already in Matrix room: {}, skipping join", roomId);
+    } catch (Exception ex) {
+      if (ex instanceof HttpClientErrorException response
+          && response.getStatusCode().value() == 403
+          && response.getResponseBodyAsString().contains(ALREADY_IN_ROOM)) {
+        log.info("User already in Matrix room {}, skipping join", roomRef);
         return true;
       }
-      log.error(
-          "Matrix Error: Could not join room ({}). Status: {}, Response: {}",
-          roomId,
-          ex.getStatusCode(),
-          ex.getResponseBodyAsString());
-      return false;
-    } catch (Exception ex) {
-      log.error("Matrix Error: Could not join room ({}). Reason: {}", roomId, ex.getMessage());
+      log.error("Could not join Matrix room {} ({})", roomRef, failureType(ex));
       return false;
     }
   }
@@ -686,6 +657,7 @@ public class MatrixRoomClient {
    * @return true when the user is not in the room afterwards, false when the leave failed
    */
   public boolean leaveRoom(String roomId, String accessToken) {
+    var roomRef = redactor.roomPseudonym(roomId);
     try {
       var headers = getClientHttpHeaders(accessToken);
       headers.setContentType(MediaType.APPLICATION_JSON);
@@ -693,32 +665,25 @@ public class MatrixRoomClient {
       HttpEntity<String> request = new HttpEntity<>("{}", headers);
 
       var url = buildUrl(ENDPOINT_LEAVE_ROOM, Map.of("roomId", roomId));
-      log.info("Leaving Matrix room: {} at URL: {}", roomId, url);
 
       var response = restTemplate.postForEntity(url, request, Map.class);
 
       if (response.getStatusCode().is2xxSuccessful()) {
-        log.info("Successfully left Matrix room: {}", roomId);
+        log.info("Successfully left Matrix room {}", roomRef);
         return true;
       }
-      log.warn("Failed to leave Matrix room: {}. Status: {}", roomId, response.getStatusCode());
-      return false;
-    } catch (HttpClientErrorException ex) {
-      if (ex.getStatusCode().value() == 403 || ex.getStatusCode().value() == 404) {
-        log.info(
-            "User was not in Matrix room {} (status {}); nothing to leave",
-            roomId,
-            ex.getStatusCode());
-        return true;
-      }
-      log.error(
-          "Matrix Error: Could not leave room ({}). Status: {}, Response: {}",
-          roomId,
-          ex.getStatusCode(),
-          ex.getResponseBodyAsString());
+      log.warn(
+          "Failed to leave Matrix room {} (HTTP {})", roomRef, response.getStatusCode().value());
       return false;
     } catch (Exception ex) {
-      log.error("Matrix Error: Could not leave room ({}). Reason: {}", roomId, ex.getMessage());
+      if (ex instanceof HttpClientErrorException response && alreadyAbsent(response)) {
+        log.info(
+            "User was not in Matrix room {} (status {}); nothing to leave",
+            roomRef,
+            response.getStatusCode().value());
+        return true;
+      }
+      log.error("Could not leave Matrix room {} ({})", roomRef, failureType(ex));
       return false;
     }
   }
@@ -735,6 +700,8 @@ public class MatrixRoomClient {
    * @return true when the user is banned afterwards, false when the ban failed
    */
   public boolean banUserFromRoom(String roomId, String userId, String accessToken) {
+    var memberRef = redactor.pseudonym(userId);
+    var roomRef = redactor.roomPseudonym(roomId);
     try {
       var headers = getClientHttpHeaders(accessToken);
       headers.setContentType(MediaType.APPLICATION_JSON);
@@ -745,33 +712,21 @@ public class MatrixRoomClient {
       HttpEntity<Map<String, Object>> request = new HttpEntity<>(body, headers);
 
       var url = buildUrl(ENDPOINT_BAN_ROOM, Map.of("roomId", roomId));
-      log.info("Banning Matrix user {} from room {}", userId, roomId);
 
       var response = restTemplate.postForEntity(url, request, Map.class);
       if (response.getStatusCode().is2xxSuccessful()) {
-        log.info("Successfully banned Matrix user {} from room {}", userId, roomId);
+        log.info("Successfully banned Matrix user {} from room {}", memberRef, roomRef);
         return true;
       }
       log.warn(
-          "Failed to ban Matrix user {} from room {}. Status: {}",
-          userId,
-          roomId,
-          response.getStatusCode());
-      return false;
-    } catch (HttpClientErrorException ex) {
-      log.error(
-          "Matrix Error: Could not ban user ({}) from room ({}). Status: {}, Response: {}",
-          userId,
-          roomId,
-          ex.getStatusCode(),
-          ex.getResponseBodyAsString());
+          "Failed to ban Matrix user {} from room {} (HTTP {})",
+          memberRef,
+          roomRef,
+          response.getStatusCode().value());
       return false;
     } catch (Exception ex) {
       log.error(
-          "Matrix Error: Could not ban user ({}) from room ({}). Reason: {}",
-          userId,
-          roomId,
-          ex.getMessage());
+          "Could not ban Matrix user {} from room {} ({})", memberRef, roomRef, failureType(ex));
       return false;
     }
   }
@@ -786,6 +741,8 @@ public class MatrixRoomClient {
    * @return true when the unban succeeded, false otherwise
    */
   public boolean unbanUserFromRoom(String roomId, String userId, String accessToken) {
+    var memberRef = redactor.pseudonym(userId);
+    var roomRef = redactor.roomPseudonym(roomId);
     try {
       var headers = getClientHttpHeaders(accessToken);
       headers.setContentType(MediaType.APPLICATION_JSON);
@@ -796,43 +753,36 @@ public class MatrixRoomClient {
       HttpEntity<Map<String, Object>> request = new HttpEntity<>(body, headers);
 
       var url = buildUrl(ENDPOINT_UNBAN_ROOM, Map.of("roomId", roomId));
-      log.info("Unbanning Matrix user {} from room {}", userId, roomId);
 
       var response = restTemplate.postForEntity(url, request, Map.class);
       if (response.getStatusCode().is2xxSuccessful()) {
-        log.info("Successfully unbanned Matrix user {} from room {}", userId, roomId);
+        log.info("Successfully unbanned Matrix user {} from room {}", memberRef, roomRef);
         return true;
       }
       log.warn(
-          "Failed to unban Matrix user {} from room {}. Status: {}",
-          userId,
-          roomId,
-          response.getStatusCode());
+          "Failed to unban Matrix user {} from room {} (HTTP {})",
+          memberRef,
+          roomRef,
+          response.getStatusCode().value());
       return false;
-    } catch (HttpClientErrorException ex) {
-      if (ex.getStatusCode().value() == 403 || ex.getStatusCode().value() == 404) {
+    } catch (Exception ex) {
+      if (ex instanceof HttpClientErrorException response && alreadyAbsent(response)) {
         log.info(
             "Matrix user {} was not banned in room {} (status {}); nothing to unban",
-            userId,
-            roomId,
-            ex.getStatusCode());
+            memberRef,
+            roomRef,
+            response.getStatusCode().value());
         return true;
       }
       log.error(
-          "Matrix Error: Could not unban user ({}) from room ({}). Status: {}, Response: {}",
-          userId,
-          roomId,
-          ex.getStatusCode(),
-          ex.getResponseBodyAsString());
-      return false;
-    } catch (Exception ex) {
-      log.error(
-          "Matrix Error: Could not unban user ({}) from room ({}). Reason: {}",
-          userId,
-          roomId,
-          ex.getMessage());
+          "Could not unban Matrix user {} from room {} ({})", memberRef, roomRef, failureType(ex));
       return false;
     }
+  }
+
+  private static boolean alreadyAbsent(HttpClientErrorException response) {
+    int status = response.getStatusCode().value();
+    return status == 403 || status == 404;
   }
 
   /**
@@ -1049,7 +999,7 @@ public class MatrixRoomClient {
       return response.getStatusCode().is2xxSuccessful();
     } catch (HttpClientErrorException ex) {
       if (ex.getStatusCode().value() == 403
-          && ex.getResponseBodyAsString().contains("already in the room")) {
+          && ex.getResponseBodyAsString().contains(ALREADY_IN_ROOM)) {
         return true;
       }
       log.warn("Matrix invite into a room was refused with status {}", ex.getStatusCode());
@@ -1070,8 +1020,8 @@ public class MatrixRoomClient {
     } catch (Exception failure) {
       log.warn(
           "Could not read the power levels of Matrix room {} ({})",
-          roomId,
-          failure.getClass().getSimpleName());
+          redactor.roomPseudonym(roomId),
+          failureType(failure));
       return Optional.empty();
     }
   }
@@ -1108,6 +1058,8 @@ public class MatrixRoomClient {
 
   public boolean setUserPowerLevel(
       String roomId, String userId, int powerLevel, String accessToken) {
+    var memberRef = redactor.pseudonym(userId);
+    var roomRef = redactor.roomPseudonym(roomId);
     try {
       var url = buildUrl(ENDPOINT_POWER_LEVELS, Map.of("roomId", roomId));
 
@@ -1118,7 +1070,7 @@ public class MatrixRoomClient {
           restTemplate.exchange(url, HttpMethod.GET, getRequest, Map.class);
 
       if (currentResponse.getBody() == null) {
-        log.error("Failed to get current power levels for room {}", roomId);
+        log.error("Failed to get current power levels for room {}", roomRef);
         return false;
       }
 
@@ -1134,19 +1086,14 @@ public class MatrixRoomClient {
       HttpEntity<Map<String, Object>> updateRequest = new HttpEntity<>(powerLevels, headers);
       restTemplate.put(url, updateRequest);
 
-      log.info("Set power level {} for user {} in room {}", powerLevel, userId, roomId);
+      log.info("Set power level {} for user {} in room {}", powerLevel, memberRef, roomRef);
       return true;
-    } catch (HttpClientErrorException ex) {
-      log.error(
-          "Matrix Error: Could not set power level for user ({}) in room ({}). Status: {}, Response: {}",
-          userId,
-          roomId,
-          ex.getStatusCode(),
-          ex.getResponseBodyAsString());
-      return false;
     } catch (Exception e) {
       log.error(
-          "Failed to set power level for user {} in room {}: {}", userId, roomId, e.getMessage());
+          "Failed to set power level for user {} in room {} ({})",
+          memberRef,
+          roomRef,
+          failureType(e));
       return false;
     }
   }
@@ -1157,6 +1104,7 @@ public class MatrixRoomClient {
    * read-only switch used when a Team-Besprechung is archived (US#473 / ADR-016).
    */
   public boolean setRoomEventsDefaultPowerLevel(String roomId, int powerLevel, String accessToken) {
+    var roomRef = redactor.roomPseudonym(roomId);
     try {
       var url = buildUrl(ENDPOINT_POWER_LEVELS, Map.of("roomId", roomId));
 
@@ -1167,7 +1115,7 @@ public class MatrixRoomClient {
           restTemplate.exchange(url, HttpMethod.GET, getRequest, Map.class);
 
       if (currentResponse.getBody() == null) {
-        log.error("Failed to get current power levels for room {}", roomId);
+        log.error("Failed to get current power levels for room {}", roomRef);
         return false;
       }
 
@@ -1178,17 +1126,10 @@ public class MatrixRoomClient {
       HttpEntity<Map<String, Object>> updateRequest = new HttpEntity<>(powerLevels, headers);
       restTemplate.put(url, updateRequest);
 
-      log.info("Set events_default power level {} in room {}", powerLevel, roomId);
+      log.info("Set events_default power level {} in room {}", powerLevel, roomRef);
       return true;
-    } catch (HttpClientErrorException ex) {
-      log.error(
-          "Matrix Error: Could not set events_default in room ({}). Status: {}, Response: {}",
-          roomId,
-          ex.getStatusCode(),
-          ex.getResponseBodyAsString());
-      return false;
     } catch (Exception e) {
-      log.error("Failed to set events_default in room {}: {}", roomId, e.getMessage());
+      log.error("Failed to set events_default in room {} ({})", roomRef, failureType(e));
       return false;
     }
   }
@@ -1213,7 +1154,10 @@ public class MatrixRoomClient {
       restTemplate.put(url, new HttpEntity<>(powerLevels, headers));
       return true;
     } catch (Exception e) {
-      log.warn("Could not clear power level in room {}: {}", roomId, failureType(e));
+      log.warn(
+          "Could not clear power level in room {} ({})",
+          redactor.roomPseudonym(roomId),
+          failureType(e));
       return false;
     }
   }
@@ -1228,7 +1172,10 @@ public class MatrixRoomClient {
           url, new HttpEntity<>(Map.of("user_id", userId), headers), Map.class);
       return true;
     } catch (Exception e) {
-      log.warn("Could not kick a user from room {}: {}", roomId, failureType(e));
+      log.warn(
+          "Could not kick a user from room {} ({})",
+          redactor.roomPseudonym(roomId),
+          failureType(e));
       return false;
     }
   }
@@ -1248,12 +1195,17 @@ public class MatrixRoomClient {
           ? java.util.Optional.of(m)
           : java.util.Optional.empty();
     } catch (Exception e) {
-      log.warn("Could not read a membership in room {}: {}", roomId, failureType(e));
+      log.warn(
+          "Could not read a membership in room {} ({})",
+          redactor.roomPseudonym(roomId),
+          failureType(e));
       return java.util.Optional.empty();
     }
   }
 
   public boolean removeUserFromRoom(String roomId, String userId, String accessToken) {
+    var memberRef = redactor.pseudonym(userId);
+    var roomRef = redactor.roomPseudonym(roomId);
     try {
       var url = buildUrl(ENDPOINT_MEMBERSHIP, Map.of("roomId", roomId, "userId", userId));
 
@@ -1265,18 +1217,10 @@ public class MatrixRoomClient {
 
       restTemplate.put(url, request);
 
-      log.info("Removed user {} from room {}", userId, roomId);
+      log.info("Removed user {} from room {}", memberRef, roomRef);
       return true;
-    } catch (HttpClientErrorException ex) {
-      log.error(
-          "Matrix Error: Could not remove user ({}) from room ({}). Status: {}, Response: {}",
-          userId,
-          roomId,
-          ex.getStatusCode(),
-          ex.getResponseBodyAsString());
-      return false;
     } catch (Exception e) {
-      log.error("Failed to remove user {} from room {}: {}", userId, roomId, e.getMessage());
+      log.error("Failed to remove user {} from room {} ({})", memberRef, roomRef, failureType(e));
       return false;
     }
   }
@@ -1287,7 +1231,7 @@ public class MatrixRoomClient {
    * admin first when the room is not public, so the admin has to be a room member with permission
    * to invite.
    *
-   * <p>Best-effort: never throws. Logs the room ID and the Synapse status only, never the user ID.
+   * <p>Best-effort: never throws. Logs a room pseudonym and a bounded outcome.
    *
    * @param roomId the Matrix room ID
    * @param userId the full Matrix user ID of the local user to join
@@ -1303,7 +1247,7 @@ public class MatrixRoomClient {
    * /_synapse/admin/v1/rooms/{roomId}/make_room_admin}, Synapse admin API). It acts through the
    * local member with the most power, so it fails when none of them can still change power levels.
    *
-   * <p>Best-effort: never throws. Logs the room ID and the Synapse status only, never the user ID.
+   * <p>Best-effort: never throws. Logs a room pseudonym and a bounded outcome.
    *
    * @param roomId the Matrix room ID
    * @param userId the full Matrix user ID to raise
@@ -1317,6 +1261,7 @@ public class MatrixRoomClient {
 
   private boolean postAdminUserAction(
       String endpoint, String action, String roomId, String userId, String adminToken) {
+    var roomRef = redactor.roomPseudonym(roomId);
     try {
       var headers = getClientHttpHeaders(adminToken);
       headers.setContentType(MediaType.APPLICATION_JSON);
@@ -1327,25 +1272,17 @@ public class MatrixRoomClient {
           restTemplate.postForEntity(
               buildUrl(endpoint, Map.of("roomId", roomId)), request, Map.class);
       if (response.getStatusCode().is2xxSuccessful()) {
-        log.info("Matrix admin {} succeeded for room {}", action, roomId);
+        log.info("Matrix admin {} succeeded for room {}", action, roomRef);
         return true;
       }
       log.warn(
-          "Matrix admin {} for room {} answered status {}",
+          "Matrix admin {} for room {} answered HTTP {}",
           action,
-          roomId,
-          response.getStatusCode());
-      return false;
-    } catch (HttpClientErrorException ex) {
-      log.warn(
-          "Matrix admin {} for room {} was refused with status {}",
-          action,
-          roomId,
-          ex.getStatusCode());
+          roomRef,
+          response.getStatusCode().value());
       return false;
     } catch (Exception ex) {
-      log.warn(
-          "Matrix admin {} for room {} failed: {}", action, roomId, ex.getClass().getSimpleName());
+      log.warn("Matrix admin {} for room {} failed ({})", action, roomRef, failureType(ex));
       return false;
     }
   }
@@ -1377,7 +1314,7 @@ public class MatrixRoomClient {
 
   /** The failure type only: a RestTemplate message can carry the URL with a Matrix user ID. */
   private static String failureType(Exception e) {
-    return e instanceof org.springframework.web.client.RestClientResponseException response
+    return e instanceof RestClientResponseException response
         ? e.getClass().getSimpleName() + " " + response.getStatusCode().value()
         : e.getClass().getSimpleName();
   }

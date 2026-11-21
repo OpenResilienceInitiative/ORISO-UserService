@@ -94,7 +94,12 @@ class PassageBlurPowerLevelSynapseIT {
     var config = new MatrixConfig();
     config.setApiUrl(baseUrl);
     config.setServerName(SERVER_NAME);
-    roomClient = new MatrixRoomClient(config, HTTP, mock(LiveChatDiagnosticMetrics.class));
+    roomClient =
+        new MatrixRoomClient(
+            config,
+            HTTP,
+            mock(LiveChatDiagnosticMetrics.class),
+            MatrixIdentifierRedactor.withKey("test-key"));
   }
 
   /** Session rooms (one-to-one and live chat): the agency creates them, the counsellor gets 100. */
