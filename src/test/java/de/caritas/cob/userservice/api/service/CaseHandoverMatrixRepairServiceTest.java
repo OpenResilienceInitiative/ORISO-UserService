@@ -385,6 +385,9 @@ class CaseHandoverMatrixRepairServiceTest {
 
   // --- ORISO-Frontend#2386: a supervisor whose client-room invite was rate-limited ---
 
+  private static final de.caritas.cob.userservice.api.adapters.matrix.MatrixRoomClient.QuietInvite
+      INVITED = de.caritas.cob.userservice.api.adapters.matrix.MatrixRoomClient.QuietInvite.INVITED;
+
   private CaseHandoverMatrixRepairTask supervisorObservation() {
     return CaseHandoverMatrixRepairTask.builder()
         .id(12L)
@@ -397,6 +400,12 @@ class CaseHandoverMatrixRepairServiceTest {
         .build();
   }
 
+  private CaseHandoverMatrixRepairTask processing(CaseHandoverMatrixRepairTask task) {
+    when(repository.findById(task.getId())).thenReturn(Optional.of(task));
+    when(repository.findByIdForUpdate(task.getId())).thenReturn(Optional.of(task));
+    return task;
+  }
+
   private void supervisorActive(Boolean first, Boolean... next) {
     when(sessionSupervisorRepository
             .existsBySessionIdAndIsActiveTrueAndSupervisorConsultantMatrixUserId(
@@ -404,163 +413,185 @@ class CaseHandoverMatrixRepairServiceTest {
         .thenReturn(first, next);
   }
 
+  /** The supervision REMOVE task the observation handed the room to, if any. */
+  private Optional<CaseHandoverMatrixRepairTask> handedOverRemoval() {
+    var captor = ArgumentCaptor.forClass(CaseHandoverMatrixRepairTask.class);
+    verify(repository, org.mockito.Mockito.atLeast(0)).save(captor.capture());
+    return captor.getAllValues().stream()
+        .filter(saved -> saved.getAction() == CaseHandoverMatrixRepairAction.REMOVE)
+        .findFirst();
+  }
+
+  private void assertHandedOverToRemoval() {
+    var removal = handedOverRemoval();
+    assertThat(removal).as("a supervision REMOVE task for the client room").isPresent();
+    assertThat(removal.get().getRoomId()).isEqualTo("!client:matrix");
+    assertThat(removal.get().getMemberId()).isEqualTo("@sup:matrix");
+    assertThat(removal.get().getOperatorId()).isEqualTo("@counsellor:matrix");
+    assertThat(removal.get().getRequesterConsultantId())
+        .isEqualTo(CaseHandoverMatrixRepairService.SUPERVISION_REMOVAL_REQUESTER);
+  }
+
   @Test
-  void enqueueSupervisorObservationQueuesTheClientRoomInviteForTheSupervisor() {
+  void enqueueSupervisorObservationWritesInTheCallersTransactionWhenThereIsOne() {
+    when(repository.findExistingForUpdate(
+            CaseHandoverMatrixRepairAction.OBSERVE, "!client:matrix", "@sup:matrix"))
+        .thenReturn(Optional.empty());
+    org.springframework.transaction.support.TransactionSynchronizationManager
+        .setActualTransactionActive(true);
+    try {
+      service.enqueueSupervisorObservation(
+          "!client:matrix", "@sup:matrix", 123L, "@counsellor:matrix");
+    } finally {
+      org.springframework.transaction.support.TransactionSynchronizationManager
+          .setActualTransactionActive(false);
+    }
+
+    var captor = ArgumentCaptor.forClass(CaseHandoverMatrixRepairTask.class);
+    verify(repository).save(captor.capture());
+    // Same transaction as the supervision row: no separate commit the worker could see first.
+    verify(repository, org.mockito.Mockito.never()).saveAndFlush(any());
+    verify(transactionManager, org.mockito.Mockito.never()).getTransaction(any());
+    assertThat(captor.getValue().getAction()).isEqualTo(CaseHandoverMatrixRepairAction.OBSERVE);
+    assertThat(captor.getValue().getRoomId()).isEqualTo("!client:matrix");
+    assertThat(captor.getValue().getMemberId()).isEqualTo("@sup:matrix");
+    assertThat(captor.getValue().getOperatorId()).isEqualTo("@counsellor:matrix");
+    assertThat(captor.getValue().getRequesterConsultantId())
+        .isEqualTo(CaseHandoverMatrixRepairService.SUPERVISION_OBSERVE_REQUESTER);
+  }
+
+  @Test
+  void enqueueSupervisorObservationCommitsOnItsOwnWithoutACallerTransaction() {
     service.enqueueSupervisorObservation(
         "!client:matrix", "@sup:matrix", 123L, "@counsellor:matrix");
 
     var captor = ArgumentCaptor.forClass(CaseHandoverMatrixRepairTask.class);
     verify(repository).saveAndFlush(captor.capture());
     assertThat(captor.getValue().getAction()).isEqualTo(CaseHandoverMatrixRepairAction.OBSERVE);
-    assertThat(captor.getValue().getRoomId()).isEqualTo("!client:matrix");
-    assertThat(captor.getValue().getMemberId()).isEqualTo("@sup:matrix");
-    assertThat(captor.getValue().getOperatorId()).isEqualTo("@counsellor:matrix");
-    assertThat(captor.getValue().getSessionId()).isEqualTo(123L);
-    assertThat(captor.getValue().getRequesterConsultantId())
-        .isEqualTo(CaseHandoverMatrixRepairService.SUPERVISION_OBSERVE_REQUESTER);
   }
 
   @Test
-  void observationInvitesAnActiveSupervisorReadOnlyAndJoinsThem() throws Exception {
-    var task = supervisorObservation();
-    when(repository.findById(12L)).thenReturn(Optional.of(task));
-    when(repository.findByIdForUpdate(12L)).thenReturn(Optional.of(task));
+  void observationInvitesAnActiveSupervisorReadOnlyAndJoinsThem() {
+    var task = processing(supervisorObservation());
     supervisorActive(true, true);
     when(matrixSynapseService.loginAsUserAccessToken("@counsellor:matrix")).thenReturn("tok-op");
     when(matrixSynapseService.loginAsUserAccessToken("@sup:matrix")).thenReturn("tok-sup");
-    when(matrixSynapseService.setUserPowerLevel("!client:matrix", "@sup:matrix", 10, "tok-op"))
+    when(matrixSynapseService.inviteObserverQuietly("!client:matrix", "@sup:matrix", "tok-op"))
+        .thenReturn(INVITED);
+    when(matrixSynapseService.setUserPowerLevelQuietly(
+            "!client:matrix", "@sup:matrix", 10, "tok-op"))
         .thenReturn(true);
     when(matrixSynapseService.joinRoom("!client:matrix", "tok-sup")).thenReturn(true);
 
     service.process(12L);
 
-    verify(matrixSynapseService).inviteUserToRoom("!client:matrix", "@sup:matrix", "tok-op");
-    verify(matrixSynapseService).setUserPowerLevel("!client:matrix", "@sup:matrix", 10, "tok-op");
     verify(matrixSynapseService).joinRoom("!client:matrix", "tok-sup");
     verify(repository).delete(task);
+    assertThat(handedOverRemoval()).isEmpty();
   }
 
   @Test
-  void observationOfASupervisorRemovedBeforeTheFirstAttemptTouchesNothing() throws Exception {
-    var task = supervisorObservation();
-    when(repository.findById(12L)).thenReturn(Optional.of(task));
-    when(repository.findByIdForUpdate(12L)).thenReturn(Optional.of(task));
+  void observationOfASupervisorWhoIsNoLongerActiveHandsTheRoomToTheSupervisionRemoval() {
+    var task = processing(supervisorObservation());
     supervisorActive(false);
+    when(repository.findExistingForUpdate(
+            CaseHandoverMatrixRepairAction.REMOVE, "!client:matrix", "@sup:matrix"))
+        .thenReturn(Optional.empty());
 
     service.process(12L);
 
-    // The add itself was rate-limited, so no invite was ever sent: nothing to take back.
-    verify(matrixSynapseService, org.mockito.Mockito.never()).inviteUserToRoom(any(), any(), any());
-    verify(matrixSynapseService, org.mockito.Mockito.never()).joinRoom(any(), any());
+    // No invite; the removal task kicks (retracting any invite from an earlier attempt) and
+    // restores a supervisor who is added again meanwhile.
+    verify(matrixSynapseService, org.mockito.Mockito.never())
+        .inviteObserverQuietly(any(), any(), any());
+    verify(matrixSynapseService, org.mockito.Mockito.never()).leaveRoom(any(), any());
+    assertHandedOverToRemoval();
     verify(repository).delete(task);
   }
 
   @Test
-  void observationOfASupervisorRemovedAfterAnEarlierAttemptRejectsTheOpenInvite() throws Exception {
-    var task = supervisorObservation();
-    task.setAttemptCount(1);
-    when(repository.findById(12L)).thenReturn(Optional.of(task));
-    when(repository.findByIdForUpdate(12L)).thenReturn(Optional.of(task));
-    supervisorActive(false);
+  void observationStaysQueuedWhileMatrixStillRateLimitsTheInvite() {
+    var task = processing(supervisorObservation());
+    supervisorActive(true, true);
     when(matrixSynapseService.loginAsUserAccessToken("@counsellor:matrix")).thenReturn("tok-op");
-    when(matrixSynapseService.loginAsUserAccessToken("@sup:matrix")).thenReturn("tok-sup");
-    when(matrixSynapseService.leaveRoom("!client:matrix", "tok-sup")).thenReturn(true);
+    when(matrixSynapseService.inviteObserverQuietly("!client:matrix", "@sup:matrix", "tok-op"))
+        .thenReturn(
+            de.caritas.cob.userservice.api.adapters.matrix.MatrixRoomClient.QuietInvite
+                .RATE_LIMITED);
 
     service.process(12L);
 
-    verify(matrixSynapseService, org.mockito.Mockito.never()).inviteUserToRoom(any(), any(), any());
-    verify(matrixSynapseService).leaveRoom("!client:matrix", "tok-sup");
-    verify(repository).delete(task);
-  }
-
-  @Test
-  void observationOfARemovedSupervisorRevokesTheInviteWithTheCounsellorsKick() throws Exception {
-    var task = supervisorObservation();
-    task.setAttemptCount(1);
-    when(repository.findById(12L)).thenReturn(Optional.of(task));
-    when(repository.findByIdForUpdate(12L)).thenReturn(Optional.of(task));
-    supervisorActive(false);
-    when(matrixSynapseService.loginAsUserAccessToken("@counsellor:matrix")).thenReturn("tok-op");
-    when(matrixSynapseService.loginAsUserAccessToken("@sup:matrix")).thenReturn(null);
-    when(matrixSynapseService.kickUserFromRoom("!client:matrix", "@sup:matrix", "tok-op"))
-        .thenReturn(true);
-
-    service.process(12L);
-
-    verify(matrixSynapseService).kickUserFromRoom("!client:matrix", "@sup:matrix", "tok-op");
-    verify(repository).delete(task);
-  }
-
-  @Test
-  void observationOfARemovedSupervisorCompletesWhenTheRoomStateShowsThemOut() throws Exception {
-    var task = supervisorObservation();
-    task.setAttemptCount(1);
-    when(repository.findById(12L)).thenReturn(Optional.of(task));
-    when(repository.findByIdForUpdate(12L)).thenReturn(Optional.of(task));
-    supervisorActive(false);
-    when(matrixSynapseService.loginAsUserAccessToken("@counsellor:matrix")).thenReturn("tok-op");
-    when(matrixSynapseService.loginAsUserAccessToken("@sup:matrix")).thenReturn("tok-sup");
-    when(matrixSynapseService.getRoomMembership("!client:matrix", "@sup:matrix", "tok-op"))
-        .thenReturn(Optional.of("leave"));
-
-    service.process(12L);
-
-    verify(repository).delete(task);
-  }
-
-  @Test
-  void observationOfARemovedSupervisorStaysQueuedWhileAnInviteIsStillOpen() throws Exception {
-    var task = supervisorObservation();
-    task.setAttemptCount(1);
-    when(repository.findById(12L)).thenReturn(Optional.of(task));
-    when(repository.findByIdForUpdate(12L)).thenReturn(Optional.of(task));
-    supervisorActive(false);
-    when(matrixSynapseService.loginAsUserAccessToken("@counsellor:matrix")).thenReturn("tok-op");
-    when(matrixSynapseService.loginAsUserAccessToken("@sup:matrix")).thenReturn("tok-sup");
-    when(matrixSynapseService.getRoomMembership("!client:matrix", "@sup:matrix", "tok-op"))
-        .thenReturn(Optional.of("invite"));
-
-    service.process(12L);
-
-    // Fails closed: an open invite (or an unreadable state) is never taken for "out".
-    verify(repository, org.mockito.Mockito.never()).delete(any());
-    assertThat(task.getAttemptCount()).isEqualTo(2);
-  }
-
-  @Test
-  void observationStaysQueuedWhileMatrixStillRateLimitsTheInvite() throws Exception {
-    var task = supervisorObservation();
-    when(repository.findById(12L)).thenReturn(Optional.of(task));
-    when(repository.findByIdForUpdate(12L)).thenReturn(Optional.of(task));
-    supervisorActive(true);
-    when(matrixSynapseService.loginAsUserAccessToken("@counsellor:matrix")).thenReturn("tok-op");
-    when(matrixSynapseService.inviteUserToRoom("!client:matrix", "@sup:matrix", "tok-op"))
-        .thenThrow(
-            new de.caritas.cob.userservice.api.exception.matrix.MatrixInviteRateLimitedException(
-                "rate limited", 269823L));
-
-    service.process(12L);
-
+    verify(matrixSynapseService, org.mockito.Mockito.never())
+        .setUserPowerLevelQuietly(any(), any(), org.mockito.ArgumentMatchers.anyInt(), any());
     verify(matrixSynapseService, org.mockito.Mockito.never()).joinRoom(any(), any());
     verify(repository, org.mockito.Mockito.never()).delete(any());
     assertThat(task.getAttemptCount()).isEqualTo(1);
   }
 
   @Test
-  void observationLeavesAgainWhenTheSupervisorWasRemovedDuringTheJoin() throws Exception {
-    var task = supervisorObservation();
-    when(repository.findById(12L)).thenReturn(Optional.of(task));
-    when(repository.findByIdForUpdate(12L)).thenReturn(Optional.of(task));
-    supervisorActive(true, false);
+  void observationStaysQueuedWhenObserverPowerCannotBeSet() {
+    var task = processing(supervisorObservation());
+    supervisorActive(true, true);
     when(matrixSynapseService.loginAsUserAccessToken("@counsellor:matrix")).thenReturn("tok-op");
-    when(matrixSynapseService.loginAsUserAccessToken("@sup:matrix")).thenReturn("tok-sup");
-    when(matrixSynapseService.joinRoom("!client:matrix", "tok-sup")).thenReturn(true);
-    when(matrixSynapseService.leaveRoom("!client:matrix", "tok-sup")).thenReturn(true);
+    when(matrixSynapseService.inviteObserverQuietly("!client:matrix", "@sup:matrix", "tok-op"))
+        .thenReturn(INVITED);
+    when(matrixSynapseService.setUserPowerLevelQuietly(
+            "!client:matrix", "@sup:matrix", 10, "tok-op"))
+        .thenReturn(false);
 
     service.process(12L);
 
-    // Never keep a client-room membership on the strength of the check before the join.
-    verify(matrixSynapseService).leaveRoom("!client:matrix", "tok-sup");
+    // Never join, and never complete, without verified read-only power.
+    verify(matrixSynapseService, org.mockito.Mockito.never()).joinRoom(any(), any());
+    verify(repository, org.mockito.Mockito.never()).delete(any());
+    assertThat(task.getAttemptCount()).isEqualTo(1);
+  }
+
+  @Test
+  void observationHandsOverToRemovalWhenTheSupervisorIsRemovedAfterAFailedJoin() {
+    var task = processing(supervisorObservation());
+    supervisorActive(true, false);
+    when(matrixSynapseService.loginAsUserAccessToken("@counsellor:matrix")).thenReturn("tok-op");
+    when(matrixSynapseService.loginAsUserAccessToken("@sup:matrix")).thenReturn("tok-sup");
+    when(matrixSynapseService.inviteObserverQuietly("!client:matrix", "@sup:matrix", "tok-op"))
+        .thenReturn(INVITED);
+    when(matrixSynapseService.setUserPowerLevelQuietly(
+            "!client:matrix", "@sup:matrix", 10, "tok-op"))
+        .thenReturn(true);
+    when(matrixSynapseService.joinRoom("!client:matrix", "tok-sup")).thenReturn(false);
+    when(repository.findExistingForUpdate(
+            CaseHandoverMatrixRepairAction.REMOVE, "!client:matrix", "@sup:matrix"))
+        .thenReturn(Optional.empty());
+
+    service.process(12L);
+
+    // The invite went out before the removal: the removal task now owns retracting it.
+    assertHandedOverToRemoval();
+    verify(repository).delete(task);
+  }
+
+  @Test
+  void observationHandsOverToRemovalWhenTheSupervisorWasRemovedDuringTheJoin() {
+    var task = processing(supervisorObservation());
+    supervisorActive(true, false);
+    when(matrixSynapseService.loginAsUserAccessToken("@counsellor:matrix")).thenReturn("tok-op");
+    when(matrixSynapseService.loginAsUserAccessToken("@sup:matrix")).thenReturn("tok-sup");
+    when(matrixSynapseService.inviteObserverQuietly("!client:matrix", "@sup:matrix", "tok-op"))
+        .thenReturn(INVITED);
+    when(matrixSynapseService.setUserPowerLevelQuietly(
+            "!client:matrix", "@sup:matrix", 10, "tok-op"))
+        .thenReturn(true);
+    when(matrixSynapseService.joinRoom("!client:matrix", "tok-sup")).thenReturn(true);
+    when(repository.findExistingForUpdate(
+            CaseHandoverMatrixRepairAction.REMOVE, "!client:matrix", "@sup:matrix"))
+        .thenReturn(Optional.empty());
+
+    service.process(12L);
+
+    // Never keep a client-room membership on the strength of the check before the join; the
+    // removal task kicks and restores a supervisor who was re-added meanwhile.
+    verify(matrixSynapseService, org.mockito.Mockito.never()).leaveRoom(any(), any());
+    assertHandedOverToRemoval();
     verify(repository).delete(task);
   }
 

@@ -515,32 +515,68 @@ class MatrixRoomClientTest {
             eq(MatrixInviteUserResponseDTO.class));
   }
 
+  private static HttpClientErrorException rateLimited(long retryAfterMs) {
+    return HttpClientErrorException.create(
+        HttpStatus.TOO_MANY_REQUESTS,
+        "Too Many Requests",
+        null,
+        ("{\"errcode\":\"M_LIMIT_EXCEEDED\",\"retry_after_ms\":" + retryAfterMs + "}")
+            .getBytes(StandardCharsets.UTF_8),
+        StandardCharsets.UTF_8);
+  }
+
   @Test
-  void inviteUserToRoom_ShouldReportTheRateLimit_WhenEveryAttemptIsRateLimited() {
+  void inviteUserToRoom_ShouldReportTheUncappedRateLimit_WhenEveryAttemptIsRateLimited() {
     when(restTemplate.postForEntity(
             eq(uri(API_URL + "/_matrix/client/r0/rooms/" + ENCODED_ROOM_ID + "/invite")),
             org.mockito.ArgumentMatchers.any(HttpEntity.class),
             eq(MatrixInviteUserResponseDTO.class)))
-        .thenThrow(
-            HttpClientErrorException.create(
-                HttpStatus.TOO_MANY_REQUESTS,
-                "Too Many Requests",
-                null,
-                "{\"errcode\":\"M_LIMIT_EXCEEDED\",\"retry_after_ms\":5}"
-                    .getBytes(StandardCharsets.UTF_8),
-                StandardCharsets.UTF_8));
+        .thenThrow(rateLimited(1), rateLimited(1), rateLimited(600000));
 
     // ORISO-Frontend#2386: the caller must be able to tell "try again later" from "refused", so
-    // it can hand the invite to the background instead of dropping what depends on it.
+    // it can hand the invite to the background instead of dropping what depends on it. The delay
+    // is the server's own value of the last answer, not the capped in-request wait.
     assertThatThrownBy(() -> matrixRoomClient.inviteUserToRoom(ROOM_ID, USER_ID, ACCESS_TOKEN))
         .isInstanceOfSatisfying(
             de.caritas.cob.userservice.api.exception.matrix.MatrixInviteRateLimitedException.class,
-            ex -> assertThat(ex.getRetryAfterMs()).isEqualTo(5L));
+            ex -> assertThat(ex.getRetryAfterMs()).isEqualTo(600000L));
     verify(restTemplate, times(3))
         .postForEntity(
             eq(uri(API_URL + "/_matrix/client/r0/rooms/" + ENCODED_ROOM_ID + "/invite")),
             org.mockito.ArgumentMatchers.any(HttpEntity.class),
             eq(MatrixInviteUserResponseDTO.class));
+  }
+
+  @Test
+  void inviteObserverQuietly_ShouldTellARateLimitApartFromARefusal() {
+    when(restTemplate.postForEntity(
+            eq(uri(API_URL + "/_matrix/client/r0/rooms/" + ENCODED_ROOM_ID + "/invite")),
+            org.mockito.ArgumentMatchers.any(HttpEntity.class),
+            eq(java.util.Map.class)))
+        .thenThrow(rateLimited(600000))
+        .thenThrow(
+            HttpClientErrorException.create(
+                HttpStatus.FORBIDDEN,
+                "Forbidden",
+                null,
+                "{\"errcode\":\"M_FORBIDDEN\",\"error\":\"@u is already in the room.\"}"
+                    .getBytes(StandardCharsets.UTF_8),
+                StandardCharsets.UTF_8))
+        .thenThrow(
+            HttpClientErrorException.create(
+                HttpStatus.FORBIDDEN,
+                "Forbidden",
+                null,
+                "{\"errcode\":\"M_FORBIDDEN\",\"error\":\"not allowed\"}"
+                    .getBytes(StandardCharsets.UTF_8),
+                StandardCharsets.UTF_8));
+
+    assertThat(matrixRoomClient.inviteObserverQuietly(ROOM_ID, USER_ID, ACCESS_TOKEN))
+        .isEqualTo(MatrixRoomClient.QuietInvite.RATE_LIMITED);
+    assertThat(matrixRoomClient.inviteObserverQuietly(ROOM_ID, USER_ID, ACCESS_TOKEN))
+        .isEqualTo(MatrixRoomClient.QuietInvite.INVITED);
+    assertThat(matrixRoomClient.inviteObserverQuietly(ROOM_ID, USER_ID, ACCESS_TOKEN))
+        .isEqualTo(MatrixRoomClient.QuietInvite.REFUSED);
   }
 
   @Test

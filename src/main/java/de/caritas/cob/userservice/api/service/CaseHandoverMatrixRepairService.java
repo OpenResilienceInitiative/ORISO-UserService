@@ -196,10 +196,25 @@ public class CaseHandoverMatrixRepairService {
    * added; this task invites them read-only and joins them once Synapse allows it, and only while
    * they are still an active supervisor of the session.
    *
+   * <p>Call it after the active supervision row is saved. Inside a transaction the task is written
+   * in that same transaction, so the worker can neither see it before the row nor lose it when a
+   * post-commit step fails; a rolled-back add leaves no task. Without a transaction the row is
+   * already committed and the task is written right after it.
+   *
    * @param operatorId Matrix user who may invite into the client room (the adding counsellor)
    */
   public void enqueueSupervisorObservation(
       String clientRoomId, String supervisorMatrixId, Long sessionId, String operatorId) {
+    if (TransactionSynchronizationManager.isActualTransactionActive()) {
+      upsertInCurrentTransaction(
+          CaseHandoverMatrixRepairAction.OBSERVE,
+          clientRoomId,
+          supervisorMatrixId,
+          operatorId,
+          sessionId,
+          SUPERVISION_OBSERVE_REQUESTER);
+      return;
+    }
     enqueue(
         CaseHandoverMatrixRepairAction.OBSERVE,
         clientRoomId,
@@ -207,6 +222,39 @@ public class CaseHandoverMatrixRepairService {
         operatorId,
         sessionId,
         SUPERVISION_OBSERVE_REQUESTER);
+  }
+
+  private void upsertInCurrentTransaction(
+      CaseHandoverMatrixRepairAction action,
+      String roomId,
+      String memberId,
+      String operatorId,
+      Long sessionId,
+      String requester) {
+    repository
+        .findExistingForUpdate(action, roomId, memberId)
+        .ifPresentOrElse(
+            existing -> {
+              existing.setOperatorId(operatorId);
+              existing.setSessionId(sessionId);
+              existing.setRequesterConsultantId(requester);
+              existing.setAttemptCount(0);
+              existing.setLastAttemptAt(null);
+              existing.setCreateDate(LocalDateTime.now(clock));
+              existing.setGeneration(existing.getGeneration() + 1);
+              repository.save(existing);
+            },
+            () ->
+                repository.save(
+                    CaseHandoverMatrixRepairTask.builder()
+                        .action(action)
+                        .roomId(roomId)
+                        .memberId(memberId)
+                        .sessionId(sessionId)
+                        .requesterConsultantId(requester)
+                        .operatorId(operatorId)
+                        .createDate(LocalDateTime.now(clock))
+                        .build()));
   }
 
   public void enqueueJoin(
@@ -525,70 +573,58 @@ public class CaseHandoverMatrixRepairService {
 
   /**
    * The deferred client-room access of an active supervisor: invite (as the adding counsellor),
-   * read-only power, join (as the supervisor). A supervisor removed meanwhile is not invited; one
-   * removed during the join leaves again, so membership never outlives the supervision row.
+   * read-only power, join (as the supervisor). The task completes only with verified read-only
+   * access; a rate limit, a failed power update or a failed join keeps it queued.
+   *
+   * <p>Whenever the supervisor turns out to be no longer active (before inviting, or after a step
+   * that may already have invited them), the task hands the room over to the supervision REMOVE
+   * task instead of cleaning up itself. That task kicks, which also retracts an open invite, and
+   * re-invites a supervisor who was added again meanwhile ({@link #removeThenRestoreIfReAdded}), so
+   * a stale observation can never strip a re-added supervisor nor leave a removed one inside. Calls
+   * here log no user, room or provider body (repair retries repeat them).
    */
   private boolean observeWhileStillSupervising(CaseHandoverMatrixRepairTask task) {
+    if (!supervisorIsActive(task)) {
+      return handOverToSupervisionRemoval(task);
+    }
     String operatorToken =
         isBlank(task.getOperatorId())
             ? null
             : matrixSynapseService.loginAsUserAccessToken(task.getOperatorId());
-    if (!supervisorIsActive(task)) {
-      // No earlier attempt of this task: nothing was sent, the add itself was rate-limited.
-      // Otherwise an earlier attempt may have invited them before the removal.
-      return task.getAttemptCount() == 0 || supervisorIsOutOfTheRoom(task, operatorToken);
-    }
     if (isBlank(operatorToken)) {
       return false;
     }
-    try {
-      matrixSynapseService.inviteUserToRoom(task.getRoomId(), task.getMemberId(), operatorToken);
-    } catch (
-        de.caritas.cob.userservice.api.exception.matrix.MatrixInviteRateLimitedException
-            stillLimited) {
-      return false;
-    } catch (
-        de.caritas.cob.userservice.api.exception.matrix.MatrixInviteUserException inviteFailed) {
-      // "already in the room" or an earlier invite that is still open: joining below decides.
-      log.debug(
-          "Supervisor observation invite skipped: {}", inviteFailed.getClass().getSimpleName());
+    if (matrixSynapseService.inviteObserverQuietly(
+            task.getRoomId(), task.getMemberId(), operatorToken)
+        != de.caritas.cob.userservice.api.adapters.matrix.MatrixRoomClient.QuietInvite.INVITED) {
+      return stillSupervisingOrHandOver(task);
     }
-    if (!matrixSynapseService.setUserPowerLevel(
+    if (!matrixSynapseService.setUserPowerLevelQuietly(
         task.getRoomId(), task.getMemberId(), SUPERVISOR_OBSERVER_POWER_LEVEL, operatorToken)) {
-      log.warn(
-          "Read-only power for the supervisor of session {} could not be set; continuing",
-          task.getSessionId());
+      // Never complete without verified observer power; the invite stays open meanwhile.
+      return stillSupervisingOrHandOver(task);
     }
     String memberToken = matrixSynapseService.loginAsUserAccessToken(task.getMemberId());
     if (isBlank(memberToken) || !matrixSynapseService.joinRoom(task.getRoomId(), memberToken)) {
-      return false;
+      return stillSupervisingOrHandOver(task);
     }
-    return supervisorIsActive(task) || supervisorIsOutOfTheRoom(task, operatorToken);
+    // Access can end while the join is in flight: never keep a membership on the earlier check.
+    return supervisorIsActive(task) || handOverToSupervisionRemoval(task);
   }
 
-  /**
-   * A supervisor who is no longer active must neither be joined nor hold an open invite. Fails
-   * closed: done only after a successful leave with their own token (which also rejects an open
-   * invite), a successful kick by the counsellor (which also retracts one), or when the room state
-   * shows their membership as {@code leave} or {@code ban}. Anything else keeps the task queued.
-   */
-  private boolean supervisorIsOutOfTheRoom(
-      CaseHandoverMatrixRepairTask task, String operatorToken) {
-    String memberToken = matrixSynapseService.loginAsUserAccessToken(task.getMemberId());
-    if (!isBlank(memberToken) && matrixSynapseService.leaveRoom(task.getRoomId(), memberToken)) {
-      return true;
-    }
-    if (isBlank(operatorToken)) {
-      return false;
-    }
-    if (matrixSynapseService.kickUserFromRoom(
-        task.getRoomId(), task.getMemberId(), operatorToken)) {
-      return true;
-    }
-    return matrixSynapseService
-        .getRoomMembership(task.getRoomId(), task.getMemberId(), operatorToken)
-        .map(membership -> "leave".equals(membership) || "ban".equals(membership))
-        .orElse(false);
+  /** {@code false} (retry later) while still supervising, otherwise hand over to removal. */
+  private boolean stillSupervisingOrHandOver(CaseHandoverMatrixRepairTask task) {
+    return !supervisorIsActive(task) && handOverToSupervisionRemoval(task);
+  }
+
+  private boolean handOverToSupervisionRemoval(CaseHandoverMatrixRepairTask task) {
+    inNewTransaction(
+        () -> {
+          enqueueRemovalInCurrentTransaction(
+              task.getRoomId(), task.getMemberId(), task.getOperatorId(), task.getSessionId());
+          return null;
+        });
+    return true;
   }
 
   private boolean supervisorIsActive(CaseHandoverMatrixRepairTask task) {

@@ -583,56 +583,7 @@ class SessionSupervisorFacadeTest {
   }
 
   @Test
-  void addSupervisor_Should_queueTheDeferredInviteOnlyAfterTheSupervisionRowCommits()
-      throws Exception {
-    // Review (codex P2): the repair worker must never see the task before the active supervision
-    // row, or it completes the task as "supervisor no longer active".
-    when(matrixSynapseService.inviteUserToRoom(eq(CLIENT_ROOM), eq(SUPERVISOR_MXID), any()))
-        .thenThrow(rateLimited());
-    org.springframework.transaction.support.TransactionSynchronizationManager.initSynchronization();
-    try {
-      facade.addSupervisor(SESSION_ID, SUPERVISOR_ID, addedBy, null, "reason");
-
-      verify(sessionSupervisorRepository).save(any(SessionSupervisor.class));
-      verify(repairs, never()).enqueueSupervisorObservation(any(), any(), any(), any());
-
-      org.springframework.transaction.support.TransactionSynchronizationManager
-          .getSynchronizations()
-          .forEach(org.springframework.transaction.support.TransactionSynchronization::afterCommit);
-
-      verify(repairs)
-          .enqueueSupervisorObservation(CLIENT_ROOM, SUPERVISOR_MXID, SESSION_ID, CONSULTANT_MXID);
-    } finally {
-      org.springframework.transaction.support.TransactionSynchronizationManager
-          .clearSynchronization();
-    }
-  }
-
-  @Test
-  void addSupervisor_Should_queueNothing_whenTheSupervisionRowRollsBack() throws Exception {
-    when(matrixSynapseService.inviteUserToRoom(eq(CLIENT_ROOM), eq(SUPERVISOR_MXID), any()))
-        .thenThrow(rateLimited());
-    org.springframework.transaction.support.TransactionSynchronizationManager.initSynchronization();
-    try {
-      facade.addSupervisor(SESSION_ID, SUPERVISOR_ID, addedBy, null, "reason");
-
-      org.springframework.transaction.support.TransactionSynchronizationManager
-          .getSynchronizations()
-          .forEach(
-              sync ->
-                  sync.afterCompletion(
-                      org.springframework.transaction.support.TransactionSynchronization
-                          .STATUS_ROLLED_BACK));
-
-      verify(repairs, never()).enqueueSupervisorObservation(any(), any(), any(), any());
-    } finally {
-      org.springframework.transaction.support.TransactionSynchronizationManager
-          .clearSynchronization();
-    }
-  }
-
-  @Test
-  void addSupervisor_Should_saveTheSupervisionRowBeforeQueueingWithoutATransaction()
+  void addSupervisor_Should_saveTheSupervisionRowBeforeQueueingTheDeferredInvite()
       throws Exception {
     when(matrixSynapseService.inviteUserToRoom(eq(CLIENT_ROOM), eq(SUPERVISOR_MXID), any()))
         .thenThrow(rateLimited());

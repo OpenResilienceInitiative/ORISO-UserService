@@ -254,14 +254,11 @@ public class SessionSupervisorFacade {
         sessionSupervisorRepository.save(
             builder.isActive(true).matrixRoomId(rooms.sideRoomId()).build());
     if (rooms.clientRoomInviteDeferred()) {
-      // ORISO-Frontend#2386: Synapse rate-limited the client-room invite. Queue it only once the
-      // active supervision row is committed, so the repair worker can never see the task first and
-      // complete it as "supervisor no longer active".
-      String operatorMatrixUserId = addedByConsultant.getMatrixUserId();
-      afterCommit(
-          () ->
-              matrixRepairService.enqueueSupervisorObservation(
-                  matrixRoomId, supervisorMatrixUserId, sessionId, operatorMatrixUserId));
+      // ORISO-Frontend#2386: Synapse rate-limited the client-room invite. Queue it with the active
+      // supervision row (same transaction when there is one), so the repair worker can neither see
+      // the task before the row nor lose it if a later step fails.
+      matrixRepairService.enqueueSupervisorObservation(
+          matrixRoomId, supervisorMatrixUserId, sessionId, addedByConsultant.getMatrixUserId());
     }
     log.info(
         "Added supervisor {} to session {} by consultant {}",
@@ -280,23 +277,6 @@ public class SessionSupervisorFacade {
    */
   /** The side room the supervisor was placed in, and whether the client-room invite is deferred. */
   private record ProvisionedRooms(String sideRoomId, boolean clientRoomInviteDeferred) {}
-
-  /** Runs after the surrounding transaction commits, or at once when there is none. */
-  private static void afterCommit(Runnable action) {
-    if (!org.springframework.transaction.support.TransactionSynchronizationManager
-        .isSynchronizationActive()) {
-      action.run();
-      return;
-    }
-    org.springframework.transaction.support.TransactionSynchronizationManager
-        .registerSynchronization(
-            new org.springframework.transaction.support.TransactionSynchronization() {
-              @Override
-              public void afterCommit() {
-                action.run();
-              }
-            });
-  }
 
   private ProvisionedRooms provisionSupervisorRooms(
       Session session,
