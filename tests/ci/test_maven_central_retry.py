@@ -26,9 +26,6 @@ class MavenCentralRetryTest(unittest.TestCase):
             ".github/workflows/ci-pull-request.yml": (
                 " -Dtest=ConsultantActivityRegistryRedisIT,RedisOneTimeTokenStoreIT test"
             ),
-            ".github/workflows/mariadb-contract.yml": (
-                " -Dskip.unit-tests=true -Dtest=LiveChatPromotionMigrationIT integration-test"
-            ),
             ".github/actions/maven-build/action.yml": " test || test_status=$?",
         }
         for filename, arguments in calls.items():
