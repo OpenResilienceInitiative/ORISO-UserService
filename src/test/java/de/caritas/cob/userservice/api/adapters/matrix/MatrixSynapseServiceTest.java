@@ -547,6 +547,25 @@ class MatrixSynapseServiceTest {
   }
 
   @Test
+  void supportRoomOperationsUseTheCreatorToken() throws Exception {
+    var nonce = "6dd98a68-9a75-4182-a83f-0000f5a64aa9";
+    when(matrixRoomClient.createSupportRoom("support-local", nonce, ACCESS_TOKEN))
+        .thenReturn(MATRIX_ROOM_ID);
+    when(matrixRoomClient.verifySupportRoomOrigin(
+            MATRIX_ROOM_ID, MATRIX_USER_ID, nonce, ACCESS_TOKEN))
+        .thenReturn(true);
+    when(matrixRoomClient.ensureSupportRoomModeration(MATRIX_ROOM_ID, ACCESS_TOKEN))
+        .thenReturn(true);
+    var service = matrixSynapseService();
+
+    assertThat(service.createSupportRoom("support-local", nonce, ACCESS_TOKEN))
+        .isEqualTo(MATRIX_ROOM_ID);
+    assertThat(service.verifySupportRoomOrigin(MATRIX_ROOM_ID, MATRIX_USER_ID, nonce, ACCESS_TOKEN))
+        .isTrue();
+    assertThat(service.ensureSupportRoomModeration(MATRIX_ROOM_ID, ACCESS_TOKEN)).isTrue();
+  }
+
+  @Test
   void banUserFromRoomAsModeratorShouldMintModeratorTokenAndBan() {
     var moderatorId = "@moderator:example.org";
     var expectedUri =

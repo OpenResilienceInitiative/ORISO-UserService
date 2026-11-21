@@ -39,9 +39,9 @@ class SupportRoomLifecyclePersistenceIT {
     var now = nowInUtc();
     var room = provisionalRoom(now);
     var transaction = new TransactionTemplate(transactionManager);
+    transaction.executeWithoutResult(status -> rooms.save(room));
     transaction.executeWithoutResult(
         status -> {
-          lifecycle.rememberProvisional(room);
           assertThat(lifecycle.activate(room.getId(), 4).getStatus()).isEqualTo(ACTIVE);
           status.setRollbackOnly();
         });

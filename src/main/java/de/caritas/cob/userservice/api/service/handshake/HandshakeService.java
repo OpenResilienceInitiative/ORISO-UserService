@@ -115,7 +115,7 @@ public class HandshakeService {
   public HandshakeItem confirm(AuthenticatedUser counterpart, String handshakeId, String password) {
     var session =
         handshakeSessionRepository
-            .findById(handshakeId)
+            .findByIdForUpdate(handshakeId)
             .orElseThrow(
                 () -> new BadRequestException(String.format("Unknown handshake %s", handshakeId)));
 
