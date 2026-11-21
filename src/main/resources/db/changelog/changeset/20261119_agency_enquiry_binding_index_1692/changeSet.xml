@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+  xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.3.xsd">
+  <changeSet id="20261119-agency-enquiry-binding-index-1692" author="oriso">
+    <preConditions onFail="MARK_RAN">
+      <not><indexExists tableName="session" indexName="idx_session_agency_consultant_status"/></not>
+    </preConditions>
+    <!-- The locking room lookup starts at one agency, including when the consultant is null. -->
+    <createIndex tableName="session" indexName="idx_session_agency_consultant_status">
+      <column name="agency_id"/>
+      <column name="consultant_id"/>
+      <column name="status"/>
+    </createIndex>
+    <rollback>
+      <dropIndex tableName="session" indexName="idx_session_agency_consultant_status"/>
+    </rollback>
+    <modifySql dbms="mariadb,mysql">
+      <append value=" ALGORITHM=INPLACE LOCK=NONE"/>
+    </modifySql>
+  </changeSet>
+</databaseChangeLog>

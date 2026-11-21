@@ -33,6 +33,9 @@ import de.caritas.cob.userservice.api.service.agency.AgencyMatrixCredentialClien
 import de.caritas.cob.userservice.api.service.agency.dto.AgencyMatrixCredentialsDTO;
 import de.caritas.cob.userservice.api.service.matrix.MatrixSessionSystemMessageService;
 import de.caritas.cob.userservice.api.service.session.AgencyDepartmentMembershipBackfill;
+import de.caritas.cob.userservice.api.service.session.AgencyEnquiryRevocations;
+import de.caritas.cob.userservice.api.service.session.AgencyEnquiryRoomAttempts;
+import de.caritas.cob.userservice.api.service.session.AgencyEnquiryRoomPublication;
 import de.caritas.cob.userservice.api.service.session.AgencyLateJoinerMembershipService;
 import de.caritas.cob.userservice.api.service.session.AgencyOpenEnquiryMembership;
 import de.caritas.cob.userservice.api.service.session.AgencyPreAssignmentRoomService;
@@ -452,10 +455,17 @@ class AgencyPasswordFreeSynapseIT {
 
   private void holdingRoom() {
     var pause = new MatrixRateLimitPause();
+    var roomAttempts = mock(AgencyEnquiryRoomAttempts.class);
+    when(sessionRepository.lockFresh(session.getId())).thenReturn(Optional.of(session));
     new AgencyPreAssignmentRoomService(
             identities,
             gateway,
-            sessions,
+            new AgencyEnquiryRoomPublication(
+                consultants,
+                sessionRepository,
+                sessions,
+                mock(AgencyEnquiryRevocations.class),
+                roomAttempts),
             silentMembership,
             new AgencyDepartmentMembershipBackfill(
                 new AgencyOpenEnquiryMembership(
@@ -466,7 +476,8 @@ class AgencyPasswordFreeSynapseIT {
                 gateway,
                 pause,
                 Runnable::run),
-            pause)
+            pause,
+            roomAttempts)
         .ensureHoldingRoom(session, session.getUser());
     assertThat(session.getMatrixRoomId()).isNotBlank();
   }

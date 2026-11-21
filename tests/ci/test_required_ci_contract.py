@@ -192,6 +192,7 @@ class RequiredCiContractTest(unittest.TestCase):
             "DeleteUserAccountSchedulerMariaDbReplicaIT",
             "DeleteUsersRegisteredOnlySchedulerMariaDbReplicaIT",
             "SupportRoomMigrationConvergenceIT",
+            "AgencyEnquiryRoomPublicationDatabaseIT",
             "GroupChatMatrixCleanupAdoptionMariaDbIT",
         ):
             self.assertIn(f"!{mariadb_owned_test}", arguments)
