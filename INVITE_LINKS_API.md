@@ -169,8 +169,9 @@ without a valid positive tenant ID receives `403`.
 }
 ```
 
-This is the **same shape** `CreateAnonymousEnquiryResponseDTO` already returns from
-`POST /conversations/askers/anonymous/new`. The visitor is now a logged-in anonymous user with a
+This is the `CreateAnonymousEnquiryResponseDTO` shape. (The former public
+`POST /conversations/askers/anonymous/new` returned it too; it had no caller and was removed in
+ORISO-UserService#1697.) The visitor is now a logged-in anonymous user with a
 live-chat session ready — drop them straight into the chat UI; no second registration call.
 
 **Errors:**

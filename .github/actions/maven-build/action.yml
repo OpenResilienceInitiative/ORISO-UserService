@@ -17,6 +17,12 @@ runs:
       java-version: ${{ inputs.java_version }}
       distribution: 'temurin'
       cache: maven
+      # Keep direct Central artifacts in a separate cache from the mirror jobs.
+      cache-dependency-path: |
+        **/pom.xml
+        **/.mvn/wrapper/maven-wrapper.properties
+        **/.mvn/extensions.xml
+        scripts/ci/run-maven-with-central-retry.sh
 
   - name: Bind SigNoz unit report to the Maven invocation
     id: unit-report-start

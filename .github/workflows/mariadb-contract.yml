@@ -37,6 +37,11 @@ jobs:
         java-version: '21'
         distribution: temurin
         cache: maven
+        cache-dependency-path: |
+          **/pom.xml
+          **/.mvn/wrapper/maven-wrapper.properties
+          **/.mvn/extensions.xml
+          scripts/ci/run-maven-with-central-retry.sh
 
     - name: Create isolated guest promotion migration database
       run: docker exec "${{ job.services.mariadb.id }}" mariadb -uroot -proot -e 'CREATE DATABASE migration_guest CHARACTER SET utf8 COLLATE utf8_unicode_ci'
@@ -60,7 +65,7 @@ jobs:
       run: >-
         ./mvnw -B -Dskip.unit-tests=true
         -Dspring.test.context.cache.maxSize=8
-        -Dtest=DatabaseChangelogDriftIT,AgencyEnquiryRoomPublicationDatabaseIT,AgencyEnquiryAcceptanceDepartureIT,DraftMessageLegacyMariaDbIT,EnquiryRejectionMariaDbIT,ConsultantTopicUniqueKeyMariaDbIT,ConsultantPictureDatabaseIT,SupportRoomMigrationConvergenceIT,AdminStatisticsRepositoryMariaDbIT,UserAdminSearchMariaDbIT,StatisticsRetentionMariaDbIT,ProvisioningCompensationMariaDbIT,ScheduledTaskClaimMariaDbIT,TutorialProgressServiceMariaDbReplicaIT,DeactivateGroupChatSchedulerMariaDbReplicaIT,DeleteUserAccountSchedulerMariaDbReplicaIT,DeleteUsersRegisteredOnlySchedulerMariaDbReplicaIT,AccountInviteRevokeAcceptRaceMariaDbIT,SessionOwnershipMariaDbIT,ChatMembersOnlyMariaDbIT,GroupChatMatrixCleanupAdoptionMariaDbIT,ConsultantTenantChangeMariaDbIT,ConsultantAgencyLateJoinerMembershipMariaDbIT,CaseHandoverLeaveAdminPowerMariaDbIT,CaseHandoverTakeoverMatrixMariaDbIT,MoveThenTakeoverMatrixMariaDbIT,CaseHandoverStatusHttpMariaDbIT,IdentityReactivationSagaMariaDbIT,UserHardDeleteClaimMariaDbIT
+        -Dtest=DatabaseChangelogDriftIT,AgencyEnquiryRoomPublicationDatabaseIT,AgencyEnquiryAcceptanceDepartureIT,DraftMessageLegacyMariaDbIT,EnquiryRejectionMariaDbIT,ConsultantTopicUniqueKeyMariaDbIT,ConsultantPictureDatabaseIT,SupportRoomMigrationConvergenceIT,AdminStatisticsRepositoryMariaDbIT,UserAdminSearchMariaDbIT,StatisticsRetentionMariaDbIT,ProvisioningCompensationMariaDbIT,ScheduledTaskClaimMariaDbIT,TutorialProgressServiceMariaDbReplicaIT,DeactivateGroupChatSchedulerMariaDbReplicaIT,DeleteUserAccountSchedulerMariaDbReplicaIT,DeleteUsersRegisteredOnlySchedulerMariaDbReplicaIT,AccountInviteRevokeAcceptRaceMariaDbIT,SessionOwnershipMariaDbIT,ChatMembersOnlyMariaDbIT,GroupChatMatrixCleanupAdoptionMariaDbIT,ConsultantTenantChangeMariaDbIT,ConsultantAgencyLateJoinerMembershipMariaDbIT,CaseHandoverLeaveAdminPowerMariaDbIT,CaseHandoverTakeoverMatrixMariaDbIT,MoveThenTakeoverMatrixMariaDbIT,CaseHandoverStatusHttpMariaDbIT,IdentityReactivationSagaMariaDbIT,UserHardDeleteClaimMariaDbIT,GuestRegistrationTypeQueriesMariaDbIT
         integration-test
 
     - name: Prove authenticated writes across two replicas

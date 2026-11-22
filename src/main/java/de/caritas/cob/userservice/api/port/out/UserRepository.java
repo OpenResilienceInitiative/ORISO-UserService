@@ -101,6 +101,15 @@ public interface UserRepository extends CrudRepository<User, String> {
       @Param("claimedState") DeletionLifecycleState claimedState,
       @Param("readyState") DeletionLifecycleState readyState);
 
+  /** Returns report IDs using the same session membership as the mapped collection. */
+  @Query(
+      """
+      SELECT u.userId FROM User u
+       WHERE u.sessions IS EMPTY
+         AND NOT EXISTS (SELECT 1 FROM UserAgency ua WHERE ua.user = u)
+      """)
+  List<String> findIdsWithoutSessionOrChatRelations();
+
   /**
    * Find all users whose create date is older than given date and having no new registered session
    * after the given create date and no running sessions.
