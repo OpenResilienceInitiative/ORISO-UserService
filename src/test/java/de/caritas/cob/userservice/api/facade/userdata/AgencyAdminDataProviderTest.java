@@ -6,17 +6,23 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import ch.qos.logback.classic.Level;
+import ch.qos.logback.classic.spi.ILoggingEvent;
 import de.caritas.cob.userservice.api.adapters.web.dto.AgencyDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.UserDataResponseDTO;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.model.AdminAgency;
 import de.caritas.cob.userservice.api.port.out.AdminAgencyRepository;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
+import de.caritas.cob.userservice.testutils.LogbackCaptor;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -28,6 +34,7 @@ import org.springframework.web.client.ResourceAccessException;
 class AgencyAdminDataProviderTest {
 
   private static final String ADMIN_ID = "agency-admin-id";
+  private static final String PRIVATE_DIAGNOSTIC = "synthetic-private-diagnostic";
 
   @Mock private AuthenticatedUser authenticatedUser;
   @Mock private KeycloakUserDataProvider keycloakUserDataProvider;
@@ -86,16 +93,33 @@ class AgencyAdminDataProviderTest {
     verify(agencyService, never()).getAgencies(anyList());
   }
 
-  @Test
-  void retrieveData_Should_DegradeToEmptyAgencies_When_AgencyServiceAnswersWithError() {
+  @ParameterizedTest
+  @ValueSource(booleans = {false, true})
+  void retrieveData_Should_DegradeToEmptyAgencies_When_AgencyServiceAnswersWithError(
+      boolean withBody) {
     when(adminAgencyRepository.findByAdminId(ADMIN_ID))
         .thenReturn(List.of(AdminAgency.builder().agencyId(3L).build()));
     when(agencyService.getAgencies(List.of(3L)))
-        .thenThrow(new HttpServerErrorException(HttpStatus.SERVICE_UNAVAILABLE));
+        .thenThrow(
+            HttpServerErrorException.create(
+                HttpStatus.SERVICE_UNAVAILABLE,
+                "unavailable",
+                null,
+                withBody ? PRIVATE_DIAGNOSTIC.getBytes(StandardCharsets.UTF_8) : null,
+                StandardCharsets.UTF_8));
 
-    var result = agencyAdminDataProvider.retrieveData();
-
-    assertThat(result.getAgencies()).isEmpty();
+    try (var logs = LogbackCaptor.forClass(AgencyAdminDataProvider.class)) {
+      assertThat(agencyAdminDataProvider.retrieveData().getAgencies()).isEmpty();
+      assertThat(logs.messages(Level.WARN))
+          .singleElement()
+          .satisfies(
+              message ->
+                  assertThat(message).contains("503").doesNotContain(PRIVATE_DIAGNOSTIC, ADMIN_ID));
+      assertThat(logs.events())
+          .singleElement()
+          .extracting(ILoggingEvent::getThrowableProxy)
+          .isNull();
+    }
   }
 
   @Test
@@ -103,10 +127,23 @@ class AgencyAdminDataProviderTest {
     when(adminAgencyRepository.findByAdminId(ADMIN_ID))
         .thenReturn(List.of(AdminAgency.builder().agencyId(3L).build()));
     when(agencyService.getAgencies(List.of(3L)))
-        .thenThrow(new ResourceAccessException("connection refused"));
+        .thenThrow(new ResourceAccessException(PRIVATE_DIAGNOSTIC));
 
-    var result = agencyAdminDataProvider.retrieveData();
-
-    assertThat(result.getAgencies()).isEmpty();
+    try (var logs = LogbackCaptor.forClass(AgencyAdminDataProvider.class)) {
+      assertThat(agencyAdminDataProvider.retrieveData().getAgencies()).isEmpty();
+      assertThat(logs.events())
+          .singleElement()
+          .extracting(ILoggingEvent::getThrowableProxy)
+          .isNull();
+      assertThat(logs.messages(Level.WARN))
+          .singleElement()
+          .satisfies(
+              message ->
+                  assertThat(message)
+                      .contains(
+                          "Could not load agencies for agency admin",
+                          ResourceAccessException.class.getSimpleName())
+                      .doesNotContain(PRIVATE_DIAGNOSTIC, ADMIN_ID));
+    }
   }
 }

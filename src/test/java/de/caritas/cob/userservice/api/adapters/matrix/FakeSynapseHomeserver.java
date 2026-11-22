@@ -93,14 +93,11 @@ public final class FakeSynapseHomeserver extends RestTemplate {
 
   /** The production gateway, talking to this homeserver. */
   public MatrixSynapseService gateway() {
-    var roomClient = new MatrixRoomClient(config, this, mock(LiveChatDiagnosticMetrics.class));
+    var redactor = MatrixIdentifierRedactor.withKey("fake-synapse");
+    var roomClient =
+        new MatrixRoomClient(config, this, mock(LiveChatDiagnosticMetrics.class), redactor);
     return new MatrixSynapseService(
-        config,
-        this,
-        this,
-        roomClient,
-        mock(MatrixMediaClient.class),
-        MatrixIdentifierRedactor.withKey("fake-synapse"));
+        config, this, this, roomClient, mock(MatrixMediaClient.class), redactor);
   }
 
   public static String adminMxid() {

@@ -297,6 +297,33 @@ class AgencyEnquiryRoomPublicationDatabaseIT {
   }
 
   @Test
+  void aDelayOutsideTheDatabaseDateRangeKeepsTheSameRoomWaiting() {
+    var attemptId = recordInvitationAttempt(ROOM);
+    var requester = enquiry.getUser();
+    var plan =
+        new RequesterJoinPlan(
+            requester.getUserId(),
+            requester.getMatrixUserId(),
+            "@agency:example.invalid",
+            false,
+            List.of(),
+            List.of());
+    var first = roomAttempts.recordConfirmedInvitation(attemptId, plan);
+
+    roomAttempts.deferRequesterJoin(first, Long.MAX_VALUE);
+
+    var stored = attempts.findById(attemptId).orElseThrow();
+    assertThat(stored.getRequesterJoinReadyAt())
+        .isEqualTo(LocalDateTime.of(9999, 12, 31, 23, 59, 59, 999_999_000));
+    assertThat(stored.getRequesterJoinClaim()).isNull();
+    assertThat(stored.getRequesterJoinPlan()).isEqualTo(plan);
+    assertThat(stored.getRoomId()).isEqualTo(ROOM);
+    var recovery = roomAttempts.claimRequesterJoin(enquiry, requester);
+    assertThat(recovery.pending()).isTrue();
+    assertThat(recovery.claim()).isEmpty();
+  }
+
+  @Test
   void concurrentReopensClaimExactlyOnePersistedAttempt() throws Exception {
     var attemptId = recordInvitationAttempt(ROOM);
     var requester = enquiry.getUser();

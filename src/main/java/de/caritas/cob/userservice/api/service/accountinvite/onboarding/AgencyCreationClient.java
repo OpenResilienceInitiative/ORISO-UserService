@@ -104,46 +104,39 @@ public class AgencyCreationClient {
       // AgencyService is down or broken: a retryable downstream failure, not a fault of this
       // service. docs/api-error-contract.md reserves 424/502 for exactly this, so the invitee's
       // wizard can tell an outage apart from a request it must never repeat unchanged.
-      logUpstreamFailure(reservedAgencyId, tenantId, exception);
+      logUpstreamFailure(reservedAgencyId, tenantId, exception.getStatusCode().value());
       throw new ResponseStatusException(
           HttpStatus.BAD_GATEWAY, "Agency creation is unavailable upstream");
     } catch (ResourceAccessException exception) {
       // No status at all — connection refused, timeout, DNS. Same class of failure as a 5xx.
       log.error(
-          "Agency creation for reserved agency ID {} (tenant {}) could not reach AgencyService",
+          "Agency creation for reserved agency ID {} (tenant {}) could not reach AgencyService"
+              + " (failure={})",
           reservedAgencyId,
           tenantId,
-          exception);
+          exception.getClass().getSimpleName());
       throw new ResponseStatusException(
           HttpStatus.BAD_GATEWAY, "Agency creation is unavailable upstream");
     } catch (HttpStatusCodeException exception) {
       // A 4xx that is not the documented 409 means AgencyService rejected what this client sent
       // — a wrong consulting type, a malformed field. That is this service's own configuration or
       // request being wrong, so it stays a 500: repeating it unchanged cannot succeed.
-      logUpstreamFailure(reservedAgencyId, tenantId, exception);
+      logUpstreamFailure(reservedAgencyId, tenantId, exception.getStatusCode().value());
       throw new InternalServerErrorException(
           "Agency creation for the reserved ID was rejected upstream with status "
               + exception.getStatusCode().value());
     }
   }
 
-  /**
-   * Every rejection used to propagate raw, so the public onboarding endpoint answered a bare 500
-   * and the reason existed only in AgencyService's log. The body is safe to record: this is a
-   * server-to-server admin call, so it carries AgencyService's validation reason, never invitee
-   * content.
-   */
-  private void logUpstreamFailure(
-      Long reservedAgencyId, Long tenantId, HttpStatusCodeException exception) {
+  /** Records local request context and the upstream HTTP status for diagnosis. */
+  private void logUpstreamFailure(Long reservedAgencyId, Long tenantId, int status) {
     log.error(
         "Agency creation for reserved agency ID {} (tenant {}, consulting type {}) failed:"
-            + " AgencyService answered {} {}",
+            + " AgencyService answered {}",
         reservedAgencyId,
         tenantId,
         defaultConsultingType,
-        exception.getStatusCode().value(),
-        exception.getResponseBodyAsString(),
-        exception);
+        status);
   }
 
   private AdminAgencyControllerApi createControllerApi() {

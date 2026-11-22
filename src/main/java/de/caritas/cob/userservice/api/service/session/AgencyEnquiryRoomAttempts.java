@@ -22,6 +22,8 @@ import org.springframework.transaction.annotation.Transactional;
 public class AgencyEnquiryRoomAttempts {
 
   private static final Duration JOIN_LEASE = Duration.ofSeconds(30);
+  private static final LocalDateTime LATEST_JOIN_READY_AT =
+      LocalDateTime.of(9999, 12, 31, 23, 59, 59, 999_999_000);
 
   private final AgencyEnquiryRoomAttemptRepository attempts;
   private final SessionRepository sessions;
@@ -109,9 +111,16 @@ public class AgencyEnquiryRoomAttempts {
         .lockAttempt(claim.attemptId())
         .filter(attempt -> claim.token().equals(attempt.getRequesterJoinClaim()))
         .ifPresent(
-            attempt ->
-                attempt.deferRequesterJoin(
-                    LocalDateTime.now(clock).plus(Duration.ofMillis(serverDelayMs))));
+            attempt -> {
+              var now = LocalDateTime.now(clock);
+              var delay = Duration.ofMillis(serverDelayMs);
+              // Keep the same room pending when the wait exceeds the DATETIME(6) range.
+              var readyAt =
+                  delay.compareTo(Duration.between(now, LATEST_JOIN_READY_AT)) > 0
+                      ? LATEST_JOIN_READY_AT
+                      : now.plus(delay);
+              attempt.deferRequesterJoin(readyAt);
+            });
   }
 
   @Transactional(propagation = Propagation.REQUIRES_NEW)

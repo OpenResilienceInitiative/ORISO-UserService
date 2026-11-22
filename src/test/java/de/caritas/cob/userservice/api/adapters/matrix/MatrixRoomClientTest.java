@@ -8,6 +8,8 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import ch.qos.logback.classic.Level;
+import ch.qos.logback.classic.Logger;
 import de.caritas.cob.userservice.api.adapters.matrix.config.MatrixConfig;
 import de.caritas.cob.userservice.api.adapters.matrix.dto.MatrixCreateRoomRequestDTO;
 import de.caritas.cob.userservice.api.adapters.matrix.dto.MatrixCreateRoomResponseDTO;
@@ -15,6 +17,7 @@ import de.caritas.cob.userservice.api.adapters.matrix.dto.MatrixInviteUserReques
 import de.caritas.cob.userservice.api.adapters.matrix.dto.MatrixInviteUserResponseDTO;
 import de.caritas.cob.userservice.api.config.observability.LiveChatDiagnosticMetrics;
 import de.caritas.cob.userservice.api.exception.matrix.MatrixJoinRateLimitedException;
+import de.caritas.cob.userservice.testutils.LogbackCaptor;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
@@ -22,17 +25,20 @@ import java.util.Map;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Captor;
-import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.client.HttpClientErrorException;
+import org.springframework.web.client.ResourceAccessException;
 import org.springframework.web.client.RestTemplate;
 
 @ExtendWith(MockitoExtension.class)
@@ -56,7 +62,8 @@ class MatrixRoomClientTest {
   @Captor private ArgumentCaptor<HttpEntity<MatrixInviteUserRequestDTO>> inviteRequestCaptor;
   @Captor private ArgumentCaptor<HttpEntity<Map<String, Object>>> mapRequestCaptor;
 
-  @InjectMocks private MatrixRoomClient matrixRoomClient;
+  private final MatrixIdentifierRedactor redactor = MatrixIdentifierRedactor.withKey("test-key");
+  private MatrixRoomClient matrixRoomClient;
 
   private static URI uri(String value) {
     return URI.create(value);
@@ -64,6 +71,8 @@ class MatrixRoomClientTest {
 
   @BeforeEach
   void setup() {
+    matrixRoomClient =
+        new MatrixRoomClient(matrixConfig, restTemplate, diagnosticMetrics, redactor);
     when(matrixConfig.getApiUrl(org.mockito.ArgumentMatchers.anyString()))
         .thenAnswer(invocation -> API_URL + invocation.getArgument(0, String.class));
   }
@@ -71,7 +80,7 @@ class MatrixRoomClientTest {
   /** A RestTemplate message can carry the request URL, and with it the Matrix user ID. */
   @Test
   void guestCleanupFailuresAreLoggedWithoutTheRestTemplateMessage() {
-    var failure = new org.springframework.web.client.ResourceAccessException("GET " + USER_ID);
+    var failure = new ResourceAccessException("GET " + USER_ID);
     when(restTemplate.postForEntity(
             org.mockito.ArgumentMatchers.any(URI.class),
             org.mockito.ArgumentMatchers.any(),
@@ -84,14 +93,13 @@ class MatrixRoomClientTest {
             eq(Map.class)))
         .thenThrow(failure);
 
-    try (var logs =
-        de.caritas.cob.userservice.testutils.LogbackCaptor.forClass(MatrixRoomClient.class)) {
+    try (var logs = LogbackCaptor.forClass(MatrixRoomClient.class)) {
       assertThat(matrixRoomClient.kickUserFromRoom(ROOM_ID, USER_ID, ACCESS_TOKEN)).isFalse();
       assertThat(matrixRoomClient.getRoomMembership(ROOM_ID, USER_ID, ACCESS_TOKEN)).isEmpty();
       assertThat(matrixRoomClient.clearUserPowerLevel(ROOM_ID, USER_ID, ACCESS_TOKEN)).isFalse();
-      assertThat(logs.messages(ch.qos.logback.classic.Level.WARN))
+      assertThat(logs.messages(Level.WARN))
           .hasSize(3)
-          .allSatisfy(message -> assertThat(message).doesNotContain(USER_ID));
+          .allSatisfy(message -> assertThat(message).doesNotContain(USER_ID, ROOM_ID));
     }
   }
 
@@ -107,15 +115,30 @@ class MatrixRoomClientTest {
                 HttpStatus.TOO_MANY_REQUESTS,
                 "Too Many Requests",
                 null,
-                "{\"errcode\":\"M_LIMIT_EXCEEDED\",\"retry_after_ms\":3256}"
+                ("{\"errcode\":\"M_LIMIT_EXCEEDED\",\"retry_after_ms\":3256,\"error\":\""
+                        + ROOM_ID
+                        + "\"}")
                     .getBytes(StandardCharsets.UTF_8),
                 StandardCharsets.UTF_8));
 
-    assertThatThrownBy(() -> matrixRoomClient.createRoom("Room name", "room-alias", ACCESS_TOKEN))
-        .isInstanceOfSatisfying(
-            de.caritas.cob.userservice.api.exception.matrix.MatrixCreateRoomRateLimitedException
-                .class,
-            ex -> assertThat(ex.getRetryAfterMs()).isEqualTo(3256L));
+    try (var logs = LogbackCaptor.forClass(MatrixRoomClient.class)) {
+      assertThatThrownBy(() -> matrixRoomClient.createRoom("Room name", "room-alias", ACCESS_TOKEN))
+          .isInstanceOfSatisfying(
+              de.caritas.cob.userservice.api.exception.matrix.MatrixCreateRoomRateLimitedException
+                  .class,
+              ex -> assertThat(ex.getRetryAfterMs()).isEqualTo(3256L))
+          .hasMessageNotContaining(ROOM_ID)
+          .hasMessageNotContaining("Room name")
+          .hasNoCause();
+      assertThat(logs.messages(Level.ERROR))
+          .singleElement()
+          .asString()
+          .contains("429")
+          .doesNotContain(ROOM_ID, "Room name");
+      assertThat(logs.events()).allSatisfy(event -> assertThat(event.getThrowableProxy()).isNull());
+      verify(diagnosticMetrics)
+          .recordRoomCreation(false, LiveChatDiagnosticMetrics.Outcome.FAILURE);
+    }
   }
 
   @Test
@@ -416,22 +439,40 @@ class MatrixRoomClientTest {
     assertThatThrownBy(() -> matrixRoomClient.createRoom("Room name", "room-alias", ACCESS_TOKEN))
         .isInstanceOf(
             de.caritas.cob.userservice.api.exception.matrix.MatrixCreateRoomException.class)
-        .hasMessageContaining("Could not create room (Room name) in Matrix");
+        .hasMessage("Could not create room in Matrix");
     verify(diagnosticMetrics).recordRoomCreation(false, LiveChatDiagnosticMetrics.Outcome.FAILURE);
   }
 
   @Test
   void createRoom_ShouldThrowMatrixCreateRoomException_WhenUnexpectedErrorOccurs() {
+    var roomName = "Synthetic counselling room";
+    var transportMessage = "Synthetic transport detail for " + API_URL;
     when(restTemplate.postForEntity(
             eq(uri(API_URL + "/_matrix/client/r0/createRoom")),
             org.mockito.ArgumentMatchers.any(HttpEntity.class),
             eq(MatrixCreateRoomResponseDTO.class)))
-        .thenThrow(new RuntimeException("connection failed"));
+        .thenThrow(new ResourceAccessException(transportMessage));
 
-    assertThatThrownBy(() -> matrixRoomClient.createRoom("Room name", "room-alias", ACCESS_TOKEN))
-        .isInstanceOf(
-            de.caritas.cob.userservice.api.exception.matrix.MatrixCreateRoomException.class)
-        .hasMessage("Could not create room (Room name) in Matrix");
+    try (var logs = LogbackCaptor.forClass(MatrixRoomClient.class)) {
+      assertThatThrownBy(() -> matrixRoomClient.createRoom(roomName, "room-alias", ACCESS_TOKEN))
+          .isInstanceOf(
+              de.caritas.cob.userservice.api.exception.matrix.MatrixCreateRoomException.class)
+          .hasMessageContaining("Could not create room")
+          .hasMessageNotContaining(roomName)
+          .hasMessageNotContaining(transportMessage)
+          .hasNoCause();
+      assertThat(logs.messages(Level.ERROR))
+          .singleElement()
+          .asString()
+          .contains("ResourceAccessException");
+      assertThat(logs.events())
+          .allSatisfy(
+              event -> {
+                assertThat(event.getFormattedMessage())
+                    .doesNotContain(roomName, transportMessage, API_URL);
+                assertThat(event.getThrowableProxy()).isNull();
+              });
+    }
     verify(diagnosticMetrics).recordRoomCreation(false, LiveChatDiagnosticMetrics.Outcome.FAILURE);
   }
 
@@ -447,7 +488,7 @@ class MatrixRoomClientTest {
             () -> matrixRoomClient.createRoom("Room name", "room-alias", ACCESS_TOKEN, true))
         .isInstanceOf(
             de.caritas.cob.userservice.api.exception.matrix.MatrixCreateRoomException.class)
-        .hasMessage("Could not create room (Room name) in Matrix");
+        .hasMessage("Could not create room in Matrix");
     verify(diagnosticMetrics).recordRoomCreation(true, LiveChatDiagnosticMetrics.Outcome.FAILURE);
   }
 
@@ -470,6 +511,7 @@ class MatrixRoomClientTest {
 
   @Test
   void inviteUserToRoom_ShouldThrowMatrixInviteUserException_WhenMatrixRejectsRequest() {
+    var responseDetail = "synthetic provider diagnostic";
     when(restTemplate.postForEntity(
             eq(uri(API_URL + "/_matrix/client/r0/rooms/" + ENCODED_ROOM_ID + "/invite")),
             org.mockito.ArgumentMatchers.any(HttpEntity.class),
@@ -479,13 +521,64 @@ class MatrixRoomClientTest {
                 HttpStatus.FORBIDDEN,
                 "Forbidden",
                 null,
-                "{\"error\":\"not allowed\"}".getBytes(StandardCharsets.UTF_8),
+                ("{\"error\":\"" + responseDetail + "\"}").getBytes(StandardCharsets.UTF_8),
                 StandardCharsets.UTF_8));
+
+    try (var logs = LogbackCaptor.forClass(MatrixRoomClient.class)) {
+      assertThatThrownBy(() -> matrixRoomClient.inviteUserToRoom(ROOM_ID, USER_ID, ACCESS_TOKEN))
+          .isInstanceOf(
+              de.caritas.cob.userservice.api.exception.matrix.MatrixInviteUserException.class)
+          .hasMessageContaining("Could not invite")
+          .hasMessageNotContaining(USER_ID)
+          .hasMessageNotContaining(ROOM_ID)
+          .hasMessageNotContaining(responseDetail)
+          .hasNoCause();
+      assertThat(logs.messages(Level.ERROR))
+          .singleElement()
+          .asString()
+          .contains("403", redactor.pseudonym(USER_ID), redactor.roomPseudonym(ROOM_ID));
+      assertThat(logs.events())
+          .allSatisfy(
+              event -> {
+                assertThat(event.getFormattedMessage())
+                    .doesNotContain(USER_ID, ROOM_ID, responseDetail, ENCODED_ROOM_ID);
+                assertThat(event.getThrowableProxy()).isNull();
+              });
+    }
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {"already in the room", "already invited"})
+  void inviteFailuresPreserveTheIdempotentOutcomeWithoutTheProviderMessage(String outcome) {
+    var detail = "synthetic provider diagnostic";
+    var rejection =
+        HttpClientErrorException.create(
+            HttpStatus.FORBIDDEN,
+            "Forbidden",
+            null,
+            ("{\"error\":\"" + USER_ID + " " + outcome + " in " + ROOM_ID + " " + detail + "\"}")
+                .getBytes(StandardCharsets.UTF_8),
+            StandardCharsets.UTF_8);
+    when(restTemplate.postForEntity(
+            eq(uri(API_URL + "/_matrix/client/r0/rooms/" + ENCODED_ROOM_ID + "/invite")),
+            org.mockito.ArgumentMatchers.any(HttpEntity.class),
+            eq(MatrixInviteUserResponseDTO.class)))
+        .thenThrow(rejection);
 
     assertThatThrownBy(() -> matrixRoomClient.inviteUserToRoom(ROOM_ID, USER_ID, ACCESS_TOKEN))
         .isInstanceOf(
             de.caritas.cob.userservice.api.exception.matrix.MatrixInviteUserException.class)
-        .hasMessageContaining("Could not invite user");
+        .hasMessageContaining(outcome)
+        .hasMessageNotContaining(USER_ID)
+        .hasMessageNotContaining(ROOM_ID)
+        .hasMessageNotContaining(detail);
+    assertThatThrownBy(() -> matrixRoomClient.inviteUserToRoomOnce(ROOM_ID, USER_ID, ACCESS_TOKEN))
+        .isInstanceOf(
+            de.caritas.cob.userservice.api.exception.matrix.MatrixInviteUserException.class)
+        .hasMessageContaining(outcome)
+        .hasMessageNotContaining(USER_ID)
+        .hasMessageNotContaining(ROOM_ID)
+        .hasMessageNotContaining(detail);
   }
 
   @Test
@@ -545,7 +638,13 @@ class MatrixRoomClientTest {
         HttpStatus.TOO_MANY_REQUESTS,
         "Too Many Requests",
         null,
-        ("{\"errcode\":\"M_LIMIT_EXCEEDED\",\"retry_after_ms\":" + retryAfterMs + "}")
+        ("{\"errcode\":\"M_LIMIT_EXCEEDED\",\"retry_after_ms\":"
+                + retryAfterMs
+                + ",\"error\":\""
+                + USER_ID
+                + " "
+                + ROOM_ID
+                + "\"}")
             .getBytes(StandardCharsets.UTF_8),
         StandardCharsets.UTF_8);
   }
@@ -561,10 +660,24 @@ class MatrixRoomClientTest {
     // ORISO-Frontend#2386: the caller must be able to tell "try again later" from "refused", so
     // it can hand the invite to the background instead of dropping what depends on it. The delay
     // is the server's own value of the last answer, not the capped in-request wait.
-    assertThatThrownBy(() -> matrixRoomClient.inviteUserToRoom(ROOM_ID, USER_ID, ACCESS_TOKEN))
-        .isInstanceOfSatisfying(
-            de.caritas.cob.userservice.api.exception.matrix.MatrixInviteRateLimitedException.class,
-            ex -> assertThat(ex.getRetryAfterMs()).isEqualTo(600000L));
+    try (var logs = LogbackCaptor.forClass(MatrixRoomClient.class)) {
+      assertThatThrownBy(() -> matrixRoomClient.inviteUserToRoom(ROOM_ID, USER_ID, ACCESS_TOKEN))
+          .isInstanceOfSatisfying(
+              de.caritas.cob.userservice.api.exception.matrix.MatrixInviteRateLimitedException
+                  .class,
+              ex -> assertThat(ex.getRetryAfterMs()).isEqualTo(600000L))
+          .hasMessageNotContaining(USER_ID)
+          .hasMessageNotContaining(ROOM_ID)
+          .hasNoCause();
+      assertThat(logs.messages(Level.WARN))
+          .anySatisfy(message -> assertThat(message).contains("429", "600000"));
+      assertThat(logs.events())
+          .allSatisfy(
+              event -> {
+                assertThat(event.getFormattedMessage()).doesNotContain(USER_ID, ROOM_ID);
+                assertThat(event.getThrowableProxy()).isNull();
+              });
+    }
     verify(restTemplate, times(3))
         .postForEntity(
             eq(uri(API_URL + "/_matrix/client/r0/rooms/" + ENCODED_ROOM_ID + "/invite")),
@@ -665,7 +778,42 @@ class MatrixRoomClientTest {
     assertThatThrownBy(() -> matrixRoomClient.inviteUserToRoom(ROOM_ID, USER_ID, ACCESS_TOKEN))
         .isInstanceOf(
             de.caritas.cob.userservice.api.exception.matrix.MatrixInviteUserException.class)
-        .hasMessage("Could not invite user (" + USER_ID + ") to room (" + ROOM_ID + ") in Matrix");
+        .hasMessage("Could not invite user to room in Matrix");
+  }
+
+  @Test
+  void roomDiagnosticsKeepSeparateReferencesForCaseAndServerDifferences() {
+    when(restTemplate.postForEntity(
+            org.mockito.ArgumentMatchers.any(URI.class),
+            org.mockito.ArgumentMatchers.any(HttpEntity.class),
+            eq(Map.class)))
+        .thenReturn(ResponseEntity.ok(Map.of()));
+
+    var roomId = "!Synthetic:one.invalid";
+    var logger = (Logger) LoggerFactory.getLogger(MatrixRoomClient.class);
+    var previousLevel = logger.getLevel();
+    logger.setLevel(Level.INFO);
+    try (var logs = LogbackCaptor.forClass(MatrixRoomClient.class)) {
+      assertThat(matrixRoomClient.joinRoom(roomId, ACCESS_TOKEN)).isTrue();
+      assertThat(matrixRoomClient.joinRoom(roomId, ACCESS_TOKEN)).isTrue();
+      assertThat(matrixRoomClient.joinRoom("!synthetic:one.invalid", ACCESS_TOKEN)).isTrue();
+      assertThat(matrixRoomClient.joinRoom("!Synthetic:two.invalid", ACCESS_TOKEN)).isTrue();
+
+      var messages = logs.messages(Level.INFO);
+      assertThat(messages).hasSize(4);
+      assertThat(messages.get(0)).isEqualTo(messages.get(1));
+      assertThat(messages.subList(1, 4)).doesNotHaveDuplicates();
+      assertThat(messages)
+          .allSatisfy(
+              message ->
+                  assertThat(message)
+                      .matches(".*mx-room#[0-9a-f]{12}")
+                      .doesNotContain("Synthetic", "synthetic", ".invalid"));
+    } finally {
+      logger.setLevel(previousLevel);
+    }
+    assertThat(redactor.roomPseudonym("!opaque").substring("mx-room#".length()))
+        .isNotEqualTo(redactor.pseudonym("!opaque").substring("mx#".length()));
   }
 
   @Test
@@ -726,10 +874,22 @@ class MatrixRoomClientTest {
                 "{\"retry_after_ms\":7351}".getBytes(StandardCharsets.UTF_8),
                 StandardCharsets.UTF_8));
 
-    assertThatThrownBy(() -> matrixRoomClient.joinRoomOnce(ROOM_ID, ACCESS_TOKEN))
-        .isInstanceOfSatisfying(
-            MatrixJoinRateLimitedException.class,
-            limited -> assertThat(limited.getRetryAfterMs()).isEqualTo(7351));
+    try (var logs = LogbackCaptor.forClass(MatrixRoomClient.class)) {
+      assertThatThrownBy(() -> matrixRoomClient.joinRoomOnce(ROOM_ID, ACCESS_TOKEN))
+          .isInstanceOfSatisfying(
+              MatrixJoinRateLimitedException.class,
+              limited -> assertThat(limited.getRetryAfterMs()).isEqualTo(7351))
+          .hasMessageNotContaining(ROOM_ID)
+          .hasNoCause();
+      assertThat(logs.messages(Level.WARN))
+          .singleElement()
+          .asString()
+          .contains(redactor.roomPseudonym(ROOM_ID), "429", "7351")
+          .doesNotContain(ROOM_ID, "retry_after_ms");
+      assertThat(logs.events())
+          .singleElement()
+          .satisfies(event -> assertThat(event.getThrowableProxy()).isNull());
+    }
     verify(restTemplate)
         .postForEntity(
             eq(joinUrl), org.mockito.ArgumentMatchers.any(HttpEntity.class), eq(Map.class));
