@@ -22,7 +22,7 @@ def read_assignment():
             continue
         if (
             len(fields) != 2
-            or fields[0] not in ("standard", "guest")
+            or fields[0] not in ("standard", "shared", "guest")
             or not re.fullmatch(r"[A-Za-z][A-Za-z0-9_]*IT", fields[1])
         ):
             raise ValueError(f"{MANIFEST.name}:{number}: expected group and test class")
@@ -31,7 +31,7 @@ def read_assignment():
             raise ValueError(f"{MANIFEST.name}:{number}: duplicate class {test_class}")
         assignment[test_class] = group
     groups = list(assignment.values())
-    if "standard" not in groups or groups.count("guest") != 1:
+    if not {"standard", "shared"}.intersection(groups) or groups.count("guest") != 1:
         raise ValueError(
             "Assign at least one standard class and exactly one guest class"
         )
@@ -101,9 +101,11 @@ def main():
     try:
         assignment = read_assignment()
         if args.suite == "h2":
-            print(",".join(("**/*IT", *(f"!{name}" for name in assignment))))
+            excluded = [f"!{name}" for name, group in assignment.items() if group != "shared"]
+            print(",".join(("**/*IT", *excluded)))
             return 0
-        classes = [name for name, group in assignment.items() if group == args.suite]
+        groups = ("standard", "shared") if args.suite == "standard" else ("guest",)
+        classes = [name for name, group in assignment.items() if group in groups]
         return run_native(args.suite, classes)
     except (OSError, ValueError, KeyError, ET.ParseError) as error:
         print(error, file=sys.stderr)

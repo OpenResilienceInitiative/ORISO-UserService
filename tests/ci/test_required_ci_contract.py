@@ -193,12 +193,12 @@ class RequiredCiContractTest(unittest.TestCase):
             "DeleteUsersRegisteredOnlySchedulerMariaDbReplicaIT",
             "SupportRoomMigrationConvergenceIT",
             "AgencyEnquiryRoomPublicationDatabaseIT",
-            "AgencyEnquiryAcceptanceDepartureIT",
             "ConsultantAgencyLateJoinerMembershipMariaDbIT",
             "GroupChatMatrixCleanupAdoptionMariaDbIT",
         ):
             self.assertIn(f"!{mariadb_owned_test}", arguments)
         self.assertIn("-Dtest=**/*IT,", arguments)
+        self.assertNotIn("!AgencyEnquiryAcceptanceDepartureIT", arguments)
         self.assertNotIn("!GroupChatMatrixCleanupAdoptionIT", arguments)
         self.assertNotIn("!InvitationAppointmentKindMigrationMariaDbIT", arguments)
 

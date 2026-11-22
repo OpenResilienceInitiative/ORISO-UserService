@@ -1,8 +1,9 @@
 # CI group followed by the integration test class.
+# Shared classes run in H2 and in the standard MariaDB group.
 guest LiveChatPromotionMigrationIT
 standard DatabaseChangelogDriftIT
 standard AgencyEnquiryRoomPublicationDatabaseIT
-standard AgencyEnquiryAcceptanceDepartureIT
+shared AgencyEnquiryAcceptanceDepartureIT
 standard DraftMessageLegacyMariaDbIT
 standard EnquiryRejectionMariaDbIT
 standard ConsultantTopicUniqueKeyMariaDbIT

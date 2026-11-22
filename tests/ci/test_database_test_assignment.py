@@ -70,6 +70,24 @@ class DatabaseTestAssignmentTest(unittest.TestCase):
             "-Dtest=SyntheticGuestIT", self.arguments.read_text().splitlines()
         )
 
+    def test_shared_class_runs_with_both_database_profiles(self):
+        self.manifest.write_text(
+            "shared AgencyEnquiryAcceptanceDepartureIT\nguest SyntheticGuestIT\n"
+        )
+        self.write_maven([("AgencyEnquiryAcceptanceDepartureIT", 1, 0)])
+
+        h2 = self.run_ci("python3", self.assignment, "h2")
+        self.assertEqual(0, h2.returncode, h2.stderr)
+        self.assertEqual("**/*IT,!SyntheticGuestIT", h2.stdout.strip())
+
+        native = self.run_ci("python3", self.assignment, "standard")
+        self.assertEqual(0, native.returncode, native.stderr)
+        self.assertIn(
+            "-Dtest=AgencyEnquiryAcceptanceDepartureIT",
+            self.arguments.read_text().splitlines(),
+        )
+        self.assertIn("1 classes, 1 passed", native.stdout)
+
     def test_native_contract_rejects_stale_and_skipped_reports(self):
         self.write_maven([("SyntheticStandardIT", 2, 0)])
         self.assertEqual(
