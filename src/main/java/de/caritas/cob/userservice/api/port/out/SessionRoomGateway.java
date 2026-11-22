@@ -3,6 +3,7 @@ package de.caritas.cob.userservice.api.port.out;
 import de.caritas.cob.userservice.api.exception.matrix.MatrixCreateRoomException;
 import de.caritas.cob.userservice.api.exception.matrix.MatrixCreateUserException;
 import de.caritas.cob.userservice.api.exception.matrix.MatrixInviteUserException;
+import de.caritas.cob.userservice.api.exception.matrix.MatrixJoinRateLimitedException;
 
 /**
  * Outbound room boundary owned by the session/consultant module.
@@ -40,6 +41,9 @@ public interface SessionRoomGateway {
   boolean isJoinedMember(String roomId, String userId);
 
   boolean joinRoom(String roomId, String accessToken);
+
+  /** One join attempt that surfaces the server's rate limit without waiting or retrying. */
+  boolean joinRoomOnce(String roomId, String accessToken) throws MatrixJoinRateLimitedException;
 
   boolean ensureAdminInRoom(String roomId, String memberMatrixUserId);
 

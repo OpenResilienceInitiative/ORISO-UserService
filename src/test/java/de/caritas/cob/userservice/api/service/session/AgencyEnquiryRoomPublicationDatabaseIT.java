@@ -6,6 +6,8 @@ import static org.mockito.Mockito.when;
 
 import com.neovisionaries.i18n.LanguageCode;
 import de.caritas.cob.userservice.api.model.AgencyEnquiryRevocationTask;
+import de.caritas.cob.userservice.api.model.AgencyEnquiryRoomAttempt.InitialContact;
+import de.caritas.cob.userservice.api.model.AgencyEnquiryRoomAttempt.RequesterJoinPlan;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.ConsultantAgency;
 import de.caritas.cob.userservice.api.model.ConsultantAgencyStatus;
@@ -30,6 +32,10 @@ import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
+import java.util.concurrent.Callable;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 import org.hibernate.SessionFactory;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -137,6 +143,7 @@ class AgencyEnquiryRoomPublicationDatabaseIT {
                           .userId(userId)
                           .username(userId)
                           .email(userId + "@example.invalid")
+                          .matrixUserId("@requester:example.invalid")
                           .tenantId(TENANT_ID)
                           .languageCode(LanguageCode.de)
                           .encourage2fa(false)
@@ -228,6 +235,104 @@ class AgencyEnquiryRoomPublicationDatabaseIT {
     assertThat(attempts.findById(matchingAttempt)).isEmpty();
     assertThat(attempts.findById(differentAttempt).orElseThrow().isRequesterInvitationStarted())
         .isTrue();
+  }
+
+  @Test
+  void usesThePersistedJoinAfterItsFullDelayAndRejectsAnExpiredClaim() {
+    var attemptId = recordInvitationAttempt(ROOM);
+    var requester = enquiry.getUser();
+    var plan =
+        new RequesterJoinPlan(
+            requester.getUserId(),
+            requester.getMatrixUserId(),
+            "@agency:example.invalid",
+            false,
+            List.of(new InitialContact(consultantId, MEMBER_ID)),
+            List.of(consultantId));
+    var first = roomAttempts.recordConfirmedInvitation(attemptId, plan);
+    roomAttempts.deferRequesterJoin(first, 43_200L);
+
+    var beforeDue = roomAttempts.claimRequesterJoin(enquiry, requester);
+    assertThat(beforeDue.pending()).isTrue();
+    assertThat(beforeDue.claim()).isEmpty();
+    assertThat(attempts.findById(attemptId).orElseThrow().getRequesterJoinPlan()).isEqualTo(plan);
+
+    when(clock.instant()).thenReturn(Instant.parse("2026-11-19T12:00:43.199Z"));
+    assertThat(roomAttempts.claimRequesterJoin(enquiry, requester).claim()).isEmpty();
+
+    when(clock.instant()).thenReturn(Instant.parse("2026-11-19T12:00:43.200Z"));
+    var resumed = roomAttempts.claimRequesterJoin(enquiry, requester).claim().orElseThrow();
+    assertThat(resumed.token()).isNotEqualTo(first.token());
+    assertThat(resumed.roomId()).isEqualTo(ROOM);
+    assertThat(resumed.plan()).isEqualTo(plan);
+    assertThat(roomAttempts.claimRequesterJoin(enquiry, requester).claim()).isEmpty();
+    assertThat(publication.publishPrepared(enquiry, first, contacts())).isEmpty();
+    assertThat(publication.publishPrepared(enquiry, resumed, contacts())).contains(ROOM);
+    assertThat(attempts.findById(attemptId)).isEmpty();
+  }
+
+  @Test
+  void anEarlierClaimCannotFinishANewerLeaseAndAnUnconfirmedInviteIsNeverResumed() {
+    recordInvitationAttempt("!legacy:example.invalid");
+    var requester = enquiry.getUser();
+    assertThat(roomAttempts.claimRequesterJoin(enquiry, requester).pending()).isFalse();
+
+    var attemptId = recordInvitationAttempt(ROOM);
+    var plan =
+        new RequesterJoinPlan(
+            requester.getUserId(),
+            requester.getMatrixUserId(),
+            "@agency:example.invalid",
+            false,
+            List.of(),
+            List.of());
+    var first = roomAttempts.recordConfirmedInvitation(attemptId, plan);
+    when(clock.instant()).thenReturn(Instant.parse("2026-11-19T12:00:31Z"));
+    var reclaimed = roomAttempts.claimRequesterJoin(enquiry, requester).claim().orElseThrow();
+
+    roomAttempts.finishRequesterJoin(first);
+
+    assertThat(attempts.findById(attemptId).orElseThrow().getRequesterJoinClaim())
+        .isEqualTo(reclaimed.token());
+  }
+
+  @Test
+  void concurrentReopensClaimExactlyOnePersistedAttempt() throws Exception {
+    var attemptId = recordInvitationAttempt(ROOM);
+    var requester = enquiry.getUser();
+    var plan =
+        new RequesterJoinPlan(
+            requester.getUserId(),
+            requester.getMatrixUserId(),
+            "@agency:example.invalid",
+            false,
+            List.of(),
+            List.of());
+    var first = roomAttempts.recordConfirmedInvitation(attemptId, plan);
+    roomAttempts.deferRequesterJoin(first, 1_000L);
+    when(clock.instant()).thenReturn(Instant.parse("2026-11-19T12:00:01Z"));
+
+    var start = new CountDownLatch(1);
+    Callable<Boolean> claim =
+        () -> {
+          TenantContext.setCurrentTenant(TENANT_ID);
+          try {
+            if (!start.await(5, TimeUnit.SECONDS)) {
+              throw new IllegalStateException("The claim fixture did not start");
+            }
+            return roomAttempts.claimRequesterJoin(enquiry, requester).claim().isPresent();
+          } finally {
+            TenantContext.clear();
+          }
+        };
+    try (var executor = Executors.newFixedThreadPool(2)) {
+      var left = executor.submit(claim);
+      var right = executor.submit(claim);
+      start.countDown();
+
+      assertThat(List.of(left.get(10, TimeUnit.SECONDS), right.get(10, TimeUnit.SECONDS)))
+          .containsExactlyInAnyOrder(true, false);
+    }
   }
 
   private Long recordInvitationAttempt(String room) {

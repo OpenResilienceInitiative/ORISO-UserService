@@ -3,6 +3,7 @@ package de.caritas.cob.userservice.api.adapters.matrix;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
@@ -37,6 +38,7 @@ import de.caritas.cob.userservice.api.service.matrix.MatrixSessionSystemMessageS
 import de.caritas.cob.userservice.api.service.session.AgencyDepartmentMembershipBackfill;
 import de.caritas.cob.userservice.api.service.session.AgencyEnquiryRevocations;
 import de.caritas.cob.userservice.api.service.session.AgencyEnquiryRoomAttempts;
+import de.caritas.cob.userservice.api.service.session.AgencyEnquiryRoomAttempts.RequesterJoinClaim;
 import de.caritas.cob.userservice.api.service.session.AgencyEnquiryRoomPublication;
 import de.caritas.cob.userservice.api.service.session.AgencyLateJoinerMembershipService;
 import de.caritas.cob.userservice.api.service.session.AgencyOpenEnquiryMembership;
@@ -463,6 +465,19 @@ class AgencyPasswordFreeSynapseIT {
   private void holdingRoom() {
     var pause = new MatrixRateLimitPause();
     var roomAttempts = mock(AgencyEnquiryRoomAttempts.class);
+    var preparedRoom = new java.util.concurrent.atomic.AtomicReference<String>();
+    when(roomAttempts.recordCreated(any(), anyString()))
+        .thenAnswer(
+            call -> {
+              preparedRoom.set(call.getArgument(1));
+              return 1L;
+            });
+    when(roomAttempts.recordConfirmedInvitation(eq(1L), any()))
+        .thenAnswer(
+            call ->
+                new RequesterJoinClaim(
+                    1L, preparedRoom.get(), "fixture-claim", call.getArgument(1)));
+    when(roomAttempts.ownsRequesterJoin(any(), anyString(), any())).thenReturn(true);
     when(sessionRepository.lockFresh(session.getId())).thenReturn(Optional.of(session));
     new AgencyPreAssignmentRoomService(
             identities,

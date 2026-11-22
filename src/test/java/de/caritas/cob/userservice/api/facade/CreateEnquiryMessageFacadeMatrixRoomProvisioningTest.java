@@ -1,6 +1,7 @@
 package de.caritas.cob.userservice.api.facade;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.same;
@@ -25,6 +26,7 @@ import de.caritas.cob.userservice.api.service.agency.AgencyMatrixCredentialClien
 import de.caritas.cob.userservice.api.service.agency.dto.AgencyMatrixCredentialsDTO;
 import de.caritas.cob.userservice.api.service.consultingtype.TopicConsultantRoutingService;
 import de.caritas.cob.userservice.api.service.session.AgencyEnquiryRoomAttempts;
+import de.caritas.cob.userservice.api.service.session.AgencyEnquiryRoomAttempts.RequesterJoinClaim;
 import de.caritas.cob.userservice.api.service.session.AgencyPreAssignmentRoomService;
 import de.caritas.cob.userservice.api.service.session.SessionService;
 import jakarta.servlet.http.HttpServletRequest;
@@ -153,6 +155,15 @@ class CreateEnquiryMessageFacadeMatrixRoomProvisioningTest {
     var publicationSessions =
         org.mockito.Mockito.mock(de.caritas.cob.userservice.api.port.out.SessionRepository.class);
     var roomAttempts = Mockito.mock(AgencyEnquiryRoomAttempts.class);
+    Mockito.lenient()
+        .when(roomAttempts.recordConfirmedInvitation(any(), any()))
+        .thenAnswer(
+            call ->
+                new RequesterJoinClaim(
+                    call.getArgument(0), NEW_ROOM_ID, "fixture-claim", call.getArgument(1)));
+    Mockito.lenient()
+        .when(roomAttempts.ownsRequesterJoin(any(), eq(NEW_ROOM_ID), any()))
+        .thenReturn(true);
     var realRoomService =
         new AgencyPreAssignmentRoomService(
             matrixCredentialClient,
@@ -243,7 +254,7 @@ class CreateEnquiryMessageFacadeMatrixRoomProvisioningTest {
 
     // Enquiry-event validation + membership use the user's own token.
     when(matrixSynapseService.loginAsUserAccessToken(USER_MATRIX_ID)).thenReturn(USER_TOKEN);
-    when(matrixSynapseService.joinRoom(NEW_ROOM_ID, USER_TOKEN)).thenReturn(true);
+    when(matrixSynapseService.joinRoomOnce(NEW_ROOM_ID, USER_TOKEN)).thenReturn(true);
     when(matrixSynapseService.getRoomEvent(NEW_ROOM_ID, MATRIX_EVENT_ID, USER_TOKEN))
         .thenReturn(
             Optional.of(
@@ -259,7 +270,7 @@ class CreateEnquiryMessageFacadeMatrixRoomProvisioningTest {
     // Room provisioned: create -> invite -> membership.
     verify(matrixSynapseService).createRoom(anyString(), anyString(), eq(AGENCY_TOKEN));
     verify(matrixSynapseService).inviteUserToRoom(NEW_ROOM_ID, USER_MATRIX_ID, AGENCY_TOKEN);
-    verify(matrixSynapseService).joinRoom(NEW_ROOM_ID, USER_TOKEN);
+    verify(matrixSynapseService).joinRoomOnce(NEW_ROOM_ID, USER_TOKEN);
 
     // The already browser-encrypted event is validated in the provisioned room.
     verify(matrixSynapseService).getRoomEvent(NEW_ROOM_ID, MATRIX_EVENT_ID, USER_TOKEN);
@@ -311,7 +322,8 @@ class CreateEnquiryMessageFacadeMatrixRoomProvisioningTest {
     when(matrixSynapseService.loginAsUserAccessToken(USER_MATRIX_ID)).thenReturn(USER_TOKEN);
     when(matrixSynapseService.loginAsUserAccessToken(consultantMatrixId))
         .thenReturn(consultantToken);
-    when(matrixSynapseService.joinRoom(eq(NEW_ROOM_ID), anyString())).thenReturn(true);
+    when(matrixSynapseService.joinRoom(NEW_ROOM_ID, consultantToken)).thenReturn(true);
+    when(matrixSynapseService.joinRoomOnce(NEW_ROOM_ID, USER_TOKEN)).thenReturn(true);
     when(matrixSynapseService.getRoomEvent(NEW_ROOM_ID, MATRIX_EVENT_ID, USER_TOKEN))
         .thenReturn(
             Optional.of(

@@ -14,6 +14,7 @@ import de.caritas.cob.userservice.api.adapters.matrix.dto.MatrixCreateRoomRespon
 import de.caritas.cob.userservice.api.adapters.matrix.dto.MatrixInviteUserRequestDTO;
 import de.caritas.cob.userservice.api.adapters.matrix.dto.MatrixInviteUserResponseDTO;
 import de.caritas.cob.userservice.api.config.observability.LiveChatDiagnosticMetrics;
+import de.caritas.cob.userservice.api.exception.matrix.MatrixJoinRateLimitedException;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
@@ -27,6 +28,7 @@ import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.http.HttpEntity;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -708,6 +710,51 @@ class MatrixRoomClientTest {
                 "{\"error\":\"not invited\"}".getBytes(StandardCharsets.UTF_8),
                 StandardCharsets.UTF_8));
 
+    assertThat(matrixRoomClient.joinRoom(ROOM_ID, ACCESS_TOKEN)).isFalse();
+  }
+
+  @Test
+  void joinRoomOnce_ShouldSurfaceFullBodyDelayWithoutRetrying() {
+    var joinUrl = uri(API_URL + "/_matrix/client/r0/rooms/" + ENCODED_ROOM_ID + "/join");
+    when(restTemplate.postForEntity(
+            eq(joinUrl), org.mockito.ArgumentMatchers.any(HttpEntity.class), eq(Map.class)))
+        .thenThrow(
+            HttpClientErrorException.create(
+                HttpStatus.TOO_MANY_REQUESTS,
+                "Too Many Requests",
+                null,
+                "{\"retry_after_ms\":7351}".getBytes(StandardCharsets.UTF_8),
+                StandardCharsets.UTF_8));
+
+    assertThatThrownBy(() -> matrixRoomClient.joinRoomOnce(ROOM_ID, ACCESS_TOKEN))
+        .isInstanceOfSatisfying(
+            MatrixJoinRateLimitedException.class,
+            limited -> assertThat(limited.getRetryAfterMs()).isEqualTo(7351));
+    verify(restTemplate)
+        .postForEntity(
+            eq(joinUrl), org.mockito.ArgumentMatchers.any(HttpEntity.class), eq(Map.class));
+  }
+
+  @Test
+  void joinRoomOnce_ShouldHonorTheLongerRetryAfterHeader() {
+    var headers = new HttpHeaders();
+    headers.set(HttpHeaders.RETRY_AFTER, "20");
+    when(restTemplate.postForEntity(
+            eq(uri(API_URL + "/_matrix/client/r0/rooms/" + ENCODED_ROOM_ID + "/join")),
+            org.mockito.ArgumentMatchers.any(HttpEntity.class),
+            eq(Map.class)))
+        .thenThrow(
+            HttpClientErrorException.create(
+                HttpStatus.TOO_MANY_REQUESTS,
+                "Too Many Requests",
+                headers,
+                "{\"retry_after_ms\":7351}".getBytes(StandardCharsets.UTF_8),
+                StandardCharsets.UTF_8));
+
+    assertThatThrownBy(() -> matrixRoomClient.joinRoomOnce(ROOM_ID, ACCESS_TOKEN))
+        .isInstanceOfSatisfying(
+            MatrixJoinRateLimitedException.class,
+            limited -> assertThat(limited.getRetryAfterMs()).isEqualTo(20_000));
     assertThat(matrixRoomClient.joinRoom(ROOM_ID, ACCESS_TOKEN)).isFalse();
   }
 

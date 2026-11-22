@@ -4,6 +4,7 @@ import de.caritas.cob.userservice.api.adapters.matrix.config.MatrixConfig;
 import de.caritas.cob.userservice.api.exception.matrix.MatrixCreateRoomException;
 import de.caritas.cob.userservice.api.exception.matrix.MatrixCreateUserException;
 import de.caritas.cob.userservice.api.exception.matrix.MatrixInviteUserException;
+import de.caritas.cob.userservice.api.exception.matrix.MatrixJoinRateLimitedException;
 import de.caritas.cob.userservice.api.port.out.SessionRoomGateway;
 import java.nio.charset.StandardCharsets;
 import lombok.RequiredArgsConstructor;
@@ -72,6 +73,12 @@ public class MatrixSessionRoomGateway implements SessionRoomGateway {
   @Override
   public boolean joinRoom(String roomId, String accessToken) {
     return matrixSynapseService.joinRoom(roomId, accessToken);
+  }
+
+  @Override
+  public boolean joinRoomOnce(String roomId, String accessToken)
+      throws MatrixJoinRateLimitedException {
+    return matrixSynapseService.joinRoomOnce(roomId, accessToken);
   }
 
   @Override

@@ -19,6 +19,7 @@ import de.caritas.cob.userservice.api.exception.matrix.MatrixBrowserLoginRateLim
 import de.caritas.cob.userservice.api.exception.matrix.MatrixCreateRoomException;
 import de.caritas.cob.userservice.api.exception.matrix.MatrixCreateUserException;
 import de.caritas.cob.userservice.api.exception.matrix.MatrixInviteUserException;
+import de.caritas.cob.userservice.api.exception.matrix.MatrixJoinRateLimitedException;
 import de.caritas.cob.userservice.api.helper.MatrixIds;
 import de.caritas.cob.userservice.api.port.out.MatrixRoomMembershipLookup;
 import de.caritas.cob.userservice.api.port.out.MatrixUserClient;
@@ -927,7 +928,7 @@ public class MatrixSynapseService implements MatrixUserClient, MatrixRoomMembers
         : OptionalInt.empty();
   }
 
-  private static long retryAfterHeaderSeconds(HttpHeaders headers, long nowMillis) {
+  static long retryAfterHeaderSeconds(HttpHeaders headers, long nowMillis) {
     String value = headers == null ? null : headers.getFirst(HttpHeaders.RETRY_AFTER);
     if (value == null) {
       return 0;
@@ -1714,6 +1715,11 @@ public class MatrixSynapseService implements MatrixUserClient, MatrixRoomMembers
    */
   public boolean joinRoom(String roomId, String accessToken) {
     return matrixRoomClient.joinRoom(roomId, accessToken);
+  }
+
+  public boolean joinRoomOnce(String roomId, String accessToken)
+      throws MatrixJoinRateLimitedException {
+    return matrixRoomClient.joinRoomOnce(roomId, accessToken);
   }
 
   /**

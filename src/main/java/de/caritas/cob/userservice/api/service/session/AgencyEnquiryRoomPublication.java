@@ -5,6 +5,7 @@ import static org.apache.commons.lang3.StringUtils.isNotBlank;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
+import de.caritas.cob.userservice.api.service.session.AgencyEnquiryRoomAttempts.RequesterJoinClaim;
 import de.caritas.cob.userservice.api.service.session.AgencySilentMembershipService.InitialRoomContact;
 import java.util.Comparator;
 import java.util.List;
@@ -29,6 +30,20 @@ public class AgencyEnquiryRoomPublication {
   @Transactional(isolation = Isolation.READ_COMMITTED)
   public Optional<String> publish(
       Session expected, String roomId, List<InitialRoomContact> contacts) {
+    return publish(expected, roomId, contacts, null);
+  }
+
+  @Transactional(isolation = Isolation.READ_COMMITTED)
+  public Optional<String> publishPrepared(
+      Session expected, RequesterJoinClaim claim, List<InitialRoomContact> contacts) {
+    return publish(expected, claim.roomId(), contacts, claim);
+  }
+
+  private Optional<String> publish(
+      Session expected,
+      String roomId,
+      List<InitialRoomContact> contacts,
+      RequesterJoinClaim claim) {
     var ordered =
         contacts.stream()
             .distinct()
@@ -49,6 +64,14 @@ public class AgencyEnquiryRoomPublication {
         || current.getOwnershipRevision() != expected.getOwnershipRevision()
         || Boolean.TRUE.equals(current.getIsConsultantDirectlySet())
             != Boolean.TRUE.equals(expected.getIsConsultantDirectlySet())) {
+      return Optional.empty();
+    }
+    if (claim != null
+        && (current.getUser() == null
+            || !Objects.equals(current.getUser().getUserId(), claim.plan().requesterId())
+            || !Objects.equals(
+                current.getUser().getMatrixUserId(), claim.plan().requesterMatrixUserId())
+            || !roomAttempts.ownsRequesterJoin(current, roomId, claim))) {
       return Optional.empty();
     }
     if (isNotBlank(current.getMatrixRoomId())) {

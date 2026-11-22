@@ -12,6 +12,7 @@ import de.caritas.cob.userservice.api.exception.matrix.MatrixCreateRoomException
 import de.caritas.cob.userservice.api.exception.matrix.MatrixCreateRoomRateLimitedException;
 import de.caritas.cob.userservice.api.exception.matrix.MatrixInviteRateLimitedException;
 import de.caritas.cob.userservice.api.exception.matrix.MatrixInviteUserException;
+import de.caritas.cob.userservice.api.exception.matrix.MatrixJoinRateLimitedException;
 import java.net.URI;
 import java.util.HashMap;
 import java.util.Map;
@@ -639,6 +640,15 @@ public class MatrixRoomClient {
 
   public boolean joinRoom(String roomId, String accessToken) {
     try {
+      return joinRoomOnce(roomId, accessToken);
+    } catch (MatrixJoinRateLimitedException ignored) {
+      return false;
+    }
+  }
+
+  public boolean joinRoomOnce(String roomId, String accessToken)
+      throws MatrixJoinRateLimitedException {
+    try {
       var headers = getClientHttpHeaders(accessToken);
       headers.setContentType(MediaType.APPLICATION_JSON);
 
@@ -657,6 +667,17 @@ public class MatrixRoomClient {
         return false;
       }
     } catch (HttpClientErrorException ex) {
+      if (ex.getStatusCode().value() == 429) {
+        long headerSeconds =
+            MatrixSynapseService.retryAfterHeaderSeconds(
+                ex.getResponseHeaders(), System.currentTimeMillis());
+        long headerMillis =
+            headerSeconds > Long.MAX_VALUE / 1000 ? Long.MAX_VALUE : headerSeconds * 1000;
+        long retryAfterMs = Math.max(headerMillis, serverRetryAfterMs(ex));
+        log.warn(
+            "Matrix join for room {} was rate limited; retry after {} ms", roomId, retryAfterMs);
+        throw new MatrixJoinRateLimitedException("Matrix room join was rate limited", retryAfterMs);
+      }
       if (ex.getStatusCode().value() == 403
           && ex.getResponseBodyAsString().contains("already in the room")) {
         log.info("User already in Matrix room: {}, skipping join", roomId);
