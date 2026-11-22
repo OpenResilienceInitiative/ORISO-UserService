@@ -124,6 +124,29 @@ public class GroupWaitingRoomService {
             .orElse(false);
   }
 
+  /**
+   * ORISO-UserService#1747: an audio or video self-help circle is entered by knocking. Its advice
+   * seekers wait here and a moderator lets them in; text circles keep "agree and join".
+   */
+  public static boolean requiresAdmission(Chat chat) {
+    return chat.getChatModality() == ChatModality.AUDIO
+        || chat.getChatModality() == ChatModality.VIDEO;
+  }
+
+  /**
+   * Whether a moderator let this person in recently ({@link #ADMISSION_HANDOVER_MINUTES}), so their
+   * join may go through. A pending, declined, cancelled or stale entry does not count.
+   */
+  public boolean isAdmitted(Long chatId, String userId) {
+    if (chatId == null || userId == null) {
+      return false;
+    }
+    return repository
+        .findFirstBySeriesIdAndUserIdAndViaOrderByIdDesc(chatId, userId, Via.WAITING_ROOM)
+        .filter(this::freshAdmission)
+        .isPresent();
+  }
+
   private Optional<Chat> groupOf(String matrixRoomId) {
     if (matrixRoomId == null || matrixRoomId.isBlank()) {
       return Optional.empty();

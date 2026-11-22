@@ -130,6 +130,7 @@ import org.springframework.transaction.support.TransactionTemplate;
 @RecordApplicationEvents
 @Import({
   SessionOwnershipService.class,
+  de.caritas.cob.userservice.api.service.session.AgencyEnquiryRoomDecisions.class,
   de.caritas.cob.userservice.api.service.matrix.InquiryAcceptanceNoticeStore.class,
   de.caritas.cob.userservice.api.helper.ConsultantDisplayNameResolver.class,
   EventNotificationService.class,

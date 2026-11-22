@@ -335,6 +335,27 @@ public interface SessionRepository extends CrudRepository<Session, Long>, Sessio
           + " de.caritas.cob.userservice.api.model.Session.SessionStatus.NEW)")
   int closeUnassignedEnquiries(@Param("user") User user, @Param("now") LocalDateTime now);
 
+  /** Scoped current read even when a roster transaction has an earlier snapshot. */
+  @Lock(LockModeType.PESSIMISTIC_READ)
+  @Query(
+      """
+      select enquiry.id as sessionId, enquiry.matrixRoomId as roomId
+      from Session enquiry
+      where enquiry.agencyId = :agencyId
+        and enquiry.status in :statuses
+        and enquiry.consultant is null
+        and (enquiry.isConsultantDirectlySet is null or enquiry.isConsultantDirectlySet = false)
+        and enquiry.matrixRoomId is not null and trim(enquiry.matrixRoomId) <> ''
+      """)
+  List<OpenEnquiryRoomBinding> lockOpenEnquiryBindings(
+      @Param("agencyId") Long agencyId, @Param("statuses") List<SessionStatus> statuses);
+
+  interface OpenEnquiryRoomBinding {
+    Long getSessionId();
+
+    String getRoomId();
+  }
+
   List<Session> findByAgencyIdAndStatusAndConsultantIsNull(
       Long agencyId, SessionStatus sessionStatus);
 
@@ -718,6 +739,29 @@ public interface SessionRepository extends CrudRepository<Session, Long>, Sessio
       WHERE s.matrixRoomId IS NOT NULL AND s.agencyId IN :agencyIds
       """)
   List<SessionRoomRow> findSessionRoomsOfAgencies(@Param("agencyIds") Collection<Long> agencyIds);
+
+  /** The upper ID is fixed before a late-joiner sweep so new sessions do not extend it. */
+  @Query("SELECT MAX(s.id) FROM Session s WHERE s.agencyId = :agencyId")
+  Optional<Long> findAgencySessionUpperId(@Param("agencyId") Long agencyId);
+
+  @Query(
+      """
+      SELECT new de.caritas.cob.userservice.api.port.out.SessionRoomRow(s.id, s.matrixRoomId)
+      FROM Session s
+      WHERE s.agencyId = :agencyId
+        AND s.id > :afterId AND s.id <= :upperId
+        AND s.status IN :openStatuses
+        AND s.consultant IS NULL
+        AND (s.isConsultantDirectlySet IS NULL OR s.isConsultantDirectlySet = false)
+        AND s.matrixRoomId IS NOT NULL AND TRIM(s.matrixRoomId) <> ''
+      ORDER BY s.id
+      """)
+  List<SessionRoomRow> findLateJoinerEnquiryRooms(
+      @Param("agencyId") Long agencyId,
+      @Param("openStatuses") Collection<SessionStatus> openStatuses,
+      @Param("afterId") long afterId,
+      @Param("upperId") long upperId,
+      Pageable page);
 
   /** Every supervision side room of cases of the given centres: the fallback, as above. */
   @Query(

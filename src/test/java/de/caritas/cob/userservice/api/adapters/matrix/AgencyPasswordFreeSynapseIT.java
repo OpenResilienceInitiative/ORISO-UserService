@@ -3,6 +3,7 @@ package de.caritas.cob.userservice.api.adapters.matrix;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -25,6 +26,7 @@ import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.out.ConsultantAgencyRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
+import de.caritas.cob.userservice.api.port.out.SessionRoomRow;
 import de.caritas.cob.userservice.api.port.out.TeamDiscussionRepository;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
 import de.caritas.cob.userservice.api.service.ChatService;
@@ -33,6 +35,9 @@ import de.caritas.cob.userservice.api.service.agency.AgencyMatrixCredentialClien
 import de.caritas.cob.userservice.api.service.agency.dto.AgencyMatrixCredentialsDTO;
 import de.caritas.cob.userservice.api.service.matrix.MatrixSessionSystemMessageService;
 import de.caritas.cob.userservice.api.service.session.AgencyDepartmentMembershipBackfill;
+import de.caritas.cob.userservice.api.service.session.AgencyEnquiryRevocations;
+import de.caritas.cob.userservice.api.service.session.AgencyEnquiryRoomAttempts;
+import de.caritas.cob.userservice.api.service.session.AgencyEnquiryRoomPublication;
 import de.caritas.cob.userservice.api.service.session.AgencyLateJoinerMembershipService;
 import de.caritas.cob.userservice.api.service.session.AgencyOpenEnquiryMembership;
 import de.caritas.cob.userservice.api.service.session.AgencyPreAssignmentRoomService;
@@ -259,9 +264,14 @@ class AgencyPasswordFreeSynapseIT {
   @Test
   void lateJoinAndRevocationUsePasswordFreeAgencyIdentity() {
     holdingRoom();
-    when(sessionRepository.findByAgencyIdAndStatusAndConsultantIsNull(
-            7L, Session.SessionStatus.NEW))
-        .thenReturn(List.of(session));
+    when(sessionRepository.findAgencySessionUpperId(7L)).thenReturn(Optional.of(session.getId()));
+    when(sessionRepository.findLateJoinerEnquiryRooms(
+            eq(7L),
+            eq(List.of(Session.SessionStatus.NEW, Session.SessionStatus.INITIAL)),
+            eq(Long.MIN_VALUE),
+            eq(session.getId()),
+            any()))
+        .thenReturn(List.of(new SessionRoomRow(session.getId(), session.getMatrixRoomId())));
     var assignments = mock(ConsultantAgencyRepository.class);
     when(consultants.findActiveByIdForUpdate(consultant.getId()))
         .thenReturn(Optional.of(consultant));
@@ -452,10 +462,18 @@ class AgencyPasswordFreeSynapseIT {
 
   private void holdingRoom() {
     var pause = new MatrixRateLimitPause();
+    var roomAttempts = mock(AgencyEnquiryRoomAttempts.class);
+    when(sessionRepository.lockFresh(session.getId())).thenReturn(Optional.of(session));
     new AgencyPreAssignmentRoomService(
             identities,
             gateway,
             sessions,
+            new AgencyEnquiryRoomPublication(
+                consultants,
+                sessionRepository,
+                sessions,
+                mock(AgencyEnquiryRevocations.class),
+                roomAttempts),
             silentMembership,
             new AgencyDepartmentMembershipBackfill(
                 new AgencyOpenEnquiryMembership(
@@ -466,7 +484,8 @@ class AgencyPasswordFreeSynapseIT {
                 gateway,
                 pause,
                 Runnable::run),
-            pause)
+            pause,
+            roomAttempts)
         .ensureHoldingRoom(session, session.getUser());
     assertThat(session.getMatrixRoomId()).isNotBlank();
   }

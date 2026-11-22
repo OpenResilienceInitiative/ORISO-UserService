@@ -59,12 +59,14 @@ mariadb_owned_tests=(
   DeactivateGroupChatSchedulerMariaDbReplicaIT
   DeleteUserAccountSchedulerMariaDbReplicaIT
   DeleteUsersRegisteredOnlySchedulerMariaDbReplicaIT
+  AgencyEnquiryRoomPublicationDatabaseIT
   SupportRoomMigrationConvergenceIT
   SessionOwnershipMariaDbIT
   ChatMembersOnlyMariaDbIT
   CaseHandoverStatusHttpMariaDbIT
   AccountInviteRevokeAcceptRaceMariaDbIT
   ConsultantTenantChangeMariaDbIT
+  ConsultantAgencyLateJoinerMembershipMariaDbIT
   CaseHandoverLeaveAdminPowerMariaDbIT
   CaseHandoverTakeoverMatrixMariaDbIT
   MoveThenTakeoverMatrixMariaDbIT
