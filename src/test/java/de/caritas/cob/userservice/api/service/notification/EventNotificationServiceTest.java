@@ -53,7 +53,6 @@ import org.mockito.Spy;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
-import org.springframework.test.util.ReflectionTestUtils;
 
 /**
  * WP-06 Activity Timeline (Slice 2, Tier 1) — coverage for the persisted "New client request"
@@ -1686,12 +1685,11 @@ class EventNotificationServiceTest {
   }
 
   // ---------------------------------------------------------------------------
-  // Notification preview modes (via createMessageNotificationFromRoom)
+  // Message notification metadata
   // ---------------------------------------------------------------------------
 
   @Test
-  void createMessageNotificationFromRoom_nonePreviewModeDoesNotIncludeMessageBody() {
-    ReflectionTestUtils.setField(eventNotificationService, "notificationPreviewMode", "NONE");
+  void createMessageNotificationFromRoom_doesNotIncludeMessageBody() {
     Session session = sessionMock();
     User user = mock(User.class);
     when(user.getUserId()).thenReturn("asker-1");
@@ -1710,72 +1708,6 @@ class EventNotificationServiceTest {
     assertThat(text).contains("sent a new message");
     assertThat(text).doesNotContain("secret body");
     assertThat(text).doesNotContain("[content hidden]");
-  }
-
-  @Test
-  void createMessageNotificationFromRoom_maskedPreviewModeShowsRedactedPlaceholder() {
-    ReflectionTestUtils.setField(eventNotificationService, "notificationPreviewMode", "MASKED");
-    Session session = sessionMock();
-    User user = mock(User.class);
-    when(user.getUserId()).thenReturn("asker-1");
-    when(session.getUser()).thenReturn(user);
-    when(sessionRepository.findByMatrixRoomId("!room-1:matrix.example"))
-        .thenReturn(Optional.of(session));
-    when(consultantRepository.findByIdAndDeleteDateIsNull("sender")).thenReturn(Optional.empty());
-    when(userRepository.findByUserIdAndDeleteDateIsNull("sender")).thenReturn(Optional.empty());
-    when(identityTombstoneService.resolveDisplayLabel("sender")).thenReturn(Optional.empty());
-
-    eventNotificationService.createMessageNotificationFromRoom(
-        "!room-1:matrix.example", "sender", "secret body");
-
-    verify(eventNotificationRepository).save(eventCaptor.capture());
-    String text = eventCaptor.getValue().getText();
-    assertThat(text).contains("[content hidden]");
-    assertThat(text).doesNotContain("secret body");
-  }
-
-  @Test
-  void createMessageNotificationFromRoom_fullPreviewModeNeverPersistsMessageBody() {
-    ReflectionTestUtils.setField(eventNotificationService, "notificationPreviewMode", "FULL");
-    Session session = sessionMock();
-    User user = mock(User.class);
-    when(user.getUserId()).thenReturn("asker-1");
-    when(session.getUser()).thenReturn(user);
-    when(sessionRepository.findByMatrixRoomId("!room-1:matrix.example"))
-        .thenReturn(Optional.of(session));
-    when(consultantRepository.findByIdAndDeleteDateIsNull("sender")).thenReturn(Optional.empty());
-    when(userRepository.findByUserIdAndDeleteDateIsNull("sender")).thenReturn(Optional.empty());
-    when(identityTombstoneService.resolveDisplayLabel("sender")).thenReturn(Optional.empty());
-
-    eventNotificationService.createMessageNotificationFromRoom(
-        "!room-1:matrix.example", "sender", "hello there");
-
-    verify(eventNotificationRepository).save(eventCaptor.capture());
-    assertThat(eventCaptor.getValue().getText()).contains("sent a new message");
-    assertThat(eventCaptor.getValue().getText()).doesNotContain("hello there");
-  }
-
-  @Test
-  void createMessageNotificationFromRoom_invalidPreviewModeDefaultsToNone() {
-    ReflectionTestUtils.setField(
-        eventNotificationService, "notificationPreviewMode", "INVALID_VALUE");
-    Session session = sessionMock();
-    User user = mock(User.class);
-    when(user.getUserId()).thenReturn("asker-1");
-    when(session.getUser()).thenReturn(user);
-    when(sessionRepository.findByMatrixRoomId("!room-1:matrix.example"))
-        .thenReturn(Optional.of(session));
-    when(consultantRepository.findByIdAndDeleteDateIsNull("sender")).thenReturn(Optional.empty());
-    when(userRepository.findByUserIdAndDeleteDateIsNull("sender")).thenReturn(Optional.empty());
-    when(identityTombstoneService.resolveDisplayLabel("sender")).thenReturn(Optional.empty());
-
-    eventNotificationService.createMessageNotificationFromRoom(
-        "!room-1:matrix.example", "sender", "hello");
-
-    verify(eventNotificationRepository).save(eventCaptor.capture());
-    // IllegalArgumentException on valueOf → falls back to NONE, which omits the preview
-    assertThat(eventCaptor.getValue().getText()).doesNotContain("hello");
-    assertThat(eventCaptor.getValue().getText()).doesNotContain("[content hidden]");
   }
 
   // ---------------------------------------------------------------------------
@@ -1949,35 +1881,11 @@ class EventNotificationServiceTest {
   }
 
   // ---------------------------------------------------------------------------
-  // buildThreadReplyNotificationText — MASKED + FULL modes
+  // Thread reply notification metadata
   // ---------------------------------------------------------------------------
 
   @Test
-  void createThreadReplyNotificationFromRoom_maskedModeShowsRedactedPlaceholder() {
-    ReflectionTestUtils.setField(eventNotificationService, "notificationPreviewMode", "MASKED");
-    Session session = sessionMock();
-    User user = mock(User.class);
-    when(user.getUserId()).thenReturn("asker-1");
-    when(session.getUser()).thenReturn(user);
-    when(sessionRepository.findByMatrixRoomId("!room-1:matrix.example"))
-        .thenReturn(Optional.of(session));
-    when(consultantRepository.findByIdAndDeleteDateIsNull("sender")).thenReturn(Optional.empty());
-    when(userRepository.findByUserIdAndDeleteDateIsNull("sender")).thenReturn(Optional.empty());
-    when(identityTombstoneService.resolveDisplayLabel("sender")).thenReturn(Optional.empty());
-
-    eventNotificationService.createThreadReplyNotificationFromRoom(
-        "!room-1:matrix.example", "sender", "secret reply", "thread-1");
-
-    verify(eventNotificationRepository).save(eventCaptor.capture());
-    String text = eventCaptor.getValue().getText();
-    assertThat(text).contains("replied in a thread");
-    assertThat(text).contains("[content hidden]");
-    assertThat(text).doesNotContain("secret reply");
-  }
-
-  @Test
-  void createThreadReplyNotificationFromRoom_fullModeNeverPersistsPreviewOrParentPreview() {
-    ReflectionTestUtils.setField(eventNotificationService, "notificationPreviewMode", "FULL");
+  void createThreadReplyNotificationFromRoom_neverPersistsPreviewOrParentPreview() {
     Session session = sessionMock();
     User user = mock(User.class);
     when(user.getUserId()).thenReturn("asker-1");
@@ -1999,8 +1907,7 @@ class EventNotificationServiceTest {
   }
 
   @Test
-  void createThreadReplyNotificationFromRoom_fullModeEmptyPreviewStaysGeneric() {
-    ReflectionTestUtils.setField(eventNotificationService, "notificationPreviewMode", "FULL");
+  void createThreadReplyNotificationFromRoom_emptyPreviewStaysGeneric() {
     Session session = sessionMock();
     User user = mock(User.class);
     when(user.getUserId()).thenReturn("asker-1");
@@ -2236,8 +2143,7 @@ class EventNotificationServiceTest {
   // ---------------------------------------------------------------------------
 
   @Test
-  void createMessageNotificationFromRoom_noneMode_usesContentClassAsLabel() {
-    ReflectionTestUtils.setField(eventNotificationService, "notificationPreviewMode", "NONE");
+  void createMessageNotificationFromRoom_usesContentClassAsLabel() {
     Session session = sessionMock();
     User user = mock(User.class);
     when(user.getUserId()).thenReturn("asker-1");
@@ -2258,8 +2164,7 @@ class EventNotificationServiceTest {
   }
 
   @Test
-  void createMessageNotificationFromRoom_noneMode_fileContentClassLabelIsFile() {
-    ReflectionTestUtils.setField(eventNotificationService, "notificationPreviewMode", "NONE");
+  void createMessageNotificationFromRoom_fileContentClassLabelIsFile() {
     Session session = sessionMock();
     User user = mock(User.class);
     when(user.getUserId()).thenReturn("asker-1");
@@ -2280,8 +2185,7 @@ class EventNotificationServiceTest {
   }
 
   @Test
-  void createMessageNotificationFromRoom_noneMode_audioContentClassLabelIsAudioMessage() {
-    ReflectionTestUtils.setField(eventNotificationService, "notificationPreviewMode", "NONE");
+  void createMessageNotificationFromRoom_audioContentClassLabelIsAudioMessage() {
     Session session = sessionMock();
     User user = mock(User.class);
     when(user.getUserId()).thenReturn("asker-1");
@@ -2302,8 +2206,7 @@ class EventNotificationServiceTest {
   }
 
   @Test
-  void createMessageNotificationFromRoom_noneMode_videoContentClassLabelIsVideoMessage() {
-    ReflectionTestUtils.setField(eventNotificationService, "notificationPreviewMode", "NONE");
+  void createMessageNotificationFromRoom_videoContentClassLabelIsVideoMessage() {
     Session session = sessionMock();
     User user = mock(User.class);
     when(user.getUserId()).thenReturn("asker-1");
@@ -2328,8 +2231,7 @@ class EventNotificationServiceTest {
   // ---------------------------------------------------------------------------
 
   @Test
-  void createMessageNotificationFromRoom_fullMode_doesNotPersistLongPreview() {
-    ReflectionTestUtils.setField(eventNotificationService, "notificationPreviewMode", "FULL");
+  void createMessageNotificationFromRoom_doesNotPersistLongPreview() {
     Session session = sessionMock();
     User user = mock(User.class);
     when(user.getUserId()).thenReturn("asker-1");
@@ -2355,8 +2257,7 @@ class EventNotificationServiceTest {
   // ---------------------------------------------------------------------------
 
   @Test
-  void createMessageNotificationFromRoom_fullMode_emptyPreviewKeepsEventIdOutOfText() {
-    ReflectionTestUtils.setField(eventNotificationService, "notificationPreviewMode", "FULL");
+  void createMessageNotificationFromRoom_emptyPreviewKeepsEventIdOutOfText() {
     Session session = sessionMock();
     User user = mock(User.class);
     when(user.getUserId()).thenReturn("asker-1");

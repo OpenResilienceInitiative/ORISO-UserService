@@ -1,8 +1,8 @@
 package de.caritas.cob.userservice.api.adapters.web.controller;
 
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.model.NotificationRoomLevel;
-import de.caritas.cob.userservice.api.service.matrix.RedisMessageMirrorService;
 import de.caritas.cob.userservice.api.service.notification.EventNotificationService;
 import de.caritas.cob.userservice.api.service.notification.FeedbackMessageEmailService;
 import de.caritas.cob.userservice.api.service.notification.InternalChatEmailService;
@@ -44,7 +44,6 @@ public class EventNotificationController {
   private final @NonNull InternalChatEmailService internalChatEmailService;
   private final @NonNull AuthenticatedUser authenticatedUser;
   private final @NonNull MessageEventCurrentAccessService messageEventCurrentAccessService;
-  private final Optional<RedisMessageMirrorService> redisMessageMirrorService;
 
   /** Upper bound of the {@code excludeEventTypes}/{@code eventTypes} lists (#1377 slice 7). */
   static final int MAX_EVENT_TYPES = 100;
@@ -233,31 +232,19 @@ public class EventNotificationController {
       eventNotificationService.createThreadReplyNotificationFromRoom(
           request.getRoomId(),
           authenticatedUser.getUserId(),
-          request.getMessagePreview(),
+          request.systemNotificationMarker,
           request.getThreadRootId(),
           request.getSupervisorMessage() != null && request.getSupervisorMessage(),
-          request.getThreadParentPreview(),
+          null,
           envelope);
     } else {
       eventNotificationService.createMessageNotificationFromRoom(
           request.getRoomId(),
           authenticatedUser.getUserId(),
-          request.getMessagePreview(),
+          request.systemNotificationMarker,
           request.getSupervisorMessage() != null && request.getSupervisorMessage(),
           envelope);
     }
-
-    // Debug-only mirror to Redis for Redis Commander verification of outgoing preview flow.
-    redisMessageMirrorService.ifPresent(
-        mirror ->
-            mirror.mirrorOutgoingMessage(
-                null,
-                request.getRoomId(),
-                authenticatedUser.getUsername(),
-                authenticatedUser.getRoles() != null
-                    && authenticatedUser.getRoles().contains("consultant"),
-                request.getMessagePreview(),
-                null));
 
     return new ResponseEntity<>(HttpStatus.NO_CONTENT);
   }
@@ -333,12 +320,13 @@ public class EventNotificationController {
     }
   }
 
+  @JsonIgnoreProperties("threadParentPreview")
   public static class MessageEventRequestDTO {
     @NotBlank
     @Size(max = 255)
     private String roomId;
 
-    private String messagePreview;
+    private String systemNotificationMarker;
     private String threadRootId;
     private Boolean supervisorMessage;
     private Boolean feedbackMailIntent;
@@ -351,7 +339,6 @@ public class EventNotificationController {
      */
     private String senderDisplayName;
 
-    private String threadParentPreview;
     private Boolean teamDiscussion;
     private java.util.List<String> mentionedUserIds;
 
@@ -427,12 +414,9 @@ public class EventNotificationController {
       this.roomId = roomId;
     }
 
-    public String getMessagePreview() {
-      return messagePreview;
-    }
-
     public void setMessagePreview(String messagePreview) {
-      this.messagePreview = messagePreview;
+      systemNotificationMarker =
+          EventNotificationService.legacySystemNotificationMarker(messagePreview);
     }
 
     public String getThreadRootId() {
@@ -457,14 +441,6 @@ public class EventNotificationController {
 
     public void setSupervisorMessage(Boolean supervisorMessage) {
       this.supervisorMessage = supervisorMessage;
-    }
-
-    public String getThreadParentPreview() {
-      return threadParentPreview;
-    }
-
-    public void setThreadParentPreview(String threadParentPreview) {
-      this.threadParentPreview = threadParentPreview;
     }
   }
 
