@@ -23,7 +23,9 @@ import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.HttpClientErrorException;
+import org.springframework.web.client.ResourceAccessException;
 import org.springframework.web.client.RestClientException;
+import org.springframework.web.client.RestClientResponseException;
 import org.springframework.web.client.RestTemplate;
 import org.springframework.web.util.UriComponentsBuilder;
 
@@ -88,8 +90,7 @@ public class TenantDpaSignatureReadClient {
     try {
       page = restTemplate.exchange(url, HttpMethod.GET, request, PendingPage.class).getBody();
     } catch (RestClientException failure) {
-      // Drop the original HTTP cause because it can retain a response body or request URL.
-      throw new IllegalStateException("TenantService DPA outbox page is unavailable"); // NOPMD
+      throw new OutboxRequestFailure(OutboxOperation.PAGE, failure);
     }
     if (page == null || page.events() == null || page.events().size() > boundedLimit) {
       throw new IllegalStateException("Invalid TenantService DPA outbox page");
@@ -120,7 +121,7 @@ public class TenantDpaSignatureReadClient {
     } catch (HttpClientErrorException.NotFound unavailable) {
       return Optional.empty();
     } catch (RestClientException failure) {
-      throw new IllegalStateException("TenantService exact DPA signature is unavailable"); // NOPMD
+      throw new OutboxRequestFailure(OutboxOperation.SIGNATURE, failure);
     }
     if (exact == null
         || !event.equals(new Event(exact.id(), exact.tenantId(), exact.signedAtEpochMillis()))
@@ -159,7 +160,7 @@ public class TenantDpaSignatureReadClient {
         return;
       }
     } catch (RestClientException failure) {
-      throw new IllegalStateException("TenantService DPA acknowledgement is unavailable"); // NOPMD
+      throw new OutboxRequestFailure(OutboxOperation.ACKNOWLEDGEMENT, failure);
     }
     throw new IllegalStateException("TenantService did not confirm the exact DPA acknowledgement");
   }
@@ -189,6 +190,33 @@ public class TenantDpaSignatureReadClient {
         && event.id() > 0
         && event.tenantId() > 0
         && event.signedAtEpochMillis() > 0;
+  }
+
+  enum OutboxOperation {
+    PAGE("TenantService DPA outbox page"),
+    SIGNATURE("TenantService exact DPA signature"),
+    ACKNOWLEDGEMENT("TenantService DPA acknowledgement");
+
+    private final String label;
+
+    OutboxOperation(String label) {
+      this.label = label;
+    }
+  }
+
+  /** A safe diagnostic for the scheduler. The original exception may retain a URL or body. */
+  static final class OutboxRequestFailure extends IllegalStateException {
+    OutboxRequestFailure(OutboxOperation operation, RestClientException failure) {
+      super(operation.label + " is unavailable (" + category(failure) + ")");
+    }
+
+    private static String category(RestClientException failure) {
+      return switch (failure) {
+        case RestClientResponseException response -> "HTTP " + response.getStatusCode().value();
+        case ResourceAccessException ignored -> "transport failure";
+        default -> "client failure";
+      };
+    }
   }
 
   record PendingPage(List<Event> events, Long nextAfterId) {}

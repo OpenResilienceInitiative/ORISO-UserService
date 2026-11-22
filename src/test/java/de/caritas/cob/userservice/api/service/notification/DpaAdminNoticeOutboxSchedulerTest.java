@@ -16,12 +16,17 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
+import ch.qos.logback.classic.Level;
+import ch.qos.logback.classic.spi.ILoggingEvent;
 import de.caritas.cob.userservice.api.service.notification.DpaAdminNoticeOutboxConsumer.Event;
 import de.caritas.cob.userservice.api.service.notification.DpaAdminNoticeOutboxConsumer.VerifiedSignature;
+import de.caritas.cob.userservice.api.service.notification.TenantDpaSignatureReadClient.OutboxOperation;
+import de.caritas.cob.userservice.api.service.notification.TenantDpaSignatureReadClient.OutboxRequestFailure;
 import de.caritas.cob.userservice.api.service.notification.TenantDpaSignatureReadClient.PendingPage;
 import de.caritas.cob.userservice.api.workflow.scheduling.ScheduledTaskClaimService;
 import de.caritas.cob.userservice.api.workflow.scheduling.ScheduledTaskClaimService.ClaimLease;
 import de.caritas.cob.userservice.tenantadminservice.generated.web.model.DpaSignatureDTO;
+import de.caritas.cob.userservice.testutils.LogbackCaptor;
 import java.nio.file.Path;
 import java.time.LocalDateTime;
 import java.util.List;
@@ -35,8 +40,11 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.mockito.ArgumentCaptor;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
+import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
+import org.springframework.web.client.HttpServerErrorException;
+import org.springframework.web.client.ResourceAccessException;
 
 class DpaAdminNoticeOutboxSchedulerTest {
 
@@ -202,6 +210,56 @@ class DpaAdminNoticeOutboxSchedulerTest {
     verify(client).acknowledge(held);
     verify(client).acknowledge(failed);
     assertThat(cursor()).isEqualTo(15);
+  }
+
+  @Test
+  void logsOnlyTheSafePullFailureAndStillRecoversPreviouslyClaimedNotices() {
+    when(client.readPending(0, PAGE_SIZE))
+        .thenThrow(
+            new OutboxRequestFailure(
+                OutboxOperation.PAGE,
+                new HttpServerErrorException(HttpStatus.SERVICE_UNAVAILABLE, "private reason")));
+
+    try (var logs = LogbackCaptor.forClass(DpaAdminNoticeOutboxScheduler.class)) {
+      scheduler().retryPending();
+
+      assertThat(logs.messages(Level.WARN))
+          .containsExactly(
+              "Exact DPA administrator notice pull deferred (TenantService DPA outbox page is unavailable (HTTP 503))");
+      assertThat(logs.events())
+          .singleElement()
+          .extracting(ILoggingEvent::getThrowableProxy)
+          .isNull();
+    }
+    verify(notices).retryPendingExactAdminNotices(any());
+    verify(claims).release(FIRST_LEASE);
+    assertThat(cursor()).isZero();
+  }
+
+  @Test
+  void logsOnlyTheSafeAcknowledgementFailureAndCheckpointsTheAttemptedEvent() {
+    var event = new Event(57141, 20, 30);
+    acceptOwnership(event);
+    when(client.readPending(0, PAGE_SIZE)).thenReturn(new PendingPage(List.of(event), null));
+    doThrow(
+            new OutboxRequestFailure(
+                OutboxOperation.ACKNOWLEDGEMENT, new ResourceAccessException("private URL")))
+        .when(client)
+        .acknowledge(event);
+
+    try (var logs = LogbackCaptor.forClass(DpaAdminNoticeOutboxScheduler.class)) {
+      scheduler().retryPending();
+
+      assertThat(logs.messages(Level.WARN))
+          .containsExactly(
+              "Exact DPA administrator notice event deferred (TenantService DPA acknowledgement is unavailable (transport failure))");
+      assertThat(logs.events())
+          .singleElement()
+          .extracting(ILoggingEvent::getThrowableProxy)
+          .isNull();
+    }
+    verify(claims).release(FIRST_LEASE);
+    assertThat(cursor()).isEqualTo(event.id());
   }
 
   @Test

@@ -1,5 +1,6 @@
 package de.caritas.cob.userservice.api.service.notification;
 
+import de.caritas.cob.userservice.api.service.notification.TenantDpaSignatureReadClient.OutboxRequestFailure;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
 import de.caritas.cob.userservice.api.workflow.scheduling.ScheduledTaskClaimService;
 import de.caritas.cob.userservice.api.workflow.scheduling.ScheduledTaskClaimService.ClaimLease;
@@ -93,9 +94,7 @@ class DpaAdminNoticeOutboxScheduler {
       try {
         pullOnePage(lease, consumer);
       } catch (RuntimeException failure) {
-        log.warn(
-            "Exact DPA administrator notice pull deferred ({})",
-            failure.getClass().getSimpleName());
+        log.warn("Exact DPA administrator notice pull deferred ({})", diagnostic(failure));
       }
       if (stillHeld(lease)) {
         consumer.recover();
@@ -121,10 +120,7 @@ class DpaAdminNoticeOutboxScheduler {
       } catch (RuntimeException failure) {
         // The producer retains an unacknowledged event. Revisit it on the next full sweep and
         // resume the unfinished page after the row we actually attempted.
-        log.warn(
-            "Exact DPA administrator notice event {} deferred ({})",
-            event.id(),
-            failure.getClass().getSimpleName());
+        log.warn("Exact DPA administrator notice event deferred ({})", diagnostic(failure));
         writeCursor(lease, event.id());
         return;
       }
@@ -138,6 +134,12 @@ class DpaAdminNoticeOutboxScheduler {
     if (nextAfterId != afterId) {
       writeCursor(lease, nextAfterId);
     }
+  }
+
+  private static String diagnostic(RuntimeException failure) {
+    return failure instanceof OutboxRequestFailure requestFailure
+        ? requestFailure.getMessage()
+        : failure.getClass().getSimpleName();
   }
 
   private boolean stillHeld(ClaimLease lease) {

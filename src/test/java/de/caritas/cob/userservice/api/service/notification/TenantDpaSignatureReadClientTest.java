@@ -9,6 +9,7 @@ import static org.mockito.Mockito.when;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.content;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.method;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.requestTo;
+import static org.springframework.test.web.client.response.MockRestResponseCreators.withException;
 import static org.springframework.test.web.client.response.MockRestResponseCreators.withNoContent;
 import static org.springframework.test.web.client.response.MockRestResponseCreators.withResourceNotFound;
 import static org.springframework.test.web.client.response.MockRestResponseCreators.withStatus;
@@ -35,6 +36,7 @@ import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.port.out.IdentityAuthentication;
 import de.caritas.cob.userservice.api.service.httpheader.SecurityHeaderSupplier;
 import de.caritas.cob.userservice.api.service.notification.DpaAdminNoticeOutboxConsumer.Event;
+import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.Date;
@@ -234,7 +236,31 @@ class TenantDpaSignatureReadClientTest {
     assertThat(client.readExact(EVENT)).isEmpty();
     assertThatThrownBy(() -> client.readExact(EVENT))
         .isInstanceOf(IllegalStateException.class)
-        .hasMessageNotContaining("private diagnostic")
+        .hasMessage("TenantService exact DPA signature is unavailable (HTTP 403)")
+        .hasNoCause();
+    verifyNoInteractions(legacyLogin);
+    server.verify();
+  }
+
+  @Test
+  void retainsSafeStatusAndTransportDiagnosticsForPullAndAcknowledgement() {
+    enable();
+    server
+        .expect(requestTo(OUTBOX + "?afterId=0&limit=8"))
+        .andExpect(method(HttpMethod.GET))
+        .andRespond(withStatus(HttpStatus.SERVICE_UNAVAILABLE).body("private provider body"));
+    server
+        .expect(requestTo(OUTBOX + "/1704/acknowledgements"))
+        .andExpect(method(HttpMethod.POST))
+        .andRespond(withException(new IOException("private connection details")));
+
+    assertThatThrownBy(() -> client.readPending(0, 8))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("TenantService DPA outbox page is unavailable (HTTP 503)")
+        .hasNoCause();
+    assertThatThrownBy(() -> client.acknowledge(EVENT))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("TenantService DPA acknowledgement is unavailable (transport failure)")
         .hasNoCause();
     verifyNoInteractions(legacyLogin);
     server.verify();
