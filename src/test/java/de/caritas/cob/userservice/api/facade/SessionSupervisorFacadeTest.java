@@ -563,6 +563,24 @@ class SessionSupervisorFacadeTest {
   }
 
   @Test
+  void attachStandingSupervisorIfAssigned_Should_attach_whenTheSupervisorsAgenciesAreNotLoaded()
+      throws Exception {
+    // ORISO-Frontend#2386 on Dev, 22 Nov: accepting an enquiry runs this without a transaction
+    // (self-invocation, open-in-view off), so the supervisor loaded by findById is detached and
+    // touching its lazy consultantAgencies threw. The case then stayed unsupervised.
+    addedBy.setAssignedSupervisorId(SUPERVISOR_ID);
+    // What findById hands over outside a transaction: an uninitialised lazy set with no session.
+    supervisor.setConsultantAgencies(new org.hibernate.collection.spi.PersistentSet<>());
+
+    facade.attachStandingSupervisorIfAssigned(SESSION_ID, addedBy);
+
+    ArgumentCaptor<SessionSupervisor> saved = ArgumentCaptor.forClass(SessionSupervisor.class);
+    verify(sessionSupervisorRepository).save(saved.capture());
+    assertThat(saved.getValue().getIsActive()).isTrue();
+    assertThat(saved.getValue().getSupervisorConsultant().getId()).isEqualTo(SUPERVISOR_ID);
+  }
+
+  @Test
   void attachStandingSupervisorIfAssigned_Should_keepTheSupervisor_whenMatrixRateLimitsTheInvite()
       throws Exception {
     // ORISO-Frontend#2386: right after a new enquiry the agency holding room has just invited
