@@ -21,7 +21,7 @@ public enum ConversationKind {
   /**
    * The kind of a session. A live chat is anonymous; internal and self-help groups are groups. A
    * session that was stored without a kind is read the way the app reads it: registered as
-   * anonymous, postcode 00000 or an {@code Anonymous-} name.
+   * anonymous or postcode 00000. The User-ID text never decides (ORISO-UserService#1697).
    *
    * <p>The technical session of a members-only group chat carries the dummy postcode 00000 too, so
    * the anonymous rule alone would call an internal chat anonymous. It is asked first, and only for

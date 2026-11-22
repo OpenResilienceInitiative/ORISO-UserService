@@ -1,0 +1,9 @@
+# Production files that may still recognise a guest by the anon_ / Anonymous- User-ID prefix.
+# ORISO-UserService#1697: a guest is recognised by stored facts (registration type ANONYMOUS, the
+# live-chat postcode 00000, the stored conversation type), never by the shape of the User-ID.
+# scripts/contracts/check-guest-prefix.mjs fails on any prefix rule outside this list.
+#
+# Format: one entry per line, "<path relative to the repository root> | <reason>".
+# Keep it empty unless a file truly must keep such a rule; give the reason and the ticket.
+#
+# No entries: nothing in src/main mints or detects anon_N or Anonymous-<timestamp> names any more.

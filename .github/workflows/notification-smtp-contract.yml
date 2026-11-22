@@ -22,6 +22,11 @@ jobs:
         java-version: '21'
         distribution: temurin
         cache: maven
+        cache-dependency-path: |
+          **/pom.xml
+          **/.mvn/wrapper/maven-wrapper.properties
+          **/.mvn/extensions.xml
+          scripts/ci/github-maven-settings.xml
     - name: Verify actual notification receipts and suppression
       run: scripts/ci/run-notification-smtp-receipts.sh
     - name: Upload SMTP contract report

@@ -15,6 +15,8 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpHeaders;
 import org.springframework.stereotype.Service;
+import org.springframework.web.client.ResourceAccessException;
+import org.springframework.web.client.RestClientResponseException;
 
 /**
  * Authoritative read-back of a tenant's DPA signature audit list from TenantService
@@ -45,11 +47,14 @@ public class TenantDpaSignatureReadClient {
       // RestClientException and would otherwise escape and turn the anonymous hint endpoint's
       // documented 202 into a 400. Nothing here may surface to that caller.
       //
-      // A failed read means no notice is ever sent and no ledger row is claimed, so this line is
-      // the only trace of a silently skipped notice — it carries the exception, not just its
-      // class name, or the status and body are lost with it.
-      log.warn(
-          "Could not read DPA signatures for tenant {} from TenantService", tenantId, exception);
+      // The external exception can carry response details or request identifiers.
+      String category =
+          switch (exception) {
+            case RestClientResponseException response -> "HTTP " + response.getStatusCode().value();
+            case ResourceAccessException ignored -> "transport failure";
+            default -> exception.getClass().getSimpleName();
+          };
+      log.warn("Could not read DPA signatures from TenantService ({})", category);
       return List.of();
     }
   }
