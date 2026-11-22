@@ -82,6 +82,7 @@ class AgencyEnquiryRoomPublicationDatabaseIT {
   @MockitoBean private Clock clock;
   @MockitoBean private SessionService sessionService;
   @MockitoBean private AgencyEnquiryRoomRetirements retiredRooms;
+  @MockitoBean private AgencyEnquiryRoomDecisions roomDecisions;
   @MockitoBean private AgencyMatrixCredentialClient agencyCredentials;
   @MockitoBean private SessionRoomGateway matrix;
 

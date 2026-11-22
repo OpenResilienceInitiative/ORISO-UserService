@@ -2,6 +2,7 @@
 guest LiveChatPromotionMigrationIT
 standard DatabaseChangelogDriftIT
 standard AgencyEnquiryRoomPublicationDatabaseIT
+standard AgencyEnquiryAcceptanceDepartureIT
 standard DraftMessageLegacyMariaDbIT
 standard EnquiryRejectionMariaDbIT
 standard ConsultantTopicUniqueKeyMariaDbIT

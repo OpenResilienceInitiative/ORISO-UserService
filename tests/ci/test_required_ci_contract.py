@@ -193,6 +193,7 @@ class RequiredCiContractTest(unittest.TestCase):
             "DeleteUsersRegisteredOnlySchedulerMariaDbReplicaIT",
             "SupportRoomMigrationConvergenceIT",
             "AgencyEnquiryRoomPublicationDatabaseIT",
+            "AgencyEnquiryAcceptanceDepartureIT",
             "ConsultantAgencyLateJoinerMembershipMariaDbIT",
             "GroupChatMatrixCleanupAdoptionMariaDbIT",
         ):
