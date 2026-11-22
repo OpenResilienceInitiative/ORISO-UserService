@@ -1,0 +1,428 @@
+package de.caritas.cob.userservice.api.service.session;
+
+import static java.util.concurrent.TimeUnit.SECONDS;
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
+import static org.mockito.Mockito.when;
+
+import com.neovisionaries.i18n.LanguageCode;
+import de.caritas.cob.userservice.api.model.Consultant;
+import de.caritas.cob.userservice.api.model.ConsultantAgency;
+import de.caritas.cob.userservice.api.model.ConsultantAgencyStatus;
+import de.caritas.cob.userservice.api.model.ConversationType;
+import de.caritas.cob.userservice.api.model.Session;
+import de.caritas.cob.userservice.api.model.Session.SessionStatus;
+import de.caritas.cob.userservice.api.model.User;
+import de.caritas.cob.userservice.api.port.out.AgencyEnquiryRevocationTaskRepository;
+import de.caritas.cob.userservice.api.port.out.ConsultantAgencyRepository;
+import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
+import de.caritas.cob.userservice.api.port.out.SessionRepository;
+import de.caritas.cob.userservice.api.port.out.SessionRoomGateway;
+import de.caritas.cob.userservice.api.port.out.UserRepository;
+import de.caritas.cob.userservice.api.service.agency.AgencyMatrixCredentialClient;
+import de.caritas.cob.userservice.api.service.matrix.InquiryAcceptanceNoticeStore;
+import de.caritas.cob.userservice.api.service.matrix.OrisoRoomRegistry;
+import jakarta.persistence.EntityManager;
+import java.time.Clock;
+import java.time.Instant;
+import java.time.LocalDateTime;
+import java.time.ZoneOffset;
+import java.util.UUID;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicLong;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Timeout;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.data.jpa.test.autoconfigure.DataJpaTest;
+import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase;
+import org.springframework.context.annotation.Import;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.test.context.DynamicPropertyRegistry;
+import org.springframework.test.context.DynamicPropertySource;
+import org.springframework.test.context.TestPropertySource;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
+import org.springframework.test.util.AopTestUtils;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionDefinition;
+import org.springframework.transaction.annotation.Propagation;
+import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
+
+@DataJpaTest
+@TestPropertySource(properties = {"spring.profiles.active=testing", "multitenancy.enabled=false"})
+@AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
+@Import({
+  AgencyEnquiryRevocations.class,
+  AgencyEnquiryRoomDecisions.class,
+  AgencyEnquiryRoomRetirements.class,
+  OrisoRoomRegistry.class,
+  SessionOwnershipService.class
+})
+@Transactional(propagation = Propagation.NOT_SUPPORTED)
+class AgencyEnquiryAcceptanceDepartureIT {
+
+  private static final AtomicLong AGENCY_IDS = new AtomicLong(169200L);
+  private static final long TENANT_ID = 417L;
+  private static final String MEMBER_TOKEN = "member-token";
+  private static final Instant SAME_INSTANT = Instant.parse("2026-11-19T12:00:00Z");
+
+  @Autowired private PlatformTransactionManager transactionManager;
+  @Autowired private EntityManager entityManager;
+  @Autowired private JdbcTemplate jdbc;
+  @Autowired private ConsultantRepository consultants;
+  @Autowired private ConsultantAgencyRepository assignments;
+  @Autowired private SessionRepository sessions;
+  @Autowired private UserRepository users;
+  @Autowired private AgencyEnquiryRevocationTaskRepository tasks;
+  @Autowired private SessionOwnershipService ownership;
+  @Autowired private AgencyEnquiryRoomRetirements retirements;
+  @Autowired private AgencyEnquiryRevocations revocations;
+  @MockitoBean private Clock clock;
+  @MockitoBean private AgencyMatrixCredentialClient agencyCredentials;
+  @MockitoBean private InquiryAcceptanceNoticeStore acceptanceNotices;
+  @MockitoBean private SessionRoomGateway matrix;
+  @MockitoSpyBean private AgencyEnquiryRoomDecisions roomDecisions;
+
+  private final long agencyId = AGENCY_IDS.incrementAndGet();
+  private final String oldRoom = "!former-" + agencyId + ":example.invalid";
+  private final String newRoom = "!replacement-" + agencyId + ":example.invalid";
+  private Consultant departed;
+  private Consultant owner;
+  private Long relationId;
+  private Long sessionId;
+  private String askerId;
+
+  @DynamicPropertySource
+  static void useMariaDbWhenProvided(DynamicPropertyRegistry registry) {
+    AgencyEnquiryRoomPublicationDatabaseIT.configureMariaDb(registry);
+  }
+
+  @BeforeEach
+  void seedOpenRegisteredEnquiry() {
+    when(clock.instant()).thenReturn(SAME_INSTANT);
+    when(clock.getZone()).thenReturn(ZoneOffset.UTC);
+    readCommitted()
+        .executeWithoutResult(
+            status -> {
+              departed = saveConsultant();
+              owner = saveConsultant();
+              relationId = addAssignment(departed).getId();
+              addAssignment(owner);
+              askerId = UUID.randomUUID().toString();
+              var now = LocalDateTime.now(clock);
+              var asker =
+                  users.save(
+                      User.builder()
+                          .userId(askerId)
+                          .username(askerId)
+                          .email(askerId + "@example.invalid")
+                          .tenantId(TENANT_ID)
+                          .languageCode(LanguageCode.de)
+                          .encourage2fa(false)
+                          .magicLinkLoginEnabled(false)
+                          .createDate(now)
+                          .updateDate(now)
+                          .build());
+              sessionId =
+                  sessions
+                      .save(
+                          Session.builder()
+                              .user(asker)
+                              .agencyId(agencyId)
+                              .tenantId(TENANT_ID)
+                              .status(SessionStatus.NEW)
+                              .registrationType(Session.RegistrationType.REGISTERED)
+                              .conversationType(ConversationType.AGENCY_COUNSELLING)
+                              .isConsultantDirectlySet(false)
+                              .matrixRoomId(oldRoom)
+                              .postcode("12345")
+                              .languageCode(LanguageCode.de)
+                              .createDate(now)
+                              .updateDate(now)
+                              .build())
+                      .getId();
+            });
+  }
+
+  @AfterEach
+  void removeOnlyThisEnquiryAndItsRoster() {
+    if (sessionId != null) {
+      jdbc.update("DELETE FROM agency_enquiry_revocation_task WHERE session_id = ?", sessionId);
+      jdbc.update("DELETE FROM agency_enquiry_room_decision WHERE session_id = ?", sessionId);
+      jdbc.update("DELETE FROM agency_enquiry_room_retirement WHERE session_id = ?", sessionId);
+      sessions.deleteById(sessionId);
+      jdbc.update(
+          "DELETE FROM consultant_agency WHERE agency_id = ? AND tenant_id = ?",
+          agencyId,
+          TENANT_ID);
+      consultants.deleteById(departed.getId());
+      consultants.deleteById(owner.getId());
+      users.deleteById(askerId);
+    }
+  }
+
+  @Test
+  void separatelyCommittedOwnershipKeepsTheDepartureUntilReplacement() {
+    var accepted = currentSession();
+    var assignment = ownership.updateOwnerAndStatus(accepted, owner, SessionStatus.IN_PROGRESS);
+    assertAssignedRoom(owner, oldRoom);
+
+    readCommitted().executeWithoutResult(status -> stageDeparture());
+    retirements.replaceRoom(accepted, assignment, newRoom);
+
+    assertReplacementKeepsOnlyTheRequiredCorrection();
+  }
+
+  @Test
+  @Timeout(15)
+  void acceptanceInOneTransactionKeepsTheDepartureAfterTheRoomDecisionCommits() throws Exception {
+    var acceptanceHoldingSession = new CountDownLatch(1);
+    var departureOrderAllocated = new CountDownLatch(1);
+    doAnswer(
+            invocation -> {
+              long order = (long) invocation.callRealMethod();
+              departureOrderAllocated.countDown();
+              return order;
+            })
+        .when(AopTestUtils.<AgencyEnquiryRoomDecisions>getUltimateTargetObject(roomDecisions))
+        .nextEvent();
+    try (var threads = Executors.newFixedThreadPool(2)) {
+      var accepting =
+          threads.submit(
+              () ->
+                  readCommitted()
+                      .executeWithoutResult(
+                          status -> {
+                            var accepted = sessions.lockFresh(sessionId).orElseThrow();
+                            var assignment =
+                                ownership.updateOwnerAndStatus(
+                                    accepted, owner, SessionStatus.IN_PROGRESS);
+                            acceptanceHoldingSession.countDown();
+                            await(departureOrderAllocated);
+                            retirements.replaceRoom(accepted, assignment, newRoom);
+                          }));
+      var departing =
+          threads.submit(
+              () -> {
+                await(acceptanceHoldingSession);
+                readCommitted().executeWithoutResult(status -> stageDeparture());
+              });
+      accepting.get(8, SECONDS);
+      departing.get(8, SECONDS);
+    }
+
+    assertReplacementKeepsOnlyTheRequiredCorrection();
+  }
+
+  @Test
+  void reusingTheHoldingRoomPreservesIntentionalSilentMembership() {
+    var accepted = currentSession();
+    var assignment = ownership.updateOwnerAndStatus(accepted, owner, SessionStatus.IN_PROGRESS);
+
+    readCommitted().executeWithoutResult(status -> stageDeparture());
+    assertThat(tasks.pendingSessionIds(relationId)).containsExactly(sessionId);
+    var waitingId =
+        jdbc.queryForObject(
+            "SELECT id FROM agency_enquiry_revocation_task WHERE session_id = ?",
+            Long.class,
+            sessionId);
+    assertThat(tasks.dueIds(LocalDateTime.now(clock), PageRequest.of(0, 10)))
+        .doesNotContain(waitingId);
+    revocations.retryDue();
+    verifyNoInteractions(matrix);
+    assertThat(tasks.pendingSessionIds(relationId)).containsExactly(sessionId);
+
+    retirements.reuseRoom(accepted, assignment);
+    revocations.retryDue();
+
+    assertAssignedRoom(owner, oldRoom);
+    assertThat(tasks.pendingSessionIds(relationId)).isEmpty();
+    verifyNoInteractions(matrix);
+  }
+
+  @Test
+  void departuresAfterReplacementDoNotScheduleTheFormerRoom() {
+    var accepted = currentSession();
+    var assignment = ownership.updateOwnerAndStatus(accepted, owner, SessionStatus.IN_PROGRESS);
+    retirements.replaceRoom(accepted, assignment, newRoom);
+
+    readCommitted().executeWithoutResult(status -> stageDeparture());
+    revocations.retryDue();
+
+    assertAssignedRoom(owner, newRoom);
+    assertThat(tasks.pendingSessionIds(relationId)).isEmpty();
+    verifyNoInteractions(matrix);
+  }
+
+  @Test
+  void deferredWorkRetainsTheCurrentOwner() {
+    var accepted = currentSession();
+    var assignment = ownership.updateOwnerAndStatus(accepted, departed, SessionStatus.IN_PROGRESS);
+    readCommitted().executeWithoutResult(status -> stageDeparture());
+    assertThat(tasks.pendingSessionIds(relationId)).containsExactly(sessionId);
+    retirements.replaceRoom(accepted, assignment, newRoom);
+
+    revocations.retryDue();
+
+    assertAssignedRoom(departed, newRoom);
+    assertThat(tasks.pendingSessionIds(relationId)).isEmpty();
+    verifyNoInteractions(matrix);
+  }
+
+  @Test
+  void validReadditionTakesPrecedenceOverDeferredWork() {
+    var accepted = currentSession();
+    var assignment = ownership.updateOwnerAndStatus(accepted, owner, SessionStatus.IN_PROGRESS);
+    readCommitted().executeWithoutResult(status -> stageDeparture());
+    assertThat(tasks.pendingSessionIds(relationId)).containsExactly(sessionId);
+    retirements.replaceRoom(accepted, assignment, newRoom);
+
+    readCommitted()
+        .executeWithoutResult(
+            status -> {
+              consultants.lockConsultant(departed.getId());
+              addAssignment(departed);
+            });
+    revocations.retryDue();
+
+    assertAssignedRoom(owner, newRoom);
+    assertThat(tasks.pendingSessionIds(relationId)).isEmpty();
+    verifyNoInteractions(matrix);
+  }
+
+  @Test
+  void workStagedWhileOpenStillReconcilesWhenAcceptanceReusesTheRoom() {
+    readCommitted().executeWithoutResult(status -> stageDeparture());
+    var accepted = currentSession();
+    var assignment = ownership.updateOwnerAndStatus(accepted, owner, SessionStatus.IN_PROGRESS);
+    retirements.reuseRoom(accepted, assignment);
+    when(matrix.isConfirmedOutOfRoom(oldRoom, departed.getMatrixUserId())).thenReturn(false, true);
+    when(matrix.loginAsUser(departed.getMatrixUserId())).thenReturn(MEMBER_TOKEN);
+
+    revocations.retryDue();
+
+    assertAssignedRoom(owner, oldRoom);
+    assertThat(tasks.pendingSessionIds(relationId)).isEmpty();
+    verify(matrix).leaveRoom(oldRoom, MEMBER_TOKEN);
+  }
+
+  @Test
+  void compensationRestoresTheOpenEnquiryAndItsPendingCorrection() {
+    var accepted = currentSession();
+    var assignment = ownership.updateOwnerAndStatus(accepted, owner, SessionStatus.IN_PROGRESS);
+    readCommitted().executeWithoutResult(status -> stageDeparture());
+    assertThat(tasks.pendingSessionIds(relationId)).containsExactly(sessionId);
+
+    assertThat(
+            ownership.compensateOwnerChange(
+                sessionId, assignment, null, SessionStatus.NEW, LocalDateTime.now(clock)))
+        .isTrue();
+    when(matrix.isConfirmedOutOfRoom(oldRoom, departed.getMatrixUserId())).thenReturn(true);
+    revocations.retryDue();
+
+    var reopened = currentSession();
+    assertThat(reopened.getConsultant()).isNull();
+    assertThat(reopened.getStatus()).isEqualTo(SessionStatus.NEW);
+    assertThat(reopened.getMatrixRoomId()).isEqualTo(oldRoom);
+    assertThat(tasks.pendingSessionIds(relationId)).isEmpty();
+    verify(matrix).isConfirmedOutOfRoom(oldRoom, departed.getMatrixUserId());
+  }
+
+  private void assertReplacementKeepsOnlyTheRequiredCorrection() {
+    assertAssignedRoom(owner, newRoom);
+    assertThat(tasks.pendingSessionIds(relationId)).containsExactly(sessionId);
+    verifyNoInteractions(matrix);
+    when(matrix.isConfirmedOutOfRoom(oldRoom, departed.getMatrixUserId())).thenReturn(false, true);
+    when(matrix.loginAsUser(departed.getMatrixUserId())).thenReturn(MEMBER_TOKEN);
+
+    revocations.retryDue();
+
+    assertThat(tasks.pendingSessionIds(relationId)).isEmpty();
+    verify(matrix).leaveRoom(oldRoom, MEMBER_TOKEN);
+    verify(matrix, never()).leaveRoom(eq(newRoom), any());
+  }
+
+  private void assertAssignedRoom(Consultant expectedOwner, String room) {
+    var current = currentSession();
+    assertThat(current.getConsultant().getId()).isEqualTo(expectedOwner.getId());
+    assertThat(current.getStatus()).isEqualTo(SessionStatus.IN_PROGRESS);
+    assertThat(current.getMatrixRoomId()).isEqualTo(room);
+  }
+
+  private Session currentSession() {
+    return sessions.findById(sessionId).orElseThrow();
+  }
+
+  private void stageDeparture() {
+    revocations.stage(markDeparted());
+  }
+
+  private ConsultantAgency markDeparted() {
+    consultants.lockConsultant(departed.getId());
+    var relation = assignments.findById(relationId).orElseThrow();
+    relation.setDeleteDate(LocalDateTime.now(clock));
+    assignments.save(relation);
+    entityManager.flush();
+    return relation;
+  }
+
+  private ConsultantAgency addAssignment(Consultant consultant) {
+    var now = LocalDateTime.now(clock);
+    return assignments.save(
+        ConsultantAgency.builder()
+            .consultant(consultant)
+            .agencyId(agencyId)
+            .tenantId(TENANT_ID)
+            .status(ConsultantAgencyStatus.CREATED)
+            .createDate(now)
+            .updateDate(now)
+            .build());
+  }
+
+  private Consultant saveConsultant() {
+    var id = UUID.randomUUID().toString();
+    var now = LocalDateTime.now(clock);
+    return consultants.save(
+        Consultant.builder()
+            .id(id)
+            .username(id)
+            .firstName("Test")
+            .lastName("Counsellor")
+            .email(id + "@example.invalid")
+            .matrixUserId("@" + id + ":example.invalid")
+            .tenantId(TENANT_ID)
+            .languageCode(LanguageCode.de)
+            .encourage2fa(false)
+            .magicLinkLoginEnabled(false)
+            .notifyEnquiriesRepeating(false)
+            .notifyNewChatMessageFromAdviceSeeker(false)
+            .createDate(now)
+            .updateDate(now)
+            .build());
+  }
+
+  private TransactionTemplate readCommitted() {
+    var transaction = new TransactionTemplate(transactionManager);
+    transaction.setIsolationLevel(TransactionDefinition.ISOLATION_READ_COMMITTED);
+    return transaction;
+  }
+
+  private static void await(CountDownLatch latch) {
+    try {
+      assertThat(latch.await(5, SECONDS)).isTrue();
+    } catch (InterruptedException interrupted) {
+      Thread.currentThread().interrupt();
+      throw new AssertionError(interrupted);
+    }
+  }
+}
