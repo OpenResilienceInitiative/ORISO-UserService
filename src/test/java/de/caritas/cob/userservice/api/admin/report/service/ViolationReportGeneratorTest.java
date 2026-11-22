@@ -2,8 +2,8 @@ package de.caritas.cob.userservice.api.admin.report.service;
 
 import static java.util.Arrays.asList;
 import static org.hamcrest.MatcherAssert.assertThat;
+import static org.hamcrest.Matchers.contains;
 import static org.hamcrest.Matchers.hasSize;
-import static org.hamcrest.Matchers.notNullValue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mockStatic;
 import static org.mockito.Mockito.when;
@@ -46,8 +46,9 @@ public class ViolationReportGeneratorTest {
 
     List<ViolationDTO> violations = this.violationReportGenerator.generateReport();
 
-    assertThat(violations, hasSize(6));
-    violations.forEach(violationDTO -> assertThat(violationDTO.getIdentifier(), notNullValue()));
+    assertThat(
+        violations.stream().map(ViolationDTO::getIdentifier).toList(),
+        contains("first", "second", "third", "fourth", "fifth", "sixth"));
   }
 
   @Test
@@ -56,7 +57,10 @@ public class ViolationReportGeneratorTest {
         .thenReturn(List.of(() -> List.of(identifiedViolation("fixture"))));
 
     try (var filesystem = mockStatic(Files.class)) {
-      assertThat(this.violationReportGenerator.generateReport(), hasSize(1));
+      List<ViolationDTO> violations = this.violationReportGenerator.generateReport();
+
+      assertThat(
+          violations.stream().map(ViolationDTO::getIdentifier).toList(), contains("fixture"));
       filesystem.verifyNoInteractions();
     }
   }
