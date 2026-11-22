@@ -15,9 +15,9 @@ import org.springframework.transaction.annotation.Transactional;
  * Ages {@link EventNotification} rows out of the database (KDG epic #1010, task 2a).
  *
  * <p>The table had no retention at all. Every row carries the recipient's Keycloak UUID, a session
- * reference and third-party names, and {@code read_date} is a second-precision record of when the
- * recipient looked at a given notification — an activity profile that grew for as long as the
- * account existed. None of that has a purpose once the notification has been seen.
+ * reference and third-party names, and {@code read_date} is the UTC day when the recipient looked
+ * at a given notification — an activity profile that grew for as long as the account existed. None
+ * of that has a purpose once the notification has been seen.
  *
  * <p>Two cutoffs rather than one: a read notification has already done its job, so it goes after
  * the shorter period, while the absolute cutoff makes sure an unread feed cannot grow without bound
@@ -48,7 +48,9 @@ public class EventNotificationRetentionService {
 
     int purgedRead = 0;
     if (readRetentionDays > 0) {
-      purgedRead = eventNotificationRepository.deleteReadBefore(now.minusDays(readRetentionDays));
+      purgedRead =
+          eventNotificationRepository.deleteReadBefore(
+              now.toLocalDate().minusDays(readRetentionDays).atStartOfDay());
     }
 
     int purgedAbsolute = 0;

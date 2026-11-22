@@ -120,7 +120,7 @@ class DeleteUserAnonymousSchedulerIT extends AccountInactivityPolicyHttpFixture 
     var createAnonymousEnquiryDTO =
         new CreateAnonymousEnquiryDTO().consultingType(CONSULTING_TYPE_ID_AIDS);
     var responseDTO =
-        createAnonymousEnquiryFacade.createAnonymousEnquiry(createAnonymousEnquiryDTO);
+        createAnonymousEnquiryFacade.createAnonymousEnquiry(createAnonymousEnquiryDTO, false);
 
     var sessionOptional = sessionRepository.findById(responseDTO.getSessionId());
     currentSession = sessionOptional.get();
@@ -129,7 +129,7 @@ class DeleteUserAnonymousSchedulerIT extends AccountInactivityPolicyHttpFixture 
   private Session createAnotherAnonymousSession() {
     var responseDTO =
         createAnonymousEnquiryFacade.createAnonymousEnquiry(
-            new CreateAnonymousEnquiryDTO().consultingType(CONSULTING_TYPE_ID_AIDS));
+            new CreateAnonymousEnquiryDTO().consultingType(CONSULTING_TYPE_ID_AIDS), false);
 
     return sessionRepository.findById(responseDTO.getSessionId()).orElseThrow();
   }

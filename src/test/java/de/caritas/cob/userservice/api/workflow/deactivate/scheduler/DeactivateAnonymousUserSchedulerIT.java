@@ -93,7 +93,7 @@ class DeactivateAnonymousUserSchedulerIT extends AccountInactivityPolicyHttpFixt
                 new de.caritas.cob.userservice.agencyserivce.generated.ApiClient()));
     var createAnonymousEnquiryDTO = new CreateAnonymousEnquiryDTO().consultingType(12);
     var responseDTO =
-        createAnonymousEnquiryFacade.createAnonymousEnquiry(createAnonymousEnquiryDTO);
+        createAnonymousEnquiryFacade.createAnonymousEnquiry(createAnonymousEnquiryDTO, false);
 
     var sessionOptional = sessionRepository.findById(responseDTO.getSessionId());
     currentSession = sessionOptional.get();

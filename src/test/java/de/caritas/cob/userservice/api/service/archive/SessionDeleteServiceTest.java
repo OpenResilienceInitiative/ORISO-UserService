@@ -287,12 +287,28 @@ class SessionDeleteServiceTest {
     var session = sessionService.getSession(sessionId).orElseThrow();
     session.setRegistrationType(Session.RegistrationType.REGISTERED);
     session.setConversationType(null);
-    session.getUser().setUsername("Anonymous-4711");
+    // ORISO-UserService#1697: recognised by the stored live-chat postcode, whatever the User-ID.
+    session.setPostcode("00000");
+    session.getUser().setUsername("katze_sam_4821");
     var delete = givenActionRegistryDeletesSession();
 
     sessionDeleteService.deleteSession(sessionId);
 
     verify(delete).executeActions(any(SessionDeletionWorkflowDTO.class));
+  }
+
+  @Test
+  void deleteSession_Should_refuseTheConsultant_When_OnlyTheUsernameLooksAnonymous() {
+    var sessionId = givenAPresentSession(false);
+    var session = sessionService.getSession(sessionId).orElseThrow();
+    session.setRegistrationType(Session.RegistrationType.REGISTERED);
+    session.setConversationType(null);
+    session.setPostcode("12345");
+    session.getUser().setUsername("Anonymous-4711");
+
+    org.junit.jupiter.api.Assertions.assertThrows(
+        de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException.class,
+        () -> sessionDeleteService.deleteSession(sessionId));
   }
 
   @Test
