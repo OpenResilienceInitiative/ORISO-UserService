@@ -37,49 +37,8 @@ run_maven() {
   done
 }
 
-# Real-MariaDB contracts are owned by the separately required mariadb-contract job. Excluding them
-# from discovery here prevents JUnit's environment conditions from manufacturing skipped reports.
-# SupportRoomMigrationConvergenceIT is excluded here for the same reason: it is @EnabledIf...
-# LIQUIBASE_IT_DB_URL and is run by the mariadb-contract job. An earlier revision justified the
-# exclusion with 3bfa3d06 ("Keep support migration outside refactor CI"), but that commit is on
-# feature/user-service-refactor only and never reached pre-dev, so on this branch the exclusion
-# would have removed the test from required CI entirely instead of moving it.
-mariadb_owned_tests=(
-  LiveChatPromotionMigrationIT
-  DatabaseChangelogDriftIT
-  DraftMessageLegacyMariaDbIT
-  EnquiryRejectionMariaDbIT
-  ConsultantTopicUniqueKeyMariaDbIT
-  ConsultantPictureDatabaseIT
-  AdminStatisticsRepositoryMariaDbIT
-  UserAdminSearchMariaDbIT
-  ProvisioningCompensationMariaDbIT
-  ScheduledTaskClaimMariaDbIT
-  TutorialProgressServiceMariaDbReplicaIT
-  DeactivateGroupChatSchedulerMariaDbReplicaIT
-  DeleteUserAccountSchedulerMariaDbReplicaIT
-  DeleteUsersRegisteredOnlySchedulerMariaDbReplicaIT
-  AgencyEnquiryRoomPublicationDatabaseIT
-  SupportRoomMigrationConvergenceIT
-  SessionOwnershipMariaDbIT
-  ChatMembersOnlyMariaDbIT
-  CaseHandoverStatusHttpMariaDbIT
-  AccountInviteRevokeAcceptRaceMariaDbIT
-  ConsultantTenantChangeMariaDbIT
-  ConsultantAgencyLateJoinerMembershipMariaDbIT
-  CaseHandoverLeaveAdminPowerMariaDbIT
-  CaseHandoverTakeoverMatrixMariaDbIT
-  MoveThenTakeoverMatrixMariaDbIT
-  GroupChatMatrixCleanupAdoptionMariaDbIT
-  IdentityReactivationSagaMariaDbIT
-  UserHardDeleteClaimMariaDbIT
-  StatisticsRetentionMariaDbIT
-  GuestRegistrationTypeQueriesMariaDbIT
-)
-required_test_pattern="**/*IT"
-for mariadb_owned_test in "${mariadb_owned_tests[@]}"; do
-  required_test_pattern+=",!${mariadb_owned_test}"
-done
+# The native jobs use the same assignment to select these tests.
+required_test_pattern="$(python3 "${script_dir}/database-test-assignment.py" h2)"
 
 # The application/H2 *IT suite is the required contract here. Unit tests and real-MariaDB tests
 # have their own required jobs, so they are not discovered in this report inventory.

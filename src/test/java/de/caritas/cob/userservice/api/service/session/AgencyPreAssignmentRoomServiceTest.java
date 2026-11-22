@@ -304,7 +304,7 @@ class AgencyPreAssignmentRoomServiceTest {
         .createRoom(anyString(), anyString(), eq(AGENCY_TOKEN));
     verify(rateLimitPause, times(AgencyPreAssignmentRoomService.CREATE_ROOM_MAX_ATTEMPTS - 1))
         .pause(AgencyPreAssignmentRoomService.MAX_WAIT_BEFORE_CREATE_ROOM_RETRY_MS);
-    verify(sessionService, never()).saveSession(any());
+    verifyNoInteractions(publication);
     assertNull(session.getMatrixRoomId());
   }
 
@@ -334,7 +334,7 @@ class AgencyPreAssignmentRoomServiceTest {
 
     assertEquals("!already:matrix", session.getMatrixRoomId());
     verify(sessionRoomGateway, never()).createRoom(anyString(), anyString(), anyString());
-    verify(sessionService, never()).saveSession(any());
+    verifyNoInteractions(publication);
   }
 
   @Test
@@ -380,7 +380,7 @@ class AgencyPreAssignmentRoomServiceTest {
     underTest.ensureHoldingRoom(session, user);
 
     verify(sessionRoomGateway, times(1)).createRoom(anyString(), anyString(), eq(AGENCY_TOKEN));
-    verify(sessionService, never()).saveSession(any());
+    verifyNoInteractions(publication);
     assertNull(session.getMatrixRoomId());
   }
 

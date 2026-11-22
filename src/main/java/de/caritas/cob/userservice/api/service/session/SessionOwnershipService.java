@@ -123,9 +123,25 @@ public class SessionOwnershipService {
     var current = findLocked(candidate.getSessionId()).orElse(null);
     var openingStatus = roomDecisions.reopenExpiredPreparation(candidate, current);
     if (current != null && openingStatus.isPresent()) {
-      apply(current, null, openingStatus.get(), current.getUpdateDate());
-      acceptanceNotices.cancelPreparation(current.getId(), candidate.getOwnershipRevision());
+      restorePreparedEnquiry(current, openingStatus.get());
     }
+  }
+
+  /** The caller verified and locked the accepted session before invoking this operation. */
+  @Transactional(propagation = Propagation.MANDATORY)
+  boolean startEnquiryRoomWork(Session current) {
+    var openingStatus = roomDecisions.startExternalWork(current);
+    if (openingStatus.isEmpty()) {
+      return true;
+    }
+    restorePreparedEnquiry(current, openingStatus.get());
+    return false;
+  }
+
+  private void restorePreparedEnquiry(Session current, SessionStatus openingStatus) {
+    var revision = current.getOwnershipRevision();
+    apply(current, null, openingStatus, current.getUpdateDate());
+    acceptanceNotices.cancelPreparation(current.getId(), revision);
   }
 
   @Transactional
