@@ -59,6 +59,7 @@ class AgencyEnquiryRevocationsTest {
   @Mock private ConsultantRepository consultants;
   @Mock private SessionRepository sessions;
   @Mock private AgencyEnquiryRoomRetirements retiredRooms;
+  @Mock private AgencyEnquiryRoomDecisions roomDecisions;
   @Mock private AgencyMatrixCredentialClient agencyCredentials;
   @Mock private SessionRoomGateway rooms;
   @Mock private PlatformTransactionManager transactionManager;
@@ -75,6 +76,7 @@ class AgencyEnquiryRevocationsTest {
             consultants,
             sessions,
             retiredRooms,
+            roomDecisions,
             agencyCredentials,
             rooms,
             transactionManager,

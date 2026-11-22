@@ -1825,32 +1825,14 @@ public class CaseHandoverService {
             nullable(session.getAgencyId()),
             nullable(session.getPostcode()),
             nullable(session.getMainTopicId()),
-            nullable(session.getUser() != null ? session.getUser().getUsername() : null),
-            nullable(
-                session.getUser() != null ? decodeUsername(session.getUser().getUsername()) : null),
-            nullable(
-                session.getConsultant() != null ? session.getConsultant().getUsername() : null),
-            nullable(
-                session.getConsultant() != null
-                    ? decodeUsername(session.getConsultant().getUsername())
-                    : null),
-            nullable(
-                session.getConsultant() != null
-                    ? decodeUsername(session.getConsultant().getDisplayName())
-                    : null),
-            // Colleagues search by internal name too (#996, #1725); public name stays searchable.
-            nullable(
-                session.getConsultant() != null
-                    ? decodeUsername(session.getConsultant().getInternalDisplayNameOrFallback())
-                    : null),
-            nullable(
-                session.getConsultant() != null ? session.getConsultant().getFirstName() : null),
-            nullable(
-                session.getConsultant() != null ? session.getConsultant().getLastName() : null),
-            nullable(
-                session.getConsultant() != null
-                    ? decodeUsername(session.getConsultant().getInternalDisplayNameOrRealName())
-                    : null));
+            nullable(session.getAskerUsername()),
+            nullable(decodeUsername(session.getAskerUsername())),
+            nullable(session.getConsultantUsername()),
+            nullable(decodeUsername(session.getConsultantUsername())),
+            nullable(decodeUsername(session.getConsultantDisplayName())),
+            nullable(session.getConsultantFirstName()),
+            nullable(session.getConsultantLastName()),
+            nullable(decodeUsername(session.getConsultantInternalDisplayNameOrRealName())));
 
     return haystack.stream()
         .map(this::normalizeSearchText)
