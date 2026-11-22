@@ -86,6 +86,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.EnumSource;
+import org.junit.jupiter.params.provider.NullSource;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
@@ -3834,15 +3835,19 @@ class CaseHandoverServiceTest {
     assertNull(consultant.getInternalName());
   }
 
-  @Test
-  void searchCandidates_matchesConsultantFullInternalName() {
+  @ParameterizedTest
+  @NullSource
+  @ValueSource(strings = {"   "})
+  void searchCandidates_matchesConsultantFullInternalName(String internalDisplayName) {
     previous.setDisplayName("Anna B.");
-    previous.setFirstName("Anna");
-    previous.setLastName("Berger");
+    previous.setInternalDisplayName(internalDisplayName);
+    previous.setFirstName(" Anna ");
+    previous.setLastName(" Berger ");
     givenCandidates(session);
 
     assertEquals(1, caseHandoverService.searchCandidates("berger", 0, 15, false).getTotal());
-    assertEquals(1, caseHandoverService.searchCandidates("Anna Berger", 0, 15, false).getTotal());
+    assertEquals(
+        1, caseHandoverService.searchCandidates("  aNnA bErGeR  ", 0, 15, false).getTotal());
     assertEquals(0, caseHandoverService.searchCandidates("anna meier", 0, 15, false).getTotal());
   }
 
@@ -4349,17 +4354,24 @@ class CaseHandoverServiceTest {
     List<HandoverCandidate> candidates =
         sessions.stream()
             .map(
-                candidate ->
-                    new HandoverCandidate(
-                        candidate.getId(),
-                        candidate.getAgencyId(),
-                        candidate.getMainTopicId(),
-                        candidate.getPostcode(),
-                        candidate.getMatrixRoomId(),
-                        candidate.getConversationType(),
-                        candidate.isTeamSession(),
-                        candidate.getUser(),
-                        candidate.getConsultant()))
+                candidate -> {
+                  User user = candidate.getUser();
+                  Consultant consultant = candidate.getConsultant();
+                  return new HandoverCandidate(
+                      candidate.getId(),
+                      candidate.getAgencyId(),
+                      candidate.getMainTopicId(),
+                      candidate.getPostcode(),
+                      candidate.getMatrixRoomId(),
+                      candidate.getConversationType(),
+                      candidate.isTeamSession(),
+                      user == null ? null : user.getUsername(),
+                      consultant == null ? null : consultant.getUsername(),
+                      consultant == null ? null : consultant.getDisplayName(),
+                      consultant == null ? null : consultant.getInternalDisplayName(),
+                      consultant == null ? null : consultant.getFirstName(),
+                      consultant == null ? null : consultant.getLastName());
+                })
             .toList();
     when(sessionRepository.findHandoverCandidates(any(), eq(requester), eq(statuses), anyBoolean()))
         .thenReturn(candidates);

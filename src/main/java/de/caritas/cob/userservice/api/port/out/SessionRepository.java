@@ -224,7 +224,8 @@ public interface SessionRepository extends CrudRepository<Session, Long>, Sessio
       """
       select new de.caritas.cob.userservice.api.model.HandoverCandidate(
           s.id, s.agencyId, s.mainTopicId, s.postcode, s.matrixRoomId, s.conversationType,
-          s.teamSession, asker, owner)
+          s.teamSession, asker.username, owner.username, owner.displayName, owner.internalDisplayName,
+          owner.firstName, owner.lastName)
       from Session s
       left join s.user asker on :includeNames = true
       left join s.consultant owner on :includeNames = true
