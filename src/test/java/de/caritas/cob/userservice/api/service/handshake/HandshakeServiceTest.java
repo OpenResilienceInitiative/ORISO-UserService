@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -16,6 +17,8 @@ import de.caritas.cob.userservice.api.model.HandshakeSession;
 import de.caritas.cob.userservice.api.port.out.HandshakeAuditEventRepository;
 import de.caritas.cob.userservice.api.port.out.HandshakeSessionRepository;
 import de.caritas.cob.userservice.api.service.handshake.HandshakeService.InitiateHandshakeRequest;
+import de.caritas.cob.userservice.api.workflow.scheduling.ScheduledTaskClaimService;
+import java.time.Duration;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.util.List;
@@ -39,6 +42,7 @@ class HandshakeServiceTest {
   @Mock private HandshakeAuditEventRepository handshakeAuditEventRepository;
   @Mock private KeycloakAuthClient keycloakAuthClient;
   @Mock private HandshakeCompletionHandler completionHandler;
+  @Mock private ScheduledTaskClaimService claims;
   @Mock private de.caritas.cob.userservice.api.port.out.IdentityClient identityClient;
 
   @Mock private de.caritas.cob.userservice.api.port.out.IdentitySecondFactor identitySecondFactor;
@@ -57,10 +61,12 @@ class HandshakeServiceTest {
             identityClient,
             identitySecondFactor,
             identityClientConfig,
-            List.of(completionHandler));
+            List.of(completionHandler),
+            claims);
     ReflectionTestUtils.setField(handshakeService, "ttlSeconds", 300L);
     ReflectionTestUtils.setField(handshakeService, "maxConfirmAttempts", 5);
     ReflectionTestUtils.setField(handshakeService, "sweepBatchSize", 200);
+    ReflectionTestUtils.setField(handshakeService, "sweepClaimDuration", Duration.ofMinutes(2));
     org.mockito.Mockito.lenient().when(identityClientConfig.isOtpAllowed(any())).thenReturn(true);
     org.mockito.Mockito.lenient()
         .when(identitySecondFactor.getOtpCredential(anyString()))
@@ -403,6 +409,16 @@ class HandshakeServiceTest {
   void sweepExpired_Should_ExpireLapsedPendingSessions_InBoundedBatches() {
     var session = pendingSession();
     session.setExpiryDate(LocalDateTime.now(ZoneOffset.UTC).minusMinutes(1));
+    var lease =
+        new ScheduledTaskClaimService.ClaimLease("handshake-expiry-sweep", session.getExpiryDate());
+    when(claims.tryClaimLease("handshake-expiry-sweep", Duration.ofMinutes(2)))
+        .thenReturn(Optional.of(lease));
+    when(claims.runIfHeld(eq(lease), any(Runnable.class)))
+        .thenAnswer(
+            invocation -> {
+              invocation.<Runnable>getArgument(1).run();
+              return true;
+            });
     when(handshakeSessionRepository.findAllByStatusAndExpiryDateBefore(
             any(), any(LocalDateTime.class), any(org.springframework.data.domain.Pageable.class)))
         .thenReturn(List.of(session));

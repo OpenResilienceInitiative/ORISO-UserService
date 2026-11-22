@@ -55,6 +55,8 @@ mariadb_owned_tests=(
   UserAdminSearchMariaDbIT
   ProvisioningCompensationMariaDbIT
   ScheduledTaskClaimMariaDbIT
+  HandshakeExpiryMariaDbIT
+  SupportRoomClosureMariaDbIT
   TutorialProgressServiceMariaDbReplicaIT
   DeactivateGroupChatSchedulerMariaDbReplicaIT
   DeleteUserAccountSchedulerMariaDbReplicaIT

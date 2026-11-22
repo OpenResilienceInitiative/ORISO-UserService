@@ -11,6 +11,8 @@ import de.caritas.cob.userservice.api.model.HandshakeSession;
 import de.caritas.cob.userservice.api.model.HandshakeSession.HandshakeStatus;
 import de.caritas.cob.userservice.api.port.out.HandshakeAuditEventRepository;
 import de.caritas.cob.userservice.api.port.out.HandshakeSessionRepository;
+import de.caritas.cob.userservice.api.workflow.scheduling.ScheduledTaskClaimService;
+import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.UUID;
@@ -41,6 +43,7 @@ public class HandshakeService {
   private static final String EVENT_CONFIRM_REJECTED = "CONFIRM_REJECTED";
   private static final String EVENT_NOT_ESTABLISHED = "SESSION_NOT_ESTABLISHED";
   private static final String EVENT_CONFIRM_LOCKED = "CONFIRM_LOCKED";
+  private static final String SWEEP_TASK_NAME = "handshake-expiry-sweep";
 
   private final @NonNull HandshakeSessionRepository handshakeSessionRepository;
   private final @NonNull HandshakeAuditEventRepository handshakeAuditEventRepository;
@@ -54,6 +57,7 @@ public class HandshakeService {
       identityClientConfig;
 
   private final @NonNull List<HandshakeCompletionHandler> completionHandlers;
+  private final @NonNull ScheduledTaskClaimService claims;
 
   private final de.caritas.cob.userservice.api.helper.UsernameTranscoder usernameTranscoder =
       new de.caritas.cob.userservice.api.helper.UsernameTranscoder();
@@ -69,6 +73,9 @@ public class HandshakeService {
 
   @Value("${handshake.sweep-batch-size:200}")
   private int sweepBatchSize;
+
+  @Value("${handshake.sweep-claim-duration:PT2M}")
+  private Duration sweepClaimDuration;
 
   @Transactional
   public HandshakeItem initiate(AuthenticatedUser initiator, InitiateHandshakeRequest request) {
@@ -177,10 +184,28 @@ public class HandshakeService {
         .toList();
   }
 
-  /** Lapse sweep — a quiet no-answer leaves exactly one audit entry per session. */
+  /** Commit one bounded expiry page while holding the shared scheduler claim. */
   @Scheduled(fixedDelayString = "${handshake.sweep-delay-ms:60000}")
-  @Transactional
   public void sweepExpired() {
+    var claim = claims.tryClaimLease(SWEEP_TASK_NAME, sweepClaimDuration);
+    if (claim.isEmpty()) {
+      return;
+    }
+    var lease = claim.get();
+    try {
+      claims.runIfHeld(lease, this::expireLapsedSessions);
+    } finally {
+      try {
+        claims.release(lease);
+      } catch (RuntimeException failure) {
+        log.warn(
+            "Could not release the handshake expiry claim ({})",
+            failure.getClass().getSimpleName());
+      }
+    }
+  }
+
+  private void expireLapsedSessions() {
     handshakeSessionRepository
         .findAllByStatusAndExpiryDateBefore(
             HandshakeStatus.PENDING,

@@ -6,12 +6,20 @@ import java.time.LocalDateTime;
 import java.util.Optional;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Lock;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
 public interface ScheduledTaskClaimRepository extends JpaRepository<ScheduledTaskClaim, String> {
 
-  int deleteByTaskNameAndClaimedUntil(String taskName, LocalDateTime claimedUntil);
+  @Modifying
+  @Query(
+      """
+      DELETE FROM ScheduledTaskClaim claim
+      WHERE claim.taskName = :taskName AND claim.claimedUntil = :claimedUntil
+      """)
+  int deleteByTaskNameAndClaimedUntil(
+      @Param("taskName") String taskName, @Param("claimedUntil") LocalDateTime claimedUntil);
 
   @Lock(LockModeType.PESSIMISTIC_WRITE)
   @Query("SELECT claim FROM ScheduledTaskClaim claim WHERE claim.taskName = :taskName")
