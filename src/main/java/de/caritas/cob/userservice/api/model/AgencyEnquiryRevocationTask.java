@@ -19,6 +19,10 @@ import lombok.NoArgsConstructor;
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
 public class AgencyEnquiryRevocationTask {
 
+  // Older replicas also exclude these tasks through their ordinary retryAt query.
+  public static final LocalDateTime WAITING_FOR_ROOM_DECISION =
+      LocalDateTime.of(9999, 12, 31, 0, 0);
+
   @Id
   @GeneratedValue(strategy = GenerationType.IDENTITY)
   private Long id;
@@ -41,6 +45,9 @@ public class AgencyEnquiryRevocationTask {
   @Column(name = "member_id", nullable = false, updatable = false, length = 255)
   private String memberId;
 
+  @Column(name = "room_decision_id", updatable = false)
+  private Long roomDecisionId;
+
   @Column(name = "retry_at", nullable = false)
   private LocalDateTime retryAt;
 
@@ -52,6 +59,7 @@ public class AgencyEnquiryRevocationTask {
       Long sessionId,
       String roomId,
       String memberId,
+      Long roomDecisionId,
       LocalDateTime retryAt) {
     this.consultantAgencyId = consultantAgencyId;
     this.consultantId = consultantId;
@@ -59,6 +67,7 @@ public class AgencyEnquiryRevocationTask {
     this.sessionId = sessionId;
     this.roomId = roomId;
     this.memberId = memberId;
+    this.roomDecisionId = roomDecisionId;
     this.retryAt = retryAt;
   }
 
