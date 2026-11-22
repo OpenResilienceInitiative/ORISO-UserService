@@ -149,6 +149,31 @@ class DirectInvitationServiceTest {
     assertThat(fresh.getScheduledAt()).isEqualTo(start);
   }
 
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.CsvSource({"CHAT,CHAT", "AUDIO,PHONE", "VIDEO,VIDEO"})
+  void attach_Should_StoreTheKindOfTheLinksMedium(String chatType, SessionAppointment.Kind kind) {
+    var start = LocalDateTime.now(ZoneOffset.UTC).plusDays(2).withNano(0);
+    var fresh = AgencyInviteLink.builder().linkKind("COUNSELLOR").chatType(chatType).build();
+
+    service.attachAppointment(fresh, start, start.plusMinutes(45), null);
+
+    var saved = ArgumentCaptor.forClass(SessionAppointment.class);
+    verify(appointments).save(saved.capture());
+    assertThat(saved.getValue().getKind()).isEqualTo(kind);
+  }
+
+  @Test
+  void attach_Should_LeaveTheKindOpen_When_TheLinkHasNoCallMedium() {
+    var start = LocalDateTime.now(ZoneOffset.UTC).plusDays(2).withNano(0);
+    var fresh = AgencyInviteLink.builder().linkKind("COUNSELLOR").chatType("LIVE_CHAT").build();
+
+    service.attachAppointment(fresh, start, start.plusMinutes(45), null);
+
+    var saved = ArgumentCaptor.forClass(SessionAppointment.class);
+    verify(appointments).save(saved.capture());
+    assertThat(saved.getValue().getKind()).isNull();
+  }
+
   @Test
   void attach_Should_DefaultToOneDayAfterTheEnd() {
     var start = LocalDateTime.now(ZoneOffset.UTC).plusDays(2).withNano(0);

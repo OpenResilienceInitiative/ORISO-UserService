@@ -15,6 +15,7 @@ import de.caritas.cob.userservice.api.model.ConsultantAgency;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.Session.SessionStatus;
 import de.caritas.cob.userservice.api.port.out.AgencyEnquiryRevocationTaskRepository;
+import de.caritas.cob.userservice.api.port.out.AgencyEnquiryRevocationTaskRepository.PendingRoomBinding;
 import de.caritas.cob.userservice.api.port.out.ConsultantAgencyRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
@@ -99,18 +100,21 @@ class AgencyEnquiryRevocationsTest {
             .build();
     var first = roomBinding(SESSION_ID, ROOM);
     var other = roomBinding(22L, "!other:example.org");
-    var recorded = org.mockito.Mockito.mock(SessionRepository.OpenEnquiryRoomBinding.class);
-    when(recorded.getSessionId()).thenReturn(23L);
-    when(tasks.pendingSessionIds(RELATION_ID)).thenReturn(List.of(23L));
+    var recorded = roomBinding(23L, "!original:example.org");
+    var replacement = roomBinding(23L, "!replacement:example.org");
+    var pending = org.mockito.Mockito.mock(PendingRoomBinding.class);
+    when(pending.getSessionId()).thenReturn(23L);
+    when(pending.getRoomId()).thenReturn("!original:example.org");
+    when(tasks.pendingRoomBindings(RELATION_ID)).thenReturn(List.of(pending));
     when(sessions.lockOpenEnquiryBindings(AGENCY_ID, AgencyOpenEnquiryMembership.OPEN_STATUSES))
-        .thenReturn(List.of(first, other, recorded));
+        .thenReturn(List.of(first, other, recorded, replacement));
 
     revocations.stage(relation);
 
     verify(tasks).saveAll(staged.capture());
     assertThat(staged.getValue())
-        .extracting(AgencyEnquiryRevocationTask::getSessionId)
-        .containsExactly(SESSION_ID, other.getSessionId());
+        .extracting(AgencyEnquiryRevocationTask::getRoomId)
+        .containsExactly(ROOM, other.getRoomId(), replacement.getRoomId());
     assertThat(staged.getValue())
         .extracting(AgencyEnquiryRevocationTask::getMemberId)
         .containsOnly(MEMBER_ID);

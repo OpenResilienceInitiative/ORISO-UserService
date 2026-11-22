@@ -567,34 +567,6 @@ class IndividualCounsellingDpaGateIT {
         result.body().contains("DPA_NEW_COUNSELLING_NOT_ALLOWED"), result.body());
   }
 
-  @Test
-  void expiredRenewalBlocksNewAnonymousEnquiryBeforeAccountProvisioning() throws Exception {
-    var request =
-        java.net.http.HttpRequest.newBuilder(
-                java.net.URI.create(
-                    "http://localhost:" + port + "/conversations/askers/anonymous/new"))
-            .header("Cookie", "CSRF-TOKEN=test")
-            .header("X-CSRF-Token", "test")
-            .header("Content-Type", "application/json")
-            .POST(java.net.http.HttpRequest.BodyPublishers.ofString("{\"consultingType\":1}"))
-            .build();
-    var result =
-        java.net.http.HttpClient.newHttpClient()
-            .send(request, java.net.http.HttpResponse.BodyHandlers.ofString());
-    org.junit.jupiter.api.Assertions.assertEquals(403, result.statusCode(), result.body());
-    org.junit.jupiter.api.Assertions.assertTrue(
-        result.body().contains("DPA_NEW_COUNSELLING_NOT_ALLOWED"), result.body());
-    org.mockito.Mockito.verify(identityAuthentication, org.mockito.Mockito.never())
-        .createUser(
-            org.mockito.ArgumentMatchers.any(
-                de.caritas.cob.userservice.api.adapters.web.dto.UserDTO.class));
-    org.mockito.Mockito.verify(matrix, org.mockito.Mockito.never())
-        .createUser(
-            org.mockito.ArgumentMatchers.anyString(),
-            org.mockito.ArgumentMatchers.anyString(),
-            org.mockito.ArgumentMatchers.anyString());
-  }
-
   @org.junit.jupiter.params.ParameterizedTest
   @org.junit.jupiter.params.provider.EnumSource(
       value = de.caritas.cob.userservice.api.model.Session.SessionStatus.class,

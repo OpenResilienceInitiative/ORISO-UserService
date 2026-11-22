@@ -1,0 +1,42 @@
+name: Guest prefix guard
+
+# ORISO-UserService#1697 / ORISO-Frontend#2346: a guest is recognised by stored facts, never by
+# the shape of the User-ID. Guests have carried Anonymous-<timestamp>, anon_N and now animal
+# handles (katze_sam_4821). Every earlier animal-handle rollout broke on a rule such as
+# startsWith("Anonymous-"), LIKE 'Anonymous-%' or a parseInt on the number after anon_, and was
+# undone. This job fails when production code (src/main) brings such a rule back.
+#
+# Fix a failure: decide with AnonymousSessionRegistration (registration type ANONYMOUS or the
+# live-chat postcode 00000) or the session's stored conversation type. Only a file that truly
+# must keep a prefix rule goes into scripts/contracts/guest-prefix-allowlist.txt, one
+# "<path> | <reason>" per line. Run locally: node scripts/contracts/check-guest-prefix.mjs
+
+on:
+  pull_request:
+  merge_group:
+    types: [checks_requested]
+  push:
+    branches:
+    - dev
+
+permissions:
+  contents: read
+
+jobs:
+  no-guest-prefix-detection:
+    name: no guest detection by the anon_ / Anonymous- prefix
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v6
+      with:
+        persist-credentials: false
+
+    - name: Set up Node
+      uses: actions/setup-node@v6
+      with:
+        node-version: '24'
+
+    - name: Production code recognises guests by stored facts
+      run: node scripts/contracts/check-guest-prefix.mjs

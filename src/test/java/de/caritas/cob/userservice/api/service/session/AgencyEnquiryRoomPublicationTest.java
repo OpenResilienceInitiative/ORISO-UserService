@@ -40,6 +40,7 @@ class AgencyEnquiryRoomPublicationTest {
   @Mock private SessionRepository sessions;
   @Mock private SessionService sessionService;
   @Mock private AgencyEnquiryRevocations revocations;
+  @Mock private AgencyEnquiryRoomAttempts roomAttempts;
   @InjectMocks private AgencyEnquiryRoomPublication publication;
 
   @Test
@@ -59,12 +60,13 @@ class AgencyEnquiryRoomPublicationTest {
     assertThat(publication.publish(openEnquiry(), MATRIX_ROOM_ID, List.of(second, first, first)))
         .contains(MATRIX_ROOM_ID);
 
-    var order = inOrder(consultants, sessions, revocations, sessionService);
+    var order = inOrder(consultants, sessions, revocations, sessionService, roomAttempts);
     order.verify(consultants).lockConsultant("a");
     order.verify(consultants).lockConsultant("z");
     order.verify(sessions).lockFresh(SESSION_ID);
     order.verify(revocations).stageDuringPublication(current, List.of(first, second));
     order.verify(sessionService).saveSession(current);
+    order.verify(roomAttempts).completePublication(current);
   }
 
   @Test

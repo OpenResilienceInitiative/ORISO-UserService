@@ -35,13 +35,13 @@ public interface EventNotificationRepository extends JpaRepository<EventNotifica
    */
   @Modifying(flushAutomatically = true, clearAutomatically = true)
   @Query(
-      "update EventNotification e set e.readDate = :now "
+      "update EventNotification e set e.readDate = :readDay "
           + "where e.recipientUserId = :recipientUserId and e.readDate is null "
           + "and e.eventType in :eventTypes")
   int markReadByEventTypes(
       @Param("recipientUserId") String recipientUserId,
       @Param("eventTypes") Collection<String> eventTypes,
-      @Param("now") LocalDateTime now);
+      @Param("readDay") LocalDateTime readDay);
 
   /**
    * Recipients other than {@code keepRecipientUserId} that still hold one of the given enquiry
@@ -102,10 +102,9 @@ public interface EventNotificationRepository extends JpaRepository<EventNotifica
 
   /**
    * Deletes notifications the recipient has already read and that are older than the cutoff (KDG
-   * epic #1010, task 2a). A read notification has served its purpose; keeping it preserves a
-   * second-precision record of when the recipient looked at what.
+   * epic #1010, task 2a). The read value is stored as a UTC calendar day.
    *
-   * @param cutoff read timestamps strictly before this instant are purged
+   * @param cutoff read days strictly before this UTC day are purged
    * @return number of deleted rows
    */
   @Modifying(flushAutomatically = true, clearAutomatically = true)
