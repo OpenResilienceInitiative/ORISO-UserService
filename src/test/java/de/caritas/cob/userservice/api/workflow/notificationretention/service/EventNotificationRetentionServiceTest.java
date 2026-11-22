@@ -46,7 +46,10 @@ class EventNotificationRetentionServiceTest {
 
     // Bracketed by the clock readings around the call rather than compared to a fixed duration,
     // which would round down on any elapsed time and make the test a coin flip.
-    assertThat(readCutoff.getValue()).isBetween(before.minusDays(90), after.minusDays(90));
+    assertThat(readCutoff.getValue())
+        .isBetween(
+            before.toLocalDate().minusDays(90).atStartOfDay(),
+            after.toLocalDate().minusDays(90).atStartOfDay());
     assertThat(absoluteCutoff.getValue()).isBetween(before.minusDays(365), after.minusDays(365));
   }
 

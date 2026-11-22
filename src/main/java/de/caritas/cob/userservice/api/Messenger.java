@@ -23,6 +23,7 @@ import de.caritas.cob.userservice.api.service.availability.ConsultantActivityReg
 import de.caritas.cob.userservice.api.service.chat.MembersOnlyChatAccess;
 import de.caritas.cob.userservice.api.service.matrix.GroupChatMembershipService;
 import de.caritas.cob.userservice.api.service.matrix.GroupChatMembershipService.ResolvedRoomMember;
+import de.caritas.cob.userservice.api.service.session.AnonymousSessionRegistration;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
 import java.time.LocalDateTime;
 import java.util.List;
@@ -214,10 +215,8 @@ public class Messenger implements Messaging {
     if (session.getConversationType() != null) {
       return session.getConversationType() == ConversationType.LIVE_CHAT;
     }
-    return session.getRegistrationType() == RegistrationType.ANONYMOUS
-        || "00000".equals(session.getPostcode())
-        || (session.getUser() != null
-            && StringUtils.startsWith(session.getUser().getUsername(), "Anonymous-"));
+    // Stored facts only, never the User-ID text (ORISO-UserService#1697).
+    return AnonymousSessionRegistration.matches(session);
   }
 
   private LocalDateTime liveChatQueueCutoff() {

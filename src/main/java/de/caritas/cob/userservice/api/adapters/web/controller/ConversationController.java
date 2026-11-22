@@ -7,13 +7,10 @@ import static de.caritas.cob.userservice.api.conversation.model.ConversationList
 
 import de.caritas.cob.userservice.api.adapters.web.dto.AnonymousEnquiry;
 import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantSessionListResponseDTO;
-import de.caritas.cob.userservice.api.adapters.web.dto.CreateAnonymousEnquiryDTO;
-import de.caritas.cob.userservice.api.adapters.web.dto.CreateAnonymousEnquiryResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.mapping.ConversationDtoMapper;
 import de.caritas.cob.userservice.api.config.observability.LiveChatDiagnosticMetrics;
 import de.caritas.cob.userservice.api.config.observability.LiveChatDiagnosticMetrics.AvailabilityEndpoint;
 import de.caritas.cob.userservice.api.conversation.facade.AcceptAnonymousEnquiryFacade;
-import de.caritas.cob.userservice.api.conversation.facade.CreateAnonymousEnquiryFacade;
 import de.caritas.cob.userservice.api.conversation.facade.FinishAnonymousConversationFacade;
 import de.caritas.cob.userservice.api.conversation.service.ConversationListResolver;
 import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
@@ -23,13 +20,11 @@ import de.caritas.cob.userservice.api.port.in.Messaging;
 import de.caritas.cob.userservice.api.service.consultingtype.TopicConsultantRoutingService;
 import de.caritas.cob.userservice.generated.api.conversation.controller.ConversationsApi;
 import io.swagger.annotations.Api;
-import jakarta.validation.Valid;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
-import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RestController;
 
 /** Controller for conversation API requests. */
@@ -40,7 +35,6 @@ import org.springframework.web.bind.annotation.RestController;
 public class ConversationController implements ConversationsApi {
 
   private final @NonNull ConversationListResolver conversationListResolver;
-  private final @NonNull CreateAnonymousEnquiryFacade createAnonymousEnquiryFacade;
   private final @NonNull AcceptAnonymousEnquiryFacade acceptAnonymousEnquiryFacade;
   private final @NonNull FinishAnonymousConversationFacade finishAnonymousConversationFacade;
   private final ConversationDtoMapper mapper;
@@ -127,23 +121,6 @@ public class ConversationController implements ConversationsApi {
   public ResponseEntity<Void> acceptAnonymousEnquiry(Long sessionId) {
     this.acceptAnonymousEnquiryFacade.acceptAnonymousEnquiry(sessionId);
     return ResponseEntity.ok().build();
-  }
-
-  /**
-   * Starts a new anonymous conversation enquiry for the given consulting type and returns all
-   * needed user information for this conversation.
-   *
-   * @param createAnonymousEnquiryDTO {@link CreateAnonymousEnquiryDTO} (required)
-   * @return {@link ResponseEntity} containing {@link CreateAnonymousEnquiryResponseDTO} body
-   */
-  @Override
-  public ResponseEntity<CreateAnonymousEnquiryResponseDTO> createAnonymousEnquiry(
-      @Valid @RequestBody CreateAnonymousEnquiryDTO createAnonymousEnquiryDTO) {
-
-    var createAnonymousEnquiryResponseDTO =
-        createAnonymousEnquiryFacade.createAnonymousEnquiry(createAnonymousEnquiryDTO);
-
-    return new ResponseEntity<>(createAnonymousEnquiryResponseDTO, HttpStatus.CREATED);
   }
 
   @Override
