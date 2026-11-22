@@ -356,7 +356,7 @@ public class MatrixRoomClient {
   }
 
   /** A power level as Matrix sends it: a number, or a numeric string in rooms up to version 9. */
-  static int level(Object raw, int fallback) {
+  private static int level(Object raw, int fallback) {
     if (raw instanceof Number number) {
       return Math.toIntExact(number.longValue());
     }
@@ -425,7 +425,10 @@ public class MatrixRoomClient {
       }
       // Without the rule an advice seeker's client could blur; such a room is not handed out.
       if (!requireModeratorForPassageBlur(response.getBody().getRoomId(), accessToken)) {
-        throw new IllegalStateException("Matrix room moderation rules could not be applied");
+        diagnosticMetrics.recordRoomCreation(encryptionEnabled, Outcome.FAILURE);
+        // The room exists already: hand its ID on, so the caller's cleanup can remove it.
+        throw new de.caritas.cob.userservice.api.exception.matrix.MatrixRoomRuleException(
+            "Matrix room moderation rules could not be applied", response.getBody().getRoomId());
       }
 
       diagnosticMetrics.recordRoomCreation(encryptionEnabled, Outcome.SUCCESS);
@@ -452,6 +455,8 @@ public class MatrixRoomClient {
       throw new MatrixCreateRoomException(
           String.format(
               "Could not create room (%s) in Matrix: %s", roomName, ex.getResponseBodyAsString()));
+    } catch (de.caritas.cob.userservice.api.exception.matrix.MatrixRoomRuleException ex) {
+      throw ex;
     } catch (Exception ex) {
       diagnosticMetrics.recordRoomCreation(encryptionEnabled, Outcome.FAILURE);
       log.error("Matrix Error: Could not create room ({}) in Matrix. Reason", roomName, ex);
@@ -976,16 +981,22 @@ public class MatrixRoomClient {
    * <p>Never throws. Logs the exception type only, never a user ID.
    *
    * @param moderators Matrix user ID to whether the user is a moderator of the room
+   * @param creators the room's creators with unlimited power (room version 12, see {@link
+   *     #unlimitedCreators}); never written into {@code users}
    */
   public ModeratorPowerSync syncModeratorPower(
-      String roomId, Map<String, Boolean> moderators, String holderId, String holderToken) {
+      String roomId,
+      Map<String, Boolean> moderators,
+      String holderId,
+      String holderToken,
+      java.util.Set<String> creators) {
     try {
       var power = readPowerLevels(roomId, holderToken);
-      var changes = moderatorPowerChanges(power, moderators);
+      var changes = moderatorPowerChanges(power, moderators, creators);
       if (changes.isEmpty()) {
         return ModeratorPowerSync.UNCHANGED;
       }
-      if (!mayChangePowerLevels(power, holderId, changes)) {
+      if (!mayChangePowerLevels(power, holderId, changes, creators)) {
         return ModeratorPowerSync.NOT_PERMITTED;
       }
       var users = new HashMap<>(extractUsers(power));
@@ -1004,19 +1015,94 @@ public class MatrixRoomClient {
     }
   }
 
+  /** {@link #syncModeratorPower(String, Map, String, String, java.util.Set)} without creators. */
+  public ModeratorPowerSync syncModeratorPower(
+      String roomId, Map<String, Boolean> moderators, String holderId, String holderToken) {
+    return syncModeratorPower(roomId, moderators, holderId, holderToken, java.util.Set.of());
+  }
+
+  /**
+   * The creators of a room version 12 room: the sender of {@code m.room.create} and its {@code
+   * additional_creators}. They hold unlimited power and Synapse refuses a {@code
+   * m.room.power_levels} event that names them in {@code users}. Empty for room versions up to 11,
+   * where the creator is an ordinary {@code users} entry, and for state that cannot be read.
+   *
+   * @param state the room's state events
+   */
+  static java.util.Set<String> unlimitedCreators(java.util.List<? extends Map<?, ?>> state) {
+    if (state == null) {
+      return java.util.Set.of();
+    }
+    for (var event : state) {
+      if (!"m.room.create".equals(event.get("type")) || !"".equals(event.get("state_key"))) {
+        continue;
+      }
+      if (!(event.get("content") instanceof Map<?, ?> content)
+          || !"12".equals(String.valueOf(content.get("room_version")))) {
+        return java.util.Set.of();
+      }
+      var creators = new java.util.HashSet<String>();
+      if (event.get("sender") instanceof String sender && !sender.isBlank()) {
+        creators.add(sender);
+      }
+      if (content.get("additional_creators") instanceof java.util.List<?> extra) {
+        extra.stream()
+            .filter(String.class::isInstance)
+            .map(String.class::cast)
+            .filter(id -> !id.isBlank())
+            .forEach(creators::add);
+      }
+      return java.util.Set.copyOf(creators);
+    }
+    return java.util.Set.of();
+  }
+
+  /**
+   * A power level as Synapse accepts it: an integer within the canonical JSON range (beyond Java's
+   * {@code int}), or a numeric string in rooms up to version 9.
+   *
+   * @throws IllegalStateException for anything Synapse would not accept as a level
+   */
+  static long powerLevel(Object raw, long fallback) {
+    if (raw == null) {
+      return fallback;
+    }
+    try {
+      java.math.BigDecimal numeric;
+      if (raw instanceof Number number) {
+        numeric = new java.math.BigDecimal(number.toString());
+      } else if (raw instanceof String text && !text.isBlank()) {
+        numeric = new java.math.BigDecimal(text.trim());
+      } else {
+        throw new IllegalStateException("Invalid power level");
+      }
+      long value = numeric.longValueExact();
+      if (value < -MAX_SAFE_POWER || value > MAX_SAFE_POWER) {
+        throw new IllegalStateException("Invalid power range");
+      }
+      return value;
+    } catch (ArithmeticException | NumberFormatException invalid) {
+      throw new IllegalStateException("Invalid power level");
+    }
+  }
+
   /**
    * The {@code users} entries {@link #syncModeratorPower} has to write into {@code power}: a
    * moderator below the moderator level is raised to it, a former moderator who holds exactly it
-   * falls back to 0. Empty when the room is already right.
+   * falls back to 0. Creators with unlimited power are left out. Empty when the room is already
+   * right.
    */
   static Map<String, Integer> moderatorPowerChanges(
-      Map<String, Object> power, Map<String, Boolean> moderators) {
+      Map<String, Object> power, Map<String, Boolean> moderators, java.util.Set<String> creators) {
     var users = objectMap(power.get("users"));
-    int usersDefault = level(power.get("users_default"), 0);
+    long usersDefault = powerLevel(power.get("users_default"), 0);
     var changes = new HashMap<String, Integer>();
     moderators.forEach(
         (userId, moderator) -> {
-          int current = level(users.get(userId), usersDefault);
+          if (creators.contains(userId)) {
+            return;
+          }
+          long current = powerLevel(users.get(userId), usersDefault);
           if (Boolean.TRUE.equals(moderator) && current < MODERATOR_POWER_LEVEL) {
             changes.put(userId, MODERATOR_POWER_LEVEL);
           } else if (!Boolean.TRUE.equals(moderator) && current == MODERATOR_POWER_LEVEL) {
@@ -1026,16 +1112,31 @@ public class MatrixRoomClient {
     return changes;
   }
 
-  /** Synapse's auth rules for an {@code m.room.power_levels} event that changes {@code users}. */
+  /** {@link #moderatorPowerChanges(Map, Map, java.util.Set)} for a room without such creators. */
+  static Map<String, Integer> moderatorPowerChanges(
+      Map<String, Object> power, Map<String, Boolean> moderators) {
+    return moderatorPowerChanges(power, moderators, java.util.Set.of());
+  }
+
+  /**
+   * Synapse's auth rules for an {@code m.room.power_levels} event that changes {@code users}. A
+   * creator of a room version 12 room holds unlimited power.
+   */
   private static boolean mayChangePowerLevels(
-      Map<String, Object> power, String holderId, Map<String, Integer> changes) {
+      Map<String, Object> power,
+      String holderId,
+      Map<String, Integer> changes,
+      java.util.Set<String> creators) {
     var users = objectMap(power.get("users"));
-    int usersDefault = level(power.get("users_default"), 0);
-    int holder = level(users.get(holderId), usersDefault);
-    int required =
-        level(
+    long usersDefault = powerLevel(power.get("users_default"), 0);
+    long holder =
+        creators.contains(holderId)
+            ? Long.MAX_VALUE
+            : powerLevel(users.get(holderId), usersDefault);
+    long required =
+        powerLevel(
             objectMap(power.get("events")).get("m.room.power_levels"),
-            level(power.get("state_default"), MODERATOR_POWER_LEVEL));
+            powerLevel(power.get("state_default"), MODERATOR_POWER_LEVEL));
     if (holder < required) {
       return false;
     }
@@ -1044,7 +1145,7 @@ public class MatrixRoomClient {
             change ->
                 change.getValue() <= holder
                     && (change.getKey().equals(holderId)
-                        || level(users.get(change.getKey()), usersDefault) < holder));
+                        || powerLevel(users.get(change.getKey()), usersDefault) < holder));
   }
 
   /**

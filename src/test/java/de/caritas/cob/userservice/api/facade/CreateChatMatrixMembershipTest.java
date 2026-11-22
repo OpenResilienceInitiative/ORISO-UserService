@@ -126,6 +126,10 @@ class CreateChatMatrixMembershipTest {
       verify(consultants).save(colleague);
     }
     assertThat(owner.getMatrixUserId()).isEqualTo("@owner:matrix.org");
+    // The identity provisioned during creation is the one raised to the moderator level.
+    verify(moderatorPower)
+        .grantModerators(
+            "!group:matrix.org", "@owner:matrix.org", List.of("@colleague:matrix.org"));
     if (newOwner) verify(consultants).save(owner);
     else verify(consultants, never()).save(owner);
     if (!selfHelp) {

@@ -87,11 +87,6 @@ public class GroupChatRoleService {
   }
 
   /**
-   * Brings the Matrix moderator level of a member in line with their new role
-   * (ORISO-Frontend#2229). A demotion is strict: when Matrix cannot take the level back, the role
-   * change rolls back.
-   */
-  /**
    * Drops a Matrix moderator level before the person leaves the room. Only a current moderator is
    * strict: a failed drop rolls the membership change back. A participant already has no level, so
    * a missed confirmation does not block their removal.
@@ -104,6 +99,11 @@ public class GroupChatRoleService {
     }
   }
 
+  /**
+   * Brings the Matrix moderator level of a member in line with their new role
+   * (ORISO-Frontend#2229). A demotion is strict: when Matrix cannot take the level back, the role
+   * change rolls back. A promotion is raised after the commit.
+   */
   private void syncModeratorPower(
       Long seriesId, String consultantId, ParticipantRole role, boolean demotion) {
     var series = chatRepository.findById(seriesId);
@@ -116,6 +116,10 @@ public class GroupChatRoleService {
             .orElse(null);
     if (demotion) {
       moderatorPower.reconcileOrFail(series.get(), matrixUserId, role);
+    } else if (GroupModeratorPowerService.isModerator(role)) {
+      // A promotion is raised only once it has committed.
+      moderatorPower.grantModeratorsAfterCommit(
+          series.get(), java.util.Collections.singletonList(matrixUserId));
     } else {
       moderatorPower.reconcile(series.get(), matrixUserId, role);
     }
@@ -152,8 +156,10 @@ public class GroupChatRoleService {
     participantRepository.save(actor);
     participantRepository.save(target);
     chatRepository.save(series);
-    // The new primary owner is a moderator; the former one stays a co-moderator.
-    moderatorPower.reconcile(series, newPrimaryOwner.getMatrixUserId(), ParticipantRole.OWNER);
+    // The new primary owner is a moderator; the former one stays a co-moderator. Raised only once
+    // the transfer has committed.
+    moderatorPower.grantModeratorsAfterCommit(
+        series, java.util.Collections.singletonList(newPrimaryOwner.getMatrixUserId()));
   }
 
   @Transactional

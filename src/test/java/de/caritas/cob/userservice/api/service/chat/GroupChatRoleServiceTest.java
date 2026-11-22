@@ -239,7 +239,9 @@ class GroupChatRoleServiceTest {
 
     roleService.changeRole(42L, "owner", "other", ParticipantRole.CO_MODERATOR);
 
-    verify(moderatorPower).reconcile(series, "@other:matrix.example", ParticipantRole.CO_MODERATOR);
+    verify(moderatorPower)
+        .grantModeratorsAfterCommit(
+            series, java.util.Collections.singletonList("@other:matrix.example"));
     verify(moderatorPower, never()).reconcileOrFail(any(), any(), any());
   }
 
@@ -283,7 +285,9 @@ class GroupChatRoleServiceTest {
 
     roleService.transferPrimaryOwnership(42L, "owner", "target");
 
-    verify(moderatorPower).reconcile(series, "@target:matrix.example", ParticipantRole.OWNER);
+    verify(moderatorPower)
+        .grantModeratorsAfterCommit(
+            series, java.util.Collections.singletonList("@target:matrix.example"));
   }
 
   @Test

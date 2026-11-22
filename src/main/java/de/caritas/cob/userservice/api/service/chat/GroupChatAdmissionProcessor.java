@@ -162,7 +162,9 @@ public class GroupChatAdmissionProcessor {
       // it does not finish while Matrix still holds a moderator level.
       if (de.caritas.cob.userservice.api.service.matrix.GroupModeratorPowerService.isModerator(
           request.getAdmittedRole())) {
-        moderatorPower.reconcile(series.get(), matrixUserId, request.getAdmittedRole());
+        // Raised only once the admission has committed.
+        moderatorPower.grantModeratorsAfterCommit(
+            series.get(), java.util.Collections.singletonList(matrixUserId));
       } else {
         moderatorPower.reconcileOrFail(series.get(), matrixUserId, request.getAdmittedRole());
       }

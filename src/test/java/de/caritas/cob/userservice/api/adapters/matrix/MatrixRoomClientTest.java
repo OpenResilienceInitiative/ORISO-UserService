@@ -140,6 +140,30 @@ class MatrixRoomClientTest {
     verify(diagnosticMetrics).recordRoomCreation(false, LiveChatDiagnosticMetrics.Outcome.SUCCESS);
   }
 
+  /** The room exists once the rule fails: its ID must reach the caller, so it can be removed. */
+  @Test
+  void createRoom_ShouldHandOnTheRoomId_WhenTheModerationRuleCannotBeApplied() {
+    var responseBody = new MatrixCreateRoomResponseDTO();
+    responseBody.setRoomId(ROOM_ID);
+    when(restTemplate.postForEntity(
+            eq(uri(API_URL + "/_matrix/client/r0/createRoom")),
+            org.mockito.ArgumentMatchers.any(),
+            eq(MatrixCreateRoomResponseDTO.class)))
+        .thenReturn(ResponseEntity.ok(responseBody));
+    when(restTemplate.exchange(
+            org.mockito.ArgumentMatchers.any(URI.class),
+            eq(HttpMethod.GET),
+            org.mockito.ArgumentMatchers.any(HttpEntity.class),
+            eq(Map.class)))
+        .thenThrow(new org.springframework.web.client.ResourceAccessException("timeout"));
+
+    assertThatThrownBy(() -> matrixRoomClient.createRoom("Room name", "room-alias", ACCESS_TOKEN))
+        .isInstanceOfSatisfying(
+            de.caritas.cob.userservice.api.exception.matrix.MatrixRoomRuleException.class,
+            failure -> assertThat(failure.getRoomId()).isEqualTo(ROOM_ID));
+    verify(diagnosticMetrics).recordRoomCreation(false, LiveChatDiagnosticMetrics.Outcome.FAILURE);
+  }
+
   @Test
   void createRoom_WhenEncryptionEnabled_ShouldSendMegolmInitialState() throws Exception {
     var responseBody = new MatrixCreateRoomResponseDTO();
@@ -398,6 +422,27 @@ class MatrixRoomClientTest {
   }
 
   // ── ORISO-Frontend#2229: named group moderators hold the moderator level ──
+
+  /** In a version 12 room the creator is not in {@code users}, yet may write every level. */
+  @Test
+  void aCreatorWithUnlimitedPowerMayRaiseAModerator() {
+    var power = synapseDefaultPowerLevels();
+    power.put("users", Map.of());
+    stubPowerLevels(power);
+
+    var result =
+        matrixRoomClient.syncModeratorPower(
+            ROOM_ID,
+            Map.of(USER_ID, true),
+            "@creator:matrix.example",
+            ACCESS_TOKEN,
+            java.util.Set.of("@creator:matrix.example"));
+
+    assertThat(result).isEqualTo(MatrixRoomClient.ModeratorPowerSync.WRITTEN);
+    assertThat(objectMapOf(writtenPowerLevels().get("users")))
+        .containsEntry(USER_ID, 50)
+        .doesNotContainKey("@creator:matrix.example");
+  }
 
   private static final String HOLDER_ID = USER_ID;
   private static final String CO_MODERATOR_ID = "@comoderator:matrix.example";

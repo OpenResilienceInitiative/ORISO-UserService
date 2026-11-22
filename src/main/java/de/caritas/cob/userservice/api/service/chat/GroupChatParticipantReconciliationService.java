@@ -172,9 +172,9 @@ public class GroupChatParticipantReconciliationService {
         }
       }
       // Every selected colleague is a co-moderator (or owner) and may blur passages
-      // (ORISO-Frontend#2229).
-      moderatorPower.grantModerators(
-          series.getMatrixRoomId(), series.getChatOwner().getMatrixUserId(), selectedMatrixUserIds);
+      // (ORISO-Frontend#2229). Raised only once the selection has committed, so a failed update
+      // leaves nobody with a level the database does not record.
+      moderatorPower.grantModeratorsAfterCommit(series, selectedMatrixUserIds);
       cleanupTasks.forEach(matrixCleanup::clear);
     } catch (RuntimeException failure) {
       cleanupTasks.forEach(matrixCleanup::compensate);

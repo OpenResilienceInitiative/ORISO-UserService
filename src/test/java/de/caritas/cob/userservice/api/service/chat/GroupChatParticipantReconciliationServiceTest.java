@@ -1,5 +1,6 @@
 package de.caritas.cob.userservice.api.service.chat;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
@@ -297,12 +298,20 @@ class GroupChatParticipantReconciliationServiceTest {
 
     service.reconcile(series, List.of("owner", "returning", "newcomer"));
 
+    var saved = org.mockito.ArgumentCaptor.forClass(GroupChatParticipant.class);
     var order = Mockito.inOrder(participantRepository, moderatorPower);
-    order.verify(participantRepository, Mockito.atLeastOnce()).save(Mockito.any());
+    order.verify(participantRepository, Mockito.times(2)).save(saved.capture());
+    assertThat(saved.getAllValues())
+        .extracting(GroupChatParticipant::getConsultantId, GroupChatParticipant::getRole)
+        .containsExactlyInAnyOrder(
+            org.assertj.core.groups.Tuple.tuple("returning", ParticipantRole.CO_MODERATOR),
+            org.assertj.core.groups.Tuple.tuple("newcomer", ParticipantRole.CO_MODERATOR));
+    // Raised only once the selection has committed.
     order
         .verify(moderatorPower)
-        .grantModerators(
-            "!group:matrix", "@owner:matrix", List.of("@returning:matrix", "@newcomer:matrix"));
+        .grantModeratorsAfterCommit(series, List.of("@returning:matrix", "@newcomer:matrix"));
+    Mockito.verify(moderatorPower, Mockito.never())
+        .grantModerators(Mockito.any(), Mockito.any(), Mockito.any());
   }
 
   @Test

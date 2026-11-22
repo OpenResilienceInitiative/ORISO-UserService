@@ -497,7 +497,10 @@ class MembersOnlyRevocationTest {
 
     revocation.passOwnershipOn(chat, "owner");
 
-    verify(moderatorPower).reconcile(chat, "@creator:oriso", ParticipantRole.OWNER);
+    // Raised once the ownership change has committed, never inside it.
+    verify(moderatorPower)
+        .grantModeratorsAfterCommit(chat, java.util.Collections.singletonList("@creator:oriso"));
+    verify(moderatorPower, never()).reconcile(any(), any(), any());
   }
 
   @Test

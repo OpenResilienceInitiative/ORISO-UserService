@@ -207,8 +207,10 @@ public class MembersOnlyRevocation {
           return null;
         });
     if (promoted) {
-      // Whoever is made owner moderates the room from now on (ORISO-Frontend#2229).
-      moderatorPower.reconcile(chat, successor.account().getMatrixUserId(), ParticipantRole.OWNER);
+      // Whoever is made owner moderates the room from now on (ORISO-Frontend#2229). Raised only
+      // once the ownership change has committed: a rolled-back deletion leaves no level behind.
+      moderatorPower.grantModeratorsAfterCommit(
+          chat, java.util.Collections.singletonList(successor.account().getMatrixUserId()));
     }
     return true;
   }

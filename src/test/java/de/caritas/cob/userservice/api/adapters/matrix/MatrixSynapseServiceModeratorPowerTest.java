@@ -137,4 +137,34 @@ class MatrixSynapseServiceModeratorPowerTest {
     assertThat(gateway.syncModeratorPower("", Map.of(CO_MODERATOR, true), CREATOR)).isFalse();
     assertThat(gateway.syncModeratorPower("!r:oriso.test", Map.of(), CREATOR)).isTrue();
   }
+
+  /**
+   * Only the power-levels event with the empty state key counts. A stray one, listed before or
+   * after it, must not make a demotion look done while the user still holds the level.
+   */
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.ValueSource(booleans = {true, false})
+  void aStrayPowerLevelsEventDoesNotHideALevelThatMustBeTakenBack(boolean strayListedLast) {
+    String room = homeserver.createRoom(CREATOR);
+    homeserver
+        .member(room, CO_MODERATOR, 50)
+        .strayPowerLevels(room, Map.of("users", Map.of()), strayListedLast);
+
+    boolean done = gateway.syncModeratorPower(room, Map.of(CO_MODERATOR, false), CREATOR);
+
+    assertThat(done).isTrue();
+    assertThat(homeserver.powerOf(room, CO_MODERATOR)).isZero();
+  }
+
+  @Test
+  void theHoldersOfTheModeratorLevelAreReadFromTheAuthoritativeEventOnly() {
+    String room = homeserver.createRoom(CREATOR);
+    homeserver
+        .member(room, CO_MODERATOR, 50)
+        .member(room, PARTICIPANT, 0)
+        .strayPowerLevels(room, Map.of("users", Map.of(PARTICIPANT, 50)), true);
+
+    assertThat(gateway.moderatorLevelHolders(room)).containsExactly(CO_MODERATOR);
+    assertThat(gateway.moderatorLevelHolders("")).isEmpty();
+  }
 }

@@ -17,15 +17,18 @@ import de.caritas.cob.userservice.api.model.GroupChatParticipant;
 import de.caritas.cob.userservice.api.model.GroupChatParticipant.ParticipantRole;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.GroupChatParticipantRepository;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
-import java.util.Optional;
+import java.util.Set;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.http.HttpStatus;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 /**
  * ORISO-Frontend#2229: owners and co-moderators of a group are its moderators and hold the Matrix
@@ -39,6 +42,7 @@ class GroupModeratorPowerServiceTest {
   private static final String ROOM = "!group:oriso.test";
   private static final String OWNER = "@owner:oriso.test";
   private static final String MEMBER = "@member:oriso.test";
+  private static final String FORMER = "@former:oriso.test";
 
   @Mock private MatrixSynapseService matrixSynapseService;
   @Mock private GroupChatParticipantRepository participantRepository;
@@ -125,19 +129,111 @@ class GroupModeratorPowerServiceTest {
   /** The room of the next occurrence of a recurring group: every moderator is raised there too. */
   @Test
   void everyModeratorOfTheGroupIsRaisedInAFreshOccurrenceRoom() {
+    stubModerators();
+    when(matrixSynapseService.moderatorLevelHolders("!next:oriso.test")).thenReturn(Set.of());
+    when(matrixSynapseService.syncModeratorPower(
+            "!next:oriso.test", Map.of(OWNER, true, MEMBER, true), OWNER))
+        .thenReturn(true);
+
+    assertThat(service.grantModeratorsOf(group(), "!next:oriso.test")).isTrue();
+    verify(consultantRepository, never()).findById(any());
+  }
+
+  /**
+   * A room prepared by a stop that failed earlier may still hold the level of someone demoted,
+   * removed or gone since. It is taken back before the room becomes the group's current one.
+   */
+  @Test
+  void aFormerModeratorLosesTheLevelInAPreparedOccurrenceRoom() {
+    stubModerators();
+    when(matrixSynapseService.moderatorLevelHolders("!next:oriso.test"))
+        .thenReturn(Set.of(MEMBER, FORMER));
+    when(matrixSynapseService.syncModeratorPower(
+            "!next:oriso.test", Map.of(OWNER, true, MEMBER, true, FORMER, false), OWNER))
+        .thenReturn(true);
+
+    assertThat(service.grantModeratorsOf(group(), "!next:oriso.test")).isTrue();
+  }
+
+  @Test
+  void aPreparedRoomThatKeepsAFormerModeratorsLevelFailsTheStop() {
+    stubModerators();
+    when(matrixSynapseService.moderatorLevelHolders("!next:oriso.test")).thenReturn(Set.of(FORMER));
+    when(matrixSynapseService.syncModeratorPower(anyString(), anyMap(), anyString()))
+        .thenReturn(false);
+
+    assertThatThrownBy(() -> service.grantModeratorsOf(group(), "!next:oriso.test"))
+        .isInstanceOfSatisfying(
+            CustomValidationHttpStatusException.class,
+            failure -> assertThat(failure.getHttpStatus()).isEqualTo(HttpStatus.BAD_GATEWAY));
+  }
+
+  /** Without a former moderator to take back, a missing raise only withholds blurring. */
+  @Test
+  void aFailedRaiseInAFreshOccurrenceRoomIsReportedButNeverThrown() {
+    stubModerators();
+    when(matrixSynapseService.moderatorLevelHolders("!next:oriso.test")).thenReturn(Set.of());
+    when(matrixSynapseService.syncModeratorPower(anyString(), anyMap(), anyString()))
+        .thenReturn(false);
+
+    assertThat(service.grantModeratorsOf(group(), "!next:oriso.test")).isFalse();
+  }
+
+  /** A promotion that rolls back must leave no Matrix moderator level behind. */
+  @Test
+  void aRaiseInsideATransactionWaitsForTheCommitAndNeverRunsOnRollback() {
+    TransactionSynchronizationManager.initSynchronization();
+    try {
+      service.grantModeratorsAfterCommit(group(), List.of(MEMBER));
+
+      verify(matrixSynapseService, never()).syncModeratorPower(any(), any(), any());
+      TransactionSynchronizationManager.getSynchronizations()
+          .forEach(sync -> sync.afterCompletion(TransactionSynchronization.STATUS_ROLLED_BACK));
+      verify(matrixSynapseService, never()).syncModeratorPower(any(), any(), any());
+    } finally {
+      TransactionSynchronizationManager.clearSynchronization();
+    }
+  }
+
+  /** After the commit only those who still moderate the group are raised. */
+  @Test
+  void aRaiseAfterTheCommitChecksTheRolesAgain() {
+    stubModerators();
+    when(matrixSynapseService.syncModeratorPower(ROOM, Map.of(MEMBER, true), OWNER))
+        .thenReturn(true);
+    TransactionSynchronizationManager.initSynchronization();
+    try {
+      service.grantModeratorsAfterCommit(group(), Arrays.asList(MEMBER, FORMER, null));
+
+      TransactionSynchronizationManager.getSynchronizations()
+          .forEach(TransactionSynchronization::afterCommit);
+    } finally {
+      TransactionSynchronizationManager.clearSynchronization();
+    }
+
+    verify(matrixSynapseService).syncModeratorPower(ROOM, Map.of(MEMBER, true), OWNER);
+  }
+
+  @Test
+  void aRaiseOutsideATransactionRunsAtOnce() {
+    stubModerators();
+    when(matrixSynapseService.syncModeratorPower(ROOM, Map.of(MEMBER, true), OWNER))
+        .thenReturn(true);
+
+    service.grantModeratorsAfterCommit(group(), List.of(MEMBER));
+
+    verify(matrixSynapseService).syncModeratorPower(ROOM, Map.of(MEMBER, true), OWNER);
+  }
+
+  private void stubModerators() {
     when(participantRepository.findBySeriesId(7L))
         .thenReturn(
             List.of(
                 participation("owner-id", ParticipantRole.OWNER),
                 participation("comod-id", ParticipantRole.CO_MODERATOR),
                 participation("participant-id", ParticipantRole.PARTICIPANT)));
-    when(consultantRepository.findById("owner-id")).thenReturn(Optional.of(consultant(OWNER)));
-    when(consultantRepository.findById("comod-id")).thenReturn(Optional.of(consultant(MEMBER)));
-    when(matrixSynapseService.syncModeratorPower(
-            "!next:oriso.test", Map.of(OWNER, true, MEMBER, true), OWNER))
-        .thenReturn(true);
-
-    assertThat(service.grantModeratorsOf(group(), "!next:oriso.test")).isTrue();
+    when(consultantRepository.findAllByIdIn(List.of("owner-id", "comod-id")))
+        .thenReturn(List.of(consultant(OWNER), consultant(MEMBER)));
   }
 
   private static GroupChatParticipant participation(String consultantId, ParticipantRole role) {

@@ -15,13 +15,15 @@ import de.caritas.cob.userservice.api.port.out.GroupChatParticipantRepository;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
 import java.util.Collection;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
-import java.util.Optional;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 /**
  * Keeps a group's Matrix power levels in line with its roles (ORISO-Frontend#2229). Moderators of a
@@ -110,24 +112,109 @@ public class GroupModeratorPowerService {
   }
 
   /**
-   * Raises every moderator of the group in {@code roomId}, the freshly created room of its next
-   * occurrence, which starts with the creator as its only moderator.
+   * Brings the moderators of the group in {@code roomId}, the room of its next occurrence, in line
+   * with their roles. The room starts with its creator as its only moderator; a room prepared by an
+   * earlier stop that failed may still hold the level of someone who stopped moderating since, and
+   * that level is taken back here, before the room becomes the group's current one.
+   *
+   * <p>Raising is best effort. Taking a level back is strict: when Matrix cannot confirm it, this
+   * answers {@code 502 Bad Gateway}, so the stop fails and is repeated with the same room.
+   *
+   * @return true when every moderator holds the level afterwards
    */
   public boolean grantModeratorsOf(Chat chat, String roomId) {
+    if (!MatrixIds.isRoomId(roomId)) {
+      return true;
+    }
+    var moderatorIds = moderatorMatrixUserIds(chat.getId());
+    var moderators = new LinkedHashMap<String, Boolean>();
+    matrixSynapseService.moderatorLevelHolders(roomId).stream()
+        .filter(id -> !moderatorIds.contains(id))
+        .forEach(id -> moderators.put(id, false));
+    var revokes = !moderators.isEmpty();
+    moderatorIds.forEach(id -> moderators.put(id, true));
+    if (moderators.isEmpty()) {
+      return true;
+    }
+    var done = matrixSynapseService.syncModeratorPower(roomId, moderators, ownerOf(chat));
+    if (!done && revokes) {
+      log.warn(
+          "A former moderator of group chat {} still holds the level in its next room",
+          chat.getId());
+      throw new CustomValidationHttpStatusException(
+          HttpStatusExceptionReason.INTERNAL_CHAT_MEMBERSHIP_FAILED, HttpStatus.BAD_GATEWAY);
+    }
+    if (!done) {
+      log.warn(
+          "The moderators of the next room of group chat {} could not be raised", chat.getId());
+    }
+    return done;
+  }
+
+  /**
+   * Raises {@code matrixUserIds} to the moderator level once the current transaction has committed,
+   * and only those who are still moderators of the group then. A promotion that rolls back
+   * therefore never leaves a Matrix moderator level behind. Runs at once outside a transaction.
+   * Best effort, like {@link #reconcile}: a failure is logged and only withholds blurring.
+   */
+  public void grantModeratorsAfterCommit(Chat chat, Collection<String> matrixUserIds) {
+    var roomId = roomIdOf(chat);
+    if (roomId == null || matrixUserIds == null) {
+      return;
+    }
+    var requested = matrixUserIds.stream().filter(id -> !isBlank(id)).distinct().toList();
+    if (requested.isEmpty()) {
+      return;
+    }
+    var seriesId = chat.getId();
+    var holder = ownerOf(chat);
+    Runnable raise =
+        () -> {
+          try {
+            var current = moderatorMatrixUserIds(seriesId);
+            grantModerators(roomId, holder, requested.stream().filter(current::contains).toList());
+          } catch (RuntimeException failure) {
+            log.warn(
+                "The moderators of group chat {} could not be raised after commit ({})",
+                seriesId,
+                failure.getClass().getSimpleName());
+          }
+        };
+    if (TransactionSynchronizationManager.isSynchronizationActive()) {
+      TransactionSynchronizationManager.registerSynchronization(
+          new TransactionSynchronization() {
+            @Override
+            public void afterCommit() {
+              raise.run();
+            }
+          });
+    } else {
+      raise.run();
+    }
+  }
+
+  /** Matrix user IDs of the group's owners and co-moderators, in one consultant lookup. */
+  private List<String> moderatorMatrixUserIds(Long seriesId) {
     // A co-moderator may come from another Träger (recipient scope PLATFORM): resolved by
     // participation, across Träger.
-    var moderatorIds =
-        TenantContext.supplyAcrossTenants(
-            () ->
-                participantRepository.findBySeriesId(chat.getId()).stream()
-                    .filter(participation -> isModerator(participation.getRole()))
-                    .map(GroupChatParticipant::getConsultantId)
-                    .filter(Objects::nonNull)
-                    .map(consultantRepository::findById)
-                    .flatMap(Optional::stream)
-                    .map(Consultant::getMatrixUserId)
-                    .toList());
-    return grantModerators(roomId, ownerOf(chat), moderatorIds);
+    return TenantContext.supplyAcrossTenants(
+        () -> {
+          var consultantIds =
+              participantRepository.findBySeriesId(seriesId).stream()
+                  .filter(participation -> isModerator(participation.getRole()))
+                  .map(GroupChatParticipant::getConsultantId)
+                  .filter(Objects::nonNull)
+                  .distinct()
+                  .toList();
+          if (consultantIds.isEmpty()) {
+            return List.<String>of();
+          }
+          return consultantRepository.findAllByIdIn(consultantIds).stream()
+              .map(Consultant::getMatrixUserId)
+              .filter(id -> !isBlank(id))
+              .distinct()
+              .toList();
+        });
   }
 
   private static String roomIdOf(Chat chat) {

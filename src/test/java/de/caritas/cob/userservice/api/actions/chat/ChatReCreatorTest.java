@@ -304,6 +304,8 @@ class ChatReCreatorTest {
     assertEquals(NEW_MATRIX_ROOM_ID, chatReCreator.recreateMessengerChat(chat));
 
     verify(matrixChatShutdownService, never()).shutdownRoom(chat);
+    // That room becomes the current one: no former moderator keeps a level there.
+    verify(moderatorPower).grantModeratorsOf(chat, NEW_MATRIX_ROOM_ID);
   }
 
   /** Unknown is not gone: an unreadable room may still hold members that were not carried over. */

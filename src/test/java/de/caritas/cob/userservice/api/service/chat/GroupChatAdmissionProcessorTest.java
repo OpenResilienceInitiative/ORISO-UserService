@@ -138,7 +138,9 @@ class GroupChatAdmissionProcessorTest {
 
     var order = org.mockito.Mockito.inOrder(participants, moderatorPower);
     order.verify(participants).save(any());
-    order.verify(moderatorPower).reconcile(series, "@r:test", ParticipantRole.CO_MODERATOR);
+    order
+        .verify(moderatorPower)
+        .grantModeratorsAfterCommit(series, java.util.Collections.singletonList("@r:test"));
   }
 
   /** A former moderator who comes back as a participant does not keep an old moderator level. */
@@ -155,7 +157,34 @@ class GroupChatAdmissionProcessorTest {
   @Test
   void aColleagueAdmittedAsParticipantIsNotAdmittedWhenMatrixKeepsTheModeratorLevel() {
     when(membership.isMemberInRoom(series, "@r:test")).thenReturn(Optional.of(false));
+    when(membership.resolveMatrixRoomId(series)).thenReturn("!room:test");
     when(membership.addMemberToRoom(series, "@r:test")).thenReturn(true);
+    var refused = matrixKeepsTheModeratorLevel();
+
+    assertThatThrownBy(() -> processor.process(7L)).isSameAs(refused);
+    rollBack();
+
+    assertThat(request.getStatus()).isEqualTo(Status.ADMITTING);
+    // The join of this attempt is undone with the rolled-back admission.
+    verify(membership).removeMemberFromRoom("!room:test", "@r:test");
+  }
+
+  /** Someone who was in the room before this attempt is not taken out by its rollback. */
+  @Test
+  void aRolledBackParticipantAdmissionKeepsAMemberWhoWasInTheRoomBefore() {
+    when(membership.isMemberInRoom(series, "@r:test")).thenReturn(Optional.of(true));
+    lenient().when(membership.resolveMatrixRoomId(series)).thenReturn("!room:test");
+    lenient().when(membership.addMemberToRoom(series, "@r:test")).thenReturn(true);
+    var refused = matrixKeepsTheModeratorLevel();
+
+    assertThatThrownBy(() -> processor.process(7L)).isSameAs(refused);
+    rollBack();
+
+    verify(membership, never()).removeMemberFromRoom(any(), any());
+  }
+
+  private de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHttpStatusException
+      matrixKeepsTheModeratorLevel() {
     var refused =
         new de.caritas.cob.userservice.api.exception.httpresponses
             .CustomValidationHttpStatusException(
@@ -165,10 +194,16 @@ class GroupChatAdmissionProcessorTest {
     doThrow(refused)
         .when(moderatorPower)
         .reconcileOrFail(series, "@r:test", ParticipantRole.PARTICIPANT);
+    return refused;
+  }
 
-    assertThatThrownBy(() -> processor.process(7L)).isSameAs(refused);
-
-    assertThat(request.getStatus()).isEqualTo(Status.ADMITTING);
+  private static void rollBack() {
+    TransactionSynchronizationManager.getSynchronizations()
+        .forEach(
+            synchronization ->
+                synchronization.afterCompletion(
+                    org.springframework.transaction.support.TransactionSynchronization
+                        .STATUS_ROLLED_BACK));
   }
 
   @Test
