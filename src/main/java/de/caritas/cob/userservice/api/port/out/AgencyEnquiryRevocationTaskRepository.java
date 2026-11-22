@@ -16,10 +16,23 @@ public interface AgencyEnquiryRevocationTaskRepository
 
   @Query(
       """
-      SELECT t.sessionId FROM AgencyEnquiryRevocationTask t
+      SELECT DISTINCT t.sessionId FROM AgencyEnquiryRevocationTask t
       WHERE t.consultantAgencyId = :relationId
       """)
   List<Long> pendingSessionIds(Long relationId);
+
+  @Query(
+      """
+      SELECT t.sessionId AS sessionId, t.roomId AS roomId FROM AgencyEnquiryRevocationTask t
+      WHERE t.consultantAgencyId = :relationId
+      """)
+  List<PendingRoomBinding> pendingRoomBindings(Long relationId);
+
+  interface PendingRoomBinding {
+    Long getSessionId();
+
+    String getRoomId();
+  }
 
   @Query(
       """

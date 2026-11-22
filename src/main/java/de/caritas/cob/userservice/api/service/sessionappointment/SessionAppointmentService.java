@@ -18,6 +18,7 @@ import de.caritas.cob.userservice.api.model.Session.SessionStatus;
 import de.caritas.cob.userservice.api.model.SessionAppointment;
 import de.caritas.cob.userservice.api.model.SessionAppointment.Status;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
+import de.caritas.cob.userservice.api.port.out.DirectInvitationMemberRepository;
 import de.caritas.cob.userservice.api.port.out.SessionAppointmentRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.service.CaseHandoverService;
@@ -80,11 +81,12 @@ public class SessionAppointmentService {
   private final CaseHandoverService caseHandovers;
   private final CounsellorFreeTime freeTime;
   private final ConsultantRepository consultants;
+  private final DirectInvitationMemberRepository invitationMembers;
   private final UsernameTranscoder usernameTranscoder = new UsernameTranscoder();
 
   @Transactional(readOnly = true)
   public List<SessionAppointmentDTO> list(Long sessionId) {
-    var session = sessionOfParticipant(sessionId);
+    var session = sessionOfReader(sessionId);
     return appointments
         .findNewestOfSession(session.getId(), PageRequest.of(0, SESSION_LIST_LIMIT))
         .stream()
@@ -295,6 +297,30 @@ public class SessionAppointmentService {
         .filter(this::isInCallersTenant)
         .filter(found -> isResponsibleCounsellor(found) || isAsker(found))
         .orElseThrow(() -> new NotFoundException(NOT_FOUND));
+  }
+
+  /**
+   * #1747: reading also opens to a confirmed member of the shared conversation of an appointment
+   * invitation, who is not its owner. Changes keep {@link #sessionOfParticipant}.
+   */
+  private Session sessionOfReader(Long sessionId) {
+    return sessions
+        .findById(sessionId)
+        .filter(this::isInCallersTenant)
+        .filter(
+            found -> isResponsibleCounsellor(found) || isAsker(found) || isInvitationMember(found))
+        .orElseThrow(() -> new NotFoundException(NOT_FOUND));
+  }
+
+  private boolean isInvitationMember(Session session) {
+    return !caller.isConsultant()
+        && caller.getUserId() != null
+        && invitationMembers
+            .findBySessionIdAndUserId(session.getId(), caller.getUserId())
+            .filter(
+                de.caritas.cob.userservice.api.service.agencyinvitelink.DirectInvitationMemberships
+                    ::isMember)
+            .isPresent();
   }
 
   private boolean isInCallersTenant(Session session) {
