@@ -32,6 +32,7 @@ class SessionOwnershipServiceTest {
 
   @Mock private SessionRepository sessionRepository;
   @Mock private EntityManager entityManager;
+  @Mock private AgencyEnquiryRoomDecisions roomDecisions;
 
   @Mock
   private de.caritas.cob.userservice.api.service.matrix.InquiryAcceptanceNoticeStore
@@ -47,10 +48,21 @@ class SessionOwnershipServiceTest {
       de.caritas.cob.userservice.api.model.ConversationType type) {
     var current = session(33L, null, 0L);
     var expected = session(33L, null, 0L);
+    for (var enquiry : List.of(current, expected)) {
+      enquiry.setStatus(NEW);
+      enquiry.setAgencyId(1L);
+      enquiry.setTenantId(1L);
+      enquiry.setMatrixRoomId("!agency-room:example.invalid");
+    }
     expected.setConversationType(type);
     when(sessionRepository.findByIdForUpdate(33L)).thenReturn(Optional.of(current));
     ownershipService.updateOwnerAndStatus(expected, consultant("a"), IN_PROGRESS);
     assertThat(current.getConversationType()).isEqualTo(type);
+    if (type == de.caritas.cob.userservice.api.model.ConversationType.AGENCY_COUNSELLING) {
+      verify(roomDecisions).begin(current);
+    } else {
+      verify(roomDecisions, never()).begin(current);
+    }
   }
 
   @Test
