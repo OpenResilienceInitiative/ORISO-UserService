@@ -180,6 +180,22 @@ public class MatrixSynapseService implements MatrixUserClient, MatrixRoomMembers
 
   private static final long IMPERSONATION_TOKEN_TTL_MS = 50 * 60 * 1000L;
 
+  // Server-operation tokens from loginAsUserAccessToken (matrixUserId -> token + Synapse expiry).
+  // Each Synapse admin login writes a new access_tokens row that is never removed; without reuse
+  // an active counsellor caused about 50 logins per minute (Dev, 2026-11-21). A token is reused
+  // until SERVER_OPERATION_TOKEN_REUSE_MARGIN_MS before Synapse expires it, so every caller still
+  // gets at least that much validity.
+  private final java.util.Map<String, CachedImpersonationToken> serverOperationTokenCache =
+      new java.util.concurrent.ConcurrentHashMap<>();
+
+  private static final long SERVER_OPERATION_TOKEN_REUSE_MARGIN_MS = 2 * 60 * 1000L;
+
+  // Device id for the technical admin's password login. Without one, Synapse creates a new device
+  // on every login (one per 50-minute admin-token refresh: 311 devices for the admin on Dev).
+  // The suffix is the pod name, so replicas never invalidate each other's token by logging in on
+  // the same device; a rollout leaves one device per old pod for stale-device cleanup.
+  static final String ADMIN_DEVICE_ID_PREFIX = "ORISO_USERSERVICE_";
+
   private static final class CachedImpersonationToken {
     private final String token;
     private final long expiryMs;
@@ -723,17 +739,44 @@ public class MatrixSynapseService implements MatrixUserClient, MatrixRoomMembers
   }
 
   public String loginAsUserAccessToken(String matrixUserId) {
-    var tokenResponse = loginAsUser(matrixUserId, SERVER_OPERATION_TOKEN_TTL_MS);
-    if (tokenResponse == null || tokenResponse.get("access_token") == null) {
-      return null;
-    }
-    return String.valueOf(tokenResponse.get("access_token"));
+    return serverOperationToken(matrixUserId, false);
   }
 
   private String loginAsUserAccessTokenForCall(String matrixUserId) {
-    var tokenResponse = loginAsUser(matrixUserId, SERVER_OPERATION_TOKEN_TTL_MS, true);
-    if (tokenResponse == null || tokenResponse.get("access_token") == null) return null;
-    return String.valueOf(tokenResponse.get("access_token"));
+    return serverOperationToken(matrixUserId, true);
+  }
+
+  private String serverOperationToken(String matrixUserId, boolean retryTransientFailure) {
+    if (matrixUserId == null || matrixUserId.isBlank()) {
+      return null;
+    }
+    long now = nowSupplier.getAsLong();
+    serverOperationTokenCache
+        .entrySet()
+        .removeIf(
+            e -> isExpired(e.getValue().expiryMs - SERVER_OPERATION_TOKEN_REUSE_MARGIN_MS, now));
+    var cached = serverOperationTokenCache.get(matrixUserId);
+    if (cached != null) {
+      return cached.token;
+    }
+    var tokenResponse =
+        loginAsUser(matrixUserId, SERVER_OPERATION_TOKEN_TTL_MS, retryTransientFailure);
+    if (tokenResponse == null || tokenResponse.get("access_token") == null) {
+      return null;
+    }
+    String token = String.valueOf(tokenResponse.get("access_token"));
+    serverOperationTokenCache.put(
+        matrixUserId, new CachedImpersonationToken(token, now + SERVER_OPERATION_TOKEN_TTL_MS));
+    return token;
+  }
+
+  /** Drops cached impersonation tokens, e.g. after the homeserver account was deactivated. */
+  public void evictUserAccessTokens(String matrixUserId) {
+    if (matrixUserId == null) {
+      return;
+    }
+    serverOperationTokenCache.remove(matrixUserId);
+    impersonationTokenCache.remove(matrixUserId);
   }
 
   /**
@@ -943,7 +986,8 @@ public class MatrixSynapseService implements MatrixUserClient, MatrixRoomMembers
       }
 
       // Try to login first
-      String token = loginUser(adminUsername, adminPassword);
+      String adminDeviceId = adminDeviceId();
+      String token = loginUser(adminUsername, adminPassword, adminDeviceId);
 
       // If login fails, create the ADMIN user (with admin=true)
       if (token == null) {
@@ -951,12 +995,12 @@ public class MatrixSynapseService implements MatrixUserClient, MatrixRoomMembers
         try {
           // Create admin user manually with admin=true
           createAdminUser(adminUsername, adminPassword);
-          token = loginUser(adminUsername, adminPassword);
+          token = loginUser(adminUsername, adminPassword, adminDeviceId);
         } catch (Exception e) {
           log.warn(
               "Could not create admin user, trying login again: {}",
               redactor.scrub(e.getMessage()));
-          token = loginUser(adminUsername, adminPassword);
+          token = loginUser(adminUsername, adminPassword, adminDeviceId);
         }
       }
 
@@ -1048,6 +1092,7 @@ public class MatrixSynapseService implements MatrixUserClient, MatrixRoomMembers
    * people still in the room, used when a temporary account's messages are kept (ADR-029 §5).
    */
   public boolean deactivateUser(String matrixUserId, boolean erase) {
+    evictUserAccessTokens(matrixUserId);
     try {
       String adminToken = getAdminToken();
       if (adminToken == null) {
@@ -1513,6 +1558,19 @@ public class MatrixSynapseService implements MatrixUserClient, MatrixRoomMembers
    * @return the access token
    */
   public String loginUser(String username, String password) {
+    return loginUser(username, password, null);
+  }
+
+  static String adminDeviceId() {
+    String instance = System.getenv("HOSTNAME");
+    if (instance == null || instance.isBlank()) {
+      instance = "local";
+    }
+    String deviceId = ADMIN_DEVICE_ID_PREFIX + instance.replaceAll("[^A-Za-z0-9._=-]", "_");
+    return deviceId.length() > 255 ? deviceId.substring(0, 255) : deviceId;
+  }
+
+  private String loginUser(String username, String password, String deviceId) {
     // Check cache first, evicting expired entries so a token invalidated on the homeserver
     // (e.g. after a password reset) is never served past its TTL and a fresh login is forced.
     long now = nowSupplier.getAsLong();
@@ -1531,6 +1589,9 @@ public class MatrixSynapseService implements MatrixUserClient, MatrixRoomMembers
       loginRequest.setType("m.login.password");
       loginRequest.setUser(username);
       loginRequest.setPassword(password);
+      if (deviceId != null) {
+        loginRequest.setDeviceId(deviceId);
+      }
 
       HttpEntity<MatrixLoginRequestDTO> request = new HttpEntity<>(loginRequest, headers);
 
@@ -2195,27 +2256,37 @@ public class MatrixSynapseService implements MatrixUserClient, MatrixRoomMembers
   }
 
   /**
-   * Whether a user is out of a room by its state (ORISO-Frontend#2252): no {@code m.room.member}
-   * event for them at all (never invited or joined), or their latest one says "leave" or "ban".
-   * Empty when the state cannot be read; callers must treat that as "unknown".
+   * Whether a user is out of a room by its state (ORISO-Frontend#2252): the homeserver confirms the
+   * room is gone, the user has no membership event, or their latest event says "leave" or "ban".
+   * Empty indicates that absence could not be established.
    */
   public java.util.Optional<Boolean> isOutOfRoom(String matrixRoomId, String matrixUserId) {
-    return readRoomState(matrixRoomId)
-        .map(
-            events ->
-                events.stream()
-                    .filter(event -> "m.room.member".equals(event.get("type")))
-                    .filter(event -> matrixUserId.equals(event.get("state_key")))
-                    .map(event -> event.get("content"))
-                    .filter(java.util.Map.class::isInstance)
-                    .map(content -> ((java.util.Map<?, ?>) content).get("membership"))
-                    .reduce((first, second) -> second)
-                    .map(membership -> "leave".equals(membership) || "ban".equals(membership))
-                    .orElse(true));
+    return readRoomState(matrixRoomId, true)
+        .flatMap(
+            events -> {
+              var memberEvent =
+                  events.stream()
+                      .filter(event -> "m.room.member".equals(event.get("type")))
+                      .filter(event -> matrixUserId.equals(event.get("state_key")))
+                      .reduce((first, second) -> second);
+              if (memberEvent.isEmpty()) {
+                return java.util.Optional.of(true);
+              }
+              if (!(memberEvent.get().get("content") instanceof java.util.Map<?, ?> content)
+                  || !(content.get("membership") instanceof String membership)) {
+                return java.util.Optional.empty();
+              }
+              return java.util.Optional.of("leave".equals(membership) || "ban".equals(membership));
+            });
   }
 
   private java.util.Optional<java.util.List<java.util.Map<?, ?>>> readRoomState(
       String matrixRoomId) {
+    return readRoomState(matrixRoomId, false);
+  }
+
+  private java.util.Optional<java.util.List<java.util.Map<?, ?>>> readRoomState(
+      String matrixRoomId, boolean confirmedMissingIsEmptyRoom) {
     String adminToken = getAdminAccessToken();
     if (adminToken == null) {
       return java.util.Optional.empty();
@@ -2231,15 +2302,19 @@ public class MatrixSynapseService implements MatrixUserClient, MatrixRoomMembers
               new HttpEntity<>(getClientHttpHeaders(adminToken)),
               java.util.Map.class);
       var body = response.getBody();
-      if (body == null || !(body.get("state") instanceof java.util.List<?> events)) {
+      if (body == null
+          || !(body.get("state") instanceof java.util.List<?> events)
+          || events.stream().anyMatch(event -> !(event instanceof java.util.Map<?, ?>))) {
         return java.util.Optional.empty();
       }
       return java.util.Optional.of(
-          events.stream()
-              .filter(java.util.Map.class::isInstance)
-              .<java.util.Map<?, ?>>map(java.util.Map.class::cast)
-              .toList());
+          events.stream().<java.util.Map<?, ?>>map(java.util.Map.class::cast).toList());
     } catch (Exception ex) {
+      if (confirmedMissingIsEmptyRoom
+          && ex instanceof HttpClientErrorException.NotFound notFound
+          && isMatrixRoomNotFound(notFound)) {
+        return java.util.Optional.of(java.util.List.of());
+      }
       if (ex instanceof HttpStatusCodeException status && status.getStatusCode().value() == 401) {
         // The cached admin token is no longer accepted: log in again on the next call.
         invalidateAdminAccessToken();
@@ -2249,6 +2324,19 @@ public class MatrixSynapseService implements MatrixUserClient, MatrixRoomMembers
           matrixRoomId,
           redactor.scrub(ex.getMessage()));
       return java.util.Optional.empty();
+    }
+  }
+
+  private boolean isMatrixRoomNotFound(HttpClientErrorException.NotFound failure) {
+    try {
+      return "M_NOT_FOUND"
+          .equals(
+              MATRIX_LOGIN_ERROR_READER
+                  .readTree(failure.getResponseBodyAsString())
+                  .path("errcode")
+                  .asText());
+    } catch (JsonProcessingException malformed) {
+      return false;
     }
   }
 
@@ -3012,6 +3100,18 @@ public class MatrixSynapseService implements MatrixUserClient, MatrixRoomMembers
   public boolean setUserPowerLevel(
       String roomId, String userId, int powerLevel, String accessToken) {
     return matrixRoomClient.setUserPowerLevel(roomId, userId, powerLevel, accessToken);
+  }
+
+  /** Repair-queue variant: no user, room or provider body in the log. Never throws. */
+  public boolean setUserPowerLevelQuietly(
+      String roomId, String userId, int powerLevel, String accessToken) {
+    return matrixRoomClient.setUserPowerLevelQuietly(roomId, userId, powerLevel, accessToken);
+  }
+
+  /** Repair-queue invite that reports a rate limit separately and logs no identifiers. */
+  public MatrixRoomClient.QuietInvite inviteObserverQuietly(
+      String roomId, String userId, String accessToken) {
+    return matrixRoomClient.inviteObserverQuietly(roomId, userId, accessToken);
   }
 
   /**

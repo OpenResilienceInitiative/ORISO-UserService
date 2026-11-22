@@ -81,6 +81,7 @@ import org.springframework.transaction.support.TransactionTemplate;
     })
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
 @Import({
+  de.caritas.cob.userservice.api.service.matrix.CounsellorStartedCall.class,
   de.caritas.cob.userservice.api.service.matrix.SessionCallAuthority.class,
   de.caritas.cob.userservice.api.service.matrix.SessionCallRevival.class,
   EventNotificationService.class,
@@ -121,6 +122,9 @@ class MatrixCallGuestRoomIT {
   private static final String ASKER = "@guest-asker:example";
   private static final String GUEST = "@call-guest:example";
 
+  @Autowired
+  private de.caritas.cob.userservice.api.service.matrix.CounsellorStartedCall counsellorCalls;
+
   @Autowired private UserRepository users;
   @Autowired private ConsultantRepository consultants;
   @Autowired private SessionRepository sessions;
@@ -139,6 +143,11 @@ class MatrixCallGuestRoomIT {
 
   @Autowired private PlatformTransactionManager transactionManager;
   @Autowired private javax.sql.DataSource dataSource;
+
+  @MockitoBean
+  private de.caritas.cob.userservice.api.service.lifecycle.SessionInteractionService
+      sessionInteractions;
+
   @MockitoBean private MatrixSynapseService matrix;
 
   @MockitoBean
@@ -421,6 +430,9 @@ class MatrixCallGuestRoomIT {
                 mock(
                     de.caritas.cob.userservice.api.service.matrix.MatrixSessionCallBindingService
                         .class),
+                org.mockito.Mockito.mock(
+                    de.caritas.cob.userservice.api.service.matrix.MatrixGroupCallBindingService
+                        .class),
                 actor))
         .build();
   }
@@ -445,7 +457,8 @@ class MatrixCallGuestRoomIT {
         matrix,
         hasher,
         new JdbcTemplate(dataSource),
-        callGuests);
+        callGuests,
+        counsellorCalls);
   }
 
   private AuthenticatedUser actor(String id, String role) {

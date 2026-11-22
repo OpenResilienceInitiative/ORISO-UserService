@@ -51,8 +51,10 @@ public class SessionConsentService {
    * @param sessionId the session whose pointer is moved
    * @param adviceSeeker the authenticated help-seeker: the owner or a confirmed invitation member
    * @param legalVersionId the legal-text version the room is cleared for; may be empty only for an
-   *     invitation member, meaning "agreed, no version" (the advice centre has no own text)
-   * @throws BadRequestException if the owner supplies no legal version
+   *     invitation member — including the first participant who owns a shared appointment
+   *     conversation (ORISO-UserService#1694) — meaning "agreed, no version" (the advice centre has
+   *     no own text)
+   * @throws BadRequestException if the owner of an ordinary 1:1 supplies no legal version
    * @throws NotFoundException if the session does not exist
    * @throws ConflictException if the room has no Gate 2 at all (group chats, whose session is owned
    *     by a tenant system user — see {@link Session#isConsentGateApplicable()})
@@ -76,6 +78,19 @@ public class SessionConsentService {
     }
     if (isOwnedBy(session, adviceSeeker)) {
       if (isNull(legalVersionId)) {
+        /* ORISO-UserService#1694: the first participant of a shared appointment conversation
+        owns its session and is recorded as an invitation member at the same time. Without a
+        consent text of the advice centre they agree to the platform text, like every later
+        participant: "agreed, no version" on their own member row. */
+        var creatorRow = sharedConversationMemberRow(session, adviceSeeker);
+        if (creatorRow.isPresent()) {
+          /* Overwrite, never append: an earlier version on the pointer must not keep reading as
+          the owner's current agreement. */
+          session.setConsentedLegalVersionId(null);
+          sessionRepository.save(session);
+          agree(creatorRow.get(), null);
+          return;
+        }
         /* A null would be indistinguishable from "never consented" and would silently
         reopen the gate on the next read. */
         throw new BadRequestException(
@@ -99,6 +114,10 @@ public class SessionConsentService {
                     new ForbiddenException(
                         String.format(
                             "Session %s does not belong to the authenticated user", sessionId)));
+    agree(member, legalVersionId);
+  }
+
+  private void agree(DirectInvitationMember member, Long legalVersionId) {
     /* Overwrite, never append: a later consent without a version drops the earlier one. */
     member.setConsentedLegalVersionId(legalVersionId);
     member.setConsentGiven(true);
@@ -116,7 +135,13 @@ public class SessionConsentService {
       return false;
     }
     if (nonNull(userId) && session.isAdvised(userId)) {
-      return isNull(session.getConsentedLegalVersionId());
+      if (nonNull(session.getConsentedLegalVersionId())) {
+        return false;
+      }
+      /* ORISO-UserService#1694: the first participant of a shared appointment conversation may
+      have agreed on their own member row, without a version. Only shared conversations are
+      looked up, so an ordinary 1:1 owner still needs the versioned pointer. */
+      return !session.isDirectInvitationConversation() || !hasAgreedAsMember(session, userId);
     }
     if (isNull(userId)) {
       return true;
@@ -146,6 +171,25 @@ public class SessionConsentService {
     return members
         .findBySessionIdAndUserIdForUpdate(session.getId(), adviceSeeker.getUserId())
         .filter(DirectInvitationMemberships::isMember);
+  }
+
+  /**
+   * The owner's own confirmed member row, only in a shared appointment conversation: there the
+   * first participant is the session's owner and its creator member at once.
+   */
+  private Optional<DirectInvitationMember> sharedConversationMemberRow(
+      Session session, User owner) {
+    return session.isDirectInvitationConversation()
+        ? lockedMemberRow(session, owner)
+        : Optional.empty();
+  }
+
+  private boolean hasAgreedAsMember(Session session, String userId) {
+    return members
+        .findBySessionIdAndUserId(session.getId(), userId)
+        .filter(DirectInvitationMemberships::isMember)
+        .filter(SessionConsentService::hasAgreed)
+        .isPresent();
   }
 
   private static boolean hasAgreed(DirectInvitationMember member) {

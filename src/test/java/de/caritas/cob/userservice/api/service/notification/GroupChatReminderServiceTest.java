@@ -66,6 +66,36 @@ class GroupChatReminderServiceTest {
   }
 
   @Test
+  void writesTheReminderInTheOwnersTenantNotTheSchedulersTechnicalOne() {
+    // FE#1211: the scheduler runs in the technical context, where the tenant interceptor stamps
+    // nothing. The reminder row kept tenant_id NULL and was invisible to every tenant but 1.
+    var series = series(WINDOW_END, 1, 0);
+    var owner = org.mockito.Mockito.mock(de.caritas.cob.userservice.api.model.Consultant.class);
+    when(owner.getTenantId()).thenReturn(2L);
+    series.setChatOwner(owner);
+    givenSchedule(series);
+    when(notificationRecipientService.resolveRecipientIds(series)).thenReturn(RECIPIENTS);
+    var tenantDuringPublish = new java.util.concurrent.atomic.AtomicReference<Long>();
+    org.mockito.Mockito.doAnswer(
+            invocation -> {
+              tenantDuringPublish.set(
+                  de.caritas.cob.userservice.api.tenant.TenantContext.getCurrentTenant());
+              return null;
+            })
+        .when(lifecycleNotificationService)
+        .createReminderNotifications(any(), any(), any(), any(), any(), any(), any());
+    de.caritas.cob.userservice.api.tenant.TenantContext.setCurrentTenant(
+        de.caritas.cob.userservice.api.tenant.TenantContext.TECHNICAL_TENANT_ID);
+    try {
+      service.publishUpcomingReminders(WINDOW_END.minusHours(1));
+    } finally {
+      de.caritas.cob.userservice.api.tenant.TenantContext.clear();
+    }
+
+    org.assertj.core.api.Assertions.assertThat(tenantDuringPublish.get()).isEqualTo(2L);
+  }
+
+  @Test
   void skipsReminderForAnOccurrenceThatWasCancelled() {
     var series = series(WINDOW_END, 1, 0);
     givenSchedule(series, ChatOccurrenceException.skip(series, WINDOW_END));

@@ -25,6 +25,8 @@ import de.caritas.cob.userservice.api.port.out.SessionRoomGateway;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
 import de.caritas.cob.userservice.api.service.agency.AgencyMatrixCredentialClient;
 import de.caritas.cob.userservice.api.service.notification.EventNotificationService;
+import de.caritas.cob.userservice.api.service.session.AgencyEnquiryRoomRetirements;
+import de.caritas.cob.userservice.api.service.session.SessionOwnershipService.OwnershipChange;
 import de.caritas.cob.userservice.api.service.session.SessionService;
 import de.caritas.cob.userservice.api.service.statistics.StatisticsService;
 import de.caritas.cob.userservice.api.service.statistics.event.AssignSessionStatisticsEvent;
@@ -61,6 +63,7 @@ public class AssignEnquiryFacade {
   private final @NonNull UsernameTranscoder usernameTranscoder;
   private final @NonNull ConsultantDisplayNameResolver consultantDisplayNameResolver;
   private final @NonNull AgencyMatrixCredentialClient agencyMatrixCredentialClient;
+  private final @NonNull AgencyEnquiryRoomRetirements roomRetirements;
   private final @NonNull EventNotificationService eventNotificationService;
   private final @NonNull AnonymousEnquiryDepartmentResolver anonymousEnquiryDepartmentResolver;
 
@@ -278,6 +281,7 @@ public class AssignEnquiryFacade {
         throw refusal;
       }
     }
+    boolean replacesHoldingRoom = AgencyEnquiryRoomRetirements.isInitialHoldingRoom(session);
     var departmentBound =
         bindDepartment && session.getAgencyId() == null && servingAgencyId != null;
     if (departmentBound) {
@@ -289,6 +293,8 @@ public class AssignEnquiryFacade {
         sessionService.updateConsultantAndStatusForSession(session, consultant, IN_PROGRESS);
 
     // Create Matrix room and invite user
+    Runnable createReplacement =
+        () -> createNewMatrixRoomOrFail(session, consultant, assignment, replacesHoldingRoom);
     try {
       var user = session.getUser();
       ensureUserMatrixAccount(user);
@@ -320,7 +326,7 @@ public class AssignEnquiryFacade {
               log.warn(
                   "No agency Matrix credentials found for agency {}, falling back to create new room",
                   session.getAgencyId());
-              createNewMatrixRoomOrFail(session, consultant);
+              createReplacement.run();
               return;
             }
 
@@ -329,13 +335,13 @@ public class AssignEnquiryFacade {
               log.warn(
                   "Agency Matrix credentials incomplete for agency {}, falling back to create new room",
                   session.getAgencyId());
-              createNewMatrixRoomOrFail(session, consultant);
+              createReplacement.run();
               return;
             }
 
             if (!MatrixIds.isUserId(agencyCredentials.getMatrixUserId())) {
               log.warn("Invalid agency Matrix user ID, falling back to create new room");
-              createNewMatrixRoomOrFail(session, consultant);
+              createReplacement.run();
               return;
             }
 
@@ -346,7 +352,7 @@ public class AssignEnquiryFacade {
             if (isBlank(agencyToken)) {
               log.error(
                   "Failed to login agency service account for room reuse, falling back to create new room");
-              createNewMatrixRoomOrFail(session, consultant);
+              createReplacement.run();
               return;
             }
 
@@ -396,7 +402,7 @@ public class AssignEnquiryFacade {
               log.warn(
                   "Failed to mint consultant Matrix token for room reuse on session {}, creating new room",
                   session.getId());
-              createNewMatrixRoomOrFail(session, consultant);
+              createReplacement.run();
               return;
             }
 
@@ -408,7 +414,7 @@ public class AssignEnquiryFacade {
                   consultant.getUsername(),
                   existingRoomId,
                   session.getId());
-              createNewMatrixRoomOrFail(session, consultant);
+              createReplacement.run();
               return;
             }
 
@@ -438,9 +444,6 @@ public class AssignEnquiryFacade {
                   agencyCredentials.getMatrixUserId(),
                   existingRoomId);
             }
-
-            // DON'T overwrite session.matrixRoomId - keep existing room ID
-            // No need to save session since matrixRoomId hasn't changed
           } catch (Exception e) {
             if (e instanceof InternalServerErrorException) {
               throw (InternalServerErrorException) e;
@@ -451,14 +454,17 @@ public class AssignEnquiryFacade {
                 session.getId(),
                 e.getMessage(),
                 e);
-            // Fall back to creating new room
-            createNewMatrixRoomOrFail(session, consultant);
+            // Fall back to creating new room.
+            createReplacement.run();
+          }
+          if (replacesHoldingRoom && existingRoomId.equals(session.getMatrixRoomId())) {
+            roomRetirements.reuseRoom(session, assignment);
           }
         } else {
           // NO EXISTING ROOM - Create new room (backward compatibility)
           log.info(
               "No existing room found for session {}, creating new Matrix room", session.getId());
-          createNewMatrixRoomOrFail(session, consultant);
+          createReplacement.run();
         }
       } else {
         throw new InternalServerErrorException(
@@ -506,14 +512,22 @@ public class AssignEnquiryFacade {
    * @param session the session
    * @param consultant the consultant
    */
-  private void createNewMatrixRoomOrFail(Session session, Consultant consultant) {
-    if (!createNewMatrixRoom(session, consultant)) {
+  private void createNewMatrixRoomOrFail(
+      Session session,
+      Consultant consultant,
+      OwnershipChange assignment,
+      boolean replacesHoldingRoom) {
+    if (!createNewMatrixRoom(session, consultant, assignment, replacesHoldingRoom)) {
       throw new InternalServerErrorException(
           String.format("Matrix room creation failed for session %s", session.getId()));
     }
   }
 
-  private boolean createNewMatrixRoom(Session session, Consultant consultant) {
+  private boolean createNewMatrixRoom(
+      Session session,
+      Consultant consultant,
+      OwnershipChange assignment,
+      boolean replacesHoldingRoom) {
     String previousRoomId = session.getMatrixRoomId();
     try {
       var roomName = "Session " + session.getId() + " - " + consultant.getUsername();
@@ -573,8 +587,12 @@ public class AssignEnquiryFacade {
         return false;
       }
 
-      session.setMatrixRoomId(roomId);
-      sessionService.saveSession(session);
+      if (replacesHoldingRoom) {
+        roomRetirements.replaceRoom(session, assignment, roomId);
+      } else {
+        session.setMatrixRoomId(roomId);
+        sessionService.saveSession(session);
+      }
 
       // Best-effort: the notification listener syncs as the technical admin and must
       // be a member of the room to see message events at all.

@@ -65,10 +65,15 @@ jobs:
         java-version: '21'
         distribution: temurin
         cache: maven
+        cache-dependency-path: |
+          **/pom.xml
+          **/.mvn/wrapper/maven-wrapper.properties
+          **/.mvn/extensions.xml
+          scripts/ci/run-maven-with-central-retry.sh
 
     - name: Verify Redis-backed cross-instance contracts
       run: >-
-        ./mvnw -B
+        bash scripts/ci/run-maven-with-central-retry.sh -B
         -Dtest=ConsultantActivityRegistryRedisIT,RedisOneTimeTokenStoreIT
         test
 
@@ -131,6 +136,11 @@ jobs:
         java-version: '21'
         distribution: temurin
         cache: maven
+        cache-dependency-path: |
+          **/pom.xml
+          **/.mvn/wrapper/maven-wrapper.properties
+          **/.mvn/extensions.xml
+          scripts/ci/github-maven-settings.xml
 
     # Production runs with multitenancy.enabled=true; the testing profile does not.
     - name: Run the listed integration tests with the tenant filter on

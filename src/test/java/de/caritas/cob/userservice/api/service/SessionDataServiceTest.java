@@ -243,6 +243,19 @@ public class SessionDataServiceTest {
   }
 
   @Test
+  void aTemporaryAccountCannotChangeItsSessionAlias() {
+    var session = aliasSession();
+    session.getUser().setTemporaryAccount(true);
+    org.assertj.core.api.Assertions.assertThatThrownBy(
+            () ->
+                sessionDataService.saveSessionData(
+                    session, new SessionDataDTO().displayName("katze_mika_1234")))
+        .isInstanceOf(
+            de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException.class);
+    org.mockito.Mockito.verifyNoInteractions(sessionDataRepository);
+  }
+
+  @Test
   void anotherSessionOwnerCannotChangeAnAlias() {
     var session = aliasSession();
     session.getUser().setUserId("someone-else");

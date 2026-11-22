@@ -89,6 +89,10 @@ class MatrixCallTenantIT {
    * here a counsellor may write in the case when it is assigned to them.
    */
   @MockitoBean
+  private de.caritas.cob.userservice.api.service.lifecycle.SessionInteractionService
+      sessionInteractions;
+
+  @MockitoBean
   private de.caritas.cob.userservice.api.service.notification.MatrixCaseReplyActorAuthorizer
       caseWriterAuthorizer;
 
@@ -424,6 +428,9 @@ class MatrixCallTenantIT {
                         org.mockito.Mockito.mock(
                             de.caritas.cob.userservice.api.service.matrix
                                 .MatrixSessionCallBindingService.class),
+                        org.mockito.Mockito.mock(
+                            de.caritas.cob.userservice.api.service.matrix
+                                .MatrixGroupCallBindingService.class),
                         actor))
                 .build();
         mvc.perform(
@@ -453,6 +460,9 @@ class MatrixCallTenantIT {
                           .class),
                   org.mockito.Mockito.mock(
                       de.caritas.cob.userservice.api.service.matrix.MatrixSessionCallBindingService
+                          .class),
+                  org.mockito.Mockito.mock(
+                      de.caritas.cob.userservice.api.service.matrix.MatrixGroupCallBindingService
                           .class),
                   actor))
           .build()

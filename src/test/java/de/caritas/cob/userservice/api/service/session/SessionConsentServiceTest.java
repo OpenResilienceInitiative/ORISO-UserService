@@ -309,15 +309,85 @@ class SessionConsentServiceTest {
 
   @Test
   void consentRequired_Should_FollowTheSessionPointer_ForTheOwner() {
-    assertThat(
-            sessionConsentService.consentRequired(
-                sharedConversation(42L, "asker-1", null), "asker-1"))
+    assertThat(sessionConsentService.consentRequired(sessionOf(42L, "asker-1", null), "asker-1"))
         .isTrue();
+    assertThat(sessionConsentService.consentRequired(sessionOf(42L, "asker-1", 6L), "asker-1"))
+        .isFalse();
     assertThat(
             sessionConsentService.consentRequired(
                 sharedConversation(42L, "asker-1", 6L), "asker-1"))
         .isFalse();
     verify(members, never()).findBySessionIdAndUserId(any(), any());
+  }
+
+  /* ORISO-UserService#1694: the first participant of a shared appointment conversation owns its
+  session and is its creator member at once. They agree to the platform text like everybody
+  else. */
+  @Test
+  void recordConsent_Should_AcceptTheFirstParticipantWithoutAVersion_InASharedConversation() {
+    var shared = sharedConversation(42L, "asker-1", null);
+    var creator = memberRow(42L, "asker-1");
+    when(sessionRepository.findById(42L)).thenReturn(Optional.of(shared));
+    when(members.findBySessionIdAndUserIdForUpdate(42L, "asker-1"))
+        .thenReturn(Optional.of(creator));
+    when(members.findBySessionIdAndUserId(42L, "asker-1")).thenReturn(Optional.of(creator));
+
+    sessionConsentService.recordConsent(42L, askerWithId("asker-1"), null);
+
+    assertThat(creator.isConsentGiven()).isTrue();
+    assertThat(creator.getConsentedLegalVersionId()).isNull();
+    verify(members).save(creator);
+    assertThat(sessionConsentService.consentRequired(shared, "asker-1")).isFalse();
+  }
+
+  @Test
+  void recordConsent_Should_DropAnEarlierPointerVersion_WhenTheFirstParticipantAgreesWithoutOne() {
+    var shared = sharedConversation(42L, "asker-1", 6L);
+    var creator = memberRow(42L, "asker-1");
+    when(sessionRepository.findById(42L)).thenReturn(Optional.of(shared));
+    when(members.findBySessionIdAndUserIdForUpdate(42L, "asker-1"))
+        .thenReturn(Optional.of(creator));
+    when(members.findBySessionIdAndUserId(42L, "asker-1")).thenReturn(Optional.of(creator));
+
+    sessionConsentService.recordConsent(42L, askerWithId("asker-1"), null);
+
+    assertThat(shared.getConsentedLegalVersionId()).as("overwritten, never kept").isNull();
+    verify(sessionRepository).save(shared);
+    assertThat(creator.isConsentGiven()).isTrue();
+    assertThat(sessionConsentService.consentRequired(shared, "asker-1")).isFalse();
+  }
+
+  @Test
+  void consentRequired_Should_StayOpen_ForTheFirstParticipant_WhoHasNotAgreedYet() {
+    when(members.findBySessionIdAndUserId(42L, "asker-1"))
+        .thenReturn(Optional.of(memberRow(42L, "asker-1")));
+
+    assertThat(
+            sessionConsentService.consentRequired(
+                sharedConversation(42L, "asker-1", null), "asker-1"))
+        .isTrue();
+  }
+
+  @Test
+  void recordConsent_Should_StillStoreTheVersionOnThePointer_ForTheFirstParticipant() {
+    var shared = sharedConversation(42L, "asker-1", null);
+    when(sessionRepository.findById(42L)).thenReturn(Optional.of(shared));
+
+    sessionConsentService.recordConsent(42L, askerWithId("asker-1"), 7L);
+
+    assertThat(shared.getConsentedLegalVersionId()).isEqualTo(7L);
+    verify(sessionRepository).save(shared);
+    assertThat(sessionConsentService.consentRequired(shared, "asker-1")).isFalse();
+  }
+
+  @Test
+  void recordConsent_Should_StillRejectAMissingVersion_ForAFirstParticipantWhoIsNoMember() {
+    when(sessionRepository.findById(42L))
+        .thenReturn(Optional.of(sharedConversation(42L, "asker-1", null)));
+
+    assertThatThrownBy(() -> sessionConsentService.recordConsent(42L, askerWithId("asker-1"), null))
+        .isInstanceOf(BadRequestException.class);
+    verify(members, never()).save(any());
   }
 
   @Test

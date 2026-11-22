@@ -15,6 +15,7 @@ import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
 import de.caritas.cob.userservice.api.exception.httpresponses.ServiceUnavailableException;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.model.AgencyInviteLink;
+import de.caritas.cob.userservice.api.model.GuestAccountMode;
 import de.caritas.cob.userservice.api.port.out.AgencyInviteLinkRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.service.ConsultingTypeService;
@@ -84,6 +85,12 @@ public class AgencyInviteLinkService {
 
   /** The end of an invitation with an appointment (#2252); optional for the same reason. */
   private final ObjectProvider<DirectInvitationExpiryService> invitationEnd;
+
+  /**
+   * #1662: caps the guest account mode the entry page shows. Not {@code @NonNull} for older test
+   * wiring; without it the link's own mode applies.
+   */
+  private final GuestAccountModePolicy guestAccountModes;
 
   /** Create a new invite link. All classification fields are optional — defaults are applied. */
   public AgencyInviteLink create(CreateInviteLinkCommand cmd) {
@@ -400,6 +407,17 @@ public class AgencyInviteLinkService {
     }
   }
 
+  private GuestAccountMode cappedMode(AgencyInviteLink link) {
+    var mode = link.effectiveGuestAccountMode();
+    return guestAccountModes == null
+        ? mode
+        : guestAccountModes.cap(
+            link.getTenantId(),
+            link.getAgencyId(),
+            InviteLinkChatType.valueOf(link.getChatType()),
+            mode);
+  }
+
   private InvitationContext contextOf(AgencyInviteLink link) {
     rejectPausedLink(link);
     if (InviteLinkChatType.isDirectMedium(link.getChatType())) {
@@ -426,26 +444,29 @@ public class AgencyInviteLinkService {
               ? null
               : resolveAgencyIdForRegistration(link, consultingTypeId);
       boolean direct = InviteLinkChatType.isDirectMedium(link.getChatType());
+      // #1662: the mode the registration will accept, capped as TemporaryAccountLinkResolver caps.
+      var mode = direct ? cappedMode(link) : null;
+      boolean temporary = mode != null && mode.offersTemporaryAccounts();
       // A link that creates temporary accounts tells the registration page what applies to
       // people who join now (ADR-029 §3–§5, #1476).
-      var settings =
-          direct && link.isTemporaryAccount() ? temporaryAccountSettings.current() : null;
+      var settings = temporary ? temporaryAccountSettings.current() : null;
       return new InvitationContext(
           link.getTenantId(),
           agencyId,
           consultingTypeId,
           link.getTopicId(),
           link.getChatType(),
-          direct ? link.isTemporaryAccount() : null,
+          direct ? temporary : null,
           direct ? admissionOf(link) : null,
           settings == null ? null : settings.hidePasswordField(),
           settings == null ? null : settings.messageRetention().name(),
-          direct ? link.effectiveAccessMode().name() : null,
+          direct ? mode.toAccessMode().name() : null,
           direct && !InviteLinkChatType.CHAT.name().equals(link.getChatType())
               ? link.isKnock()
               : null,
           direct ? scheduleOf(link) : null,
-          direct && link.getAppointmentId() != null ? link.getExpiresAt() : null);
+          direct && link.getAppointmentId() != null ? link.getExpiresAt() : null,
+          direct ? mode.name() : null);
     } finally {
       if (previousTenant == null) {
         TenantContext.clear();
@@ -468,8 +489,8 @@ public class AgencyInviteLinkService {
       TenantContext.setCurrentTenantData(new TenantData(link.getTenantId(), null));
       callShareLinkService.requireUsable(link);
       callShareLinkService.requireDirectInviteAllowed(link);
-      boolean temporary =
-          link.isTemporaryAccount() && callShareLinkService.temporaryAccountAllowed(link);
+      var mode = callShareLinkService.effectiveGuestAccountMode(link);
+      boolean temporary = mode.offersTemporaryAccounts();
       var settings = temporary ? temporaryAccountSettings.current() : null;
       return new CallShareContext(
           link.getTenantId(),
@@ -481,7 +502,8 @@ public class AgencyInviteLinkService {
           (link.isKnock() ? InviteLinkAdmission.KNOCK : InviteLinkAdmission.DIRECT).name(),
           InviteLinkKind.CALL.name(),
           settings == null ? null : settings.hidePasswordField(),
-          settings == null ? null : settings.messageRetention().name());
+          settings == null ? null : settings.messageRetention().name(),
+          mode.name());
     } finally {
       if (previousTenant == null) {
         TenantContext.clear();
@@ -502,7 +524,8 @@ public class AgencyInviteLinkService {
       String admission,
       String linkKind,
       @JsonInclude(JsonInclude.Include.NON_NULL) Boolean hidePasswordField,
-      @JsonInclude(JsonInclude.Include.NON_NULL) String messageRetention) {}
+      @JsonInclude(JsonInclude.Include.NON_NULL) String messageRetention,
+      String guestAccountMode) {}
 
   /**
    * Public context deliberately excludes credentials and invitation administration data, including
@@ -523,7 +546,8 @@ public class AgencyInviteLinkService {
       @JsonInclude(JsonInclude.Include.NON_NULL) String appointmentStartTime,
       @JsonInclude(JsonInclude.Include.NON_NULL) String appointmentEndTime,
       @JsonInclude(JsonInclude.Include.NON_NULL) String callOpensAt,
-      @JsonInclude(JsonInclude.Include.NON_NULL) String expiresAt) {
+      @JsonInclude(JsonInclude.Include.NON_NULL) String expiresAt,
+      @JsonInclude(JsonInclude.Include.NON_NULL) String guestAccountMode) {
 
     InvitationContext(
         Long tenantId,
@@ -538,7 +562,8 @@ public class AgencyInviteLinkService {
         String accessMode,
         Boolean knock,
         DirectInvitationSchedule schedule,
-        LocalDateTime expiresAt) {
+        LocalDateTime expiresAt,
+        String guestAccountMode) {
       this(
           tenantId,
           agencyId,
@@ -554,7 +579,8 @@ public class AgencyInviteLinkService {
           schedule == null ? null : iso(schedule.start()),
           schedule == null ? null : iso(schedule.end()),
           schedule == null ? null : iso(schedule.callOpensAt()),
-          expiresAt == null ? null : iso(expiresAt));
+          expiresAt == null ? null : iso(expiresAt),
+          guestAccountMode);
     }
 
     private static String iso(LocalDateTime utc) {
@@ -584,13 +610,21 @@ public class AgencyInviteLinkService {
    * Redeem the token: validate, mark USED, return tenant/agency/consulting-type/topic metadata for
    * the frontend registration flow. Does not create Keycloak or Matrix users on the server.
    */
+  /**
+   * @param chosenUsername the animal handle a Live Chat guest rolled on the entry page; {@code
+   *     null} lets the server roll one. Ignored for links that register on the client.
+   */
   @Transactional
-  public RedeemContext redeemWithContext(String token) {
-    return redeem(token);
+  public RedeemContext redeemWithContext(String token, String chosenUsername) {
+    return redeem(token, chosenUsername);
   }
 
   @Transactional
   RedeemContext redeem(String token) {
+    return redeem(token, null);
+  }
+
+  private RedeemContext redeem(String token, String chosenUsername) {
     // The remote policy reads must not run while the row lock below is held. Read the token
     // unlocked first; status, expiry and the other checks still decide on the locked row.
     repository
@@ -644,7 +678,8 @@ public class AgencyInviteLinkService {
       // that agency's data-protection declaration happen only when a live consultant accepts.
       if (InviteLinkChatType.LIVE_CHAT.name().equals(link.getChatType())) {
         var dto = new CreateAnonymousEnquiryDTO(consultingTypeId).mainTopicId(link.getTopicId());
-        var session = createAnonymousEnquiryFacade.createAnonymousEnquiry(dto, true);
+        var session =
+            createAnonymousEnquiryFacade.createAnonymousEnquiry(dto, true, chosenUsername);
         // Public Live Chat entry points are reusable until expiry so multiple clients can enter
         // the shared topic queue through the same published link.
         return new RedeemContext(

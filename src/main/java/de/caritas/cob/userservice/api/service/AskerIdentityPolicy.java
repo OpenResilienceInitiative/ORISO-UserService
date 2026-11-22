@@ -4,6 +4,7 @@ import de.caritas.cob.userservice.api.admin.service.tenant.TenantService;
 import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
 import de.caritas.cob.userservice.api.exception.httpresponses.ServiceUnavailableException;
 import de.caritas.cob.userservice.api.model.ConversationType;
+import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.tenantservice.generated.web.model.RestrictedTenantDTO;
 import de.caritas.cob.userservice.tenantservice.generated.web.model.Settings;
 import java.util.Objects;
@@ -30,6 +31,16 @@ public final class AskerIdentityPolicy {
           !Boolean.FALSE.equals(settings.getFeatureDisplayNameEditableSelfHelpEnabled());
       case INTERNAL_GROUP -> false;
     };
+  }
+
+  /**
+   * #1662: a temporary account keeps the name it joined with until the guest keeps the account.
+   * Permanent accounts follow the tenant rules above.
+   */
+  public static void requireDisplayNameChangeAllowed(User asker) {
+    if (asker != null && asker.isTemporaryAccount()) {
+      throw new ForbiddenException("A temporary account cannot change its display name");
+    }
   }
 
   public static void requireEmailCollectionAllowed(TenantService tenants, Long tenantId) {

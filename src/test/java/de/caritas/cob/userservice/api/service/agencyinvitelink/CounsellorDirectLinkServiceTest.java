@@ -22,6 +22,7 @@ import de.caritas.cob.userservice.api.model.AgencyInviteLink;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.ConsultantAgency;
 import de.caritas.cob.userservice.api.model.GroupChatJoinRequest;
+import de.caritas.cob.userservice.api.model.GuestAccountMode;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.out.AgencyInviteLinkRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
@@ -65,6 +66,7 @@ class CounsellorDirectLinkServiceTest {
   @Mock private de.caritas.cob.userservice.api.port.out.SessionRepository sessionRepository;
   @Mock private DirectInvitationService invitations;
   @Mock private DirectInvitationExpiryService expiry;
+  @Mock private GuestAccountModePolicy guestAccountModes;
 
   @Mock
   private de.caritas.cob.userservice.api.port.out.SessionAppointmentRepository sessionAppointments;
@@ -87,13 +89,18 @@ class CounsellorDirectLinkServiceTest {
             sessionRepository,
             invitations,
             sessionAppointments,
-            expiry);
+            expiry,
+            guestAccountModes);
     owner = consultantIn(AGENCY);
     when(consultantRepository.findByIdAndDeleteDateIsNull(OWNER_ID)).thenReturn(Optional.of(owner));
     var agency = new AgencyDTO().id(AGENCY).tenantId(TENANT).consultingType(3).postcode("12345");
     when(agencyService.getAgencyWithoutCaching(AGENCY)).thenReturn(agency);
     when(topicService.getTopicById(TOPIC)).thenReturn(new TopicDTO().id(TOPIC));
     when(policy.allows(any(), any(), any())).thenReturn(true);
+    when(guestAccountModes.allowedModes(any(), any(), any()))
+        .thenReturn(java.util.EnumSet.allOf(GuestAccountMode.class));
+    when(guestAccountModes.allows(any(), any(), any(), any())).thenCallRealMethod();
+    when(guestAccountModes.cap(any(), any(), any(), any())).thenCallRealMethod();
     when(repository.save(any())).thenAnswer(i -> i.getArgument(0));
     when(invitations.now()).thenAnswer(i -> LocalDateTime.now(ZoneOffset.UTC));
     when(invitations.joinLater(any(), any(), any())).thenAnswer(i -> i.getArgument(2));
@@ -1128,6 +1135,92 @@ class CounsellorDirectLinkServiceTest {
                     new CounsellorDirectLinkService.SessionInvitationCommand(
                         null, null, null, null, null, null, null, null)))
         .isInstanceOf(BadRequestException.class);
+  }
+
+  // --- guest account mode (#1662) ---
+
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.EnumSource(GuestAccountMode.class)
+  void create_Should_StoreTheGuestAccountMode_AndItsMirrors(GuestAccountMode mode) {
+    var link =
+        service.create(
+            owner,
+            new CreateCommand(InviteLinkChatType.VIDEO, TOPIC, null, null, null)
+                .withGuestAccountMode(mode));
+
+    assertThat(link.getGuestAccountMode()).isEqualTo(mode);
+    assertThat(link.isTemporaryAccount()).isEqualTo(mode != GuestAccountMode.PERMANENT);
+    assertThat(link.getAccessMode()).isEqualTo(mode.toAccessMode());
+  }
+
+  @Test
+  void create_Should_ReadTheOldSwitchAsTodayWhenNoModeIsGiven() {
+    var call =
+        service.create(owner, new CreateCommand(InviteLinkChatType.AUDIO, TOPIC, null, null, null));
+    var chat =
+        service.create(owner, new CreateCommand(InviteLinkChatType.CHAT, TOPIC, null, null, null));
+
+    assertThat(call.getGuestAccountMode()).isEqualTo(GuestAccountMode.GUEST_CHOOSES);
+    assertThat(chat.getGuestAccountMode()).isEqualTo(GuestAccountMode.PERMANENT);
+  }
+
+  @Test
+  void create_Should_Refuse_AModeThePlatformDoesNotAllow() {
+    when(guestAccountModes.allowedModes(TENANT, AGENCY, InviteLinkChatType.VIDEO))
+        .thenReturn(java.util.EnumSet.of(GuestAccountMode.PERMANENT));
+
+    assertThatThrownBy(
+            () ->
+                service.create(
+                    owner,
+                    new CreateCommand(InviteLinkChatType.VIDEO, TOPIC, null, null, null)
+                        .withGuestAccountMode(GuestAccountMode.TEMPORARY)))
+        .isInstanceOf(ForbiddenException.class);
+  }
+
+  @Test
+  void create_Should_FallBackToPermanent_When_TheDefaultIsNotAllowed() {
+    when(guestAccountModes.allowedModes(TENANT, AGENCY, InviteLinkChatType.VIDEO))
+        .thenReturn(java.util.EnumSet.of(GuestAccountMode.PERMANENT));
+
+    var link =
+        service.create(owner, new CreateCommand(InviteLinkChatType.VIDEO, TOPIC, null, null, null));
+
+    assertThat(link.getGuestAccountMode()).isEqualTo(GuestAccountMode.PERMANENT);
+    assertThat(link.isTemporaryAccount()).isFalse();
+  }
+
+  @Test
+  void update_Should_ChangeTheGuestAccountMode_AndRefuseOneThatIsNotAllowed() {
+    var link = ownLink(5L, "VIDEO", "ACTIVE");
+
+    service.update(
+        owner,
+        5L,
+        new UpdateCommand(null, null, null, null).withGuestAccountMode(GuestAccountMode.TEMPORARY));
+    assertThat(link.getGuestAccountMode()).isEqualTo(GuestAccountMode.TEMPORARY);
+    assertThat(link.getAccessMode()).isEqualTo(DirectInvitationAccessMode.GUESTS_ONLY);
+
+    when(guestAccountModes.allowedModes(TENANT, AGENCY, InviteLinkChatType.VIDEO))
+        .thenReturn(java.util.EnumSet.of(GuestAccountMode.PERMANENT));
+    assertThatThrownBy(
+            () ->
+                service.update(
+                    owner,
+                    5L,
+                    new UpdateCommand(null, null, null, null)
+                        .withGuestAccountMode(GuestAccountMode.GUEST_CHOOSES)))
+        .isInstanceOf(ForbiddenException.class);
+    assertThat(link.getGuestAccountMode()).isEqualTo(GuestAccountMode.TEMPORARY);
+  }
+
+  @Test
+  void update_Should_MapTheOldSwitch_When_AnOlderAppSendsIt() {
+    var link = ownLink(5L, "VIDEO", "ACTIVE");
+
+    service.update(owner, 5L, new UpdateCommand(null, null, false, null));
+
+    assertThat(link.getGuestAccountMode()).isEqualTo(GuestAccountMode.PERMANENT);
   }
 
   private AgencyInviteLink appointmentLink(String token, String medium, LocalDateTime start) {

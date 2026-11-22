@@ -106,6 +106,9 @@ public class CreateUserFacadeTest {
   private de.caritas.cob.userservice.api.service.temporaryaccount.TemporaryAccountSettingsService
       temporaryAccountSettings;
 
+  @org.mockito.Mock
+  private de.caritas.cob.userservice.api.service.lifecycle.LifecycleEventPublisher lifecycleEvents;
+
   @org.junit.jupiter.api.BeforeEach
   void recoveryPolicyFixture() {
     TenantContext.setCurrentTenant(1L);
@@ -147,7 +150,8 @@ public class CreateUserFacadeTest {
             mock(de.caritas.cob.userservice.api.service.AskerEmailCollectionPolicy.class),
             mock(de.caritas.cob.userservice.api.service.SessionDataService.class),
             temporaryAccountLinkResolver,
-            temporaryAccountSettings);
+            temporaryAccountSettings,
+            lifecycleEvents);
 
     org.mockito.Mockito.lenient()
         .when(consultingTypeManager.getConsultingTypeSettings(org.mockito.ArgumentMatchers.any()))
@@ -211,6 +215,55 @@ public class CreateUserFacadeTest {
   private ProvisioningCompensator provisioningCompensator =
       new ProvisioningCompensator(new SimpleMeterRegistry());
 
+  /** #1662: a temporary account never saves an e-mail address, also not at registration. */
+  @Test
+  void aTemporaryRegistrationWithAnEmailAddressIsRefusedBeforeAnyIdentityEffects() {
+    var dto =
+        UserDTO.builder()
+            .username("guest-login")
+            .password("pw")
+            .postcode("12345")
+            .agencyId(700L)
+            .consultingType("1")
+            .termsAccepted("true")
+            .email("guest@example.org")
+            .build();
+    dto.setTemporary(true);
+    var settings =
+        new de.caritas.cob.userservice.tenantservice.generated.web.model.Settings()
+            .featureAskerEmailEnabled(true)
+            .featureAskerEmailCollectionAgencyCounsellingEnabled(true)
+            .featureAskerEmailCollectionSelfHelpEnabled(true);
+    org.mockito.Mockito.lenient()
+        .when(tenantService.getRestrictedTenantDataFresh(42L))
+        .thenReturn(new RestrictedTenantDTO().id(42L).settings(settings));
+    var policy =
+        new de.caritas.cob.userservice.api.service.AskerEmailCollectionPolicy(
+            tenantService,
+            mock(de.caritas.cob.userservice.api.port.out.SessionRepository.class),
+            mock(de.caritas.cob.userservice.api.port.out.UserChatRepository.class),
+            mock(org.springframework.transaction.PlatformTransactionManager.class));
+    org.springframework.test.util.ReflectionTestUtils.setField(
+        createUserFacade, "emailCollectionPolicy", policy);
+    var group = new Chat();
+    group.setConversationType(ConversationType.SELF_HELP);
+    when(groupInviteRegistration.resolveInvitation(dto))
+        .thenReturn(
+            Optional.of(
+                new GroupInviteRegistration.Invitation(
+                    group, de.caritas.cob.userservice.api.model.GuestAccountMode.GUEST_CHOOSES)));
+    TenantContext.setCurrentTenant(42L);
+    try {
+      assertThrows(
+          de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException.class,
+          () -> createUserFacade.createUserAccountWithInitializedConsultingType(dto));
+    } finally {
+      TenantContext.clear();
+    }
+    org.mockito.Mockito.verifyNoInteractions(
+        identityClient, matrixSynapseService, userService, createNewSessionFacade);
+  }
+
   @org.junit.jupiter.params.ParameterizedTest
   @org.junit.jupiter.params.provider.ValueSource(booleans = {false, true})
   void registrationCollectionUsesTheVerifiedPurposeBeforeAnyIdentityEffects(boolean groupSignup) {
@@ -242,7 +295,11 @@ public class CreateUserFacadeTest {
     if (groupSignup) {
       var group = new Chat();
       group.setConversationType(ConversationType.SELF_HELP);
-      when(groupInviteRegistration.resolveInvitedGroup(dto)).thenReturn(Optional.of(group));
+      when(groupInviteRegistration.resolveInvitation(dto))
+          .thenReturn(
+              Optional.of(
+                  new GroupInviteRegistration.Invitation(
+                      group, de.caritas.cob.userservice.api.model.GuestAccountMode.GUEST_CHOOSES)));
     }
     TenantContext.setCurrentTenant(42L);
     try {
@@ -318,7 +375,11 @@ public class CreateUserFacadeTest {
     if (aliasCase == AliasCase.GROUP_INVITE) {
       var group = new Chat();
       group.setConversationType(ConversationType.SELF_HELP);
-      when(groupInviteRegistration.resolveInvitedGroup(dto)).thenReturn(Optional.of(group));
+      when(groupInviteRegistration.resolveInvitation(dto))
+          .thenReturn(
+              Optional.of(
+                  new GroupInviteRegistration.Invitation(
+                      group, de.caritas.cob.userservice.api.model.GuestAccountMode.GUEST_CHOOSES)));
     }
     if (aliasCase == AliasCase.DIRECT_LINK) {
       var link =
@@ -327,7 +388,11 @@ public class CreateUserFacadeTest {
               .chatType("CHAT")
               .temporaryAccount(false)
               .build();
-      when(temporaryAccountLinkResolver.resolve(dto)).thenReturn(Optional.of(link));
+      when(temporaryAccountLinkResolver.resolveEntry(dto))
+          .thenReturn(
+              Optional.of(
+                  new de.caritas.cob.userservice.api.service.agencyinvitelink
+                      .TemporaryAccountLinkResolver.Entry(link, link.effectiveGuestAccountMode())));
     }
     var reachedIdentity = new IllegalStateException("identity creation reached");
     when(identityClient.createUser(dto)).thenThrow(reachedIdentity);
@@ -402,7 +467,11 @@ public class CreateUserFacadeTest {
             .build();
     var group = new Chat();
     group.setConversationType(ConversationType.SELF_HELP);
-    when(groupInviteRegistration.resolveInvitedGroup(dto)).thenReturn(Optional.of(group));
+    when(groupInviteRegistration.resolveInvitation(dto))
+        .thenReturn(
+            Optional.of(
+                new GroupInviteRegistration.Invitation(
+                    group, de.caritas.cob.userservice.api.model.GuestAccountMode.GUEST_CHOOSES)));
     when(identityClient.createUser(dto))
         .thenAnswer(
             call -> {
@@ -442,7 +511,11 @@ public class CreateUserFacadeTest {
             .chatType("CHAT")
             .temporaryAccount(false)
             .build();
-    when(temporaryAccountLinkResolver.resolve(dto)).thenReturn(Optional.of(link));
+    when(temporaryAccountLinkResolver.resolveEntry(dto))
+        .thenReturn(
+            Optional.of(
+                new de.caritas.cob.userservice.api.service.agencyinvitelink
+                    .TemporaryAccountLinkResolver.Entry(link, link.effectiveGuestAccountMode())));
     var names = mock(de.caritas.cob.userservice.api.service.SessionDataService.class);
     org.springframework.test.util.ReflectionTestUtils.setField(
         createUserFacade, "sessionDataService", names);
@@ -488,7 +561,11 @@ public class CreateUserFacadeTest {
             .chatType("VIDEO")
             .temporaryAccount(false)
             .build();
-    when(temporaryAccountLinkResolver.resolve(dto)).thenReturn(Optional.of(link));
+    when(temporaryAccountLinkResolver.resolveEntry(dto))
+        .thenReturn(
+            Optional.of(
+                new de.caritas.cob.userservice.api.service.agencyinvitelink
+                    .TemporaryAccountLinkResolver.Entry(link, link.effectiveGuestAccountMode())));
     when(tenantService.getRestrictedTenantDataFresh(42L))
         .thenReturn(
             new RestrictedTenantDTO()
@@ -873,7 +950,11 @@ public class CreateUserFacadeTest {
             .startDate(LocalDateTime.now())
             .conversationType(ConversationType.SELF_HELP)
             .build();
-    when(groupInviteRegistration.resolveInvitedGroup(any())).thenReturn(Optional.of(group));
+    when(groupInviteRegistration.resolveInvitation(any()))
+        .thenReturn(
+            Optional.of(
+                new GroupInviteRegistration.Invitation(
+                    group, de.caritas.cob.userservice.api.model.GuestAccountMode.GUEST_CHOOSES)));
     // The membership row may exist although the call failed, so compensation must still leave.
     RuntimeException joinFailure = new RuntimeException("membership write failed");
     doThrow(joinFailure).when(groupInviteRegistration).join(group, user);
@@ -910,7 +991,11 @@ public class CreateUserFacadeTest {
             .startDate(LocalDateTime.now())
             .conversationType(ConversationType.SELF_HELP)
             .build();
-    when(groupInviteRegistration.resolveInvitedGroup(any())).thenReturn(Optional.of(group));
+    when(groupInviteRegistration.resolveInvitation(any()))
+        .thenReturn(
+            Optional.of(
+                new GroupInviteRegistration.Invitation(
+                    group, de.caritas.cob.userservice.api.model.GuestAccountMode.GUEST_CHOOSES)));
     // Without it the event would fail to build and be swallowed, hiding a regression.
 
     Long sessionId =
@@ -957,7 +1042,11 @@ public class CreateUserFacadeTest {
             .startDate(LocalDateTime.now())
             .conversationType(ConversationType.SELF_HELP)
             .build();
-    when(groupInviteRegistration.resolveInvitedGroup(any())).thenReturn(Optional.of(group));
+    when(groupInviteRegistration.resolveInvitation(any()))
+        .thenReturn(
+            Optional.of(
+                new GroupInviteRegistration.Invitation(
+                    group, de.caritas.cob.userservice.api.model.GuestAccountMode.GUEST_CHOOSES)));
 
     USER_DTO_SUCHT.setTemporary(true);
     try {
@@ -967,6 +1056,10 @@ public class CreateUserFacadeTest {
     }
 
     assertThat(user.isTemporaryAccount(), is(true));
+    // #1662: "join without account" lets the guest keep the account later
+    assertThat(
+        user.getGuestAccountModeAtEntry(),
+        is(de.caritas.cob.userservice.api.model.GuestAccountMode.GUEST_CHOOSES));
     verify(groupInviteRegistration).join(group, user);
   }
 
@@ -986,8 +1079,16 @@ public class CreateUserFacadeTest {
             .linkKind(linkKind)
             .chatType("AUDIO")
             .temporaryAccount(true)
+            .guestAccountMode(de.caritas.cob.userservice.api.model.GuestAccountMode.GUEST_CHOOSES)
             .build();
-    when(temporaryAccountLinkResolver.resolve(any())).thenReturn(Optional.of(link));
+    // The link stores GUEST_CHOOSES, but the Träger's cap admits only TEMPORARY now: the account
+    // must keep the resolver's capped mode, not reread the stored one.
+    when(temporaryAccountLinkResolver.resolveEntry(any()))
+        .thenReturn(
+            Optional.of(
+                new de.caritas.cob.userservice.api.service.agencyinvitelink
+                    .TemporaryAccountLinkResolver.Entry(
+                    link, de.caritas.cob.userservice.api.model.GuestAccountMode.TEMPORARY)));
     var snapshot =
         de.caritas.cob.userservice.api.model.TemporaryAccountSnapshot.builder()
             .medium(
@@ -1012,6 +1113,10 @@ public class CreateUserFacadeTest {
     assertThat(sessionId, nullValue());
     assertThat(user.isTemporaryAccount(), is(true));
     assertThat(user.getTemporaryAccountSnapshot(), is(snapshot));
+    // #1662: the mode the guest entered under, as the link resolver capped it
+    assertThat(
+        user.getGuestAccountModeAtEntry(),
+        is(de.caritas.cob.userservice.api.model.GuestAccountMode.TEMPORARY));
     org.mockito.Mockito.verifyNoInteractions(createNewSessionFacade);
   }
 
@@ -1030,7 +1135,11 @@ public class CreateUserFacadeTest {
             .chatType("CHAT")
             .temporaryAccount(false)
             .build();
-    when(temporaryAccountLinkResolver.resolve(any())).thenReturn(Optional.of(link));
+    when(temporaryAccountLinkResolver.resolveEntry(any()))
+        .thenReturn(
+            Optional.of(
+                new de.caritas.cob.userservice.api.service.agencyinvitelink
+                    .TemporaryAccountLinkResolver.Entry(link, link.effectiveGuestAccountMode())));
 
     Long sessionId =
         createUserFacade.createUserAccountWithInitializedConsultingType(USER_DTO_SUCHT);
@@ -1038,7 +1147,74 @@ public class CreateUserFacadeTest {
     assertThat(sessionId, nullValue());
     assertThat(user.isTemporaryAccount(), is(false));
     assertThat(user.getTemporaryAccountSnapshot(), nullValue());
+    assertThat(user.getGuestAccountModeAtEntry(), nullValue());
     org.mockito.Mockito.verifyNoInteractions(createNewSessionFacade, temporaryAccountSettings);
+  }
+
+  @Test
+  void registrationWithAnAddonReferenceAnnouncesTheCommittedAccount() throws Exception {
+    givenBasicRegistrationStubs();
+    User user = givenAFullyPersistedUser();
+    user.setUserId(USER_ID);
+    var registration = registrationWithReference("ref_42-A");
+    PlainCredentialsHolder.set("plainuser", "plainpw");
+
+    createUserFacade.createUserAccountWithInitializedConsultingType(registration);
+
+    var order = inOrder(createNewSessionFacade, lifecycleEvents, welcomeEmailService);
+    order
+        .verify(createNewSessionFacade)
+        .initializeNewSession(any(), any(), any(ExtendedConsultingTypeResponseDTO.class));
+    order.verify(lifecycleEvents).userRegistered(1L, USER_ID, "ref_42-A");
+    order.verify(welcomeEmailService).sendWelcomeEmail(any(), any());
+  }
+
+  @Test
+  void registrationWithoutAnAddonReferenceAnnouncesNothing() throws Exception {
+    givenBasicRegistrationStubs();
+    givenAFullyPersistedUser().setUserId(USER_ID);
+    PlainCredentialsHolder.set("plainuser", "plainpw");
+
+    createUserFacade.createUserAccountWithInitializedConsultingType(
+        registrationWithReference(null));
+
+    org.mockito.Mockito.verifyNoInteractions(lifecycleEvents);
+  }
+
+  @Test
+  void failedRegistrationAnnouncesNothing() throws Exception {
+    lenient().when(agencyService.getAgencyWithoutCaching(any())).thenReturn(new AgencyDTO());
+    when(consultingTypeManager.getConsultingTypeSettings(any()))
+        .thenReturn(CONSULTING_TYPE_SETTINGS_KREUZBUND);
+    when(identityClient.createUser(any())).thenReturn(CREATED_IDENTITY_WITH_USER_ID);
+    givenMatrixProvisioningSucceeds();
+    givenAFullyPersistedUser().setUserId(USER_ID);
+    PlainCredentialsHolder.set("plainuser", "plainpw");
+    when(createNewSessionFacade.initializeNewSession(
+            any(), any(), any(ExtendedConsultingTypeResponseDTO.class)))
+        .thenThrow(new IllegalStateException("session failed"));
+
+    assertThrows(
+        IllegalStateException.class,
+        () ->
+            createUserFacade.createUserAccountWithInitializedConsultingType(
+                registrationWithReference("ref_42-A")));
+
+    org.mockito.Mockito.verifyNoInteractions(lifecycleEvents);
+  }
+
+  private static UserDTO registrationWithReference(String registrationRef) {
+    var registration =
+        new UserDTO(
+            USER_DTO_SUCHT.getUsername(),
+            USER_DTO_SUCHT.getPostcode(),
+            USER_DTO_SUCHT.getAgencyId(),
+            USER_DTO_SUCHT.getPassword(),
+            USER_DTO_SUCHT.getEmail(),
+            USER_DTO_SUCHT.getTermsAccepted(),
+            USER_DTO_SUCHT.getConsultingType());
+    registration.setRegistrationRef(registrationRef);
+    return registration;
   }
 
   private User givenAFullyPersistedUser() {

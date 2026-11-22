@@ -34,8 +34,12 @@ class UserAdminSearchMariaDbIT {
   @DynamicPropertySource
   static void database(DynamicPropertyRegistry r) {
     r.add("spring.datasource.url", () -> System.getenv("LIQUIBASE_IT_DB_URL"));
-    r.add("spring.datasource.username", () -> "root");
-    r.add("spring.datasource.password", () -> "root");
+    r.add(
+        "spring.datasource.username",
+        () -> System.getenv().getOrDefault("LIQUIBASE_IT_DB_USERNAME", "root"));
+    r.add(
+        "spring.datasource.password",
+        () -> System.getenv().getOrDefault("LIQUIBASE_IT_DB_PASSWORD", "root"));
     r.add("spring.datasource.driver-class-name", () -> "org.mariadb.jdbc.Driver");
     r.add("spring.jpa.properties.hibernate.dialect", () -> "org.hibernate.dialect.MariaDBDialect");
     r.add("spring.liquibase.enabled", () -> "true");

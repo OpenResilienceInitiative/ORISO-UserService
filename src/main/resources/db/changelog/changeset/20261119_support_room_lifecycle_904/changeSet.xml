@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+  xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-3.2.xsd">
+  <changeSet id="20261119-support-room-lifecycle-status-904" author="oriso">
+    <modifyDataType tableName="support_room" columnName="status" newDataType="VARCHAR(20)"/>
+    <!-- Keep the wider type so existing pending rows remain readable on an application roll-forward. -->
+    <rollback/>
+    <modifySql dbms="mariadb,mysql">
+      <append value=" NOT NULL"/>
+    </modifySql>
+  </changeSet>
+  <changeSet id="20261119-support-room-lifecycle-retry-904" author="oriso">
+    <preConditions onFail="MARK_RAN">
+      <not><columnExists tableName="support_room" columnName="retry_at"/></not>
+    </preConditions>
+    <addColumn tableName="support_room">
+      <column name="retry_at" type="DATETIME(6)"/>
+    </addColumn>
+    <!-- Pending retry times must survive a rollback. -->
+    <rollback/>
+  </changeSet>
+  <changeSet id="20261119-support-room-lifecycle-retry-index-904" author="oriso">
+    <preConditions onFail="MARK_RAN">
+      <not><indexExists tableName="support_room" indexName="idx_support_room_status_retry"/></not>
+    </preConditions>
+    <createIndex tableName="support_room" indexName="idx_support_room_status_retry">
+      <column name="status"/>
+      <column name="retry_at"/>
+    </createIndex>
+    <rollback/>
+  </changeSet>
+</databaseChangeLog>

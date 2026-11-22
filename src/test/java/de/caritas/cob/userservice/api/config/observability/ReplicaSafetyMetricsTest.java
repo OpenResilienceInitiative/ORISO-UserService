@@ -32,7 +32,9 @@ class ReplicaSafetyMetricsTest {
                 .tag("risk", "duplicate-side-effect")
                 .gauge()
                 .value())
-        .isEqualTo(1);
+        // +1 (US#1737): the per-replica holding-room repair guard of
+        // AgencyPreAssignmentRoomService.
+        .isEqualTo(3);
     assertThat(
             registry
                 .get("userservice.replica.local_state")

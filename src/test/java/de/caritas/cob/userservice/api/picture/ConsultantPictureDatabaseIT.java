@@ -57,11 +57,18 @@ import org.springframework.transaction.support.TransactionTemplate;
   DeleteDatabaseConsultantAction.class
 })
 class ConsultantPictureDatabaseIT {
+  @MockitoBean
+  private de.caritas.cob.userservice.api.service.session.AgencyEnquiryRoomDecisions roomDecisions;
+
   @DynamicPropertySource
   static void properties(DynamicPropertyRegistry r) {
     r.add("spring.datasource.url", () -> System.getenv("LIQUIBASE_IT_DB_URL"));
-    r.add("spring.datasource.username", () -> "root");
-    r.add("spring.datasource.password", () -> "root");
+    r.add(
+        "spring.datasource.username",
+        () -> System.getenv().getOrDefault("LIQUIBASE_IT_DB_USERNAME", "root"));
+    r.add(
+        "spring.datasource.password",
+        () -> System.getenv().getOrDefault("LIQUIBASE_IT_DB_PASSWORD", "root"));
     r.add("spring.liquibase.enabled", () -> "true");
     r.add("spring.liquibase.change-log", () -> "classpath:db/changelog/userservice-master.xml");
     r.add("spring.liquibase.contexts", () -> "dev,seed");
@@ -73,6 +80,10 @@ class ConsultantPictureDatabaseIT {
   @Autowired ConsultantPictureStore store;
   @Autowired ConsultantAdminService deletion;
   @Autowired DeleteDatabaseConsultantAction hardDeletion;
+
+  @MockitoBean
+  private de.caritas.cob.userservice.api.service.lifecycle.LifecycleEventPublisher lifecycleEvents;
+
   @MockitoBean IdentityTombstoneService tombstones;
   @Autowired ConsultantRepository consultants;
   @Autowired EntityManager em;

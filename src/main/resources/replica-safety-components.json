@@ -6,6 +6,22 @@
   "schedulerRegistrationMetric": "userservice.scheduler.registered",
   "components": [
     {
+      "id": "agency-holding-room-repair-guard",
+      "source": "src/main/java/de/caritas/cob/userservice/api/service/session/AgencyPreAssignmentRoomService.java",
+      "kind": "local-state",
+      "owner": "sessions-matrix",
+      "risk": "duplicate-side-effect",
+      "components": [
+        "repairsInFlight",
+        "lastRepairStart"
+      ],
+      "decision": "Retain locally: one holding-room repair per session at a time and a 30 s cooldown per replica (US#1737). Across replicas the session is re-read first, so a room another replica persisted is adopted; a parallel second room stays unpersisted. Externalize with a session row lock before scaling out.",
+      "signals": [
+        "userservice.replica.local_state"
+      ],
+      "status": "bounded"
+    },
+    {
       "id": "matrix-access-token-cache",
       "source": "src/main/java/de/caritas/cob/userservice/api/adapters/matrix/MatrixSynapseService.java",
       "kind": "local-state",
@@ -143,6 +159,21 @@
         "userservice.replica.local_state"
       ],
       "status": "blocker"
+    },
+    {
+      "id": "session-interaction-debounce",
+      "source": "src/main/java/de/caritas/cob/userservice/api/service/lifecycle/SessionInteractionService.java",
+      "kind": "local-state",
+      "owner": "sessions-matrix",
+      "risk": "duplicate-side-effect",
+      "components": [
+        "claimedUntil"
+      ],
+      "decision": "Retain locally: message interactions come from the single-leader Matrix sync loop, and a second replica can at most announce one extra session.interaction per session, counsellor and interval, which add-ons treat as a hint.",
+      "signals": [
+        "userservice.replica.local_state"
+      ],
+      "status": "bounded"
     },
     {
       "id": "notification-active-view-map",
@@ -427,6 +458,22 @@
       "status": "blocker"
     },
     {
+      "id": "appointment-request-expiry-scheduler",
+      "source": "src/main/java/de/caritas/cob/userservice/api/workflow/appointmentrequestexpiry/scheduler/AppointmentRequestExpiryScheduler.java",
+      "kind": "scheduler",
+      "owner": "appointments",
+      "risk": "correctness",
+      "components": [
+        "declineUnansweredRequests"
+      ],
+      "decision": "One conditional UPDATE (REQUESTED and started -> DECLINED); concurrent runs decline each row once and have no external side effect.",
+      "signals": [
+        "userservice.scheduler.executions",
+        "userservice.scheduler.duration"
+      ],
+      "status": "safe"
+    },
+    {
       "id": "inactive-account-notification-scheduler",
       "source": "src/main/java/de/caritas/cob/userservice/api/workflow/inactiveaccountnotification/scheduler/InactiveAccountNotificationScheduler.java",
       "kind": "scheduler",
@@ -587,6 +634,22 @@
       "status": "bounded"
     },
     {
+      "id": "live-chat-queue-policy-refresh",
+      "source": "src/main/java/de/caritas/cob/userservice/api/service/livechat/LiveChatQueuePolicyRefresher.java",
+      "kind": "scheduler",
+      "owner": "sessions-matrix",
+      "risk": "correctness",
+      "components": [
+        "refresh"
+      ],
+      "decision": "Each replica re-reads the platform live-chat free-choice switch into its own snapshot. The run is a read-only settings request with no side effect, so every replica runs it without a lease. Replicas can disagree for at most one refresh interval, and an unreadable setting falls back to the strict queue order (ORISO-Admin#1497).",
+      "signals": [
+        "userservice.scheduler.executions",
+        "userservice.scheduler.duration"
+      ],
+      "status": "safe"
+    },
+    {
       "id": "case-handover-co-access-expiry",
       "source": "src/main/java/de/caritas/cob/userservice/api/service/CaseHandoverService.java",
       "kind": "scheduler",
@@ -596,6 +659,22 @@
         "expireCoAccessSchedule"
       ],
       "decision": "The sweep uses a shared lease, technical tenant context and pessimistic row locks; database expiry is saved only after Matrix membership is reconciled.",
+      "signals": [
+        "userservice.scheduler.executions",
+        "userservice.scheduler.duration"
+      ],
+      "status": "bounded"
+    },
+    {
+      "id": "agency-enquiry-access-revocation",
+      "source": "src/main/java/de/caritas/cob/userservice/api/service/session/AgencyEnquiryRevocationScheduler.java",
+      "kind": "scheduler",
+      "owner": "sessions-matrix",
+      "risk": "correctness",
+      "components": [
+        "retryPending"
+      ],
+      "decision": "A dedicated one-worker executor runs short sweeps under a shared lease. Each pending task survives a restart and locks the counsellor and session before checking that an attempt still applies.",
       "signals": [
         "userservice.scheduler.executions",
         "userservice.scheduler.duration"

@@ -92,6 +92,23 @@ public class UserDataResponseDTO {
       access = com.fasterxml.jackson.annotation.JsonProperty.Access.READ_ONLY)
   private Boolean isAskerEmailCollectionAllowed;
 
+  /**
+   * Advice seekers only (#1575): true while the account is a temporary guest account that ORISO
+   * deletes later (ADR-029). Absent for consultants and admins.
+   */
+  @com.fasterxml.jackson.annotation.JsonInclude(
+      com.fasterxml.jackson.annotation.JsonInclude.Include.NON_NULL)
+  @ApiModelProperty(readOnly = true)
+  @com.fasterxml.jackson.annotation.JsonProperty(
+      access = com.fasterxml.jackson.annotation.JsonProperty.Access.READ_ONLY)
+  private Boolean temporaryAccount;
+
+  /** #1662: whether "Konto behalten" will succeed for this temporary account. */
+  @ApiModelProperty(readOnly = true)
+  @com.fasterxml.jackson.annotation.JsonProperty(
+      access = com.fasterxml.jackson.annotation.JsonProperty.Access.READ_ONLY)
+  private Boolean temporaryAccountKeepAllowed;
+
   private String publicSlug;
 
   private String pendingPublicSlug;

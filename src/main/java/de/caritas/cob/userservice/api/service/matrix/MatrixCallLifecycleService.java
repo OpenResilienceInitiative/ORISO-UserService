@@ -5,8 +5,10 @@ import de.caritas.cob.userservice.api.model.MatrixCallDevice;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.MatrixCallBindingRepository;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
+import de.caritas.cob.userservice.api.service.lifecycle.SessionInteractionService;
 import de.caritas.cob.userservice.api.service.notification.EventNotificationService;
 import de.caritas.cob.userservice.api.workflow.accountinactivity.AccountInactivityService;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -29,6 +31,7 @@ public class MatrixCallLifecycleService {
   private final EventNotificationService notifications;
   private final AccountInactivityService accountLifecycle;
   private final MatrixCallGuestService callGuests;
+  private final SessionInteractionService sessionInteractions;
 
   @org.springframework.beans.factory.annotation.Value("${matrix.calls.observation-retry-ms:30000}")
   private long observationRetryMillis = 30000;
@@ -262,14 +265,9 @@ public class MatrixCallLifecycleService {
                   .orElse(now);
       binding.finishByLifecycle(lastPresenceEnd);
       if (retainedClosure) return;
-      binding.getDevices().values().stream()
-          .filter(MatrixCallDevice::isAttended)
-          .map(MatrixCallDevice::getSenderMatrixId)
-          .distinct()
-          .filter(members::contains)
-          .map(sender -> identity(sender, binding.getTenantId()))
-          .flatMap(Optional::stream)
-          .distinct()
+      var attended = attendedRecipients(binding, members);
+      announceSessionCall(binding, attended);
+      attended.stream()
           .filter(recipient -> isActiveRecipient(recipient.id()))
           .forEach(
               recipient ->
@@ -304,6 +302,55 @@ public class MatrixCallLifecycleService {
                       binding.getMediaRoomId(),
                       binding.isVideo()));
     }
+  }
+
+  /**
+   * An explicit end closes the binding before any lifecycle pass sees the last departure, so the
+   * attendance recorded until then is announced from here, after the end committed.
+   */
+  @Transactional
+  public void announceExplicitEnd(String room) {
+    var binding = bindings.lockByMediaRoomId(room).orElse(null);
+    if (binding == null
+        || binding.getEndedAt() == null
+        || binding.getSessionId() == null
+        || binding.getChatId() != null) return;
+    var session = conversations.resolve(binding.getSourceRoomId()).orElse(null);
+    if (session == null
+        || !Objects.equals(session.getSessionId(), binding.getSessionId())
+        || session.getChatId() != null
+        || !Objects.equals(session.getTenantId(), binding.getTenantId())) return;
+    var members = matrix.getCallRoomMembers(binding.getSourceRoomId()).orElse(null);
+    if (members == null || !conversations.lockCurrentForWriting(session)) return;
+    announceSessionCall(binding, attendedRecipients(binding, members));
+  }
+
+  private List<Recipient> attendedRecipients(
+      de.caritas.cob.userservice.api.model.MatrixCallBinding binding, List<String> members) {
+    return binding.getDevices().values().stream()
+        .filter(MatrixCallDevice::isAttended)
+        .map(MatrixCallDevice::getSenderMatrixId)
+        .distinct()
+        .filter(members::contains)
+        .map(sender -> identity(sender, binding.getTenantId()))
+        .flatMap(Optional::stream)
+        .distinct()
+        .toList();
+  }
+
+  private void announceSessionCall(
+      de.caritas.cob.userservice.api.model.MatrixCallBinding binding, List<Recipient> attended) {
+    if (binding.getSessionId() == null || binding.getChatId() != null) return;
+    attended.stream()
+        .filter(Recipient::consultant)
+        .forEach(
+            counsellor ->
+                sessionInteractions.callEnded(
+                    binding.getSessionId(),
+                    counsellor.id(),
+                    binding.getCallId(),
+                    binding.isVideo(),
+                    Instant.ofEpochMilli(binding.getEndedAt())));
   }
 
   private boolean startedBeforeRejection(

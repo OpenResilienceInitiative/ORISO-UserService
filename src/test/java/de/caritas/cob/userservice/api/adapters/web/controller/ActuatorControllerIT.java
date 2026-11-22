@@ -1,6 +1,7 @@
 package de.caritas.cob.userservice.api.adapters.web.controller;
 
 import static jakarta.ws.rs.core.MediaType.APPLICATION_JSON;
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.hamcrest.Matchers.is;
 import static org.springframework.security.test.web.servlet.setup.SecurityMockMvcConfigurers.springSecurity;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -12,17 +13,21 @@ import de.caritas.cob.userservice.api.service.session.SessionTopicEnrichmentServ
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.actuate.logging.LoggersEndpoint;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
-import org.springframework.test.web.servlet.request.MockMvcRequestBuilders;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import org.springframework.web.context.WebApplicationContext;
 
 @SpringBootTest(classes = UserServiceApplication.class)
-@TestPropertySource(properties = "spring.profiles.active=testing")
+@TestPropertySource(
+    properties = {
+      "spring.profiles.active=testing",
+      "management.endpoints.web.exposure.include=health,loggers,metrics"
+    })
 @AutoConfigureMockMvc(addFilters = false)
 class ActuatorControllerIT {
 
@@ -38,34 +43,28 @@ class ActuatorControllerIT {
   }
 
   @Test
-  void getLivenessHealthcheckShouldReturnUp() throws Exception {
-
-    // when // then
+  void livenessAndReadinessProbesReturnStatusWithoutHealthDetails() throws Exception {
     mockMvc
         .perform(get("/actuator/health/liveness").contentType(APPLICATION_JSON))
         .andExpect(status().isOk())
-        .andExpect(jsonPath("status", is("UP")));
+        .andExpect(jsonPath("$.status", is("UP")))
+        .andExpect(jsonPath("$.components").doesNotExist());
+    mockMvc
+        .perform(get("/actuator/health/readiness").contentType(APPLICATION_JSON))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.status", is("UP")))
+        .andExpect(jsonPath("$.components").doesNotExist());
   }
 
   @Test
-  void updateLoggerLevel_Should_ChangeLogLevel() throws Exception {
-    // given
-    String loggerName = "de.caritas.cob.userservice.api.adapters.web.controller";
-    String newLevel = "DEBUG";
+  void loggersStayUnavailableWhenTheHttpExposureListIncludesThem() throws Exception {
+    assertThat(context.getBeansOfType(LoggersEndpoint.class)).isEmpty();
 
-    // when
     mockMvc
-        .perform(
-            MockMvcRequestBuilders.post("/actuator/loggers/" + loggerName)
-                .contentType(APPLICATION_JSON)
-                .content("{\"configuredLevel\": \"" + newLevel + "\"}"))
-        .andExpect(status().isNoContent());
-
-    // then
-    mockMvc
-        .perform(get("/actuator/loggers/" + loggerName).contentType(APPLICATION_JSON))
+        .perform(get("/actuator").contentType(APPLICATION_JSON))
         .andExpect(status().isOk())
-        .andExpect(jsonPath("$.configuredLevel", is(newLevel)));
+        .andExpect(jsonPath("$._links.loggers").doesNotExist())
+        .andExpect(jsonPath("$._links.metrics").exists());
   }
 
   @Test

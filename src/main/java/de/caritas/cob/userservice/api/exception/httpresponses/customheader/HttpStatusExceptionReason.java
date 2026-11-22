@@ -99,10 +99,21 @@ public enum HttpStatusExceptionReason {
   /** A moderator banned the caller from this group chat; joining again is refused. */
   USER_BANNED_FROM_CHAT,
   /**
+   * An audio or video self-help circle is entered by knocking: the caller has not been let in from
+   * its waiting room (ORISO-UserService#1747).
+   */
+  GROUP_ADMISSION_REQUIRED,
+  /**
    * A self-help group invite link was refused: unknown or foreign group, not a self-help group, or
    * a wrong token. Says only that the link does not work, never whether the group exists (#1483).
    */
   GROUP_INVITE_INVALID,
+  /**
+   * #1662: the running call has no share-link binding this counsellor may use (a group call a plain
+   * member or an advice seeker started, or a call the server has not registered yet). Unlike a
+   * plain 404 ("no link yet") this one stays: the app stops asking after a bounded number of tries.
+   */
+  CALL_SHARE_LINK_NO_CALL,
   /**
    * An admin switched this feature off for the Träger or Beratungsstelle (#1564), or the switch
    * cannot be read. The counselling app hides the button; this is the server refusing the action.
@@ -116,5 +127,22 @@ public enum HttpStatusExceptionReason {
    */
   TECHNICAL_GROUP_CHAT_ACCOUNT,
   /** The advice seeker is already marked for deletion; marking again changes nothing (#1521). */
-  ASKER_ALREADY_MARKED_FOR_DELETION
+  ASKER_ALREADY_MARKED_FOR_DELETION,
+  /**
+   * Self-booking (ORISO-Frontend#1050): the conversation already has an upcoming appointment; an
+   * advice seeker books one at a time (security review, calendar flooding).
+   */
+  SELF_BOOKING_LIMIT_REACHED,
+  /**
+   * Self-booking (ORISO-Frontend#1050): the start lies inside the lead time or beyond the booking
+   * horizon, the window the free slots are offered in.
+   */
+  SLOT_OUTSIDE_BOOKING_WINDOW,
+  /** ORISO-Frontend#2287: only a request waiting for the counsellor is confirmed or declined. */
+  APPOINTMENT_NOT_REQUESTED,
+  /**
+   * ORISO-Frontend#2287: the requested time has passed or something else takes it now, so the
+   * request cannot be confirmed; the counsellor declines it instead.
+   */
+  REQUESTED_TIME_TAKEN
 }

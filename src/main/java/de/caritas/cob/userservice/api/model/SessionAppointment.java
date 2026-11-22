@@ -33,9 +33,16 @@ import org.hibernate.type.SqlTypes;
 @NoArgsConstructor
 public class SessionAppointment {
 
+  /**
+   * REQUESTED: an advice seeker's booking that waits for the counsellor (ORISO-Frontend#2287); it
+   * takes the time like a scheduled one. Confirmed it is SCHEDULED, declined DECLINED. A request
+   * nobody answered by its start is declined automatically (Frank, 17 Nov 2026).
+   */
   public enum Status {
     SCHEDULED,
-    CANCELLED
+    CANCELLED,
+    REQUESTED,
+    DECLINED
   }
 
   /** How the appointment takes place (ADR-032); null on rows made before the kind existed. */
@@ -77,4 +84,15 @@ public class SessionAppointment {
   @Enumerated(EnumType.STRING)
   @Column(length = 16)
   private Kind kind;
+
+  /** A request declined automatically because nobody answered it by its start (#2287). */
+  @Column(name = "auto_declined", nullable = false)
+  private boolean autoDeclined;
+
+  /**
+   * The conversation notice of an automatic decline is still to be posted. The backend holds no
+   * room keys, so the first participant's client that sees the flag claims and posts it.
+   */
+  @Column(name = "notice_pending", nullable = false)
+  private boolean noticePending;
 }

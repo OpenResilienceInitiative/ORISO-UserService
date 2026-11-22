@@ -296,4 +296,19 @@
   <include file="db/changelog/changeset/20261117_account_invite_deletion_1522/changeSet.xml"/>
   <include file="db/changelog/changeset/20261117_admin_type_statistics_1666/changeSet.xml"/>
   <include file="db/changelog/changeset/20261117_consultant_planned_absence_2303/changeSet.xml"/>
+  <include file="db/changelog/changeset/20261117_guest_account_mode_1662/changeSet.xml"/>
+  <include file="db/changelog/changeset/20261117_guest_account_mode_at_entry_1662/changeSet.xml"/>
+  <include file="db/changelog/changeset/20261117_calendar_colleague_appointment_2305/changeSet.xml"/>
+  <include file="db/changelog/changeset/20261117_calendar_consultation_hours_2287/changeSet.xml"/>
+  <include file="db/changelog/changeset/20261117_session_appointment_request_expiry_2287/changeSet.xml"/>
+  <include file="db/changelog/changeset/20261117_deleted_asker_session_archive/changeSet.xml"/>
+  <include file="db/changelog/changeset/20261118_agency_enquiry_revocation_1692/changeSet.xml"/>
+  <include file="db/changelog/changeset/20261118_agency_enquiry_room_retirement_1692/changeSet.xml"/>
+  <include file="db/changelog/changeset/20261119_support_room_lifecycle_904/changeSet.xml"/>
+  <include file="db/changelog/changeset/20261119_journey_storage_1689/changeSet.xml"/>
+  <include file="db/changelog/changeset/20261119_agency_enquiry_binding_index_1692/changeSet.xml"/>
+  <include file="db/changelog/changeset/20261120_agency_enquiry_room_attempt_1692/changeSet.xml"/>
+  <include file="db/changelog/changeset/20261121_agency_enquiry_revocation_room_scope_1692/changeSet.xml"/>
+  <include file="db/changelog/changeset/20261121_invitation_appointment_kind_1747/changeSet.xml"/>
+  <include file="db/changelog/changeset/20261119_agency_enquiry_room_decision_1692/changeSet.xml"/>
 </databaseChangeLog>

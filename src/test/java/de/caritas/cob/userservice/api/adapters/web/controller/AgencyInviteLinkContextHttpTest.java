@@ -44,12 +44,18 @@ class AgencyInviteLinkContextHttpTest {
   private final de.caritas.cob.userservice.api.service.agencyinvitelink.DirectInvitePolicy
       directInvitePolicy =
           mock(de.caritas.cob.userservice.api.service.agencyinvitelink.DirectInvitePolicy.class);
+  private final de.caritas.cob.userservice.api.service.agencyinvitelink.GuestAccountModePolicy
+      guestAccountModes =
+          new de.caritas.cob.userservice.api.service.agencyinvitelink
+              .PlatformGuestAccountModePolicy((tenant, agency, medium) -> true);
   private MockMvc mvc;
 
   @BeforeEach
   void setup() {
     var topicService = mock(TopicService.class);
     when(directInvitePolicy.allows(any(), any(), any())).thenReturn(true);
+    when(callShareLinks.effectiveGuestAccountMode(any()))
+        .thenReturn(de.caritas.cob.userservice.api.model.GuestAccountMode.PERMANENT);
     var service =
         new AgencyInviteLinkService(
             repository,
@@ -65,7 +71,8 @@ class AgencyInviteLinkContextHttpTest {
             directInvitePolicy,
             callShareLinks,
             null,
-            null);
+            null,
+            guestAccountModes);
     when(temporaryAccountSettings.current())
         .thenReturn(
             new de.caritas.cob.userservice.api.service.temporaryaccount
@@ -113,6 +120,8 @@ class AgencyInviteLinkContextHttpTest {
     var link = callLink();
     when(repository.findByToken("token")).thenReturn(Optional.of(link));
     when(callShareLinks.temporaryAccountAllowed(link)).thenReturn(false);
+    when(callShareLinks.effectiveGuestAccountMode(link))
+        .thenReturn(de.caritas.cob.userservice.api.model.GuestAccountMode.PERMANENT);
     mvc.perform(get("/users/invitelinks/token/context"))
         .andExpect(status().isOk())
         .andExpect(
@@ -120,7 +129,8 @@ class AgencyInviteLinkContextHttpTest {
                 .json(
                     """
             {"tenantId":83,"agencyId":99,"consultingTypeId":1,"topicId":11,"chatType":"AUDIO",
-             "temporaryAccount":false,"admission":"DIRECT","linkKind":"CALL"}
+             "temporaryAccount":false,"admission":"DIRECT","linkKind":"CALL",
+             "guestAccountMode":"PERMANENT"}
             """,
                     org.springframework.test.json.JsonCompareMode.STRICT));
     verify(callShareLinks).requireUsable(link);
@@ -150,11 +160,14 @@ class AgencyInviteLinkContextHttpTest {
     link.setTemporaryAccount(true);
     when(repository.findByToken("token")).thenReturn(Optional.of(link));
     when(callShareLinks.temporaryAccountAllowed(link)).thenReturn(true);
+    when(callShareLinks.effectiveGuestAccountMode(link))
+        .thenReturn(de.caritas.cob.userservice.api.model.GuestAccountMode.TEMPORARY);
 
     mvc.perform(get("/users/invitelinks/token/context"))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.hidePasswordField").value(true))
-        .andExpect(jsonPath("$.messageRetention").value("ALWAYS_PERSISTENT"));
+        .andExpect(jsonPath("$.messageRetention").value("ALWAYS_PERSISTENT"))
+        .andExpect(jsonPath("$.guestAccountMode").value("TEMPORARY"));
   }
 
   @Test
@@ -276,7 +289,8 @@ class AgencyInviteLinkContextHttpTest {
                     """
             {"tenantId":83,"agencyId":99,"consultingTypeId":1,"topicId":11,"chatType":"VIDEO",
              "temporaryAccount":true,"admission":"KNOCK","hidePasswordField":true,
-             "messageRetention":"ALWAYS_PERSISTENT","accessMode":"BOTH","knock":true}
+             "messageRetention":"ALWAYS_PERSISTENT","accessMode":"BOTH","knock":true,
+             "guestAccountMode":"GUEST_CHOOSES"}
             """,
                     org.springframework.test.json.JsonCompareMode.STRICT));
   }
@@ -295,7 +309,7 @@ class AgencyInviteLinkContextHttpTest {
                     """
             {"tenantId":83,"agencyId":99,"consultingTypeId":1,"topicId":11,"chatType":"VIDEO",
              "temporaryAccount":false,"admission":"KNOCK","accessMode":"ACCOUNTS_ONLY",
-             "knock":true}
+             "knock":true,"guestAccountMode":"PERMANENT"}
             """,
                     org.springframework.test.json.JsonCompareMode.STRICT));
   }

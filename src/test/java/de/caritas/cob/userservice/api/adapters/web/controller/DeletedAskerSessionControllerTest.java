@@ -14,6 +14,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.http.HttpStatus;
 
 @ExtendWith(MockitoExtension.class)
 class DeletedAskerSessionControllerTest {
@@ -25,7 +26,7 @@ class DeletedAskerSessionControllerTest {
   @Test
   void returnsTheCallingCounsellorsPlaceholdersInUtc() {
     when(authenticatedUser.getUserId()).thenReturn("consultant-1");
-    when(service.findForConsultant("consultant-1"))
+    when(service.findForConsultant("consultant-1", false))
         .thenReturn(
             List.of(
                 DeletedAskerSession.builder()
@@ -35,12 +36,49 @@ class DeletedAskerSessionControllerTest {
                     .deletedAt(LocalDateTime.of(2026, 10, 29, 9, 30))
                     .build()));
 
-    var body = underTest.getDeletedAskerSessions().getBody();
+    var body = underTest.getDeletedAskerSessions(false).getBody();
 
     assertThat(body).hasSize(1);
     assertThat(body.get(0).getFormerSessionId()).isEqualTo(77L);
     assertThat(body.get(0).getAgencyId()).isEqualTo(5L);
     assertThat(body.get(0).getDeletedAt().getOffset()).isEqualTo(ZoneOffset.UTC);
     assertThat(body.get(0).getDeletedAt().getHour()).isEqualTo(9);
+  }
+
+  @Test
+  void listsTheArchivedPlaceholders_When_askedForTheArchive() {
+    when(authenticatedUser.getUserId()).thenReturn("consultant-1");
+    when(service.findForConsultant("consultant-1", true))
+        .thenReturn(
+            List.of(
+                DeletedAskerSession.builder()
+                    .consultantId("consultant-1")
+                    .formerSessionId(78L)
+                    .deletedAt(LocalDateTime.of(2026, 10, 29, 9, 30))
+                    .archivedAt(LocalDateTime.of(2026, 11, 17, 10, 0))
+                    .build()));
+
+    var body = underTest.getDeletedAskerSessions(true).getBody();
+
+    assertThat(body).hasSize(1);
+    assertThat(body.get(0).getArchivedAt().getHour()).isEqualTo(10);
+  }
+
+  @Test
+  void archive_answersNoContent_When_theCounsellorOwnsThePlaceholder() {
+    when(authenticatedUser.getUserId()).thenReturn("consultant-1");
+    when(service.archive("consultant-1", 77L)).thenReturn(true);
+
+    assertThat(underTest.archiveDeletedAskerSession(77L).getStatusCode())
+        .isEqualTo(HttpStatus.NO_CONTENT);
+  }
+
+  @Test
+  void archive_answersNotFound_When_thePlaceholderIsNotTheCounsellorsOwn() {
+    when(authenticatedUser.getUserId()).thenReturn("consultant-2");
+    when(service.archive("consultant-2", 77L)).thenReturn(false);
+
+    assertThat(underTest.archiveDeletedAskerSession(77L).getStatusCode())
+        .isEqualTo(HttpStatus.NOT_FOUND);
   }
 }

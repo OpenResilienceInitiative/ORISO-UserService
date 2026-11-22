@@ -5,6 +5,7 @@ import static de.caritas.cob.userservice.api.helper.UserHelper.AGENCY_ID_MIN;
 import static de.caritas.cob.userservice.api.helper.UserHelper.AGE_REGEXP;
 import static de.caritas.cob.userservice.api.helper.UserHelper.CONSULTING_TYPE_REGEXP;
 import static de.caritas.cob.userservice.api.helper.UserHelper.REFERER_REGEXP;
+import static de.caritas.cob.userservice.api.helper.UserHelper.REGISTRATION_REF_REGEXP;
 import static de.caritas.cob.userservice.api.helper.UserHelper.STATE_REGEXP;
 import static de.caritas.cob.userservice.api.helper.UserHelper.TERMS_ACCEPTED_REGEXP;
 import static de.caritas.cob.userservice.api.helper.UserHelper.VALID_POSTCODE_REGEX;
@@ -171,6 +172,15 @@ public class UserDTO implements UserRegistrationDTO {
   @ApiModelProperty(required = false, example = "\"a1b2c3\"")
   @JsonProperty("directLinkToken")
   private String directLinkToken;
+
+  /**
+   * Opaque reference of a registration add-on (ADR-034). Not stored; announced once in {@code
+   * user.registered} so the add-on can link what it stored before the account existed.
+   */
+  @ApiModelProperty(required = false, example = "\"r3f_a1-B2\"")
+  @Pattern(regexp = REGISTRATION_REF_REGEXP, message = "{user.registrationRef.invalid}")
+  @JsonProperty("registrationRef")
+  private String registrationRef;
 
   public Integer getUserAge() {
     return StringUtils.isNumeric(age) ? Integer.valueOf(age) : null;

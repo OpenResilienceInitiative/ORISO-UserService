@@ -9,9 +9,11 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
+import static org.mockito.ArgumentMatchers.anyCollection;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.atLeastOnce;
@@ -46,6 +48,7 @@ import de.caritas.cob.userservice.api.model.CaseHandoverRequest;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.ConsultantAgency;
 import de.caritas.cob.userservice.api.model.ConsultantTopic;
+import de.caritas.cob.userservice.api.model.HandoverCandidate;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.Session.SessionStatus;
 import de.caritas.cob.userservice.api.model.SessionTopic;
@@ -70,6 +73,7 @@ import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
@@ -82,6 +86,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.EnumSource;
+import org.junit.jupiter.params.provider.NullSource;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
@@ -3726,9 +3731,7 @@ class CaseHandoverServiceTest {
 
   @Test
   void searchCandidates_returnsMetadataOnlySameAgencyMatches() {
-    when(sessionRepository.findByAgencyIdInAndConsultantNotAndStatusInOrderByUpdateDateDesc(
-            List.of(10L), requester, List.of(SessionStatus.IN_PROGRESS, SessionStatus.DONE)))
-        .thenReturn(List.of(session));
+    givenCandidates(session);
 
     session.getUser().setAvatarId("fox");
     session
@@ -3785,9 +3788,7 @@ class CaseHandoverServiceTest {
     // display name stays a valid search term as well.
     previous.setDisplayName("Anna B.");
     previous.setInternalDisplayName("Standort Nord Team 7");
-    when(sessionRepository.findByAgencyIdInAndConsultantNotAndStatusInOrderByUpdateDateDesc(
-            List.of(10L), requester, List.of(SessionStatus.IN_PROGRESS, SessionStatus.DONE)))
-        .thenReturn(List.of(session));
+    givenCandidates(session);
 
     var internalNameResponse = caseHandoverService.searchCandidates("standort nord", 0, 15, false);
     var publicNameResponse = caseHandoverService.searchCandidates("anna b", 0, 15, false);
@@ -3834,15 +3835,19 @@ class CaseHandoverServiceTest {
     assertNull(consultant.getInternalName());
   }
 
-  @Test
-  void searchCandidates_matchesConsultantFullInternalName() {
+  @ParameterizedTest
+  @NullSource
+  @ValueSource(strings = {"   "})
+  void searchCandidates_matchesConsultantFullInternalName(String internalDisplayName) {
     previous.setDisplayName("Anna B.");
-    previous.setFirstName("Anna");
-    previous.setLastName("Berger");
+    previous.setInternalDisplayName(internalDisplayName);
+    previous.setFirstName(" Anna ");
+    previous.setLastName(" Berger ");
     givenCandidates(session);
 
     assertEquals(1, caseHandoverService.searchCandidates("berger", 0, 15, false).getTotal());
-    assertEquals(1, caseHandoverService.searchCandidates("Anna Berger", 0, 15, false).getTotal());
+    assertEquals(
+        1, caseHandoverService.searchCandidates("  aNnA bErGeR  ", 0, 15, false).getTotal());
     assertEquals(0, caseHandoverService.searchCandidates("anna meier", 0, 15, false).getTotal());
   }
 
@@ -3852,9 +3857,7 @@ class CaseHandoverServiceTest {
     asker.setUsername(usernameTranscoder.encodeUsername("codexasker1782348153159"));
     previous.setUsername(usernameTranscoder.encodeUsername("codexcounselor20260625023940"));
     previous.setDisplayName(usernameTranscoder.encodeUsername("Codex Counselor"));
-    when(sessionRepository.findByAgencyIdInAndConsultantNotAndStatusInOrderByUpdateDateDesc(
-            List.of(10L), requester, List.of(SessionStatus.IN_PROGRESS, SessionStatus.DONE)))
-        .thenReturn(List.of(session));
+    givenCandidates(session);
 
     var askerResponse = caseHandoverService.searchCandidates("codexasker", 0, 15, false);
     var consultantResponse = caseHandoverService.searchCandidates("codexcounselor", 0, 15, false);
@@ -4343,9 +4346,45 @@ class CaseHandoverServiceTest {
   }
 
   private void givenCandidates(Session... candidates) {
-    when(sessionRepository.findByAgencyIdInAndConsultantNotAndStatusInOrderByUpdateDateDesc(
-            List.of(10L), requester, List.of(SessionStatus.IN_PROGRESS, SessionStatus.DONE)))
-        .thenReturn(List.of(candidates));
+    givenCandidateScan(List.of(candidates), List.of(SessionStatus.IN_PROGRESS, SessionStatus.DONE));
+  }
+
+  private List<HandoverCandidate> givenCandidateScan(
+      List<Session> sessions, List<SessionStatus> statuses) {
+    List<HandoverCandidate> candidates =
+        sessions.stream()
+            .map(
+                candidate -> {
+                  User user = candidate.getUser();
+                  Consultant consultant = candidate.getConsultant();
+                  return new HandoverCandidate(
+                      candidate.getId(),
+                      candidate.getAgencyId(),
+                      candidate.getMainTopicId(),
+                      candidate.getPostcode(),
+                      candidate.getMatrixRoomId(),
+                      candidate.getConversationType(),
+                      candidate.isTeamSession(),
+                      user == null ? null : user.getUsername(),
+                      consultant == null ? null : consultant.getUsername(),
+                      consultant == null ? null : consultant.getDisplayName(),
+                      consultant == null ? null : consultant.getInternalDisplayName(),
+                      consultant == null ? null : consultant.getFirstName(),
+                      consultant == null ? null : consultant.getLastName());
+                })
+            .toList();
+    when(sessionRepository.findHandoverCandidates(any(), eq(requester), eq(statuses), anyBoolean()))
+        .thenReturn(candidates);
+    lenient()
+        .when(sessionRepository.findHandoverCandidatePage(anyCollection()))
+        .thenAnswer(
+            invocation -> {
+              Collection<Long> ids = invocation.getArgument(0);
+              return sessions.reversed().stream()
+                  .filter(candidate -> ids.contains(candidate.getId()))
+                  .toList();
+            });
+    return candidates;
   }
 
   @Test
@@ -4430,16 +4469,47 @@ class CaseHandoverServiceTest {
     // from any of them.
     givenRequesterTopics(6L);
     Session multiTopic = candidateSession(208L, 10L, 5L, false);
-    SessionTopic secondary = new SessionTopic();
-    secondary.setSession(multiTopic);
-    secondary.setTopicId(6L);
-    multiTopic.setSessionTopics(List.of(secondary));
     givenCandidates(multiTopic);
+    when(sessionRepository.findSessionIdsWithAnyAdditionalTopic(List.of(208L), Set.of(6L)))
+        .thenReturn(Set.of(208L));
 
     var response = caseHandoverService.searchCandidates("asker", 0, 15, false);
 
     assertEquals(1, response.getTotal());
     assertEquals(208L, response.getSessions().get(0).getSession().getId());
+  }
+
+  @Test
+  void searchCandidatesBatchesSecondaryTopicsByCentreAndKeepsRepositoryOrder() {
+    givenTwoRequesterCentres();
+    requester.setConsultantTopics(Set.of(requesterTopic(10L, 5L), requesterTopic(20L, 6L)));
+    var firstBatch = new ArrayList<Long>();
+    var rows = new ArrayList<Session>();
+    for (long id = 1; id <= 500; id++) {
+      rows.add(candidateSession(id, 10L, 99L, true));
+      firstBatch.add(id);
+    }
+    rows.add(candidateSession(501L, 20L, 99L, true));
+    rows.add(candidateSession(502L, 10L, null, false));
+    rows.add(candidateSession(503L, 10L, 99L, false));
+    rows.add(candidateSession(504L, 20L, 6L, false));
+    var candidates =
+        givenCandidateScan(rows, List.of(SessionStatus.IN_PROGRESS, SessionStatus.DONE));
+    when(membersOnlyChatAccess.membersOnlySessionIds(candidates)).thenReturn(Set.of(503L));
+    when(sessionRepository.findSessionIdsWithAnyAdditionalTopic(firstBatch, Set.of(5L)))
+        .thenReturn(Set.of(450L, 3L));
+    when(sessionRepository.findSessionIdsWithAnyAdditionalTopic(List.of(502L), Set.of(5L)))
+        .thenReturn(Set.of(502L));
+    when(sessionRepository.findSessionIdsWithAnyAdditionalTopic(List.of(501L), Set.of(6L)))
+        .thenReturn(Set.of(501L));
+
+    var response = caseHandoverService.searchCandidates("asker", 1, 3, false);
+
+    assertEquals(5, response.getTotal());
+    assertEquals(
+        List.of(450L, 501L, 502L),
+        response.getSessions().stream().map(dto -> dto.getSession().getId()).toList());
+    verify(sessionRepository, times(3)).findSessionIdsWithAnyAdditionalTopic(any(), any());
   }
 
   @Test
@@ -4486,13 +4556,10 @@ class CaseHandoverServiceTest {
     secondAgency.setConsultant(requester);
     requester.setConsultantAgencies(Set.of(firstAgency, secondAgency));
     givenRequesterTopics(5L, 6L);
-    when(sessionRepository.findByAgencyIdInAndConsultantNotAndStatusInOrderByUpdateDateDesc(
-            any(), eq(requester), eq(List.of(SessionStatus.IN_PROGRESS, SessionStatus.DONE))))
-        .thenReturn(
-            List.of(
-                candidateSession(213L, 10L, 5L, false),
-                candidateSession(214L, 20L, 6L, true),
-                candidateSession(215L, 20L, 99L, false)));
+    givenCandidates(
+        candidateSession(213L, 10L, 5L, false),
+        candidateSession(214L, 20L, 6L, true),
+        candidateSession(215L, 20L, 99L, false));
 
     var response = caseHandoverService.searchCandidates("asker", 0, 15, false);
 
@@ -4502,6 +4569,103 @@ class CaseHandoverServiceTest {
         response.getSessions().stream().map(dto -> dto.getSession().getId()).toList());
   }
 
+  @ParameterizedTest
+  @CsvSource({"20, 5, false", "1000, 20, false", "20, 5, true"})
+  void searchCandidatePagesReuseStaffScope(int candidates, int pageSize, boolean archived) {
+    givenTwoRequesterCentres();
+    var agencyAssignments = List.copyOf(requester.getConsultantAgencies());
+    requester.setConsultantAgencies(Set.of());
+    requester.setConsultantTopics(Set.of(requesterTopic(10L, 5L), requesterTopic(20L, 6L)));
+    when(consultantAgencyRepository.findByConsultantIdAndDeleteDateIsNull(requester.getId()))
+        .thenReturn(agencyAssignments);
+
+    List<Session> repositoryRows = new ArrayList<>();
+    List<Long> expected = new ArrayList<>();
+    Set<Long> membersOnly = new HashSet<>();
+    for (int row = 0; row < candidates; row++) {
+      long id = candidates - row;
+      switch (row % 5) {
+        case 0 -> {
+          repositoryRows.add(candidateSession(id, 10L, 5L, true));
+          expected.add(id);
+        }
+        case 1 -> {
+          repositoryRows.add(candidateSession(id, 20L, 6L, false));
+          expected.add(id);
+        }
+        case 2 -> repositoryRows.add(candidateSession(id, 30L, 5L, true));
+        case 3 -> repositoryRows.add(candidateSession(id, 20L, 5L, false));
+        default -> {
+          repositoryRows.add(candidateSession(id, 10L, 5L, false));
+          membersOnly.add(id);
+        }
+      }
+    }
+
+    var statuses =
+        archived
+            ? List.of(SessionStatus.IN_ARCHIVE)
+            : List.of(SessionStatus.IN_PROGRESS, SessionStatus.DONE);
+    if (archived) {
+      repositoryRows.forEach(candidate -> candidate.setStatus(SessionStatus.IN_ARCHIVE));
+    }
+    var candidateRows = givenCandidateScan(repositoryRows, statuses);
+    when(membersOnlyChatAccess.membersOnlySessionIds(candidateRows)).thenReturn(membersOnly);
+
+    String query = archived ? "  AsKeR  " : "asker";
+    List<Long> observed = new ArrayList<>();
+    int pages = 0;
+    for (int offset = 0; offset < expected.size(); offset += pageSize) {
+      var response = caseHandoverService.searchCandidates(query, offset, pageSize, archived);
+      var expectedPage = expected.subList(offset, Math.min(offset + pageSize, expected.size()));
+      assertEquals(offset, response.getOffset());
+      assertEquals(expectedPage.size(), response.getCount());
+      assertEquals(expected.size(), response.getTotal());
+      var ids = response.getSessions().stream().map(dto -> dto.getSession().getId()).toList();
+      assertEquals(expectedPage, ids);
+      observed.addAll(ids);
+      pages++;
+    }
+    assertEquals(expected, observed);
+
+    var empty = caseHandoverService.searchCandidates(query, expected.size(), pageSize, archived);
+    assertEquals(expected.size(), empty.getTotal());
+    assertEquals(0, empty.getCount());
+    assertTrue(empty.getSessions().isEmpty());
+    int requests = pages + 1;
+    verify(sessionRepository, times(requests))
+        .findHandoverCandidates(
+            argThat(ids -> ids.size() == 2 && ids.containsAll(List.of(10L, 20L))),
+            eq(requester),
+            eq(statuses),
+            eq(true));
+    verify(membersOnlyChatAccess, times(requests)).membersOnlySessionIds(candidateRows);
+    verify(sessionRepository, times(pages))
+        .findHandoverCandidatePage(
+            argThat(ids -> ids.size() <= pageSize && expected.containsAll(ids)));
+    verify(agencyService, times(pages)).getAgencies(any());
+    verify(consultantAgencyRepository, times(requests))
+        .findByConsultantIdAndDeleteDateIsNull(requester.getId());
+  }
+
+  @Test
+  void searchCandidatesKeepsTotalBeyondTheLastPage() {
+    givenRequesterTopics(5L);
+    givenCandidates(candidateSession(301L, 10L, 5L, true));
+
+    var response = caseHandoverService.searchCandidates(null, Integer.MAX_VALUE, 200, false);
+
+    assertEquals(Integer.MAX_VALUE, response.getOffset());
+    assertEquals(1, response.getTotal());
+    assertEquals(0, response.getCount());
+    assertTrue(response.getSessions().isEmpty());
+    verify(agencyService, never()).getAgencies(any());
+    verify(sessionRepository, never()).findHandoverCandidatePage(any());
+    verify(sessionRepository)
+        .findHandoverCandidates(
+            List.of(10L), requester, List.of(SessionStatus.IN_PROGRESS, SessionStatus.DONE), false);
+  }
+
   @Test
   void searchCandidates_usesTheTopicsOfTheSessionsCentreOnly() {
     // #1264: topic 5 is stored for centre 10 only, so centre 20's topic-5 case is another
@@ -4509,15 +4673,12 @@ class CaseHandoverServiceTest {
     givenTwoRequesterCentres();
     requester.setConsultantTopics(
         Set.of(requesterTopic(10L, 5L), requesterTopic(null, 6L), requesterTopic(20L, 7L)));
-    when(sessionRepository.findByAgencyIdInAndConsultantNotAndStatusInOrderByUpdateDateDesc(
-            any(), eq(requester), eq(List.of(SessionStatus.IN_PROGRESS, SessionStatus.DONE))))
-        .thenReturn(
-            List.of(
-                candidateSession(221L, 10L, 5L, false),
-                candidateSession(222L, 20L, 5L, false),
-                candidateSession(223L, 20L, 6L, false),
-                candidateSession(224L, 20L, 7L, false),
-                candidateSession(225L, 10L, 7L, false)));
+    givenCandidates(
+        candidateSession(221L, 10L, 5L, false),
+        candidateSession(222L, 20L, 5L, false),
+        candidateSession(223L, 20L, 6L, false),
+        candidateSession(224L, 20L, 7L, false),
+        candidateSession(225L, 10L, 7L, false));
 
     var response = caseHandoverService.searchCandidates("asker", 0, 15, false);
 
