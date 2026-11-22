@@ -46,6 +46,7 @@ public class AgencyEnquiryRevocations {
   static final Duration RETRY_DELAY = Duration.ofMinutes(1);
   static final int BATCH_SIZE = 8;
   private static final Duration BATCH_BUDGET = Duration.ofSeconds(30);
+  private static final Duration RECOVERY_BUDGET = Duration.ofSeconds(15);
 
   private final AgencyEnquiryRevocationTaskRepository tasks;
   private final ConsultantAgencyRepository assignments;
@@ -53,6 +54,7 @@ public class AgencyEnquiryRevocations {
   private final SessionRepository sessions;
   private final AgencyEnquiryRoomRetirements retiredRooms;
   private final AgencyEnquiryRoomDecisions roomDecisions;
+  private final SessionOwnershipService ownership;
   private final AgencyMatrixCredentialClient agencyCredentials;
   private final SessionRoomGateway rooms;
   private final PlatformTransactionManager transactionManager;
@@ -179,6 +181,21 @@ public class AgencyEnquiryRevocations {
         break;
       }
       attemptSafely(id, agencyTokens);
+    }
+    // Keep a separate budget so ordinary departure retries cannot starve recovery.
+    long recoveryStartedAt = System.nanoTime();
+    for (var preparation : roomDecisions.expiredPreparations(BATCH_SIZE)) {
+      if (System.nanoTime() - recoveryStartedAt >= RECOVERY_BUDGET.toNanos()) {
+        break;
+      }
+      try {
+        ownership.recoverExpiredRoomPreparation(preparation);
+      } catch (RuntimeException failure) {
+        log.warn(
+            "Failed to recover enquiry room preparation {} ({})",
+            preparation.getId(),
+            failure.getClass().getSimpleName());
+      }
     }
   }
 
