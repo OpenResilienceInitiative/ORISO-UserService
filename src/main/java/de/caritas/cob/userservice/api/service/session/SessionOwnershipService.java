@@ -2,6 +2,7 @@ package de.caritas.cob.userservice.api.service.session;
 
 import de.caritas.cob.userservice.api.exception.httpresponses.ConflictException;
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
+import de.caritas.cob.userservice.api.model.AgencyEnquiryRoomDecision.Outcome;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.Session.SessionStatus;
@@ -27,6 +28,7 @@ public class SessionOwnershipService {
 
   private final @NonNull SessionRepository sessionRepository;
   private final @NonNull EntityManager entityManager;
+  private final @NonNull AgencyEnquiryRoomDecisions roomDecisions;
   private final @NonNull de.caritas.cob.userservice.api.service.matrix.InquiryAcceptanceNoticeStore
       acceptanceNotices;
 
@@ -53,12 +55,21 @@ public class SessionOwnershipService {
       throw new ConflictException("Rejected enquiry cannot be reopened");
     }
     requireCurrentOwnership(current, expectedOwnerId, expectedRevision, expectedRowVersion);
-    // The accepting counsellor’s validated department is bound before this locked update.
-    current.setAgencyId(expectedSession.getAgencyId());
     if (current.getConversationType() == null) {
       current.setConversationType(expectedSession.getConversationType());
     }
+    boolean trackInitialRoom =
+        newStatus == SessionStatus.IN_PROGRESS
+            && newOwner != null
+            && Objects.equals(current.getAgencyId(), expectedSession.getAgencyId())
+            && AgencyEnquiryRoomDecisions.tracksRegistration(current)
+            && AgencyEnquiryRoomRetirements.isInitialHoldingRoom(current);
+    // The accepting counsellor’s validated department is bound before this locked update.
+    current.setAgencyId(expectedSession.getAgencyId());
     apply(current, newOwner, newStatus, updateDate);
+    if (trackInitialRoom) {
+      roomDecisions.begin(current);
+    }
     synchronizeExpectedSession(expectedSession, current);
     return token(current);
   }
@@ -87,6 +98,11 @@ public class SessionOwnershipService {
         || !Objects.equals(ownerId(current.getConsultant()), assignment.ownerId())
         || current.getOwnershipRevision() != assignment.revision()) {
       return false;
+    }
+    if (restoredOwner == null
+        && AgencyOpenEnquiryMembership.OPEN_STATUSES.contains(restoredStatus)
+        && AgencyEnquiryRoomDecisions.tracksRegistration(current)) {
+      roomDecisions.resolve(current, Outcome.REOPENED);
     }
     if (clearDepartment) {
       current.setAgencyId(null);
