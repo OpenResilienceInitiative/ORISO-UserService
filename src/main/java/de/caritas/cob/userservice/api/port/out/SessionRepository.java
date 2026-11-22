@@ -2,6 +2,7 @@ package de.caritas.cob.userservice.api.port.out;
 
 import de.caritas.cob.userservice.api.model.CaseHandoverRequest;
 import de.caritas.cob.userservice.api.model.Consultant;
+import de.caritas.cob.userservice.api.model.HandoverCandidate;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.Session.RegistrationType;
 import de.caritas.cob.userservice.api.model.Session.SessionStatus;
@@ -219,8 +220,35 @@ public interface SessionRepository extends CrudRepository<Session, Long>, Sessio
    * half of the scope — {@code CaseHandoverService} narrows the result to the requester's
    * departments (agency × topic) before anything is returned.
    */
-  List<Session> findByAgencyIdInAndConsultantNotAndStatusInOrderByUpdateDateDesc(
-      List<Long> agencyIds, Consultant consultant, List<SessionStatus> statuses);
+  @Query(
+      """
+      select new de.caritas.cob.userservice.api.model.HandoverCandidate(
+          s.id, s.agencyId, s.mainTopicId, s.postcode, s.matrixRoomId, s.conversationType,
+          s.teamSession, asker.username, owner.username, owner.displayName, owner.internalDisplayName,
+          owner.firstName, owner.lastName)
+      from Session s
+      left join s.user asker on :includeNames = true
+      left join s.consultant owner on :includeNames = true
+      where s.agencyId in :agencyIds and s.consultant <> :requester and s.status in :statuses
+      order by s.updateDate desc, s.id asc
+      """)
+  List<HandoverCandidate> findHandoverCandidates(
+      @Param("agencyIds") List<Long> agencyIds,
+      @Param("requester") Consultant requester,
+      @Param("statuses") List<SessionStatus> statuses,
+      @Param("includeNames") boolean includeNames);
+
+  @Query("select s from Session s where s.id in :ids")
+  List<Session> findHandoverCandidatePage(@Param("ids") Collection<Long> ids);
+
+  @Query(
+      """
+      select distinct s.id from Session s join s.sessionTopics topic
+      where s.id in :sessionIds and topic.topicId in :topicIds
+      """)
+  Set<Long> findSessionIdsWithAnyAdditionalTopic(
+      @Param("sessionIds") Collection<Long> sessionIds,
+      @Param("topicIds") Collection<Long> topicIds);
 
   /**
    * Find team {@link Session} list by agency ids and status where consultant is not the given
@@ -307,6 +335,27 @@ public interface SessionRepository extends CrudRepository<Session, Long>, Sessio
           + " (de.caritas.cob.userservice.api.model.Session.SessionStatus.INITIAL,"
           + " de.caritas.cob.userservice.api.model.Session.SessionStatus.NEW)")
   int closeUnassignedEnquiries(@Param("user") User user, @Param("now") LocalDateTime now);
+
+  /** Scoped current read even when a roster transaction has an earlier snapshot. */
+  @Lock(LockModeType.PESSIMISTIC_READ)
+  @Query(
+      """
+      select enquiry.id as sessionId, enquiry.matrixRoomId as roomId
+      from Session enquiry
+      where enquiry.agencyId = :agencyId
+        and enquiry.status in :statuses
+        and enquiry.consultant is null
+        and (enquiry.isConsultantDirectlySet is null or enquiry.isConsultantDirectlySet = false)
+        and enquiry.matrixRoomId is not null and trim(enquiry.matrixRoomId) <> ''
+      """)
+  List<OpenEnquiryRoomBinding> lockOpenEnquiryBindings(
+      @Param("agencyId") Long agencyId, @Param("statuses") List<SessionStatus> statuses);
+
+  interface OpenEnquiryRoomBinding {
+    Long getSessionId();
+
+    String getRoomId();
+  }
 
   List<Session> findByAgencyIdAndStatusAndConsultantIsNull(
       Long agencyId, SessionStatus sessionStatus);
@@ -694,6 +743,29 @@ public interface SessionRepository extends CrudRepository<Session, Long>, Sessio
       WHERE s.matrixRoomId IS NOT NULL AND s.agencyId IN :agencyIds
       """)
   List<SessionRoomRow> findSessionRoomsOfAgencies(@Param("agencyIds") Collection<Long> agencyIds);
+
+  /** The upper ID is fixed before a late-joiner sweep so new sessions do not extend it. */
+  @Query("SELECT MAX(s.id) FROM Session s WHERE s.agencyId = :agencyId")
+  Optional<Long> findAgencySessionUpperId(@Param("agencyId") Long agencyId);
+
+  @Query(
+      """
+      SELECT new de.caritas.cob.userservice.api.port.out.SessionRoomRow(s.id, s.matrixRoomId)
+      FROM Session s
+      WHERE s.agencyId = :agencyId
+        AND s.id > :afterId AND s.id <= :upperId
+        AND s.status IN :openStatuses
+        AND s.consultant IS NULL
+        AND (s.isConsultantDirectlySet IS NULL OR s.isConsultantDirectlySet = false)
+        AND s.matrixRoomId IS NOT NULL AND TRIM(s.matrixRoomId) <> ''
+      ORDER BY s.id
+      """)
+  List<SessionRoomRow> findLateJoinerEnquiryRooms(
+      @Param("agencyId") Long agencyId,
+      @Param("openStatuses") Collection<SessionStatus> openStatuses,
+      @Param("afterId") long afterId,
+      @Param("upperId") long upperId,
+      Pageable page);
 
   /** Every supervision side room of cases of the given centres: the fallback, as above. */
   @Query(

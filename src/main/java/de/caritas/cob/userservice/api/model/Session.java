@@ -52,7 +52,7 @@ import org.springframework.lang.Nullable;
 @Setter
 @ToString
 @Filter(name = TenantFilter.NAME, condition = TenantFilter.CONDITION_WITH_LEGACY_ROWS_OF_TENANT_ONE)
-public class Session implements TenantAware {
+public class Session implements TenantAware, SessionRoom {
 
   public enum RegistrationType {
     REGISTERED,

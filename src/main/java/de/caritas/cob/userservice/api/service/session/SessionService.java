@@ -33,6 +33,7 @@ import de.caritas.cob.userservice.api.model.SessionSupervisor;
 import de.caritas.cob.userservice.api.model.SessionTopic;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.out.ConsultantTopicRepository;
+import de.caritas.cob.userservice.api.port.out.DirectInvitationMemberRepository;
 import de.caritas.cob.userservice.api.port.out.GroupChatParticipantRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.port.out.SessionSupervisorRepository;
@@ -87,6 +88,7 @@ public class SessionService {
       rejectionReadAccess;
   private final @NonNull SessionOwnershipService sessionOwnershipService;
   private final @NonNull MembersOnlyChatAccess membersOnlyChatAccess;
+  private final @NonNull DirectInvitationMemberRepository directInvitationMembers;
 
   @Value("${feature.topics.enabled}")
   private boolean topicsFeatureEnabled;
@@ -229,6 +231,29 @@ public class SessionService {
       sessionResponseDTOs = convertToUserSessionResponseDTO(sessions, agencies);
     }
     return sessionResponseDTOs;
+  }
+
+  /**
+   * #1747: the shared conversations of an appointment invitation the asker joined as a later
+   * person. The first person owns the session; everybody after them is only a confirmed member and
+   * would otherwise not see the conversation they just entered. Sessions the asker owns are left
+   * out, {@link #getSessionsForUserId} lists those.
+   */
+  @Transactional(readOnly = true)
+  public List<UserSessionResponseDTO> getInvitationMemberSessionsForUserId(String userId) {
+    var memberSessionIds =
+        new HashSet<>(directInvitationMembers.findMemberSessionIdsByUserId(userId));
+    if (memberSessionIds.isEmpty()) {
+      return new ArrayList<>();
+    }
+    var sessions =
+        StreamSupport.stream(sessionRepository.findAllById(memberSessionIds).spliterator(), false)
+            .filter(session -> !isOwnedBy(session, userId))
+            .collect(Collectors.toList());
+    if (sessions.isEmpty()) {
+      return new ArrayList<>();
+    }
+    return convertToUserSessionResponseDTO(sessions, fetchAgencies(sessions), userId);
   }
 
   /**
@@ -602,6 +627,30 @@ public class SessionService {
         .collect(Collectors.toList());
   }
 
+  /**
+   * #1747: the list a given asker reads. A session they own carries their own alias and postcode; a
+   * session they only joined as a later person of an appointment invitation carries neither, so the
+   * first person's user id, username, display name and postcode never reach the others.
+   */
+  private List<UserSessionResponseDTO> convertToUserSessionResponseDTO(
+      List<Session> sessions, List<AgencyDTO> agencies, String viewerUserId) {
+    return sessions.stream()
+        .map(
+            session ->
+                isOwnedBy(session, viewerUserId)
+                    ? buildUserSessionDTO(session, agencies)
+                    : withoutOwnerIdentity(buildUserSessionDTO(session, agencies)))
+        .collect(Collectors.toList());
+  }
+
+  private static UserSessionResponseDTO withoutOwnerIdentity(UserSessionResponseDTO dto) {
+    dto.setUser(null);
+    if (dto.getSession() != null) {
+      dto.getSession().setPostcode(null);
+    }
+    return dto;
+  }
+
   private UserSessionResponseDTO buildUserSessionDTO(Session session, List<AgencyDTO> agencies) {
     var mapper = new SessionMapper();
     return new UserSessionResponseDTO()
@@ -653,9 +702,9 @@ public class SessionService {
       String userId, Set<String> matrixRoomIds, Set<String> roles) {
     checkForAskerRoles(roles);
     var sessions = sessionRepository.findByMatrixRoomIdIn(matrixRoomIds);
-    sessions.forEach(session -> checkAskerPermissionForSession(session, userId, roles));
+    checkAskerReadPermissionForSessions(sessions, userId, roles);
     List<AgencyDTO> agencies = fetchAgencies(sessions);
-    return convertToUserSessionResponseDTO(sessions, agencies);
+    return convertToUserSessionResponseDTO(sessions, agencies, userId);
   }
 
   /**
@@ -674,9 +723,9 @@ public class SessionService {
     var sessions =
         StreamSupport.stream(sessionRepository.findAllById(sessionIds).spliterator(), false)
             .collect(Collectors.toList());
-    sessions.forEach(session -> checkAskerPermissionForSession(session, userId, roles));
+    checkAskerReadPermissionForSessions(sessions, userId, roles);
     List<AgencyDTO> agencies = fetchAgencies(sessions);
-    return convertToUserSessionResponseDTO(sessions, agencies);
+    return convertToUserSessionResponseDTO(sessions, agencies, userId);
   }
 
   private List<AgencyDTO> fetchAgencies(List<Session> sessions) {
@@ -886,6 +935,50 @@ public class SessionService {
     throw new ForbiddenException(
         String.format("Asker %s not allowed to access session with ID %s", userId, session.getId()),
         LogService::logForbidden);
+  }
+
+  /**
+   * Reading sessions: the owner, or (#1747) an asker who is a confirmed member of the shared
+   * conversation of an appointment invitation (same states as {@code
+   * DirectInvitationMemberships.isMember}). Writes keep {@link #checkAskerPermissionForSession},
+   * which admits the owner only.
+   */
+  private void checkAskerReadPermissionForSessions(
+      List<Session> sessions, String userId, Set<String> roles) {
+    // One membership read per request, not one per session (only when a session is not the
+    // caller's own).
+    var othersSessionIds =
+        sessions.stream()
+            .filter(session -> !isOwnedBy(session, userId))
+            .map(Session::getId)
+            .filter(Objects::nonNull)
+            .collect(Collectors.toSet());
+    Set<Long> memberSessionIds =
+        roles.contains(UserRole.USER.getValue()) && userId != null && !othersSessionIds.isEmpty()
+            ? directInvitationMembers.findByUserIdAndSessionIdIn(userId, othersSessionIds).stream()
+                .filter(
+                    de.caritas.cob.userservice.api.service.agencyinvitelink
+                            .DirectInvitationMemberships
+                        ::isMember)
+                .map(de.caritas.cob.userservice.api.model.DirectInvitationMember::getSessionId)
+                .collect(Collectors.toSet())
+            : Set.of();
+    sessions.forEach(
+        session -> {
+          if (roles.contains(UserRole.USER.getValue())
+              && !isOwnedBy(session, userId)
+              && session.getId() != null
+              && memberSessionIds.contains(session.getId())) {
+            return;
+          }
+          checkAskerPermissionForSession(session, userId, roles);
+        });
+  }
+
+  private static boolean isOwnedBy(Session session, String userId) {
+    return session.getUser() != null
+        && session.getUser().getUserId() != null
+        && session.getUser().getUserId().equals(userId);
   }
 
   private void checkIfUserAndNotOwnerOfSession(Session session, String userId, Set<String> roles) {
