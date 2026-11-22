@@ -29,8 +29,8 @@ state.
 - `userservice.replica.local_state` publishes one bounded gauge per catalogued
   local-state component with `component`, `owner`, `risk` and `status`.
 - `userservice.replica.local_state.components` and
-  `userservice.replica.local_state.risks` aggregate only the 17 local-state
-  entries; scheduled workflows are not double-counted as local state.
+  `userservice.replica.local_state.risks` aggregate the catalogued local-state
+  entries. Both totals exclude scheduled workflows.
 - `userservice.scheduler.registered` publishes every catalogued scheduler,
   including jobs whose cron interval has not elapsed.
 - `userservice.scheduler.executions` counts completed executions by bounded
@@ -51,14 +51,38 @@ These signals prove inventory presence and execution behavior; they do not
 prove leader safety. Multiple replicas remain unsupported while any
 correctness or duplicate-side-effect entry is marked `blocker`.
 
+## Scheduler overlap protection
+
+The scheduler inventory marks workflows as `bounded` when their protection
+applies to a specific lease duration, row or notification identity.
+
+- The enquiry notification and account deactivation or deletion jobs acquire a
+  database-backed run claim. A second sweep skips while the claim is active.
+- Handshake expiry holds a database claim through one page of updates and audit
+  writes. Its inventory entry identifies the expiry method as protected and
+  remains a blocker because the same service also runs audit retention.
+- Group-chat deactivation locks the chat before checking its state. Support-room
+  expiry reserves the room's next retry under a row lock before contacting Matrix.
+- Group-chat reminders deduplicate per recipient and occurrence through the
+  event notification key. Inactive-account notifications acquire a unique claim
+  before attempting delivery.
+
+CI requires source evidence wherever a scheduler calls
+`ScheduledTaskClaimService` or the catalog names it as a delegated guard. It
+checks each declared mechanism against the scheduler, service, repository or
+migration as applicable. A run can outlast its lease, and an external call can
+fail without a confirmed outcome. Concurrent-run and retry behavior still
+require integration evidence.
+
 ## Current blocker groups
 
 1. Coordinate the Matrix sync leader and cursor across replicas and deduplicate
    durable event side effects.
 2. Externalize browser-login locks, notification active-view state and
    correctness-relevant reference caches, or prove a bounded alternative.
-3. Lease or prove idempotency for every scheduled workflow under simultaneous
-   execution.
+3. Assess overlapping handshake audit retention and the duration of its database
+   locks. The expiry sweep already claims one bounded page and writes its audit
+   events inside that transaction. Both methods share one inventory entry.
 4. Run deterministic two-instance Redis, MariaDB, integration and product E2E
    scenarios without sticky sessions.
 5. Query the deployed metrics and traces in SigNoz before changing the Helm
