@@ -17,6 +17,8 @@ import de.caritas.cob.userservice.api.model.SessionData.SessionDataType;
 import de.caritas.cob.userservice.api.model.User;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.EntityManagerFactory;
+import java.util.Arrays;
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -26,6 +28,8 @@ import org.hibernate.SessionFactory;
 import org.jeasy.random.EasyRandom;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.data.jpa.test.autoconfigure.DataJpaTest;
 import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase;
@@ -349,8 +353,10 @@ class SessionRepositoryIT {
     assertEquals(List.of(oneToOne.getId()), found.stream().map(Session::getId).toList());
   }
 
-  @Test
-  void namedHandoverCandidateScanDoesNotLoadAskerOrConsultantEntities() {
+  @ParameterizedTest
+  @ValueSource(booleans = {true, false})
+  void handoverCandidateScanLoadsOnlyRequestedNamesWithoutLoadingPersonEntities(
+      boolean includeNames) {
     givenAUser();
     var consultants = consultantRepository.findAll();
     var owner = consultants.get(0);
@@ -377,17 +383,31 @@ class SessionRepositoryIT {
     try {
       var results =
           underTest.findHandoverCandidates(
-              List.of(agencyId), requester, List.of(SessionStatus.IN_PROGRESS), true);
+              List.of(agencyId), requester, List.of(SessionStatus.IN_PROGRESS), includeNames);
       assertEquals(1, results.size());
       var projected = results.getFirst();
       assertEquals(candidateId, projected.getId());
+      var expectedNames =
+          includeNames
+              ? List.of(
+                  askerUsername,
+                  consultantUsername,
+                  "Public Alias",
+                  "Internal Alias",
+                  "Given Name",
+                  "Family Name")
+              : Collections.nCopies(6, null);
       assertAll(
-          () -> assertEquals(askerUsername, projected.getAskerUsername()),
-          () -> assertEquals(consultantUsername, projected.getConsultantUsername()),
-          () -> assertEquals("Public Alias", projected.getConsultantDisplayName()),
-          () -> assertEquals("Internal Alias", projected.getConsultantInternalDisplayName()),
-          () -> assertEquals("Given Name", projected.getConsultantFirstName()),
-          () -> assertEquals("Family Name", projected.getConsultantLastName()),
+          () ->
+              assertEquals(
+                  expectedNames,
+                  Arrays.asList(
+                      projected.getAskerUsername(),
+                      projected.getConsultantUsername(),
+                      projected.getConsultantDisplayName(),
+                      projected.getConsultantInternalDisplayName(),
+                      projected.getConsultantFirstName(),
+                      projected.getConsultantLastName())),
           () ->
               assertEquals(0, statistics.getEntityStatistics(User.class.getName()).getLoadCount()),
           () ->
