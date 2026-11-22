@@ -18,6 +18,7 @@ import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Isolation;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -33,8 +34,11 @@ class SupportRoomProvisioningLedger {
   private final SupportRoomRepository rooms;
   private final Clock clock;
 
-  /** The authorised caller holds the handshake lock until confirmation commits or rolls back. */
-  @Transactional(propagation = Propagation.REQUIRES_NEW)
+  /**
+   * The authorised caller holds the handshake lock until confirmation commits or rolls back. Read
+   * committed keeps the write lock on an existing intent without taking a gap lock for a new one.
+   */
+  @Transactional(propagation = Propagation.REQUIRES_NEW, isolation = Isolation.READ_COMMITTED)
   public Reservation reserve(
       String handshakeId,
       String supportAdminId,

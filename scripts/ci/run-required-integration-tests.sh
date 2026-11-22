@@ -61,6 +61,7 @@ mariadb_owned_tests=(
   DeleteUsersRegisteredOnlySchedulerMariaDbReplicaIT
   AgencyEnquiryRoomPublicationDatabaseIT
   SupportRoomMigrationConvergenceIT
+  SupportRoomProvisioningLedgerMariaDbIT
   SessionOwnershipMariaDbIT
   ChatMembersOnlyMariaDbIT
   CaseHandoverStatusHttpMariaDbIT
