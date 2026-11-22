@@ -37,6 +37,11 @@ jobs:
         java-version: '21'
         distribution: temurin
         cache: maven
+        cache-dependency-path: |
+          **/pom.xml
+          **/.mvn/wrapper/maven-wrapper.properties
+          **/.mvn/extensions.xml
+          scripts/ci/run-maven-with-central-retry.sh
 
     - name: Create isolated guest promotion migration database
       run: docker exec "${{ job.services.mariadb.id }}" mariadb -uroot -proot -e 'CREATE DATABASE migration_guest CHARACTER SET utf8 COLLATE utf8_unicode_ci'
