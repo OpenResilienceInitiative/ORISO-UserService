@@ -51,22 +51,10 @@ jobs:
         GUEST_PROMOTION_TEST_DB_URL: jdbc:mariadb://127.0.0.1:3306/migration_guest
         GUEST_PROMOTION_TEST_DB_USER: root
         GUEST_PROMOTION_TEST_DB_PASSWORD: root
-      run: |
-        rm -f target/surefire-reports/TEST-de.caritas.cob.userservice.api.LiveChatPromotionMigrationIT.xml
-        bash scripts/ci/run-maven-with-central-retry.sh -B -Dskip.unit-tests=true -Dtest=LiveChatPromotionMigrationIT integration-test
-        python3 - <<'PYCODE'
-        import xml.etree.ElementTree as ET
-        report = ET.parse("target/surefire-reports/TEST-de.caritas.cob.userservice.api.LiveChatPromotionMigrationIT.xml").getroot()
-        if int(report.attrib["tests"]) != 2 or any(int(report.attrib[key]) != 0 for key in ("skipped", "failures", "errors")):
-            raise SystemExit("Guest promotion migration contract must run exactly two passing tests")
-        PYCODE
+      run: python3 scripts/ci/database-test-assignment.py guest
 
     - name: Verify real MariaDB schema contracts
-      run: >-
-        ./mvnw -B -Dskip.unit-tests=true
-        -Dspring.test.context.cache.maxSize=8
-        -Dtest=DatabaseChangelogDriftIT,AgencyEnquiryRoomPublicationDatabaseIT,AgencyEnquiryAcceptanceDepartureIT,DraftMessageLegacyMariaDbIT,EnquiryRejectionMariaDbIT,ConsultantTopicUniqueKeyMariaDbIT,ConsultantPictureDatabaseIT,SupportRoomMigrationConvergenceIT,SupportRoomProvisioningLedgerMariaDbIT,AdminStatisticsRepositoryMariaDbIT,UserAdminSearchMariaDbIT,StatisticsRetentionMariaDbIT,ProvisioningCompensationMariaDbIT,ScheduledTaskClaimMariaDbIT,TutorialProgressServiceMariaDbReplicaIT,DeactivateGroupChatSchedulerMariaDbReplicaIT,DeleteUserAccountSchedulerMariaDbReplicaIT,DeleteUsersRegisteredOnlySchedulerMariaDbReplicaIT,AccountInviteRevokeAcceptRaceMariaDbIT,SessionOwnershipMariaDbIT,ChatMembersOnlyMariaDbIT,GroupChatMatrixCleanupAdoptionMariaDbIT,ConsultantTenantChangeMariaDbIT,ConsultantAgencyLateJoinerMembershipMariaDbIT,CaseHandoverLeaveAdminPowerMariaDbIT,CaseHandoverTakeoverMatrixMariaDbIT,MoveThenTakeoverMatrixMariaDbIT,CaseHandoverStatusHttpMariaDbIT,IdentityReactivationSagaMariaDbIT,UserHardDeleteClaimMariaDbIT,GuestRegistrationTypeQueriesMariaDbIT
-        integration-test
+      run: python3 scripts/ci/database-test-assignment.py standard
 
     - name: Prove authenticated writes across two replicas
       env:
