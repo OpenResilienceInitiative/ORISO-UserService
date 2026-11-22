@@ -115,7 +115,8 @@ class InternalChatInvitationFacadeTest {
     order.verify(participantRepository).save(any(GroupChatParticipant.class));
     order
         .verify(moderatorPower)
-        .grantModerators(ROOM, "@owner:oriso.test", List.of("@colleague:oriso.test"));
+        .grantCurrentModerators(
+            CHAT_ID, ROOM, "@owner:oriso.test", List.of("@colleague:oriso.test"));
   }
 
   @Test

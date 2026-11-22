@@ -22,8 +22,11 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
+import org.springframework.transaction.support.TransactionTemplate;
 
 /**
  * Keeps a group's Matrix power levels in line with its roles (ORISO-Frontend#2229). Moderators of a
@@ -48,6 +51,7 @@ public class GroupModeratorPowerService {
   private final MatrixSynapseService matrixSynapseService;
   private final GroupChatParticipantRepository participantRepository;
   private final ConsultantRepository consultantRepository;
+  private final PlatformTransactionManager transactions;
 
   /** Owners and co-moderators moderate a group; participants and leavers ({@code null}) do not. */
   public static boolean isModerator(ParticipantRole role) {
@@ -127,8 +131,21 @@ public class GroupModeratorPowerService {
       return true;
     }
     var moderatorIds = moderatorMatrixUserIds(chat.getId());
+    // Unknown is not empty: a room whose levels cannot be read must not become current unchecked.
+    var holders =
+        matrixSynapseService
+            .moderatorLevelHolders(roomId)
+            .orElseThrow(
+                () -> {
+                  log.warn(
+                      "The moderators of the next room of group chat {} could not be read",
+                      chat.getId());
+                  return new CustomValidationHttpStatusException(
+                      HttpStatusExceptionReason.INTERNAL_CHAT_MEMBERSHIP_FAILED,
+                      HttpStatus.BAD_GATEWAY);
+                });
     var moderators = new LinkedHashMap<String, Boolean>();
-    matrixSynapseService.moderatorLevelHolders(roomId).stream()
+    holders.stream()
         .filter(id -> !moderatorIds.contains(id))
         .forEach(id -> moderators.put(id, false));
     var revokes = !moderators.isEmpty();
@@ -168,18 +185,7 @@ public class GroupModeratorPowerService {
     }
     var seriesId = chat.getId();
     var holder = ownerOf(chat);
-    Runnable raise =
-        () -> {
-          try {
-            var current = moderatorMatrixUserIds(seriesId);
-            grantModerators(roomId, holder, requested.stream().filter(current::contains).toList());
-          } catch (RuntimeException failure) {
-            log.warn(
-                "The moderators of group chat {} could not be raised after commit ({})",
-                seriesId,
-                failure.getClass().getSimpleName());
-          }
-        };
+    Runnable raise = () -> grantCurrentModerators(seriesId, roomId, holder, requested);
     if (TransactionSynchronizationManager.isSynchronizationActive()) {
       TransactionSynchronizationManager.registerSynchronization(
           new TransactionSynchronization() {
@@ -193,14 +199,58 @@ public class GroupModeratorPowerService {
     }
   }
 
+  /**
+   * Raises those of {@code requested} who moderate the group right now, while holding the group's
+   * participant rows locked: the same rows a demotion, removal, leave or deselection locks before
+   * it takes a level back. A raise therefore never reads a role that a concurrent demotion is about
+   * to end, and never writes after that demotion took the level back. The lock is a database lock,
+   * so it holds across service instances. Best effort: a failure is logged and only withholds
+   * blurring.
+   */
+  public void grantCurrentModerators(
+      Long seriesId, String roomId, String holder, Collection<String> requested) {
+    if (seriesId == null || !MatrixIds.isRoomId(roomId) || requested == null) {
+      return;
+    }
+    var wanted = requested.stream().filter(id -> !isBlank(id)).distinct().toList();
+    if (wanted.isEmpty()) {
+      return;
+    }
+    try {
+      var template = new TransactionTemplate(transactions);
+      template.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+      template.executeWithoutResult(
+          status -> {
+            var current = lockedModeratorMatrixUserIds(seriesId);
+            grantModerators(roomId, holder, wanted.stream().filter(current::contains).toList());
+          });
+    } catch (RuntimeException failure) {
+      log.warn(
+          "The moderators of group chat {} could not be raised ({})",
+          seriesId,
+          failure.getClass().getSimpleName());
+    }
+  }
+
+  private List<String> lockedModeratorMatrixUserIds(Long seriesId) {
+    return moderatorMatrixUserIds(
+        TenantContext.supplyAcrossTenants(
+            () -> participantRepository.findBySeriesIdForUpdate(seriesId)));
+  }
+
   /** Matrix user IDs of the group's owners and co-moderators, in one consultant lookup. */
   private List<String> moderatorMatrixUserIds(Long seriesId) {
+    return moderatorMatrixUserIds(
+        TenantContext.supplyAcrossTenants(() -> participantRepository.findBySeriesId(seriesId)));
+  }
+
+  private List<String> moderatorMatrixUserIds(List<GroupChatParticipant> participations) {
     // A co-moderator may come from another Träger (recipient scope PLATFORM): resolved by
     // participation, across Träger.
     return TenantContext.supplyAcrossTenants(
         () -> {
           var consultantIds =
-              participantRepository.findBySeriesId(seriesId).stream()
+              participations.stream()
                   .filter(participation -> isModerator(participation.getRole()))
                   .map(GroupChatParticipant::getConsultantId)
                   .filter(Objects::nonNull)

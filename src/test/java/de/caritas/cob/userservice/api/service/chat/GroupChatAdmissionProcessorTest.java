@@ -169,6 +169,37 @@ class GroupChatAdmissionProcessorTest {
     verify(membership).removeMemberFromRoom("!room:test", "@r:test");
   }
 
+  /**
+   * A participant row may exist already (an earlier admission that was repaired). The Matrix level
+   * is still brought in line with that row's role, and a refusal still blocks the admission.
+   */
+  @Test
+  void anExistingParticipantRowIsReconciledAndBlocksTheAdmissionWhenMatrixRefuses() {
+    when(participants.findBySeriesIdForUpdate(11L))
+        .thenReturn(
+            List.of(
+                GroupChatParticipant.builder()
+                    .chatId(19L)
+                    .seriesId(11L)
+                    .consultantId("owner")
+                    .role(ParticipantRole.OWNER)
+                    .build(),
+                GroupChatParticipant.builder()
+                    .chatId(19L)
+                    .seriesId(11L)
+                    .consultantId("requester")
+                    .role(ParticipantRole.PARTICIPANT)
+                    .build()));
+    lenient().when(membership.isMemberInRoom(series, "@r:test")).thenReturn(Optional.of(true));
+    lenient().when(membership.addMemberToRoom(series, "@r:test")).thenReturn(true);
+    var refused = matrixKeepsTheModeratorLevel();
+
+    assertThatThrownBy(() -> processor.process(7L)).isSameAs(refused);
+
+    verify(participants, never()).save(any());
+    assertThat(request.getStatus()).isEqualTo(Status.ADMITTING);
+  }
+
   /** Someone who was in the room before this attempt is not taken out by its rollback. */
   @Test
   void aRolledBackParticipantAdmissionKeepsAMemberWhoWasInTheRoomBefore() {

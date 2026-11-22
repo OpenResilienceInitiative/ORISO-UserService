@@ -164,7 +164,9 @@ class MatrixSynapseServiceModeratorPowerTest {
         .member(room, PARTICIPANT, 0)
         .strayPowerLevels(room, Map.of("users", Map.of(PARTICIPANT, 50)), true);
 
-    assertThat(gateway.moderatorLevelHolders(room)).containsExactly(CO_MODERATOR);
+    assertThat(gateway.moderatorLevelHolders(room)).contains(java.util.Set.of(CO_MODERATOR));
+    // Unknown is not "nobody": an unreadable room answers empty, not an empty set.
     assertThat(gateway.moderatorLevelHolders("")).isEmpty();
+    assertThat(gateway.moderatorLevelHolders("!nowhere:oriso.test")).isEmpty();
   }
 }

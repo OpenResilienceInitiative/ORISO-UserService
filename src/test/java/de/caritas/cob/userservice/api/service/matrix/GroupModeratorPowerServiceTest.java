@@ -20,6 +20,7 @@ import de.caritas.cob.userservice.api.port.out.GroupChatParticipantRepository;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -47,6 +48,7 @@ class GroupModeratorPowerServiceTest {
   @Mock private MatrixSynapseService matrixSynapseService;
   @Mock private GroupChatParticipantRepository participantRepository;
   @Mock private ConsultantRepository consultantRepository;
+  @Mock private org.springframework.transaction.PlatformTransactionManager transactions;
 
   @InjectMocks private GroupModeratorPowerService service;
 
@@ -130,7 +132,8 @@ class GroupModeratorPowerServiceTest {
   @Test
   void everyModeratorOfTheGroupIsRaisedInAFreshOccurrenceRoom() {
     stubModerators();
-    when(matrixSynapseService.moderatorLevelHolders("!next:oriso.test")).thenReturn(Set.of());
+    when(matrixSynapseService.moderatorLevelHolders("!next:oriso.test"))
+        .thenReturn(Optional.of(Set.of()));
     when(matrixSynapseService.syncModeratorPower(
             "!next:oriso.test", Map.of(OWNER, true, MEMBER, true), OWNER))
         .thenReturn(true);
@@ -147,7 +150,7 @@ class GroupModeratorPowerServiceTest {
   void aFormerModeratorLosesTheLevelInAPreparedOccurrenceRoom() {
     stubModerators();
     when(matrixSynapseService.moderatorLevelHolders("!next:oriso.test"))
-        .thenReturn(Set.of(MEMBER, FORMER));
+        .thenReturn(Optional.of(Set.of(MEMBER, FORMER)));
     when(matrixSynapseService.syncModeratorPower(
             "!next:oriso.test", Map.of(OWNER, true, MEMBER, true, FORMER, false), OWNER))
         .thenReturn(true);
@@ -158,7 +161,8 @@ class GroupModeratorPowerServiceTest {
   @Test
   void aPreparedRoomThatKeepsAFormerModeratorsLevelFailsTheStop() {
     stubModerators();
-    when(matrixSynapseService.moderatorLevelHolders("!next:oriso.test")).thenReturn(Set.of(FORMER));
+    when(matrixSynapseService.moderatorLevelHolders("!next:oriso.test"))
+        .thenReturn(Optional.of(Set.of(FORMER)));
     when(matrixSynapseService.syncModeratorPower(anyString(), anyMap(), anyString()))
         .thenReturn(false);
 
@@ -172,7 +176,8 @@ class GroupModeratorPowerServiceTest {
   @Test
   void aFailedRaiseInAFreshOccurrenceRoomIsReportedButNeverThrown() {
     stubModerators();
-    when(matrixSynapseService.moderatorLevelHolders("!next:oriso.test")).thenReturn(Set.of());
+    when(matrixSynapseService.moderatorLevelHolders("!next:oriso.test"))
+        .thenReturn(Optional.of(Set.of()));
     when(matrixSynapseService.syncModeratorPower(anyString(), anyMap(), anyString()))
         .thenReturn(false);
 
@@ -198,7 +203,7 @@ class GroupModeratorPowerServiceTest {
   /** After the commit only those who still moderate the group are raised. */
   @Test
   void aRaiseAfterTheCommitChecksTheRolesAgain() {
-    stubModerators();
+    stubLockedModerators();
     when(matrixSynapseService.syncModeratorPower(ROOM, Map.of(MEMBER, true), OWNER))
         .thenReturn(true);
     TransactionSynchronizationManager.initSynchronization();
@@ -216,13 +221,55 @@ class GroupModeratorPowerServiceTest {
 
   @Test
   void aRaiseOutsideATransactionRunsAtOnce() {
-    stubModerators();
+    stubLockedModerators();
     when(matrixSynapseService.syncModeratorPower(ROOM, Map.of(MEMBER, true), OWNER))
         .thenReturn(true);
 
     service.grantModeratorsAfterCommit(group(), List.of(MEMBER));
 
     verify(matrixSynapseService).syncModeratorPower(ROOM, Map.of(MEMBER, true), OWNER);
+  }
+
+  /**
+   * Unknown is not empty: a prepared room whose levels cannot be read must not become the group's
+   * current room unchecked.
+   */
+  @Test
+  void aPreparedRoomWhoseModeratorsCannotBeReadFailsTheStop() {
+    stubModerators();
+    when(matrixSynapseService.moderatorLevelHolders("!next:oriso.test"))
+        .thenReturn(Optional.empty());
+
+    assertThatThrownBy(() -> service.grantModeratorsOf(group(), "!next:oriso.test"))
+        .isInstanceOfSatisfying(
+            CustomValidationHttpStatusException.class,
+            failure -> assertThat(failure.getHttpStatus()).isEqualTo(HttpStatus.BAD_GATEWAY));
+    verify(matrixSynapseService, never()).syncModeratorPower(any(), any(), any());
+  }
+
+  /**
+   * The raise reads the roles under the same row lock a demotion, removal or leave takes. Someone
+   * removed or demoted in the meantime is not raised again.
+   */
+  @Test
+  void aRaiseReadsTheRolesUnderTheParticipantLockAndSkipsWhoeverLeft() {
+    stubLockedModerators();
+
+    service.grantCurrentModerators(7L, ROOM, OWNER, List.of(FORMER));
+
+    verify(participantRepository).findBySeriesIdForUpdate(7L);
+    verify(participantRepository, never()).findBySeriesId(any());
+    verify(matrixSynapseService, never()).syncModeratorPower(any(), any(), any());
+  }
+
+  private void stubLockedModerators() {
+    when(participantRepository.findBySeriesIdForUpdate(7L))
+        .thenReturn(
+            List.of(
+                participation("owner-id", ParticipantRole.OWNER),
+                participation("comod-id", ParticipantRole.CO_MODERATOR)));
+    when(consultantRepository.findAllByIdIn(List.of("owner-id", "comod-id")))
+        .thenReturn(List.of(consultant(OWNER), consultant(MEMBER)));
   }
 
   private void stubModerators() {

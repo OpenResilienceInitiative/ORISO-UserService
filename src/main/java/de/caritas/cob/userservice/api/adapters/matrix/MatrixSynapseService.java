@@ -2171,39 +2171,39 @@ public class MatrixSynapseService implements MatrixUserClient, MatrixRoomMembers
 
   /**
    * Who holds exactly the Matrix moderator level (50) in the room, read as the technical admin: the
-   * entries a full reconciliation of a group's moderators checks against its roles. Empty when the
-   * room state cannot be read.
+   * entries a full reconciliation of a group's moderators checks against its roles.
+   *
+   * @return the holders, an empty set when nobody holds the level; {@link
+   *     java.util.Optional#empty()} when the room state cannot be read, so a caller can tell
+   *     "unknown" from "nobody"
    */
-  public java.util.Set<String> moderatorLevelHolders(String roomId) {
+  public java.util.Optional<java.util.Set<String>> moderatorLevelHolders(String roomId) {
     if (roomId == null || roomId.isBlank()) {
-      return java.util.Set.of();
+      return java.util.Optional.empty();
     }
     try {
-      return readRoomState(roomId)
-          .map(MatrixSynapseService::powerLevelsOf)
-          .map(power -> power.get("users"))
-          .filter(java.util.Map.class::isInstance)
-          .map(
-              users -> {
-                var holders = new java.util.HashSet<String>();
-                ((java.util.Map<?, ?>) users)
-                    .forEach(
-                        (user, raw) -> {
-                          if (user instanceof String id
-                              && MatrixRoomClient.powerLevel(raw, 0)
-                                  == MatrixRoomClient.MODERATOR_POWER_LEVEL) {
-                            holders.add(id);
-                          }
-                        });
-                return java.util.Set.copyOf(holders);
-              })
-          .orElseGet(java.util.Set::of);
+      var state = readRoomState(roomId);
+      if (state.isEmpty()) {
+        return java.util.Optional.empty();
+      }
+      var holders = new java.util.HashSet<String>();
+      if (powerLevelsOf(state.get()).get("users") instanceof java.util.Map<?, ?> users) {
+        users.forEach(
+            (user, raw) -> {
+              if (user instanceof String id
+                  && MatrixRoomClient.powerLevel(raw, 0)
+                      == MatrixRoomClient.MODERATOR_POWER_LEVEL) {
+                holders.add(id);
+              }
+            });
+      }
+      return java.util.Optional.of(java.util.Set.copyOf(holders));
     } catch (RuntimeException unreadableState) {
       log.warn(
           "The moderators of room {} could not be read ({})",
           roomId,
           unreadableState.getClass().getSimpleName());
-      return java.util.Set.of();
+      return java.util.Optional.empty();
     }
   }
 

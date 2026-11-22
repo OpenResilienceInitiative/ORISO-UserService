@@ -121,6 +121,9 @@ class ChatMatrixRoomRotationMariaDbIT {
   @BeforeEach
   void inTenant() {
     TenantContext.setCurrentTenant(TENANT);
+    // A next room holds no moderator level of a former moderator (ORISO-Frontend#2229).
+    org.mockito.Mockito.when(matrix.moderatorLevelHolders(org.mockito.ArgumentMatchers.anyString()))
+        .thenReturn(java.util.Optional.of(java.util.Set.of()));
     // Every room but a fixture's current one is a next room. It reports one stale member, so each
     // transfer also exercises the eviction of someone who is no longer in the current room.
     org.mockito.Mockito.when(

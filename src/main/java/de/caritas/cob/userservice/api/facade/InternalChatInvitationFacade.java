@@ -118,7 +118,10 @@ public class InternalChatInvitationFacade {
         compensateJoin(admission, colleagueToken, failure);
       }
       // An invited colleague is a co-moderator and may blur passages (ORISO-Frontend#2229).
-      moderatorPower.grantModerators(
+      // Raised under the participant-row lock a removal or leave takes, and only while the
+      // colleague is still in: a removal in between leaves no level behind.
+      moderatorPower.grantCurrentModerators(
+          admission.row().getSeriesId(),
           admission.matrixRoomId(),
           admission.ownerMatrixId(),
           List.of(admission.colleagueMatrixId()));

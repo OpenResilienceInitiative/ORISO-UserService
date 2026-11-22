@@ -158,16 +158,22 @@ public class GroupChatAdmissionProcessor {
               .build());
       appointmentEvents.recordMemberJoined(
           series.get(), RecipientRole.COUNSELOR, request.getConsultantId());
-      // A co-moderator may blur passages. Admitting someone as a participant is a demotion:
-      // it does not finish while Matrix still holds a moderator level.
-      if (de.caritas.cob.userservice.api.service.matrix.GroupModeratorPowerService.isModerator(
-          request.getAdmittedRole())) {
-        // Raised only once the admission has committed.
-        moderatorPower.grantModeratorsAfterCommit(
-            series.get(), java.util.Collections.singletonList(matrixUserId));
-      } else {
-        moderatorPower.reconcileOrFail(series.get(), matrixUserId, request.getAdmittedRole());
-      }
+    }
+    // A co-moderator may blur passages. Admitting someone as a participant is a demotion: it does
+    // not finish while Matrix still holds a moderator level, also for a row that existed already.
+    var role =
+        current.stream()
+            .filter(participant -> request.getConsultantId().equals(participant.getConsultantId()))
+            .map(GroupChatParticipant::getRole)
+            .findFirst()
+            .orElse(request.getAdmittedRole());
+    if (de.caritas.cob.userservice.api.service.matrix.GroupModeratorPowerService.isModerator(
+        role)) {
+      // Raised only once the admission has committed.
+      moderatorPower.grantModeratorsAfterCommit(
+          series.get(), java.util.Collections.singletonList(matrixUserId));
+    } else {
+      moderatorPower.reconcileOrFail(series.get(), matrixUserId, role);
     }
     request.setStatus(Status.ADMITTED);
     request.setDecidedAt(CustomLocalDateTime.nowInUtc());
