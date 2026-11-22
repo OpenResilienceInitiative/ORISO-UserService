@@ -50,12 +50,14 @@ public interface ConsultantAgencyRepository extends CrudRepository<ConsultantAge
           select 1 from AgencyEnquiryRevocationTask pending
           where pending.consultantAgencyId = removed.id
             and pending.sessionId = :sessionId
+            and pending.roomId = :roomId
         )
       """)
   List<PublicationRevocationCandidate> findPublicationRevocationCandidates(
       @Param("agencyId") Long agencyId,
       @Param("consultantIds") Collection<String> consultantIds,
-      @Param("sessionId") Long sessionId);
+      @Param("sessionId") Long sessionId,
+      @Param("roomId") String roomId);
 
   interface PublicationRevocationCandidate {
     String getConsultantId();

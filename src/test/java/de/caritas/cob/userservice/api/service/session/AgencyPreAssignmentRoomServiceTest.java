@@ -65,11 +65,12 @@ class AgencyPreAssignmentRoomServiceTest {
 
   @Mock private AgencyMatrixCredentialClient matrixCredentialClient;
   @Mock private SessionRoomGateway sessionRoomGateway;
-  @Mock private AgencyEnquiryRoomPublication publication;
   @Mock private SessionService sessionService;
+  @Mock private AgencyEnquiryRoomPublication publication;
   @Mock private AgencySilentMembershipService agencySilentMembershipService;
   @Mock private AgencyDepartmentMembershipBackfill departmentMembershipBackfill;
   @Mock private MatrixRateLimitPause rateLimitPause;
+  @Mock private AgencyEnquiryRoomAttempts roomAttempts;
 
   @InjectMocks private AgencyPreAssignmentRoomService underTest;
 
@@ -603,6 +604,7 @@ class AgencyPreAssignmentRoomServiceTest {
   void recordsUnboundRoomWithoutSchedulingMembershipBackfill(
       String confirmedRoomId, CapturedOutput output) throws Exception {
     stubHappyPathUntilRoomCreation();
+    when(roomAttempts.recordCreated(session, NEW_ROOM_ID)).thenReturn(81L);
     when(sessionRoomGateway.loginAsUser(USER_MATRIX_ID)).thenReturn(USER_TOKEN);
     when(sessionRoomGateway.joinRoom(NEW_ROOM_ID, USER_TOKEN)).thenReturn(true);
     when(publication.publish(session, NEW_ROOM_ID, List.of()))
@@ -611,9 +613,21 @@ class AgencyPreAssignmentRoomServiceTest {
     underTest.ensureHoldingRoom(session, user);
 
     assertEquals(confirmedRoomId, session.getMatrixRoomId());
-    verify(sessionRoomGateway).inviteUser(NEW_ROOM_ID, USER_MATRIX_ID, AGENCY_TOKEN);
-    verify(sessionRoomGateway).joinRoom(NEW_ROOM_ID, USER_TOKEN);
-    verify(publication).publish(session, NEW_ROOM_ID, List.of());
+    var order =
+        org.mockito.Mockito.inOrder(
+            roomAttempts, agencySilentMembershipService, sessionRoomGateway, publication);
+    order.verify(roomAttempts).recordCreated(session, NEW_ROOM_ID);
+    order
+        .verify(agencySilentMembershipService)
+        .joinAgencyConsultantsWithoutWaiting(
+            AGENCY_ID,
+            NEW_ROOM_ID,
+            AGENCY_TOKEN,
+            AgencyPreAssignmentRoomService.DEPARTMENT_IN_REQUEST_BUDGET);
+    order.verify(roomAttempts).markRequesterInvitationStarted(81L);
+    order.verify(sessionRoomGateway).inviteUser(NEW_ROOM_ID, USER_MATRIX_ID, AGENCY_TOKEN);
+    order.verify(sessionRoomGateway).joinRoom(NEW_ROOM_ID, USER_TOKEN);
+    order.verify(publication).publish(session, NEW_ROOM_ID, List.of());
     verifyNoInteractions(departmentMembershipBackfill);
     assertThat(output)
         .contains("Matrix holding room " + NEW_ROOM_ID + " was not bound to session " + SESSION_ID)

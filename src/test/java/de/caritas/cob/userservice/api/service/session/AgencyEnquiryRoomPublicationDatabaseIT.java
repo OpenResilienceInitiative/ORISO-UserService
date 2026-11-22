@@ -13,6 +13,7 @@ import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.Session.SessionStatus;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.out.AgencyEnquiryRevocationTaskRepository;
+import de.caritas.cob.userservice.api.port.out.AgencyEnquiryRoomAttemptRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantAgencyRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
@@ -52,7 +53,11 @@ import org.springframework.transaction.support.TransactionTemplate;
 @DataJpaTest
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
 @TestPropertySource(properties = {"spring.profiles.active=testing", "multitenancy.enabled=true"})
-@Import({AgencyEnquiryRoomPublication.class, AgencyEnquiryRevocations.class})
+@Import({
+  AgencyEnquiryRoomPublication.class,
+  AgencyEnquiryRevocations.class,
+  AgencyEnquiryRoomAttempts.class
+})
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
 class AgencyEnquiryRoomPublicationDatabaseIT {
 
@@ -64,6 +69,8 @@ class AgencyEnquiryRoomPublicationDatabaseIT {
   @Autowired private AgencyEnquiryRoomPublication publication;
   @Autowired private AgencyEnquiryRevocations revocations;
   @Autowired private AgencyEnquiryRevocationTaskRepository tasks;
+  @Autowired private AgencyEnquiryRoomAttempts roomAttempts;
+  @Autowired private AgencyEnquiryRoomAttemptRepository attempts;
   @Autowired private ConsultantRepository consultants;
   @Autowired private ConsultantAgencyRepository assignments;
   @Autowired private SessionRepository sessions;
@@ -85,6 +92,7 @@ class AgencyEnquiryRoomPublicationDatabaseIT {
   private String userId;
   private Long relationId;
   private final List<String> extraConsultantIds = new ArrayList<>();
+  private final List<Long> attemptIds = new ArrayList<>();
 
   @DynamicPropertySource
   static void configureMariaDb(DynamicPropertyRegistry registry) {
@@ -157,6 +165,7 @@ class AgencyEnquiryRoomPublicationDatabaseIT {
   @AfterEach
   void removeOnlyTheTestData() {
     try {
+      attempts.deleteAllById(attemptIds);
       if (enquiry != null) {
         tasks.findAll().stream()
             .filter(task -> enquiry.getId().equals(task.getSessionId()))
@@ -169,6 +178,64 @@ class AgencyEnquiryRoomPublicationDatabaseIT {
     } finally {
       TenantContext.clear();
     }
+  }
+
+  @Test
+  void roomAttemptSurvivesBindingRollbackAndCompletesWithACommittedBinding() {
+    var attempt = recordInvitationAttempt(ROOM);
+    var binding = new TransactionTemplate(transactionManager);
+    binding.setIsolationLevel(TransactionDefinition.ISOLATION_READ_COMMITTED);
+
+    binding.executeWithoutResult(
+        status -> {
+          assertThat(publication.publish(enquiry, ROOM, contacts())).contains(ROOM);
+          status.setRollbackOnly();
+        });
+
+    assertThat(sessions.findById(enquiry.getId()).orElseThrow().getMatrixRoomId()).isNull();
+    assertThat(attempts.findById(attempt).orElseThrow().isRequesterInvitationStarted()).isTrue();
+
+    assertThat(publication.publish(enquiry, ROOM, contacts())).contains(ROOM);
+
+    assertThat(sessions.findById(enquiry.getId()).orElseThrow().getMatrixRoomId()).isEqualTo(ROOM);
+    assertThat(attempts.findById(attempt)).isEmpty();
+  }
+
+  @Test
+  void keepsTheAttemptWhenAnotherRoomAlreadyHoldsTheBinding() {
+    var losingAttempt = recordInvitationAttempt(ROOM);
+    var winningRoom = "!winning:example.invalid";
+    var winningAttempt = recordInvitationAttempt(winningRoom);
+
+    assertThat(publication.publish(enquiry, winningRoom, contacts())).contains(winningRoom);
+    assertThat(publication.publish(enquiry, ROOM, contacts())).contains(winningRoom);
+
+    assertThat(sessions.findById(enquiry.getId()).orElseThrow().getMatrixRoomId())
+        .isEqualTo(winningRoom);
+    assertThat(attempts.findById(winningAttempt)).isEmpty();
+    assertThat(attempts.findById(losingAttempt).orElseThrow().isRequesterInvitationStarted())
+        .isTrue();
+  }
+
+  @Test
+  void clearsOnlyTheMatchingAttemptWhenTheSameRoomIsAlreadyBound() {
+    assertThat(publication.publish(enquiry, ROOM, contacts())).contains(ROOM);
+    var matchingAttempt = recordInvitationAttempt(ROOM);
+    var differentAttempt = recordInvitationAttempt("!other:example.invalid");
+
+    assertThat(publication.publish(enquiry, ROOM, contacts())).contains(ROOM);
+
+    assertThat(sessions.findById(enquiry.getId()).orElseThrow().getMatrixRoomId()).isEqualTo(ROOM);
+    assertThat(attempts.findById(matchingAttempt)).isEmpty();
+    assertThat(attempts.findById(differentAttempt).orElseThrow().isRequesterInvitationStarted())
+        .isTrue();
+  }
+
+  private Long recordInvitationAttempt(String room) {
+    var attempt = roomAttempts.recordCreated(enquiry, room);
+    attemptIds.add(attempt);
+    roomAttempts.markRequesterInvitationStarted(attempt);
+    return attempt;
   }
 
   @Test
@@ -319,6 +386,40 @@ class AgencyEnquiryRoomPublicationDatabaseIT {
               assertThat(task.getMemberId()).isEqualTo(MEMBER_ID);
               assertThat(task.getRoomId()).isEqualTo(ROOM);
             });
+    verifyNoInteractions(matrix);
+  }
+
+  @Test
+  void publicationKeepsSeparateTasksForExactRooms() {
+    var otherRoom = "!NEW:example.invalid";
+    new TransactionTemplate(transactionManager)
+        .executeWithoutResult(
+            status -> {
+              var relation = assignments.findById(relationId).orElseThrow();
+              var now = LocalDateTime.now(clock);
+              relation.setDeleteDate(now);
+              tasks.saveAndFlush(
+                  AgencyEnquiryRevocationTask.builder()
+                      .consultantAgencyId(relationId)
+                      .consultantId(consultantId)
+                      .agencyId(AGENCY_ID)
+                      .sessionId(enquiry.getId())
+                      .roomId(otherRoom)
+                      .memberId(MEMBER_ID)
+                      .retryAt(now)
+                      .build());
+            });
+
+    assertThat(
+            assignments.findPublicationRevocationCandidates(
+                AGENCY_ID, List.of(consultantId), enquiry.getId(), otherRoom))
+        .isEmpty();
+
+    assertThat(publication.publish(enquiry, ROOM, contacts())).contains(ROOM);
+
+    assertThat(pending())
+        .extracting(AgencyEnquiryRevocationTask::getRoomId)
+        .containsExactlyInAnyOrder(otherRoom, ROOM);
     verifyNoInteractions(matrix);
   }
 

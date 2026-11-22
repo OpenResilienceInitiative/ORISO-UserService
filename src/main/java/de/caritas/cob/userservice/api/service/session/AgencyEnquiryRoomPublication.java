@@ -24,6 +24,7 @@ public class AgencyEnquiryRoomPublication {
   private final SessionRepository sessions;
   private final SessionService sessionService;
   private final AgencyEnquiryRevocations revocations;
+  private final AgencyEnquiryRoomAttempts roomAttempts;
 
   @Transactional(isolation = Isolation.READ_COMMITTED)
   public Optional<String> publish(
@@ -51,6 +52,9 @@ public class AgencyEnquiryRoomPublication {
       return Optional.empty();
     }
     if (isNotBlank(current.getMatrixRoomId())) {
+      if (roomId.equals(current.getMatrixRoomId())) {
+        roomAttempts.completePublication(current);
+      }
       return Optional.of(current.getMatrixRoomId());
     }
 
@@ -59,6 +63,7 @@ public class AgencyEnquiryRoomPublication {
       revocations.stageDuringPublication(current, ordered);
     }
     sessionService.saveSession(current);
+    roomAttempts.completePublication(current);
     return Optional.of(roomId);
   }
 }
