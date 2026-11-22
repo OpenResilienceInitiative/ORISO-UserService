@@ -251,8 +251,6 @@ public class SecurityConfig {
                 .permitAll()
                 .requestMatchers(
                     "/users/askers/new",
-                    "/conversations/askers/anonymous/new",
-                    "/service/conversations/askers/anonymous/new",
                     "/conversations/anonymous/availability",
                     "/service/conversations/anonymous/availability",
                     "/users/consultants/{consultantId:" + PUBLIC_CONSULTANT_ID_PATTERN + "}",
