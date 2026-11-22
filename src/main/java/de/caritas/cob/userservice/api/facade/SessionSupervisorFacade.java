@@ -5,6 +5,7 @@ import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestExceptio
 import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
 import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException;
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
+import de.caritas.cob.userservice.api.exception.matrix.MatrixInviteRateLimitedException;
 import de.caritas.cob.userservice.api.exception.matrix.MatrixInviteUserException;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.model.Consultant;
@@ -246,11 +247,19 @@ public class SessionSupervisorFacade {
     // immediately.
     // A removal queued earlier must not kick the supervisor who is authorised again from now on.
     matrixRepairService.cancelPendingRemovals(sessionId, supervisorMatrixUserId);
-    String sideRoomId =
+    ProvisionedRooms rooms =
         provisionSupervisorRooms(
             session, addedByConsultant, supervisorConsultant, supervisorMatrixUserId, matrixRoomId);
     SessionSupervisor saved =
-        sessionSupervisorRepository.save(builder.isActive(true).matrixRoomId(sideRoomId).build());
+        sessionSupervisorRepository.save(
+            builder.isActive(true).matrixRoomId(rooms.sideRoomId()).build());
+    if (rooms.clientRoomInviteDeferred()) {
+      // ORISO-Frontend#2386: Synapse rate-limited the client-room invite. Queue it with the active
+      // supervision row (same transaction when there is one), so the repair worker can neither see
+      // the task before the row nor lose it if a later step fails.
+      matrixRepairService.enqueueSupervisorObservation(
+          matrixRoomId, supervisorMatrixUserId, sessionId, addedByConsultant.getMatrixUserId());
+    }
     log.info(
         "Added supervisor {} to session {} by consultant {}",
         supervisorConsultant.getUsername(),
@@ -266,7 +275,10 @@ public class SessionSupervisorFacade {
    *
    * @return the supervision side room id the supervisor was placed in
    */
-  private String provisionSupervisorRooms(
+  /** The side room the supervisor was placed in, and whether the client-room invite is deferred. */
+  private record ProvisionedRooms(String sideRoomId, boolean clientRoomInviteDeferred) {}
+
+  private ProvisionedRooms provisionSupervisorRooms(
       Session session,
       Consultant addedByConsultant,
       Consultant supervisorConsultant,
@@ -292,8 +304,15 @@ public class SessionSupervisorFacade {
             consultantToken);
 
     // Invite supervisor to the CLIENT room as a read-only observer.
-    inviteSupervisorToClientRoom(
-        matrixRoomId, supervisorMatrixUserId, consultantToken, supervisorConsultant, session);
+    boolean invited =
+        inviteSupervisorToClientRoom(
+            matrixRoomId, supervisorMatrixUserId, consultantToken, supervisorConsultant, session);
+    if (!invited) {
+      // ORISO-Frontend#2386: Synapse rate-limited the invite (typically for minutes after the
+      // agency holding room invited every counsellor). The side room already works; the caller
+      // queues the client-room invite once the supervision row is committed.
+      return new ProvisionedRooms(sideRoomId, true);
+    }
 
     // Set supervisor power level to 10 (read-only observer)
     boolean powerLevelSet =
@@ -322,7 +341,7 @@ public class SessionSupervisorFacade {
             matrixRoomId);
       }
     }
-    return sideRoomId;
+    return new ProvisionedRooms(sideRoomId, false);
   }
 
   /**
@@ -647,7 +666,11 @@ public class SessionSupervisorFacade {
     matrixSynapseService.joinRoom(roomId, userToken);
   }
 
-  private void inviteSupervisorToClientRoom(
+  /**
+   * @return {@code false} when Synapse rate-limited the invite, so the caller defers it; any other
+   *     failure throws
+   */
+  private boolean inviteSupervisorToClientRoom(
       String matrixRoomId,
       String supervisorMatrixUserId,
       String consultantToken,
@@ -660,6 +683,16 @@ public class SessionSupervisorFacade {
           supervisorConsultant.getUsername(),
           matrixRoomId,
           session.getId());
+      return true;
+    } catch (MatrixInviteRateLimitedException e) {
+      log.warn(
+          "Invite of supervisor {} into Matrix room {} for session {} is rate limited (retry after"
+              + " {} ms); deferring it to the repair queue",
+          supervisorConsultant.getUsername(),
+          matrixRoomId,
+          session.getId(),
+          e.getRetryAfterMs());
+      return false;
     } catch (MatrixInviteUserException e) {
       if (e.getMessage() != null && e.getMessage().contains("already in the room")) {
         log.info(
@@ -667,7 +700,7 @@ public class SessionSupervisorFacade {
             supervisorConsultant.getUsername(),
             matrixRoomId,
             session.getId());
-        return;
+        return true;
       }
       log.error(
           "Failed to invite supervisor {} to Matrix room {}: {}",

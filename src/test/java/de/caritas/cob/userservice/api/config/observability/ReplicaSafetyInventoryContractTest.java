@@ -15,6 +15,7 @@ class ReplicaSafetyInventoryContractTest {
   private static final Set<String> REQUIRED_COMPONENTS =
       Set.of(
           "email-template-cache",
+          "agency-holding-room-repair-guard",
           "matrix-access-token-cache",
           "matrix-feed-signal-coalescer",
           "internal-group-chat-recipient-scope-cache",

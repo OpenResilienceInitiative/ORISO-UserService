@@ -213,6 +213,42 @@ class GroupWaitingRoomServiceTest {
     assertThat(service.mayAdmit(waiting, host)).isFalse();
   }
 
+  // ORISO-UserService#1747: /join of an audio or video circle needs a recent admission.
+  @Test
+  void isAdmittedOnlyForARecentAdmission() {
+    var admitted = pending(LocalDateTime.now().minusMinutes(1));
+    admitted.setStatus(Status.ADMITTED);
+    admitted.setDecidedAt(LocalDateTime.now().minusMinutes(1));
+    when(repository.findFirstBySeriesIdAndUserIdAndViaOrderByIdDesc(
+            CHAT_ID, "asker-1", Via.WAITING_ROOM))
+        .thenReturn(Optional.of(admitted));
+    assertThat(service.isAdmitted(CHAT_ID, "asker-1")).isTrue();
+
+    admitted.setDecidedAt(LocalDateTime.now().minusHours(1));
+    assertThat(service.isAdmitted(CHAT_ID, "asker-1")).isFalse();
+
+    when(repository.findFirstBySeriesIdAndUserIdAndViaOrderByIdDesc(
+            CHAT_ID, "asker-1", Via.WAITING_ROOM))
+        .thenReturn(Optional.of(pending(LocalDateTime.now())));
+    assertThat(service.isAdmitted(CHAT_ID, "asker-1")).isFalse();
+
+    when(repository.findFirstBySeriesIdAndUserIdAndViaOrderByIdDesc(
+            CHAT_ID, "asker-1", Via.WAITING_ROOM))
+        .thenReturn(Optional.empty());
+    assertThat(service.isAdmitted(CHAT_ID, "asker-1")).isFalse();
+    assertThat(service.isAdmitted(null, "asker-1")).isFalse();
+  }
+
+  @Test
+  void onlyAudioAndVideoCirclesRequireAdmission() {
+    chat.setChatModality(ChatModality.VIDEO);
+    assertThat(GroupWaitingRoomService.requiresAdmission(chat)).isTrue();
+    chat.setChatModality(ChatModality.AUDIO);
+    assertThat(GroupWaitingRoomService.requiresAdmission(chat)).isTrue();
+    chat.setChatModality(ChatModality.TEXT);
+    assertThat(GroupWaitingRoomService.requiresAdmission(chat)).isFalse();
+  }
+
   private GroupChatJoinRequest pending(LocalDateTime requestedAt) {
     return GroupChatJoinRequest.builder()
         .id(9L)
