@@ -401,7 +401,7 @@ public class Consultant implements TenantAware, NotificationsAware {
    */
   @JsonIgnore
   public String getInternalDisplayNameOrFallback() {
-    return hasInternalDisplayName() ? internalDisplayName : displayName;
+    return hasInternalDisplayName(internalDisplayName) ? internalDisplayName : displayName;
   }
 
   /**
@@ -412,7 +412,12 @@ public class Consultant implements TenantAware, NotificationsAware {
    */
   @JsonIgnore
   public String getInternalDisplayNameOrRealName() {
-    if (hasInternalDisplayName()) {
+    return resolveInternalDisplayNameOrRealName(internalDisplayName, firstName, lastName);
+  }
+
+  public static String resolveInternalDisplayNameOrRealName(
+      String internalDisplayName, String firstName, String lastName) {
+    if (hasInternalDisplayName(internalDisplayName)) {
       return internalDisplayName;
     }
     String realName =
@@ -423,7 +428,7 @@ public class Consultant implements TenantAware, NotificationsAware {
     return realName.isEmpty() ? null : realName;
   }
 
-  private boolean hasInternalDisplayName() {
+  private static boolean hasInternalDisplayName(String internalDisplayName) {
     return internalDisplayName != null && !internalDisplayName.isBlank();
   }
 

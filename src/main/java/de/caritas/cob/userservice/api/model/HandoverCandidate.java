@@ -15,6 +15,15 @@ public class HandoverCandidate implements SessionRoom {
   private final String matrixRoomId;
   private final ConversationType conversationType;
   private final boolean teamSession;
-  private final User user;
-  private final Consultant consultant;
+  private final String askerUsername;
+  private final String consultantUsername;
+  private final String consultantDisplayName;
+  private final String consultantInternalDisplayName;
+  private final String consultantFirstName;
+  private final String consultantLastName;
+
+  public String getConsultantInternalDisplayNameOrRealName() {
+    return Consultant.resolveInternalDisplayNameOrRealName(
+        consultantInternalDisplayName, consultantFirstName, consultantLastName);
+  }
 }

@@ -4,8 +4,15 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import de.caritas.cob.userservice.api.model.DraftMessage;
 import jakarta.persistence.EntityManager;
+import java.sql.DriverManager;
 import java.time.LocalDateTime;
 import java.util.UUID;
+import liquibase.Contexts;
+import liquibase.LabelExpression;
+import liquibase.Liquibase;
+import liquibase.database.DatabaseFactory;
+import liquibase.database.jvm.JdbcConnection;
+import liquibase.resource.ClassLoaderResourceAccessor;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -13,6 +20,7 @@ import org.springframework.boot.data.jpa.test.autoconfigure.DataJpaTest;
 import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
+import org.testcontainers.containers.MariaDBContainer;
 
 /**
  * Permanent schema drift guard (Liquibase Re-Enablement Plan 2026-07-04, package L1).
@@ -46,6 +54,9 @@ import org.springframework.test.context.DynamicPropertySource;
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
 @EnabledIfEnvironmentVariable(named = "LIQUIBASE_IT_DB_URL", matches = ".+")
 class DatabaseChangelogDriftIT {
+
+  private static final String NOTIFICATION_READ_DAY_CHANGELOG =
+      "db/changelog/changeset/20261121_event_notification_read_day/changeSet.xml";
 
   @DynamicPropertySource
   private static void databaseProperties(DynamicPropertyRegistry registry) {
@@ -112,5 +123,92 @@ class DatabaseChangelogDriftIT {
     entityManager.clear();
 
     assertThat(entityManager.find(DraftMessage.class, row.getId()).getText()).isEqualTo(ciphertext);
+  }
+
+  @Test
+  void readDayMigrationPreservesNullAndNormalizesHistoricalAndLegacyWrites() throws Exception {
+    try (var database =
+        new MariaDBContainer<>(System.getProperty("it.mariadb.image", "mariadb:10.11"))
+            .withDatabaseName("userservice")) {
+      database.start();
+      try (var connection =
+              DriverManager.getConnection(
+                  database.getJdbcUrl(), database.getUsername(), database.getPassword());
+          var sql = connection.createStatement()) {
+        sql.execute(
+            """
+            CREATE TABLE event_notification (
+              id BIGINT PRIMARY KEY,
+              recipient_user_id VARCHAR(36) NOT NULL,
+              read_date DATETIME(3),
+              create_date DATETIME(3) NOT NULL,
+              INDEX idx_event_notification_recipient_read (recipient_user_id, read_date)
+            )
+            """);
+        sql.execute(
+            """
+            INSERT INTO event_notification VALUES
+              (1, 'recipient', '2026-11-19 23:59:59.999', '2026-11-18 12:30:45.678'),
+              (2, 'recipient', NULL, '2026-11-18 12:30:45.678'),
+              (3, 'recipient', NULL, '2026-11-18 12:30:45.678')
+            """);
+
+        var liquibaseDatabase =
+            DatabaseFactory.getInstance()
+                .findCorrectDatabaseImplementation(new JdbcConnection(connection));
+        try (var migration =
+            new Liquibase(
+                NOTIFICATION_READ_DAY_CHANGELOG,
+                new ClassLoaderResourceAccessor(),
+                liquibaseDatabase)) {
+          migration.update(new Contexts(), new LabelExpression());
+          sql.execute(
+              """
+              INSERT INTO event_notification VALUES
+                (4, 'recipient', '2026-11-21 19:30:45.678', '2026-11-20 12:30:45.678')
+              """);
+          try (var update =
+              connection.prepareStatement(
+                  "UPDATE event_notification SET read_date = ? WHERE id = 3")) {
+            update.setObject(1, LocalDateTime.of(2026, 11, 20, 23, 59, 59, 999_000_000));
+            assertThat(update.executeUpdate()).isEqualTo(1);
+          }
+          try (var rows =
+              sql.executeQuery(
+                  "SELECT read_date, create_date FROM event_notification ORDER BY id")) {
+            assertThat(rows.getMetaData().getColumnTypeName(1)).isEqualToIgnoringCase("datetime");
+            assertThat(rows.getMetaData().getScale(1)).isEqualTo(3);
+            assertThat(rows.next()).isTrue();
+            assertThat(rows.getObject(1, LocalDateTime.class))
+                .isEqualTo(LocalDateTime.of(2026, 11, 19, 0, 0));
+            assertThat(rows.getObject(2, LocalDateTime.class))
+                .isEqualTo(LocalDateTime.of(2026, 11, 18, 12, 30, 45, 678_000_000));
+            assertThat(rows.next()).isTrue();
+            assertThat(rows.getObject(1)).isNull();
+            assertThat(rows.next()).isTrue();
+            assertThat(rows.getObject(1, LocalDateTime.class))
+                .isEqualTo(LocalDateTime.of(2026, 11, 20, 0, 0));
+            assertThat(rows.next()).isTrue();
+            assertThat(rows.getObject(1, LocalDateTime.class))
+                .isEqualTo(LocalDateTime.of(2026, 11, 21, 0, 0));
+            assertThat(rows.next()).isFalse();
+          }
+
+          migration.rollback(3, new Contexts(), new LabelExpression());
+          sql.execute(
+              "UPDATE event_notification SET read_date = '2026-11-20 11:30:00' WHERE id = 3");
+          try (var rows =
+              sql.executeQuery(
+                  "SELECT read_date FROM event_notification WHERE id IN (1, 3) ORDER BY id")) {
+            assertThat(rows.next()).isTrue();
+            assertThat(rows.getObject(1, LocalDateTime.class))
+                .isEqualTo(LocalDateTime.of(2026, 11, 19, 0, 0));
+            assertThat(rows.next()).isTrue();
+            assertThat(rows.getObject(1, LocalDateTime.class))
+                .isEqualTo(LocalDateTime.of(2026, 11, 20, 11, 30));
+          }
+        }
+      }
+    }
   }
 }
