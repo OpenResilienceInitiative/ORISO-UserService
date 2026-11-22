@@ -7,6 +7,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import de.caritas.cob.userservice.api.adapters.keycloak.KeycloakAuthClient;
 import de.caritas.cob.userservice.api.model.HandshakeSession;
+import de.caritas.cob.userservice.api.port.out.HandshakeAuditEventRepository;
 import de.caritas.cob.userservice.api.port.out.HandshakeSessionRepository;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
@@ -16,6 +17,7 @@ import de.caritas.cob.userservice.api.workflow.scheduling.ScheduledTaskClaimServ
 import de.caritas.cob.userservice.api.workflow.scheduling.ScheduledTaskClaimWriter;
 import java.time.Clock;
 import java.time.Duration;
+import java.time.LocalDateTime;
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
@@ -25,13 +27,12 @@ import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.data.jpa.test.autoconfigure.DataJpaTest;
 import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase;
-import org.springframework.boot.test.context.TestConfiguration;
-import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Import;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.scheduling.TaskScheduler;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
+import org.springframework.test.context.bean.override.convention.TestBean;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
@@ -43,16 +44,17 @@ import org.springframework.transaction.annotation.Transactional;
   HandshakeService.class,
   ScheduledTaskClaimService.class,
   ScheduledTaskClaimWriter.class,
-  TeamDiscussionParticipantWriter.class,
-  HandshakeExpiryMariaDbIT.ClockConfiguration.class
+  TeamDiscussionParticipantWriter.class
 })
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
 class HandshakeExpiryMariaDbIT {
 
   private static final String TASK_NAME = "handshake-expiry-sweep";
+  private static final String AUDIT_PURGE_TASK_NAME = "handshake-audit-retention";
 
   @Autowired private HandshakeService handshakes;
   @Autowired private HandshakeSessionRepository sessions;
+  @Autowired private HandshakeAuditEventRepository auditEvents;
   @Autowired private ScheduledTaskClaimService claims;
   @Autowired private JdbcTemplate jdbc;
 
@@ -61,6 +63,9 @@ class HandshakeExpiryMariaDbIT {
   @MockitoBean private IdentityClientConfig identityConfig;
   @MockitoBean private IdentitySecondFactor secondFactor;
   @MockitoBean private TaskScheduler taskScheduler;
+
+  @TestBean(methodName = "utcClock")
+  private Clock schedulerClock;
 
   @DynamicPropertySource
   static void database(DynamicPropertyRegistry registry) {
@@ -121,6 +126,77 @@ class HandshakeExpiryMariaDbIT {
         "SESSION_NOT_ESTABLISHED");
   }
 
+  @Test
+  void anotherReplicaHoldingTheAuditRetentionClaimLeavesTheRowsForThatReplica() {
+    var id = UUID.randomUUID().toString();
+    recordAudit(id, HandshakePurpose.SUPPORT_ACCESS, 1L, nowInUtc().minusMonths(13));
+    try {
+      var otherReplica =
+          claims.tryClaimLease(AUDIT_PURGE_TASK_NAME, Duration.ofMinutes(2)).orElseThrow();
+      try {
+        handshakes.purgeOldAuditEvents();
+        assertThat(auditRows(id)).isOne();
+      } finally {
+        claims.release(otherReplica);
+      }
+
+      handshakes.purgeOldAuditEvents();
+      assertThat(auditRows(id)).isZero();
+    } finally {
+      jdbc.update("DELETE FROM handshake_audit_event WHERE handshake_id = ?", id);
+      jdbc.update("DELETE FROM scheduled_task_claim WHERE task_name = ?", AUDIT_PURGE_TASK_NAME);
+    }
+  }
+
+  @Test
+  void auditBatchesCommitIndependentlyAndKeepRowsAtOrAfterTheCutoff() {
+    var id = UUID.randomUUID().toString();
+    var cutoff = LocalDateTime.of(2025, 1, 5, 3, 30);
+    var older = cutoff.minusSeconds(1);
+    recordAudit(id, HandshakePurpose.SUPPORT_ACCESS, 1L, older);
+    recordAudit(id, HandshakePurpose.RECOVERY_SUPPORT_ADMIN, 0L, older);
+    recordAudit(id, HandshakePurpose.RECOVERY_CONSULTANT, 7L, older);
+    recordAudit(id, HandshakePurpose.IDENTITY_GRANT, null, older);
+    recordAudit(id, HandshakePurpose.SUPPORT_ACCESS, null, older);
+    recordAudit(id, HandshakePurpose.IDENTITY_GRANT, 1L, cutoff);
+    try {
+      assertThat(auditEvents.deleteBatchCreatedBefore(cutoff, 2)).isEqualTo(2);
+      assertThat(auditRows(id)).isEqualTo(4);
+      recordAudit(id, HandshakePurpose.SUPPORT_ACCESS, 1L, cutoff.plusSeconds(1));
+
+      assertThat(auditEvents.deleteBatchCreatedBefore(cutoff, 2)).isEqualTo(2);
+      assertThat(auditEvents.deleteBatchCreatedBefore(cutoff, 2)).isOne();
+      assertThat(auditEvents.deleteBatchCreatedBefore(cutoff, 2)).isZero();
+      assertThat(
+              jdbc.queryForList(
+                  "SELECT create_date FROM handshake_audit_event WHERE handshake_id = ? ORDER BY create_date",
+                  java.sql.Timestamp.class,
+                  id))
+          .extracting(java.sql.Timestamp::toLocalDateTime)
+          .containsExactly(cutoff, cutoff.plusSeconds(1));
+    } finally {
+      jdbc.update("DELETE FROM handshake_audit_event WHERE handshake_id = ?", id);
+    }
+  }
+
+  private void recordAudit(
+      String id, HandshakePurpose purpose, Long tenant, LocalDateTime createdAt) {
+    jdbc.update(
+        """
+        INSERT INTO handshake_audit_event (handshake_id, purpose, event, tenant_id, create_date)
+        VALUES (?, ?, 'INITIATED', ?, ?)
+        """,
+        id,
+        purpose.name(),
+        tenant,
+        createdAt);
+  }
+
+  private int auditRows(String id) {
+    return jdbc.queryForObject(
+        "SELECT COUNT(*) FROM handshake_audit_event WHERE handshake_id = ?", Integer.class, id);
+  }
+
   private void runTwoSweeps() throws Exception {
     var ready = new CountDownLatch(2);
     var start = new CountDownLatch(1);
@@ -144,11 +220,7 @@ class HandshakeExpiryMariaDbIT {
     return null;
   }
 
-  @TestConfiguration
-  static class ClockConfiguration {
-    @Bean
-    Clock schedulerClock() {
-      return Clock.systemUTC();
-    }
+  static Clock utcClock() {
+    return Clock.systemUTC();
   }
 }

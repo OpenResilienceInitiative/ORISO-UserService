@@ -44,6 +44,8 @@ public class HandshakeService {
   private static final String EVENT_NOT_ESTABLISHED = "SESSION_NOT_ESTABLISHED";
   private static final String EVENT_CONFIRM_LOCKED = "CONFIRM_LOCKED";
   private static final String SWEEP_TASK_NAME = "handshake-expiry-sweep";
+  private static final String AUDIT_PURGE_TASK_NAME = "handshake-audit-retention";
+  private static final int AUDIT_PURGE_BATCH_SIZE = 1_000;
 
   private final @NonNull HandshakeSessionRepository handshakeSessionRepository;
   private final @NonNull HandshakeAuditEventRepository handshakeAuditEventRepository;
@@ -67,6 +69,9 @@ public class HandshakeService {
 
   @Value("${handshake.audit-retention-months:12}")
   private long auditRetentionMonths;
+
+  @Value("${handshake.audit-purge-claim-duration:PT12H}")
+  private Duration auditPurgeClaimDuration;
 
   @Value("${handshake.max-confirm-attempts:5}")
   private int maxConfirmAttempts;
@@ -216,10 +221,21 @@ public class HandshakeService {
 
   /** ADR-018 §3: audit retention 12 months, automatic deletion. */
   @Scheduled(cron = "${handshake.audit-purge-cron:0 30 3 * * *}")
-  @Transactional
   public void purgeOldAuditEvents() {
-    handshakeAuditEventRepository.deleteAllByCreateDateBefore(
-        nowInUtc().minusMonths(auditRetentionMonths));
+    if (!claims.tryClaim(AUDIT_PURGE_TASK_NAME, auditPurgeClaimDuration)) {
+      return;
+    }
+    var cutoff = nowInUtc().minusMonths(auditRetentionMonths);
+    long total = 0;
+    int deleted;
+    do {
+      deleted =
+          handshakeAuditEventRepository.deleteBatchCreatedBefore(cutoff, AUDIT_PURGE_BATCH_SIZE);
+      total += deleted;
+    } while (deleted == AUDIT_PURGE_BATCH_SIZE);
+    if (total > 0) {
+      log.info("Removed {} expired handshake audit entries", total);
+    }
   }
 
   /**

@@ -59,8 +59,8 @@ applies to a specific lease duration, row or notification identity.
 - The enquiry notification and account deactivation or deletion jobs acquire a
   database-backed run claim. A second sweep skips while the claim is active.
 - Handshake expiry holds a database claim through one page of updates and audit
-  writes. Its inventory entry identifies the expiry method as protected and
-  remains a blocker because the same service also runs audit retention.
+  writes. Audit retention takes its own nightly claim and deletes up to
+  1,000 expired entries per transaction with the existing date index.
 - Group-chat deactivation locks the chat before checking its state. Support-room
   expiry reserves the room's next retry under a row lock before contacting Matrix.
 - Group-chat reminders deduplicate per recipient and occurrence through the
@@ -80,10 +80,7 @@ require integration evidence.
    durable event side effects.
 2. Externalize browser-login locks, notification active-view state and
    correctness-relevant reference caches, or prove a bounded alternative.
-3. Assess overlapping handshake audit retention and the duration of its database
-   locks. The expiry sweep already claims one bounded page and writes its audit
-   events inside that transaction. Both methods share one inventory entry.
-4. Run deterministic two-instance Redis, MariaDB, integration and product E2E
+3. Run deterministic two-instance Redis, MariaDB, integration and product E2E
    scenarios without sticky sessions.
-5. Query the deployed metrics and traces in SigNoz before changing the Helm
+4. Query the deployed metrics and traces in SigNoz before changing the Helm
    replica ceiling.

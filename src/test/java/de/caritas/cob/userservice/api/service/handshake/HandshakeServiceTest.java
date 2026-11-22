@@ -6,6 +6,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -432,15 +433,21 @@ class HandshakeServiceTest {
   }
 
   @Test
-  void purgeOldAuditEvents_Should_DeleteEntriesOlderThanRetention() {
+  void purgeOldAuditEvents_Should_DrainBatchesUsingOneUtcCutoff() {
     ReflectionTestUtils.setField(handshakeService, "auditRetentionMonths", 12L);
+    ReflectionTestUtils.setField(handshakeService, "auditPurgeClaimDuration", Duration.ofHours(12));
+    when(claims.tryClaim("handshake-audit-retention", Duration.ofHours(12))).thenReturn(true);
+    when(handshakeAuditEventRepository.deleteBatchCreatedBefore(any(), eq(1_000)))
+        .thenReturn(1_000, 1_000, 7);
+    var earliestCutoff = LocalDateTime.now(ZoneOffset.UTC).minusMonths(12);
 
     handshakeService.purgeOldAuditEvents();
 
     var captor = ArgumentCaptor.forClass(LocalDateTime.class);
-    verify(handshakeAuditEventRepository).deleteAllByCreateDateBefore(captor.capture());
-    assertThat(captor.getValue())
-        .isBefore(LocalDateTime.now(ZoneOffset.UTC).minusMonths(11))
-        .isAfter(LocalDateTime.now(ZoneOffset.UTC).minusMonths(13));
+    verify(handshakeAuditEventRepository, times(3))
+        .deleteBatchCreatedBefore(captor.capture(), eq(1_000));
+    var cutoff = captor.getValue();
+    assertThat(cutoff).isBetween(earliestCutoff, LocalDateTime.now(ZoneOffset.UTC).minusMonths(12));
+    assertThat(captor.getAllValues()).containsExactly(cutoff, cutoff, cutoff);
   }
 }

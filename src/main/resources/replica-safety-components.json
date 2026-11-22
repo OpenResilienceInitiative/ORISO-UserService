@@ -696,18 +696,21 @@
         "sweepExpired",
         "purgeOldAuditEvents"
       ],
-      "decision": "Expiry takes a database claim around one page and its audit writes. Audit retention still needs an overlap and lock-duration assessment.",
+      "decision": "Expiry holds a database claim through one page and its audit writes. Audit retention takes a separate nightly claim and deletes independently committed batches.",
       "signals": [
         "userservice.scheduler.executions",
         "userservice.scheduler.duration"
       ],
-      "status": "blocker",
+      "status": "bounded",
       "claim": {
         "mechanism": "scheduled-task-claim",
-        "coveredComponents": ["sweepExpired"],
         "evidence": [
           {
-            "contains": ["public void sweepExpired() {", "claims.tryClaimLease(SWEEP_TASK_NAME, sweepClaimDuration)", "claims.runIfHeld(lease, this::expireLapsedSessions)"]
+            "contains": ["public void sweepExpired() {", "claims.tryClaimLease(SWEEP_TASK_NAME, sweepClaimDuration)", "claims.runIfHeld(lease, this::expireLapsedSessions)", "public void purgeOldAuditEvents() {", "claims.tryClaim(AUDIT_PURGE_TASK_NAME, auditPurgeClaimDuration)", "handshakeAuditEventRepository.deleteBatchCreatedBefore(cutoff, AUDIT_PURGE_BATCH_SIZE)"]
+          },
+          {
+            "source": "src/main/java/de/caritas/cob/userservice/api/port/out/HandshakeAuditEventRepository.java",
+            "contains": ["DELETE FROM handshake_audit_event WHERE create_date < :cutoff LIMIT :batchSize"]
           }
         ]
       }
