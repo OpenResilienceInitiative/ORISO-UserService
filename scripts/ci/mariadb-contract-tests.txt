@@ -30,3 +30,4 @@ standard MoveThenTakeoverMatrixMariaDbIT
 standard CaseHandoverStatusHttpMariaDbIT
 standard IdentityReactivationSagaMariaDbIT
 standard UserHardDeleteClaimMariaDbIT
+standard GuestRegistrationTypeQueriesMariaDbIT
