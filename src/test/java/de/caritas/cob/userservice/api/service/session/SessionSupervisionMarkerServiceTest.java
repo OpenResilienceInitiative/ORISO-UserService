@@ -172,17 +172,31 @@ class SessionSupervisionMarkerServiceTest {
     var postcodeAnonymous = entry(17L);
     postcodeAnonymous.getSession().setRegistrationType("REGISTERED");
     postcodeAnonymous.getSession().setPostcode("00000");
-    var usernameAnonymous = entry(18L);
-    usernameAnonymous.getSession().setRegistrationType("REGISTERED");
-    usernameAnonymous.getSession().setPostcode("12345");
-    usernameAnonymous.setUser(
-        new SessionUserDTO("u-18", "Anonymous-18", null, false, null, null, null));
+    var animalGuest = entry(18L);
+    animalGuest.getSession().setRegistrationType("ANONYMOUS");
+    animalGuest.getSession().setPostcode("00000");
+    animalGuest.setUser(
+        new SessionUserDTO("u-18", "katze_sam_4821", null, false, null, null, null));
 
-    service.enrich(List.of(postcodeAnonymous, usernameAnonymous), consultant("me"));
+    service.enrich(List.of(postcodeAnonymous, animalGuest), consultant("me"));
 
     verify(sessionSupervisorRepository, never()).findActiveMarkerRowsBySessionIdIn(any());
     assertThat(postcodeAnonymous.getSession().getSupervision()).isNull();
-    assertThat(usernameAnonymous.getSession().getSupervision()).isNull();
+    assertThat(animalGuest.getSession().getSupervision()).isNull();
+  }
+
+  /** ORISO-UserService#1697: the User-ID text alone does not make a session anonymous. */
+  @Test
+  void enrich_ShouldTreatARegularRegistrationAsRegistered_When_OnlyTheUsernameLooksAnonymous() {
+    var namedLikeAGuest = entry(19L);
+    namedLikeAGuest.getSession().setRegistrationType("REGISTERED");
+    namedLikeAGuest.getSession().setPostcode("12345");
+    namedLikeAGuest.setUser(
+        new SessionUserDTO("u-19", "Anonymous-19", null, false, null, null, null));
+
+    service.enrich(List.of(namedLikeAGuest), consultant("me"));
+
+    verify(sessionSupervisorRepository).findActiveMarkerRowsBySessionIdIn(any());
   }
 
   @Test

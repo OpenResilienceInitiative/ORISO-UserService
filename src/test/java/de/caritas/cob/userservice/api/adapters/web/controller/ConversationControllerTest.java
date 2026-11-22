@@ -63,7 +63,6 @@ class ConversationControllerTest {
     controller =
         new ConversationController(
             conversationListResolver,
-            createAnonymousEnquiryFacade,
             acceptAnonymousEnquiryFacade,
             finishAnonymousConversationFacade,
             mapper,

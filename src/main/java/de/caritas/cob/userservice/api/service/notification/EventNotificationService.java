@@ -15,6 +15,7 @@ import de.caritas.cob.userservice.api.port.out.UserRepository;
 import de.caritas.cob.userservice.api.service.matrix.MatrixFeedUpdateSignalService;
 import de.caritas.cob.userservice.api.workflow.delete.service.IdentityTombstoneService;
 import java.time.Duration;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.util.Collection;
@@ -1001,7 +1002,7 @@ public class EventNotificationService {
       return 0;
     }
     return eventNotificationRepository.markReadByEventTypes(
-        recipientUserId, types, LocalDateTime.now());
+        recipientUserId, types, currentReadDay());
   }
 
   /** Trimmed, non-blank, de-duplicated; {@code null} reads as empty. */
@@ -1022,7 +1023,7 @@ public class EventNotificationService {
         .ifPresent(
             item -> {
               if (item.getReadDate() == null) {
-                item.setReadDate(LocalDateTime.now());
+                item.setReadDate(currentReadDay());
                 eventNotificationRepository.save(item);
               }
             });
@@ -1035,9 +1036,13 @@ public class EventNotificationService {
     if (unread.isEmpty()) {
       return;
     }
-    var now = LocalDateTime.now();
-    unread.forEach(item -> item.setReadDate(now));
+    var readDay = currentReadDay();
+    unread.forEach(item -> item.setReadDate(readDay));
     eventNotificationRepository.saveAll(unread);
+  }
+
+  private static LocalDateTime currentReadDay() {
+    return LocalDate.now(ZoneOffset.UTC).atStartOfDay();
   }
 
   @Transactional
@@ -1561,7 +1566,11 @@ public class EventNotificationService {
         .sourceSessionId(item.getSourceSessionId())
         .readAt(
             item.getReadDate() != null
-                ? item.getReadDate().atOffset(ZoneOffset.UTC).toString()
+                ? item.getReadDate()
+                    .toLocalDate()
+                    .atStartOfDay()
+                    .atOffset(ZoneOffset.UTC)
+                    .toString()
                 : null)
         .createdAt(
             item.getCreateDate() != null

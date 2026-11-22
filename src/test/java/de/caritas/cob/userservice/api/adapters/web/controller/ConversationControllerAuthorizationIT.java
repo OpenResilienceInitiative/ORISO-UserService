@@ -24,8 +24,6 @@ import static org.mockito.Mockito.verifyNoMoreInteractions;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
-import de.caritas.cob.userservice.api.adapters.web.dto.CreateAnonymousEnquiryDTO;
 import de.caritas.cob.userservice.api.config.auth.Authority.AuthorityValue;
 import de.caritas.cob.userservice.api.conversation.facade.AcceptAnonymousEnquiryFacade;
 import de.caritas.cob.userservice.api.conversation.facade.CreateAnonymousEnquiryFacade;
@@ -34,7 +32,6 @@ import de.caritas.cob.userservice.api.conversation.service.ConversationListResol
 import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
 import de.caritas.cob.userservice.api.service.session.SessionTopicEnrichmentService;
 import jakarta.servlet.http.Cookie;
-import org.jeasy.random.EasyRandom;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -285,36 +282,6 @@ class ConversationControllerAuthorizationIT {
         .andExpect(status().isForbidden());
 
     verifyNoMoreInteractions(this.acceptAnonymousEnquiryFacade);
-  }
-
-  @Test
-  void createAnonymousEnquiry_Should_ReturnCreated_When_CsrfTokensMatch() throws Exception {
-    this.mvc
-        .perform(
-            MockMvcRequestBuilders.post(ConversationControllerIT.POST_CREATE_ANONYMOUS_ENQUIRY_PATH)
-                .cookie(csrfCookie)
-                .header(CSRF_HEADER, CSRF_VALUE)
-                .content(
-                    new ObjectMapper()
-                        .writeValueAsString(
-                            new EasyRandom().nextObject(CreateAnonymousEnquiryDTO.class)))
-                .contentType(MediaType.APPLICATION_JSON))
-        .andExpect(status().isCreated());
-
-    verify(this.createAnonymousEnquiryFacade, times(1)).createAnonymousEnquiry(any());
-  }
-
-  @Test
-  void createAnonymousEnquiry_Should_ReturnForbiddenAndCallNoMethods_When_NoCsrfToken()
-      throws Exception {
-    this.mvc
-        .perform(
-            MockMvcRequestBuilders.post(ConversationControllerIT.POST_CREATE_ANONYMOUS_ENQUIRY_PATH)
-                .contentType(MediaType.APPLICATION_JSON)
-                .accept(MediaType.APPLICATION_JSON))
-        .andExpect(status().isForbidden());
-
-    verifyNoMoreInteractions(createAnonymousEnquiryFacade);
   }
 
   @Test

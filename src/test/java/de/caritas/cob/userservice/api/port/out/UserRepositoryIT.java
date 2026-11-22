@@ -5,15 +5,25 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 
 import com.neovisionaries.i18n.LanguageCode;
+import de.caritas.cob.userservice.api.adapters.web.dto.ViolationDTO;
+import de.caritas.cob.userservice.api.admin.report.rule.MissingSessionAndChatForAskerViolationReportRule;
 import de.caritas.cob.userservice.api.config.JpaAuditingConfiguration;
+import de.caritas.cob.userservice.api.model.Session;
+import de.caritas.cob.userservice.api.model.Session.SessionStatus;
+import de.caritas.cob.userservice.api.model.TenantFilter;
 import de.caritas.cob.userservice.api.model.User;
+import de.caritas.cob.userservice.api.model.UserAgency;
+import jakarta.persistence.EntityManager;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 import java.util.UUID;
+import java.util.stream.StreamSupport;
 import org.apache.commons.lang3.RandomStringUtils;
+import org.hibernate.SessionFactory;
+import org.hibernate.stat.Statistics;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -26,12 +36,15 @@ import org.springframework.test.context.TestPropertySource;
 @DataJpaTest
 @TestPropertySource(properties = "spring.profiles.active=testing")
 @AutoConfigureTestDatabase(replace = Replace.NONE)
-@Import(JpaAuditingConfiguration.class)
+@Import({JpaAuditingConfiguration.class, MissingSessionAndChatForAskerViolationReportRule.class})
 class UserRepositoryIT {
 
   private User user;
 
   @Autowired private UserRepository userRepository;
+  @Autowired private UserAgencyRepository userAgencyRepository;
+  @Autowired private MissingSessionAndChatForAskerViolationReportRule integrityRule;
+  @Autowired private EntityManager entityManager;
 
   @AfterEach
   public void reset() {
@@ -110,6 +123,123 @@ class UserRepositoryIT {
     } finally {
       userRepository.deleteAll(saved);
     }
+  }
+
+  @Test
+  void integrityReportProjectsOnlyIdsAndPreservesTheVisibleRelationshipRules() {
+    var filter = entityManager.unwrap(org.hibernate.Session.class).enableFilter(TenantFilter.NAME);
+    filter.setParameter(TenantFilter.PARAMETER, 0L);
+    User withoutRelations = persistAsker(1L, null);
+    User deletedWithoutRelations = persistAsker(1L, LocalDateTime.now().minusDays(1));
+    User withSession = persistAsker(1L, null);
+    User withChat = persistAsker(1L, null);
+    User withBoth = persistAsker(1L, null);
+    User withLegacySession = persistAsker(1L, null);
+    User withForeignSession = persistAsker(1L, null);
+    User otherTenant = persistAsker(83L, null);
+    User legacyAsker = persistAsker(null, null);
+    persistSession(withSession, 1L);
+    persistSession(withBoth, 1L);
+    persistSession(withLegacySession, null);
+    persistSession(withForeignSession, 83L);
+    entityManager.persist(new UserAgency(withChat, 10L));
+    entityManager.persist(new UserAgency(withBoth, 10L));
+    entityManager.flush();
+    entityManager.clear();
+
+    var statistics =
+        entityManager.getEntityManagerFactory().unwrap(SessionFactory.class).getStatistics();
+    boolean previouslyEnabled = statistics.isStatisticsEnabled();
+    statistics.setStatisticsEnabled(true);
+    try {
+      for (long tenantId : List.of(0L, 1L, 83L)) {
+        filter.setParameter(TenantFilter.PARAMETER, tenantId);
+        assertIntegrityReportMatchesLegacyRelationshipTraversal();
+      }
+
+      filter.setParameter(TenantFilter.PARAMETER, 0L);
+      assertThat(reportIds())
+          .contains(
+              withoutRelations.getUserId(),
+              deletedWithoutRelations.getUserId(),
+              otherTenant.getUserId(),
+              legacyAsker.getUserId())
+          .doesNotContain(
+              withSession.getUserId(),
+              withChat.getUserId(),
+              withBoth.getUserId(),
+              withLegacySession.getUserId(),
+              withForeignSession.getUserId());
+
+      filter.setParameter(TenantFilter.PARAMETER, 1L);
+      assertThat(reportIds())
+          .contains(withoutRelations.getUserId(), deletedWithoutRelations.getUserId())
+          .doesNotContain(
+              otherTenant.getUserId(),
+              legacyAsker.getUserId(),
+              withLegacySession.getUserId(),
+              withForeignSession.getUserId());
+      entityManager.clear();
+      statistics.clear();
+
+      List<String> idsBeforeGrowth = reportIds();
+      assertOnlyOneScalarQuery(statistics);
+
+      for (int i = 0; i < 16; i++) {
+        persistSession(persistAsker(1L, null), 1L);
+        entityManager.persist(new UserAgency(persistAsker(1L, null), 10L));
+      }
+      entityManager.flush();
+      entityManager.clear();
+      statistics.clear();
+
+      assertThat(reportIds()).containsExactlyInAnyOrderElementsOf(idsBeforeGrowth);
+      assertOnlyOneScalarQuery(statistics);
+    } finally {
+      statistics.setStatisticsEnabled(previouslyEnabled);
+      entityManager.unwrap(org.hibernate.Session.class).disableFilter(TenantFilter.NAME);
+    }
+  }
+
+  private static void assertOnlyOneScalarQuery(Statistics statistics) {
+    assertEquals(1L, statistics.getPrepareStatementCount());
+    assertEquals(0L, statistics.getEntityLoadCount());
+    assertEquals(0L, statistics.getCollectionLoadCount());
+  }
+
+  private void assertIntegrityReportMatchesLegacyRelationshipTraversal() {
+    List<String> legacyIds =
+        StreamSupport.stream(userRepository.findAll().spliterator(), false)
+            .filter(
+                user ->
+                    user.getSessions().isEmpty() && userAgencyRepository.findByUser(user).isEmpty())
+            .map(User::getUserId)
+            .toList();
+    entityManager.clear();
+    assertThat(reportIds()).containsExactlyInAnyOrderElementsOf(legacyIds);
+    entityManager.clear();
+  }
+
+  private List<String> reportIds() {
+    return integrityRule.generateViolations().stream().map(ViolationDTO::getIdentifier).toList();
+  }
+
+  private User persistAsker(Long tenantId, LocalDateTime deleteDate) {
+    User asker = userIn(tenantId, UUID.randomUUID().toString(), deleteDate);
+    entityManager.persist(asker);
+    return asker;
+  }
+
+  private void persistSession(User asker, Long tenantId) {
+    Session session = new Session(asker, 1, "10115", 10L, SessionStatus.IN_ARCHIVE, false);
+    LocalDateTime savedAt = LocalDateTime.of(2026, 1, 1, 0, 0);
+    session.setCreateDate(savedAt);
+    session.setUpdateDate(savedAt);
+    session.setTenantId(tenantId);
+    session.setLanguageCode(LanguageCode.de);
+    session.setIsConsultantDirectlySet(false);
+    session.setSupervisionOptedOut(false);
+    entityManager.persist(session);
   }
 
   private static User userIn(Long tenantId, String userId, LocalDateTime deleteDate) {
