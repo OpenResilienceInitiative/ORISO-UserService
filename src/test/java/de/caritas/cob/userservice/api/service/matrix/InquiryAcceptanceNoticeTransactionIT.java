@@ -15,6 +15,7 @@ import org.springframework.boot.data.jpa.test.autoconfigure.DataJpaTest;
 import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase;
 import org.springframework.context.annotation.Import;
 import org.springframework.test.context.TestPropertySource;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
@@ -30,6 +31,9 @@ import org.springframework.transaction.support.TransactionTemplate;
   ConsultantDisplayNameResolver.class
 })
 class InquiryAcceptanceNoticeTransactionIT {
+  @MockitoBean
+  private de.caritas.cob.userservice.api.service.session.AgencyEnquiryRoomDecisions roomDecisions;
+
   @Autowired SessionRepository sessions;
   @Autowired ConsultantRepository consultants;
   @Autowired UserRepository users;

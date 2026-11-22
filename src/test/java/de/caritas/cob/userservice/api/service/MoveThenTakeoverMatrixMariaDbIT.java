@@ -91,6 +91,8 @@ import org.springframework.transaction.support.TransactionTemplate;
 })
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
 class MoveThenTakeoverMatrixMariaDbIT {
+  @MockitoBean
+  private de.caritas.cob.userservice.api.service.session.AgencyEnquiryRoomDecisions roomDecisions;
 
   private static final long TENANT_ID = 7L;
   private static final long AGENCY_ID = 14211422L;

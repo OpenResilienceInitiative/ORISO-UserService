@@ -26,6 +26,11 @@ sys.modules[SPEC.name] = LOAD_SMOKE
 SPEC.loader.exec_module(LOAD_SMOKE)
 
 
+class LoadFixtureServer(ThreadingHTTPServer):
+    # Allow the fixture to accept the tests' concurrent connection bursts.
+    request_queue_size = 16
+
+
 class HealthHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         payload = b'{"status":"UP"}'
@@ -183,7 +188,7 @@ class LoadSmokeContractTest(unittest.TestCase):
         self.assertFalse(docker_calls.exists())
 
     def test_concurrent_smoke_reports_request_volume_payload_and_latency(self):
-        server = ThreadingHTTPServer(("127.0.0.1", 0), HealthHandler)
+        server = LoadFixtureServer(("127.0.0.1", 0), HealthHandler)
         thread = Thread(target=server.serve_forever, daemon=True)
         thread.start()
         try:
@@ -207,7 +212,7 @@ class LoadSmokeContractTest(unittest.TestCase):
         self.assertTrue(all(sample.status == 200 for sample in samples))
 
     def test_weighted_workload_reports_each_public_read_operation_separately(self):
-        server = ThreadingHTTPServer(("127.0.0.1", 0), HealthHandler)
+        server = LoadFixtureServer(("127.0.0.1", 0), HealthHandler)
         thread = Thread(target=server.serve_forever, daemon=True)
         thread.start()
         try:
@@ -245,8 +250,8 @@ class LoadSmokeContractTest(unittest.TestCase):
         )
 
     def test_weighted_workload_distributes_requests_across_two_replicas(self):
-        first = ThreadingHTTPServer(("127.0.0.1", 0), HealthHandler)
-        second = ThreadingHTTPServer(("127.0.0.1", 0), HealthHandler)
+        first = LoadFixtureServer(("127.0.0.1", 0), HealthHandler)
+        second = LoadFixtureServer(("127.0.0.1", 0), HealthHandler)
         first_thread = Thread(target=first.serve_forever, daemon=True)
         second_thread = Thread(target=second.serve_forever, daemon=True)
         first_thread.start()
@@ -304,7 +309,7 @@ class LoadSmokeContractTest(unittest.TestCase):
             )
 
     def test_cli_runs_a_json_scenario_and_emits_per_operation_results(self):
-        server = ThreadingHTTPServer(("127.0.0.1", 0), HealthHandler)
+        server = LoadFixtureServer(("127.0.0.1", 0), HealthHandler)
         thread = Thread(target=server.serve_forever, daemon=True)
         thread.start()
         try:
@@ -366,8 +371,8 @@ class LoadSmokeContractTest(unittest.TestCase):
         )
 
     def test_cli_accepts_a_second_replica_and_reports_both_targets(self):
-        first = ThreadingHTTPServer(("127.0.0.1", 0), HealthHandler)
-        second = ThreadingHTTPServer(("127.0.0.1", 0), HealthHandler)
+        first = LoadFixtureServer(("127.0.0.1", 0), HealthHandler)
+        second = LoadFixtureServer(("127.0.0.1", 0), HealthHandler)
         first_thread = Thread(target=first.serve_forever, daemon=True)
         second_thread = Thread(target=second.serve_forever, daemon=True)
         first_thread.start()
@@ -417,8 +422,8 @@ class LoadSmokeContractTest(unittest.TestCase):
         self.assertEqual(10, output["summary"]["targets"][second_url]["requests"])
 
     def test_cli_fails_when_one_replica_exceeds_its_error_rate(self):
-        healthy = ThreadingHTTPServer(("127.0.0.1", 0), HealthHandler)
-        failing = ThreadingHTTPServer(("127.0.0.1", 0), FailingHandler)
+        healthy = LoadFixtureServer(("127.0.0.1", 0), HealthHandler)
+        failing = LoadFixtureServer(("127.0.0.1", 0), FailingHandler)
         healthy_thread = Thread(target=healthy.serve_forever, daemon=True)
         failing_thread = Thread(target=failing.serve_forever, daemon=True)
         healthy_thread.start()
@@ -473,7 +478,7 @@ class LoadSmokeContractTest(unittest.TestCase):
         self.assertEqual(1, result.returncode)
 
     def test_scenario_fails_when_a_low_weight_operation_exceeds_its_p95_limit(self):
-        server = ThreadingHTTPServer(("127.0.0.1", 0), SlowOperationHandler)
+        server = LoadFixtureServer(("127.0.0.1", 0), SlowOperationHandler)
         thread = Thread(target=server.serve_forever, daemon=True)
         thread.start()
         try:
