@@ -2,6 +2,8 @@ package de.caritas.cob.userservice.api.service.session;
 
 import de.caritas.cob.userservice.api.exception.httpresponses.ConflictException;
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
+import de.caritas.cob.userservice.api.model.AgencyEnquiryRoomDecision;
+import de.caritas.cob.userservice.api.model.AgencyEnquiryRoomDecision.Outcome;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.Session.SessionStatus;
@@ -12,10 +14,12 @@ import java.time.LocalDateTime;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Objects;
+import java.util.Optional;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import org.springframework.lang.Nullable;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 /** The single transactional boundary for changing the consultant who owns a session. */
@@ -27,6 +31,7 @@ public class SessionOwnershipService {
 
   private final @NonNull SessionRepository sessionRepository;
   private final @NonNull EntityManager entityManager;
+  private final @NonNull AgencyEnquiryRoomDecisions roomDecisions;
   private final @NonNull de.caritas.cob.userservice.api.service.matrix.InquiryAcceptanceNoticeStore
       acceptanceNotices;
 
@@ -53,12 +58,22 @@ public class SessionOwnershipService {
       throw new ConflictException("Rejected enquiry cannot be reopened");
     }
     requireCurrentOwnership(current, expectedOwnerId, expectedRevision, expectedRowVersion);
-    // The accepting counsellor’s validated department is bound before this locked update.
-    current.setAgencyId(expectedSession.getAgencyId());
     if (current.getConversationType() == null) {
       current.setConversationType(expectedSession.getConversationType());
     }
+    boolean trackInitialRoom =
+        newStatus == SessionStatus.IN_PROGRESS
+            && newOwner != null
+            && Objects.equals(current.getAgencyId(), expectedSession.getAgencyId())
+            && AgencyEnquiryRoomDecisions.tracksRegistration(current)
+            && AgencyEnquiryRoomRetirements.isInitialHoldingRoom(current);
+    var openingStatus = current.getStatus();
+    // The accepting counsellor’s validated department is bound before this locked update.
+    current.setAgencyId(expectedSession.getAgencyId());
     apply(current, newOwner, newStatus, updateDate);
+    if (trackInitialRoom) {
+      roomDecisions.begin(current, openingStatus);
+    }
     synchronizeExpectedSession(expectedSession, current);
     return token(current);
   }
@@ -88,12 +103,45 @@ public class SessionOwnershipService {
         || current.getOwnershipRevision() != assignment.revision()) {
       return false;
     }
+    if (restoredOwner == null
+        && AgencyOpenEnquiryMembership.OPEN_STATUSES.contains(restoredStatus)
+        && AgencyEnquiryRoomDecisions.tracksRegistration(current)) {
+      roomDecisions.resolve(current, Outcome.REOPENED);
+    }
     if (clearDepartment) {
       current.setAgencyId(null);
     }
     apply(current, restoredOwner, restoredStatus, updateDate);
     acceptanceNotices.cancelPreparation(sessionId, assignment.revision());
     return true;
+  }
+
+  @Transactional(
+      propagation = Propagation.REQUIRES_NEW,
+      timeout = AgencyEnquiryRoomDecisions.SWEEP_TRANSACTION_TIMEOUT_SECONDS)
+  public void recoverExpiredRoomPreparation(AgencyEnquiryRoomDecision candidate) {
+    var current = findLocked(candidate.getSessionId()).orElse(null);
+    var openingStatus = roomDecisions.reopenExpiredPreparation(candidate, current);
+    if (current != null && openingStatus.isPresent()) {
+      restorePreparedEnquiry(current, openingStatus.get());
+    }
+  }
+
+  /** The caller verified and locked the accepted session before invoking this operation. */
+  @Transactional(propagation = Propagation.MANDATORY)
+  boolean startEnquiryRoomWork(Session current) {
+    var openingStatus = roomDecisions.startExternalWork(current);
+    if (openingStatus.isEmpty()) {
+      return true;
+    }
+    restorePreparedEnquiry(current, openingStatus.get());
+    return false;
+  }
+
+  private void restorePreparedEnquiry(Session current, SessionStatus openingStatus) {
+    var revision = current.getOwnershipRevision();
+    apply(current, null, openingStatus, current.getUpdateDate());
+    acceptanceNotices.cancelPreparation(current.getId(), revision);
   }
 
   @Transactional
@@ -111,11 +159,13 @@ public class SessionOwnershipService {
   }
 
   private Session lock(Long sessionId) {
-    Session current =
-        sessionRepository
-            .findByIdForUpdate(sessionId)
-            .orElseThrow(() -> new NotFoundException("Session not found: " + sessionId));
-    entityManager.refresh(current, LockModeType.PESSIMISTIC_WRITE);
+    return findLocked(sessionId)
+        .orElseThrow(() -> new NotFoundException("Session not found: " + sessionId));
+  }
+
+  private Optional<Session> findLocked(Long sessionId) {
+    var current = sessionRepository.findByIdForUpdate(sessionId);
+    current.ifPresent(session -> entityManager.refresh(session, LockModeType.PESSIMISTIC_WRITE));
     return current;
   }
 

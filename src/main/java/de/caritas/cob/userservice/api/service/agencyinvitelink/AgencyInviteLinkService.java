@@ -46,9 +46,9 @@ import org.springframework.web.context.request.RequestContextHolder;
 import org.springframework.web.context.request.ServletRequestAttributes;
 
 /**
- * Manages one-time invite links. On redeem, the link is marked used and metadata is returned so the
- * frontend can run the standard anonymous asker registration (same flow as before the topic-based
- * redesign).
+ * Manages published invite links that remain reusable until expiry. Live Chat redemption creates an
+ * anonymous topic session; other supported invite types return routing metadata for the frontend
+ * registration flow.
  */
 @Service
 @RequiredArgsConstructor
@@ -607,10 +607,9 @@ public class AgencyInviteLinkService {
   }
 
   /**
-   * Redeem the token: validate, mark USED, return tenant/agency/consulting-type/topic metadata for
-   * the frontend registration flow. Does not create Keycloak or Matrix users on the server.
-   */
-  /**
+   * Validate the token and return a Live Chat session or registration routing metadata. The active
+   * link remains reusable until expiry. The frontend initializes its Matrix client.
+   *
    * @param chosenUsername the animal handle a Live Chat guest rolled on the entry page; {@code
    *     null} lets the server roll one. Ignored for links that register on the client.
    */
@@ -686,7 +685,7 @@ public class AgencyInviteLinkService {
             session, link.getTenantId(), null, consultingTypeId, link.getTopicId());
       }
 
-      // Registered (non-live-chat) links keep the legacy client-side registration path.
+      // Registered (non-live-chat) links use the client-side registration path.
       Long agencyId = resolveAgencyIdForRegistration(link, consultingTypeId);
 
       // Link is reusable until expiry date — stay ACTIVE, do not mark USED.

@@ -182,8 +182,8 @@ public class AgencyInviteLinkController {
   }
 
   // ---------------------------------------------------------------------------------------------
-  // POST /users/invitelinks/{token}/redeem — public; marks link used and returns registration
-  // metadata.
+  // POST /users/invitelinks/{token}/redeem — public. Returns a Live Chat session or
+  // registration routing metadata. Successful redemption keeps the link active.
   // ---------------------------------------------------------------------------------------------
   // An optional body carries the animal handle a Live Chat guest rolled; it becomes the login.
   // Without it (older clients) the server rolls one. Never anon_N (ORISO-Frontend#2346).

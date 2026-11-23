@@ -31,12 +31,12 @@ public interface SessionRepository extends CrudRepository<Session, Long>, Sessio
   @Query(value = "SELECT COUNT(*) FROM session WHERE matrix_room_id = :room", nativeQuery = true)
   long countAnyTenantByMatrixRoomId(@Param("room") String room);
 
-  // A known modality is authoritative; the older markers only identify pre-modality rows.
+  // A known modality is authoritative; the older markers only identify pre-modality rows. Guests
+  // are recognised by stored facts, never by the User-ID text (ORISO-UserService#1697).
   String LIVE_CHAT_MODALITY =
       " AND (s.conversationType = de.caritas.cob.userservice.api.model.ConversationType.LIVE_CHAT"
           + " OR (s.conversationType IS NULL"
-          + " AND (s.registrationType = :anonymousRegistrationType OR s.postcode = '00000'"
-          + " OR u.username LIKE 'Anonymous-%')))";
+          + " AND (s.registrationType = :anonymousRegistrationType OR s.postcode = '00000')))";
 
   interface AgencyConsultingTypeProjection {
 
@@ -224,7 +224,8 @@ public interface SessionRepository extends CrudRepository<Session, Long>, Sessio
       """
       select new de.caritas.cob.userservice.api.model.HandoverCandidate(
           s.id, s.agencyId, s.mainTopicId, s.postcode, s.matrixRoomId, s.conversationType,
-          s.teamSession, asker, owner)
+          s.teamSession, asker.username, owner.username, owner.displayName, owner.internalDisplayName,
+          owner.firstName, owner.lastName)
       from Session s
       left join s.user asker on :includeNames = true
       left join s.consultant owner on :includeNames = true
@@ -335,6 +336,27 @@ public interface SessionRepository extends CrudRepository<Session, Long>, Sessio
           + " de.caritas.cob.userservice.api.model.Session.SessionStatus.NEW)")
   int closeUnassignedEnquiries(@Param("user") User user, @Param("now") LocalDateTime now);
 
+  /** Scoped current read even when a roster transaction has an earlier snapshot. */
+  @Lock(LockModeType.PESSIMISTIC_READ)
+  @Query(
+      """
+      select enquiry.id as sessionId, enquiry.matrixRoomId as roomId
+      from Session enquiry
+      where enquiry.agencyId = :agencyId
+        and enquiry.status in :statuses
+        and enquiry.consultant is null
+        and (enquiry.isConsultantDirectlySet is null or enquiry.isConsultantDirectlySet = false)
+        and enquiry.matrixRoomId is not null and trim(enquiry.matrixRoomId) <> ''
+      """)
+  List<OpenEnquiryRoomBinding> lockOpenEnquiryBindings(
+      @Param("agencyId") Long agencyId, @Param("statuses") List<SessionStatus> statuses);
+
+  interface OpenEnquiryRoomBinding {
+    Long getSessionId();
+
+    String getRoomId();
+  }
+
   List<Session> findByAgencyIdAndStatusAndConsultantIsNull(
       Long agencyId, SessionStatus sessionStatus);
 
@@ -423,8 +445,7 @@ public interface SessionRepository extends CrudRepository<Session, Long>, Sessio
           + "AND s.status = :sessionStatus "
           + "AND s.consultant IS NULL "
           + "AND s.updateDate >= :minUpdateDate "
-          + "AND (s.registrationType = :anonymousRegistrationType OR s.postcode = '00000' "
-          + "     OR u.username LIKE 'Anonymous-%') "
+          + "AND (s.registrationType = :anonymousRegistrationType OR s.postcode = '00000') "
           + "AND s.mainTopicId IS NULL "
           + "ORDER BY s.createDate DESC")
   Page<Session> findAnonymousEnquiriesVisibleForConsultantsWithoutTopic(
@@ -441,8 +462,7 @@ public interface SessionRepository extends CrudRepository<Session, Long>, Sessio
           + "AND s.status = :sessionStatus "
           + "AND s.consultant IS NULL "
           + "AND s.updateDate >= :minUpdateDate "
-          + "AND (s.registrationType = :anonymousRegistrationType OR s.postcode = '00000' "
-          + "     OR u.username LIKE 'Anonymous-%') "
+          + "AND (s.registrationType = :anonymousRegistrationType OR s.postcode = '00000') "
           + "AND (s.mainTopicId IS NULL OR s.mainTopicId IN :topicIds) "
           + "ORDER BY s.createDate DESC")
   Page<Session> findAnonymousEnquiriesVisibleForConsultantsByTopics(
@@ -534,15 +554,14 @@ public interface SessionRepository extends CrudRepository<Session, Long>, Sessio
       @Param("anonymousRegistrationType") RegistrationType anonymousRegistrationType);
 
   /**
-   * Returns anonymous and live-chat-style sessions (REGISTERED with postcode {@code 00000} or
-   * {@code Anonymous-} username) for deactivation workflows.
+   * Returns anonymous and live-chat-style sessions (REGISTERED with postcode {@code 00000}) for
+   * deactivation workflows, whatever the guest's User-ID looks like (ORISO-UserService#1697).
    */
   @Query(
       "SELECT s FROM Session s "
           + "JOIN s.user u "
           + "WHERE s.status IN :statuses "
-          + "AND (s.registrationType = :anonymousRegistrationType OR s.postcode = '00000' "
-          + "     OR u.username LIKE 'Anonymous-%')")
+          + "AND (s.registrationType = :anonymousRegistrationType OR s.postcode = '00000')")
   List<Session> findLiveChatSessionsByStatusIn(
       @Param("statuses") Set<SessionStatus> statuses,
       @Param("anonymousRegistrationType") RegistrationType anonymousRegistrationType);

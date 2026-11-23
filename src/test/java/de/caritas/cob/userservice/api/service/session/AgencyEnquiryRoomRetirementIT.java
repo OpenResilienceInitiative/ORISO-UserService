@@ -49,6 +49,7 @@ import org.springframework.transaction.support.TransactionTemplate;
 @Import({
   JpaAuditingConfiguration.class,
   AgencyEnquiryRoomRetirements.class,
+  AgencyEnquiryRoomDecisions.class,
   AgencyEnquiryRevocations.class,
   OrisoRoomRegistry.class
 })
@@ -73,6 +74,7 @@ class AgencyEnquiryRoomRetirementIT {
   @Autowired private AgencyEnquiryRevocations revocations;
   @MockitoBean private SessionRoomGateway rooms;
   @MockitoBean private AgencyMatrixCredentialClient agencyCredentials;
+  @MockitoBean private SessionOwnershipService ownership;
   @MockitoBean private Clock clock;
 
   private final long agencyId = AGENCY_IDS.incrementAndGet();

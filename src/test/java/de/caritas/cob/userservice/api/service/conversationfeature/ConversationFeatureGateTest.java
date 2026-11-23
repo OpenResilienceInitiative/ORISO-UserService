@@ -166,10 +166,11 @@ class ConversationFeatureGateTest {
   void aSessionIsOfTheKindTheAppShows() {
     var anonymousByPostcode = session(null);
     anonymousByPostcode.setPostcode("00000");
-    var anonymousByName = session(null);
+    // ORISO-UserService#1697: the User-ID text alone does not make a session anonymous.
+    var onlyNamedLikeAGuest = session(null);
     var user = new de.caritas.cob.userservice.api.model.User();
     user.setUsername("Anonymous-1234");
-    anonymousByName.setUser(user);
+    onlyNamedLikeAGuest.setUser(user);
     var anonymousByRegistration = session(null);
     anonymousByRegistration.setRegistrationType(Session.RegistrationType.ANONYMOUS);
     var storedAsCounselling = session(ConversationType.AGENCY_COUNSELLING);
@@ -177,8 +178,8 @@ class ConversationFeatureGateTest {
 
     assertThat(ConversationKind.of(anonymousByPostcode, NO_MEMBERS_ONLY))
         .isEqualTo(ConversationKind.ANONYMOUS);
-    assertThat(ConversationKind.of(anonymousByName, NO_MEMBERS_ONLY))
-        .isEqualTo(ConversationKind.ANONYMOUS);
+    assertThat(ConversationKind.of(onlyNamedLikeAGuest, NO_MEMBERS_ONLY))
+        .isEqualTo(ConversationKind.ONE_ON_ONE);
     assertThat(ConversationKind.of(anonymousByRegistration, NO_MEMBERS_ONLY))
         .isEqualTo(ConversationKind.ANONYMOUS);
     assertThat(ConversationKind.of(session(ConversationType.LIVE_CHAT), NO_MEMBERS_ONLY))

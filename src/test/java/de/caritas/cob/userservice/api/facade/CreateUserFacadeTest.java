@@ -780,11 +780,9 @@ public class CreateUserFacadeTest {
   public void
       createUserAccountWithInitializedConsultingType_Should_ProvisionMatrixAndInitializeSession_When_ConsultingTypeIsKreuzbundAndNoTenantIsSet()
           throws Exception {
-    // Was named "..._Should_LogOutFromRocketChat_When_...RocketChatLoginSucceeded"
-    // and asserted nothing at all — it only checked that the call did not throw,
-    // for a log-out that no longer exists. It covers the Kreuzbund path without a
-    // tenant context (the sibling test below covers it with one), so assert what
-    // that path is actually supposed to do.
+    // Covers the Kreuzbund path without a tenant context; the sibling test below covers the
+    // tenant-specific path. The assertions verify Matrix provisioning, session initialization,
+    // and credential cleanup.
     when(consultingTypeManager.getConsultingTypeSettings(any()))
         .thenReturn(CONSULTING_TYPE_SETTINGS_KREUZBUND);
     when(identityClient.createUser(any())).thenReturn(CREATED_IDENTITY_WITH_USER_ID);
@@ -1662,7 +1660,35 @@ public class CreateUserFacadeTest {
 
   @Test
   void
-      updateIdentityAndCreateAccount_Should_ClearPrivacyConfirmations_When_UsernameStartsWithAnonymousPrefix() {
+      updateIdentityAndCreateAccount_Should_KeepPrivacyConfirmations_When_OnlyTheUsernameLooksAnonymous() {
+    // ORISO-UserService#1697: the User-ID text does not decide; the regular postcode does.
+    when(consultingTypeManager.getConsultingTypeSettings(any()))
+        .thenReturn(CONSULTING_TYPE_SETTINGS_KREUZBUND);
+    User user = new User();
+    user.setTermsAndConditionsConfirmation(LocalDateTime.now());
+    user.setDataPrivacyConfirmation(LocalDateTime.now());
+    when(userService.createUser(any(), any(), any(), any(), anyBoolean(), any(), any()))
+        .thenReturn(user);
+    UserDTO anonymousUsernameDto =
+        UserDTO.builder()
+            .email(USER_DTO_SUCHT.getEmail())
+            .username("Anonymous-1234")
+            .postcode(USER_DTO_SUCHT.getPostcode())
+            .consultingType(USER_DTO_SUCHT.getConsultingType())
+            .build();
+
+    User result =
+        createUserFacade.updateIdentityAndCreateAccount(
+            USER_ID, anonymousUsernameDto, UserRole.USER);
+
+    assertThat(result.getTermsAndConditionsConfirmation(), notNullValue());
+    assertThat(result.getDataPrivacyConfirmation(), notNullValue());
+    verify(userService, never()).saveUser(any());
+  }
+
+  @Test
+  void
+      updateIdentityAndCreateAccount_Should_ClearPrivacyConfirmations_When_AnimalGuestRegistersWithLiveChatPostcode() {
     when(consultingTypeManager.getConsultingTypeSettings(any()))
         .thenReturn(CONSULTING_TYPE_SETTINGS_KREUZBUND);
     User user = new User();
@@ -1674,8 +1700,8 @@ public class CreateUserFacadeTest {
     UserDTO anonymousUsernameDto =
         UserDTO.builder()
             .email(USER_DTO_SUCHT.getEmail())
-            .username("Anonymous-1234")
-            .postcode(USER_DTO_SUCHT.getPostcode())
+            .username("katze_sam_4821")
+            .postcode("00000")
             .consultingType(USER_DTO_SUCHT.getConsultingType())
             .build();
 

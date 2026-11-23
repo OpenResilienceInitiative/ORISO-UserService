@@ -829,8 +829,7 @@ class AgencyInviteLinkServiceTest {
   }
 
   @Test
-  void redeem_Should_StayLegacy_When_LinkIsNotLiveChat() {
-    // A non-live-chat (registered) link keeps the legacy agency-resolution path with no session.
+  void redeem_Should_ReturnRegistrationRouting_When_LinkIsNotLiveChat() {
     AgencyInviteLink link =
         AgencyInviteLink.builder()
             .token("reg")

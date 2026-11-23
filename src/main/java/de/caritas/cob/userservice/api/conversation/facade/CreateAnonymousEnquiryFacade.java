@@ -10,11 +10,9 @@ import de.caritas.cob.userservice.api.conversation.service.AnonymousConversation
 import de.caritas.cob.userservice.api.conversation.service.user.anonymous.AnonymousUserCreatorService;
 import de.caritas.cob.userservice.api.conversation.service.user.anonymous.AnonymousUsernameRegistry;
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
-import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
 import de.caritas.cob.userservice.api.helper.UserHelper;
 import de.caritas.cob.userservice.api.manager.consultingtype.ConsultingTypeManager;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
-import de.caritas.cob.userservice.api.tenant.TenantContextProvider;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -31,27 +29,10 @@ public class CreateAnonymousEnquiryFacade {
   private final @NonNull AnonymousUsernameRegistry usernameRegistry;
   private final @NonNull UserHelper userHelper;
   private final @NonNull ConsultingTypeManager consultingTypeManager;
-  private final @NonNull TenantContextProvider tenantContextProvider;
   private final @NonNull de.caritas.cob.userservice.api.admin.service.tenant.TenantService
       tenantService;
 
   private static final String DEFAULT_ANONYMOUS_POSTCODE = "00000";
-
-  /**
-   * Creates an anonymous user account and its corresponding anonymous conversation resp. session
-   * and returns all needed user credentials.
-   *
-   * @param createAnonymousEnquiryDTO {@link CreateAnonymousEnquiryDTO}
-   * @return {@link CreateAnonymousEnquiryResponseDTO}
-   */
-  public CreateAnonymousEnquiryResponseDTO createAnonymousEnquiry(
-      CreateAnonymousEnquiryDTO createAnonymousEnquiryDTO) {
-    // Without a tenant the new user and session would be written without one.
-    if (tenantContextProvider.isMultiTenancyEnabled() && !TenantContext.contextIsSet()) {
-      throw new ForbiddenException("An anonymous enquiry needs a tenant");
-    }
-    return createAnonymousEnquiry(createAnonymousEnquiryDTO, false);
-  }
 
   /**
    * @param skipConsultingTypeAnonymousCheck when {@code true} the consulting-type-level "anonymous

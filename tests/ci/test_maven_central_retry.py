@@ -5,6 +5,8 @@ import subprocess
 import tempfile
 import unittest
 
+import yaml
+
 
 ROOT = Path(__file__).resolve().parents[2]
 RUNNER = ROOT / "scripts/ci/run-maven-with-central-retry.sh"
@@ -26,15 +28,44 @@ class MavenCentralRetryTest(unittest.TestCase):
             ".github/workflows/ci-pull-request.yml": (
                 " -Dtest=ConsultantActivityRegistryRedisIT,RedisOneTimeTokenStoreIT test"
             ),
-            ".github/workflows/mariadb-contract.yml": (
-                " -Dskip.unit-tests=true -Dtest=LiveChatPromotionMigrationIT integration-test"
-            ),
             ".github/actions/maven-build/action.yml": " test || test_status=$?",
         }
         for filename, arguments in calls.items():
             with self.subTest(filename=filename):
                 contents = " ".join((ROOT / filename).read_text().split())
                 self.assertIn(f"bash scripts/ci/{RUNNER.name} -B{arguments}", contents)
+
+    def test_maven_caches_are_keyed_by_repository_origin(self):
+        default_paths = [
+            "**/pom.xml",
+            "**/.mvn/wrapper/maven-wrapper.properties",
+            "**/.mvn/extensions.xml",
+        ]
+        direct = [*default_paths, "scripts/ci/run-maven-with-central-retry.sh"]
+        mirror = [*default_paths, "scripts/ci/github-maven-settings.xml"]
+        expected = {
+            (".github/actions/maven-build/action.yml", "composite"): direct,
+            (".github/actions/maven-verify-required/action.yml", "composite"): mirror,
+            (".github/workflows/ci-pull-request.yml", "redis-contract"): direct,
+            (".github/workflows/ci-pull-request.yml", "tenant-filter-on-integration-tests"): mirror,
+            (".github/workflows/mariadb-contract.yml", "verify"): direct,
+            (".github/workflows/notification-smtp-contract.yml", "verify"): mirror,
+        }
+        cache_paths = {}
+        github = ROOT / ".github"
+        documents = [*github.glob("actions/*/action.y*ml"), *github.glob("workflows/*.y*ml")]
+        for path in documents:
+            document = yaml.safe_load(path.read_text())
+            jobs = document.get("jobs", {"composite": document.get("runs", {})})
+            for job_name, job in jobs.items():
+                for step in job.get("steps", []):
+                    inputs = step.get("with", {})
+                    if not step.get("uses", "").startswith("actions/setup-java@") or inputs.get("cache") != "maven":
+                        continue
+                    location = (path.relative_to(ROOT).as_posix(), job_name)
+                    self.assertNotIn(location, cache_paths)
+                    cache_paths[location] = inputs.get("cache-dependency-path", "").splitlines()
+        self.assertEqual(expected, cache_paths)
 
     def run_maven(self, *results):
         with tempfile.TemporaryDirectory() as directory:

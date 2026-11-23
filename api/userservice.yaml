@@ -2583,7 +2583,7 @@ paths:
         401:
           description: UNAUTHORIZED - no/invalid Keycloak token
         403:
-          description: FORBIDDEN - no chat permission, AVV does not permit new external counselling, or a moderator banned the caller (X-Reason USER_BANNED_FROM_CHAT)
+          description: FORBIDDEN - no chat permission, AVV does not permit new external counselling, a moderator banned the caller (X-Reason USER_BANNED_FROM_CHAT), or an advice seeker of an audio or video self-help circle has not been let in from its waiting room (X-Reason GROUP_ADMISSION_REQUIRED)
           headers:
             X-Reason:
               schema:
@@ -4395,6 +4395,28 @@ components:
           $ref: '#/components/schemas/AgencyDTO'
         latestMessage:
           $ref: '#/components/schemas/Date'
+        caseHandoverStatus:
+          allOf:
+            - $ref: '#/components/schemas/CaseHandoverListStatusDTO'
+          x-field-extra-annotation: "@com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_NULL)"
+
+    CaseHandoverListStatusDTO:
+      description: >-
+        Snapshot for the authenticated counsellor on an eligible case-handover candidate row.
+        Other session lists may omit it. Check the dedicated status endpoint before opening
+        protected content or submitting a handover action.
+      type: object
+      required: [status, canViewContent, hasRequest]
+      properties:
+        status:
+          type: string
+          description: Existing case-handover status, or NOT_REQUESTED if the counsellor has no visible request.
+        canViewContent:
+          type: boolean
+          description: Whether the counsellor could view the case at the time of this read.
+        hasRequest:
+          type: boolean
+          description: Whether the status comes from a request for this counsellor.
 
     GroupSessionListResponseDTO:
       type: object

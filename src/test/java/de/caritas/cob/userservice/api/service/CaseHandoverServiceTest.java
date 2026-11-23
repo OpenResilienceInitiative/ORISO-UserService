@@ -86,6 +86,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.EnumSource;
+import org.junit.jupiter.params.provider.NullSource;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
@@ -3364,11 +3365,13 @@ class CaseHandoverServiceTest {
   @Test
   void reclaim_returnsTheCaseToTheOriginalCounsellorAndRecordsTheAudit() {
     var takeover = givenGrantedTakeover("COUNSELLOR_IS_ILL");
+    session.setOwnershipRevision(7L);
 
     CaseHandoverStatus status = caseHandoverService.reclaim(123L);
 
     assertEquals(previous, session.getConsultant());
-    verify(sessionRepository).save(session);
+    assertEquals(8L, session.getOwnershipRevision());
+    assertThat(status.getOwnershipRevision()).isEqualTo(8L);
     assertEquals(CaseHandoverRequest.Status.RECLAIMED, takeover.getStatus());
     assertEquals("RECLAIMED", takeover.getAuditOutcome());
     assertEquals(LocalDateTime.of(2026, 8, 16, 10, 0), takeover.getResolvedAt());
@@ -3470,6 +3473,20 @@ class CaseHandoverServiceTest {
     assertThrows(ConflictException.class, () -> caseHandoverService.reclaim(123L));
 
     assertEquals(third, session.getConsultant());
+  }
+
+  @Test
+  void reclaim_leavesTheHandoverUnchangedWhenTheOwnershipWriteConflicts() {
+    var takeover = givenGrantedTakeoverInMatrixRoom();
+    when(sessionOwnershipService.updateOwner(eq(session), eq(previous), any(), any()))
+        .thenThrow(new ConflictException("Session ownership changed"));
+
+    assertThrows(ConflictException.class, () -> caseHandoverService.reclaim(123L));
+
+    assertEquals(requester, session.getConsultant());
+    assertEquals(CaseHandoverRequest.Status.GRANTED, takeover.getStatus());
+    verify(caseHandoverRequestRepository, never()).save(takeover);
+    verifyNoInteractions(matrixSynapseService, sessionSupervisorFacade);
   }
 
   @ParameterizedTest
@@ -3834,15 +3851,19 @@ class CaseHandoverServiceTest {
     assertNull(consultant.getInternalName());
   }
 
-  @Test
-  void searchCandidates_matchesConsultantFullInternalName() {
+  @ParameterizedTest
+  @NullSource
+  @ValueSource(strings = {"   "})
+  void searchCandidates_matchesConsultantFullInternalName(String internalDisplayName) {
     previous.setDisplayName("Anna B.");
-    previous.setFirstName("Anna");
-    previous.setLastName("Berger");
+    previous.setInternalDisplayName(internalDisplayName);
+    previous.setFirstName(" Anna ");
+    previous.setLastName(" Berger ");
     givenCandidates(session);
 
     assertEquals(1, caseHandoverService.searchCandidates("berger", 0, 15, false).getTotal());
-    assertEquals(1, caseHandoverService.searchCandidates("Anna Berger", 0, 15, false).getTotal());
+    assertEquals(
+        1, caseHandoverService.searchCandidates("  aNnA bErGeR  ", 0, 15, false).getTotal());
     assertEquals(0, caseHandoverService.searchCandidates("anna meier", 0, 15, false).getTotal());
   }
 
@@ -4349,17 +4370,24 @@ class CaseHandoverServiceTest {
     List<HandoverCandidate> candidates =
         sessions.stream()
             .map(
-                candidate ->
-                    new HandoverCandidate(
-                        candidate.getId(),
-                        candidate.getAgencyId(),
-                        candidate.getMainTopicId(),
-                        candidate.getPostcode(),
-                        candidate.getMatrixRoomId(),
-                        candidate.getConversationType(),
-                        candidate.isTeamSession(),
-                        candidate.getUser(),
-                        candidate.getConsultant()))
+                candidate -> {
+                  User user = candidate.getUser();
+                  Consultant consultant = candidate.getConsultant();
+                  return new HandoverCandidate(
+                      candidate.getId(),
+                      candidate.getAgencyId(),
+                      candidate.getMainTopicId(),
+                      candidate.getPostcode(),
+                      candidate.getMatrixRoomId(),
+                      candidate.getConversationType(),
+                      candidate.isTeamSession(),
+                      user == null ? null : user.getUsername(),
+                      consultant == null ? null : consultant.getUsername(),
+                      consultant == null ? null : consultant.getDisplayName(),
+                      consultant == null ? null : consultant.getInternalDisplayName(),
+                      consultant == null ? null : consultant.getFirstName(),
+                      consultant == null ? null : consultant.getLastName());
+                })
             .toList();
     when(sessionRepository.findHandoverCandidates(any(), eq(requester), eq(statuses), anyBoolean()))
         .thenReturn(candidates);
@@ -4498,6 +4526,10 @@ class CaseHandoverServiceTest {
         List.of(450L, 501L, 502L),
         response.getSessions().stream().map(dto -> dto.getSession().getId()).toList());
     verify(sessionRepository, times(3)).findSessionIdsWithAnyAdditionalTopic(any(), any());
+    verify(caseHandoverRequestRepository)
+        .findLatestCandidateStatusRequests(List.of(450L, 501L, 502L), requester.getId());
+    verify(caseHandoverRequestRepository, never())
+        .findBySessionIdAndRequesterConsultantIdOrderByCreatedAtDesc(any(), any());
   }
 
   @Test
@@ -4649,6 +4681,7 @@ class CaseHandoverServiceTest {
     assertTrue(response.getSessions().isEmpty());
     verify(agencyService, never()).getAgencies(any());
     verify(sessionRepository, never()).findHandoverCandidatePage(any());
+    verifyNoInteractions(caseHandoverRequestRepository);
     verify(sessionRepository)
         .findHandoverCandidates(
             List.of(10L), requester, List.of(SessionStatus.IN_PROGRESS, SessionStatus.DONE), false);

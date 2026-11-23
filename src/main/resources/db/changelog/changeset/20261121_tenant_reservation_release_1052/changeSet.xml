@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+  xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-3.2.xsd">
+  <changeSet id="20261121-tenant-reservation-waiting-token-1052" author="oriso">
+    <preConditions onFail="MARK_RAN">
+      <not><columnExists tableName="account_invite" columnName="waiting_tenant_reservation_token"/></not>
+    </preConditions>
+    <addColumn tableName="account_invite">
+      <column name="waiting_tenant_reservation_token" type="VARCHAR(36)"/>
+    </addColumn>
+    <!-- Keep the proof of the original reservation for any waiting invite. -->
+    <rollback/>
+  </changeSet>
+  <changeSet id="20261121-tenant-reservation-release-task-1052" author="oriso">
+    <preConditions onFail="MARK_RAN">
+      <not><tableExists tableName="tenant_reservation_release_task"/></not>
+    </preConditions>
+    <createTable tableName="tenant_reservation_release_task">
+      <column name="id" type="BIGINT" autoIncrement="true">
+        <constraints primaryKey="true" nullable="false"/>
+      </column>
+      <column name="tenant_id" type="BIGINT"><constraints nullable="false"/></column>
+      <column name="reservation_token" type="VARCHAR(36)"><constraints nullable="false"/></column>
+      <column name="release_generation" type="VARCHAR(64)"><constraints nullable="false"/></column>
+      <column name="attempt_count" type="INT" defaultValueNumeric="0">
+        <constraints nullable="false"/>
+      </column>
+      <column name="last_attempt_at" type="DATETIME(6)"/>
+      <column name="create_date" type="DATETIME(6)"><constraints nullable="false"/></column>
+    </createTable>
+    <!-- Keep queued work separate from the table polled by older releases. -->
+    <rollback/>
+  </changeSet>
+  <changeSet id="20261121-tenant-reservation-release-generation-1052" author="oriso">
+    <preConditions onFail="MARK_RAN">
+      <not><indexExists tableName="tenant_reservation_release_task"
+        indexName="idx_tenant_reservation_release_generation"/></not>
+    </preConditions>
+    <createIndex tableName="tenant_reservation_release_task"
+      indexName="idx_tenant_reservation_release_generation" unique="true">
+      <column name="tenant_id"/>
+      <column name="release_generation"/>
+    </createIndex>
+    <rollback/>
+  </changeSet>
+</databaseChangeLog>

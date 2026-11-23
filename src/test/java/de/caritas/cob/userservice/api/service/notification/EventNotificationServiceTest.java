@@ -34,7 +34,11 @@ import de.caritas.cob.userservice.api.port.out.TeamDiscussionParticipantReposito
 import de.caritas.cob.userservice.api.port.out.TeamDiscussionRepository;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
 import de.caritas.cob.userservice.api.workflow.delete.service.IdentityTombstoneService;
+import java.time.Clock;
+import java.time.Instant;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
@@ -53,7 +57,6 @@ import org.mockito.Spy;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
-import org.springframework.test.util.ReflectionTestUtils;
 
 /**
  * WP-06 Activity Timeline (Slice 2, Tier 1) — coverage for the persisted "New client request"
@@ -1302,9 +1305,31 @@ class EventNotificationServiceTest {
     when(eventNotificationRepository.findByIdAndRecipientUserId(42L, "user-1"))
         .thenReturn(Optional.of(unread));
 
+    LocalDate before = LocalDate.now(ZoneOffset.UTC);
     eventNotificationService.markAsRead("user-1", 42L);
 
+    var value = ArgumentCaptor.forClass(LocalDateTime.class);
+    verify(unread).setReadDate(value.capture());
+    assertCurrentUtcReadDay(value.getValue(), before);
     verify(eventNotificationRepository).save(unread);
+  }
+
+  @Test
+  void markAsRead_usesUtcWhenTheServerIsStillOnThePreviousDate() {
+    Clock utc = Clock.fixed(Instant.parse("2026-11-21T00:10:00Z"), ZoneOffset.UTC);
+    Clock local = utc.withZone(ZoneOffset.ofHours(-8));
+    assertThat(LocalDate.now(local)).isEqualTo(LocalDate.of(2026, 11, 20));
+    var unread = new EventNotification();
+    when(eventNotificationRepository.findByIdAndRecipientUserId(42L, "user-1"))
+        .thenReturn(Optional.of(unread));
+
+    try (var clocks = Mockito.mockStatic(Clock.class, Mockito.CALLS_REAL_METHODS)) {
+      clocks.when(() -> Clock.system(ZoneOffset.UTC)).thenReturn(utc);
+      clocks.when(Clock::systemDefaultZone).thenReturn(local);
+      eventNotificationService.markAsRead("user-1", 42L);
+    }
+
+    assertThat(unread.getReadDate()).isEqualTo(LocalDate.of(2026, 11, 21).atStartOfDay());
   }
 
   // ---------------------------------------------------------------------------
@@ -1328,11 +1353,15 @@ class EventNotificationServiceTest {
     when(eventNotificationRepository.findByRecipientUserIdAndReadDateIsNull("user-1"))
         .thenReturn(List.of(n1, n2));
 
+    LocalDate before = LocalDate.now(ZoneOffset.UTC);
     eventNotificationService.markAllAsRead("user-1");
 
-    verify(n1).setReadDate(any());
-    verify(n2).setReadDate(any());
-    verify(eventNotificationRepository).saveAll(any());
+    var value = ArgumentCaptor.forClass(LocalDateTime.class);
+    verify(n1).setReadDate(value.capture());
+    LocalDateTime sameDay = value.getValue();
+    assertCurrentUtcReadDay(sameDay, before);
+    verify(n2).setReadDate(sameDay);
+    verify(eventNotificationRepository).saveAll(List.of(n1, n2));
   }
 
   // ---------------------------------------------------------------------------
@@ -1686,12 +1715,11 @@ class EventNotificationServiceTest {
   }
 
   // ---------------------------------------------------------------------------
-  // Notification preview modes (via createMessageNotificationFromRoom)
+  // Message notification metadata
   // ---------------------------------------------------------------------------
 
   @Test
-  void createMessageNotificationFromRoom_nonePreviewModeDoesNotIncludeMessageBody() {
-    ReflectionTestUtils.setField(eventNotificationService, "notificationPreviewMode", "NONE");
+  void createMessageNotificationFromRoom_doesNotIncludeMessageBody() {
     Session session = sessionMock();
     User user = mock(User.class);
     when(user.getUserId()).thenReturn("asker-1");
@@ -1710,72 +1738,6 @@ class EventNotificationServiceTest {
     assertThat(text).contains("sent a new message");
     assertThat(text).doesNotContain("secret body");
     assertThat(text).doesNotContain("[content hidden]");
-  }
-
-  @Test
-  void createMessageNotificationFromRoom_maskedPreviewModeShowsRedactedPlaceholder() {
-    ReflectionTestUtils.setField(eventNotificationService, "notificationPreviewMode", "MASKED");
-    Session session = sessionMock();
-    User user = mock(User.class);
-    when(user.getUserId()).thenReturn("asker-1");
-    when(session.getUser()).thenReturn(user);
-    when(sessionRepository.findByMatrixRoomId("!room-1:matrix.example"))
-        .thenReturn(Optional.of(session));
-    when(consultantRepository.findByIdAndDeleteDateIsNull("sender")).thenReturn(Optional.empty());
-    when(userRepository.findByUserIdAndDeleteDateIsNull("sender")).thenReturn(Optional.empty());
-    when(identityTombstoneService.resolveDisplayLabel("sender")).thenReturn(Optional.empty());
-
-    eventNotificationService.createMessageNotificationFromRoom(
-        "!room-1:matrix.example", "sender", "secret body");
-
-    verify(eventNotificationRepository).save(eventCaptor.capture());
-    String text = eventCaptor.getValue().getText();
-    assertThat(text).contains("[content hidden]");
-    assertThat(text).doesNotContain("secret body");
-  }
-
-  @Test
-  void createMessageNotificationFromRoom_fullPreviewModeNeverPersistsMessageBody() {
-    ReflectionTestUtils.setField(eventNotificationService, "notificationPreviewMode", "FULL");
-    Session session = sessionMock();
-    User user = mock(User.class);
-    when(user.getUserId()).thenReturn("asker-1");
-    when(session.getUser()).thenReturn(user);
-    when(sessionRepository.findByMatrixRoomId("!room-1:matrix.example"))
-        .thenReturn(Optional.of(session));
-    when(consultantRepository.findByIdAndDeleteDateIsNull("sender")).thenReturn(Optional.empty());
-    when(userRepository.findByUserIdAndDeleteDateIsNull("sender")).thenReturn(Optional.empty());
-    when(identityTombstoneService.resolveDisplayLabel("sender")).thenReturn(Optional.empty());
-
-    eventNotificationService.createMessageNotificationFromRoom(
-        "!room-1:matrix.example", "sender", "hello there");
-
-    verify(eventNotificationRepository).save(eventCaptor.capture());
-    assertThat(eventCaptor.getValue().getText()).contains("sent a new message");
-    assertThat(eventCaptor.getValue().getText()).doesNotContain("hello there");
-  }
-
-  @Test
-  void createMessageNotificationFromRoom_invalidPreviewModeDefaultsToNone() {
-    ReflectionTestUtils.setField(
-        eventNotificationService, "notificationPreviewMode", "INVALID_VALUE");
-    Session session = sessionMock();
-    User user = mock(User.class);
-    when(user.getUserId()).thenReturn("asker-1");
-    when(session.getUser()).thenReturn(user);
-    when(sessionRepository.findByMatrixRoomId("!room-1:matrix.example"))
-        .thenReturn(Optional.of(session));
-    when(consultantRepository.findByIdAndDeleteDateIsNull("sender")).thenReturn(Optional.empty());
-    when(userRepository.findByUserIdAndDeleteDateIsNull("sender")).thenReturn(Optional.empty());
-    when(identityTombstoneService.resolveDisplayLabel("sender")).thenReturn(Optional.empty());
-
-    eventNotificationService.createMessageNotificationFromRoom(
-        "!room-1:matrix.example", "sender", "hello");
-
-    verify(eventNotificationRepository).save(eventCaptor.capture());
-    // IllegalArgumentException on valueOf → falls back to NONE, which omits the preview
-    assertThat(eventCaptor.getValue().getText()).doesNotContain("hello");
-    assertThat(eventCaptor.getValue().getText()).doesNotContain("[content hidden]");
   }
 
   // ---------------------------------------------------------------------------
@@ -1895,8 +1857,8 @@ class EventNotificationServiceTest {
     var item = result.getItems().get(0);
     assertThat(item.getId()).isEqualTo(99L);
     assertThat(item.getEventType()).isEqualTo("message.new");
-    assertThat(item.getReadAt()).isNotNull();
-    assertThat(item.getCreatedAt()).isNotNull();
+    assertThat(item.getReadAt()).isEqualTo("2026-01-01T00:00Z");
+    assertThat(item.getCreatedAt()).isEqualTo("2026-01-01T11:00Z");
   }
 
   @Test
@@ -1949,35 +1911,11 @@ class EventNotificationServiceTest {
   }
 
   // ---------------------------------------------------------------------------
-  // buildThreadReplyNotificationText — MASKED + FULL modes
+  // Thread reply notification metadata
   // ---------------------------------------------------------------------------
 
   @Test
-  void createThreadReplyNotificationFromRoom_maskedModeShowsRedactedPlaceholder() {
-    ReflectionTestUtils.setField(eventNotificationService, "notificationPreviewMode", "MASKED");
-    Session session = sessionMock();
-    User user = mock(User.class);
-    when(user.getUserId()).thenReturn("asker-1");
-    when(session.getUser()).thenReturn(user);
-    when(sessionRepository.findByMatrixRoomId("!room-1:matrix.example"))
-        .thenReturn(Optional.of(session));
-    when(consultantRepository.findByIdAndDeleteDateIsNull("sender")).thenReturn(Optional.empty());
-    when(userRepository.findByUserIdAndDeleteDateIsNull("sender")).thenReturn(Optional.empty());
-    when(identityTombstoneService.resolveDisplayLabel("sender")).thenReturn(Optional.empty());
-
-    eventNotificationService.createThreadReplyNotificationFromRoom(
-        "!room-1:matrix.example", "sender", "secret reply", "thread-1");
-
-    verify(eventNotificationRepository).save(eventCaptor.capture());
-    String text = eventCaptor.getValue().getText();
-    assertThat(text).contains("replied in a thread");
-    assertThat(text).contains("[content hidden]");
-    assertThat(text).doesNotContain("secret reply");
-  }
-
-  @Test
-  void createThreadReplyNotificationFromRoom_fullModeNeverPersistsPreviewOrParentPreview() {
-    ReflectionTestUtils.setField(eventNotificationService, "notificationPreviewMode", "FULL");
+  void createThreadReplyNotificationFromRoom_neverPersistsPreviewOrParentPreview() {
     Session session = sessionMock();
     User user = mock(User.class);
     when(user.getUserId()).thenReturn("asker-1");
@@ -1999,8 +1937,7 @@ class EventNotificationServiceTest {
   }
 
   @Test
-  void createThreadReplyNotificationFromRoom_fullModeEmptyPreviewStaysGeneric() {
-    ReflectionTestUtils.setField(eventNotificationService, "notificationPreviewMode", "FULL");
+  void createThreadReplyNotificationFromRoom_emptyPreviewStaysGeneric() {
     Session session = sessionMock();
     User user = mock(User.class);
     when(user.getUserId()).thenReturn("asker-1");
@@ -2236,8 +2173,7 @@ class EventNotificationServiceTest {
   // ---------------------------------------------------------------------------
 
   @Test
-  void createMessageNotificationFromRoom_noneMode_usesContentClassAsLabel() {
-    ReflectionTestUtils.setField(eventNotificationService, "notificationPreviewMode", "NONE");
+  void createMessageNotificationFromRoom_usesContentClassAsLabel() {
     Session session = sessionMock();
     User user = mock(User.class);
     when(user.getUserId()).thenReturn("asker-1");
@@ -2258,8 +2194,7 @@ class EventNotificationServiceTest {
   }
 
   @Test
-  void createMessageNotificationFromRoom_noneMode_fileContentClassLabelIsFile() {
-    ReflectionTestUtils.setField(eventNotificationService, "notificationPreviewMode", "NONE");
+  void createMessageNotificationFromRoom_fileContentClassLabelIsFile() {
     Session session = sessionMock();
     User user = mock(User.class);
     when(user.getUserId()).thenReturn("asker-1");
@@ -2280,8 +2215,7 @@ class EventNotificationServiceTest {
   }
 
   @Test
-  void createMessageNotificationFromRoom_noneMode_audioContentClassLabelIsAudioMessage() {
-    ReflectionTestUtils.setField(eventNotificationService, "notificationPreviewMode", "NONE");
+  void createMessageNotificationFromRoom_audioContentClassLabelIsAudioMessage() {
     Session session = sessionMock();
     User user = mock(User.class);
     when(user.getUserId()).thenReturn("asker-1");
@@ -2302,8 +2236,7 @@ class EventNotificationServiceTest {
   }
 
   @Test
-  void createMessageNotificationFromRoom_noneMode_videoContentClassLabelIsVideoMessage() {
-    ReflectionTestUtils.setField(eventNotificationService, "notificationPreviewMode", "NONE");
+  void createMessageNotificationFromRoom_videoContentClassLabelIsVideoMessage() {
     Session session = sessionMock();
     User user = mock(User.class);
     when(user.getUserId()).thenReturn("asker-1");
@@ -2328,8 +2261,7 @@ class EventNotificationServiceTest {
   // ---------------------------------------------------------------------------
 
   @Test
-  void createMessageNotificationFromRoom_fullMode_doesNotPersistLongPreview() {
-    ReflectionTestUtils.setField(eventNotificationService, "notificationPreviewMode", "FULL");
+  void createMessageNotificationFromRoom_doesNotPersistLongPreview() {
     Session session = sessionMock();
     User user = mock(User.class);
     when(user.getUserId()).thenReturn("asker-1");
@@ -2355,8 +2287,7 @@ class EventNotificationServiceTest {
   // ---------------------------------------------------------------------------
 
   @Test
-  void createMessageNotificationFromRoom_fullMode_emptyPreviewKeepsEventIdOutOfText() {
-    ReflectionTestUtils.setField(eventNotificationService, "notificationPreviewMode", "FULL");
+  void createMessageNotificationFromRoom_emptyPreviewKeepsEventIdOutOfText() {
     Session session = sessionMock();
     User user = mock(User.class);
     when(user.getUserId()).thenReturn("asker-1");
@@ -2470,19 +2401,33 @@ class EventNotificationServiceTest {
 
   @Test
   void markAsReadByEventTypes_runsOneBulkUpdateAndReportsItsCount() {
+    var types = Set.of("supervisor.added");
     when(eventNotificationRepository.markReadByEventTypes(
             org.mockito.ArgumentMatchers.eq("user-1"),
-            org.mockito.ArgumentMatchers.eq(
-                new java.util.TreeSet<>(java.util.Set.of("supervisor.added"))),
-            any(LocalDateTime.class)))
+            org.mockito.ArgumentMatchers.eq(types),
+            any()))
         .thenReturn(2);
 
+    LocalDate before = LocalDate.now(ZoneOffset.UTC);
     int updated =
         eventNotificationService.markAsReadByEventTypes(
-            "user-1", java.util.Set.of(" supervisor.added ", "supervisor.added"));
+            "user-1", Set.of(" supervisor.added ", "supervisor.added"));
 
+    var value = ArgumentCaptor.forClass(LocalDateTime.class);
+    verify(eventNotificationRepository)
+        .markReadByEventTypes(
+            org.mockito.ArgumentMatchers.eq("user-1"),
+            org.mockito.ArgumentMatchers.eq(types),
+            value.capture());
+    assertCurrentUtcReadDay(value.getValue(), before);
     assertThat(updated).isEqualTo(2);
     verify(eventNotificationRepository, never()).saveAll(any());
+  }
+
+  private static void assertCurrentUtcReadDay(LocalDateTime value, LocalDate before) {
+    assertThat(value).isNotNull();
+    assertThat(value).isEqualTo(value.toLocalDate().atStartOfDay());
+    assertThat(value.toLocalDate()).isBetween(before, LocalDate.now(ZoneOffset.UTC));
   }
 
   @Test

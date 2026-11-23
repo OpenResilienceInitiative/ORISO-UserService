@@ -568,6 +568,7 @@ public class AccountInviteService {
                       .targetRole(oldInvite.getTargetRole())
                       .tenantId(oldInvite.getTenantId())
                       .tenantIdReservationToken(oldInvite.getTenantIdReservationToken())
+                      .waitingTenantReservationToken(oldInvite.getWaitingTenantReservationToken())
                       .recipientEmail(oldInvite.getRecipientEmail())
                       .activeRecipientKey(normalizeEmail(oldInvite.getRecipientEmail()))
                       .firstName(oldInvite.getFirstName())

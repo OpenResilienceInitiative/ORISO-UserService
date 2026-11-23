@@ -835,6 +835,8 @@ class AccountInviteUnitQueueIT {
         .thenReturn(IdAllocationStatus.RESERVED);
     when(tenantIdAllocationClient.reserve(NEW_TENANT))
         .thenReturn(new TenantIdReservation(NEW_TENANT, "reservation-token-900"));
+    when(tenantIdAllocationClient.hasReservationProof(NEW_TENANT, "reservation-token-900"))
+        .thenReturn(true);
   }
 
   private AccountInvite reload(AccountInvite invite) {

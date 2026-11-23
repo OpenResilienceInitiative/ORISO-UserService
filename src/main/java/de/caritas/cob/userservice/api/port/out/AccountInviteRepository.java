@@ -575,16 +575,28 @@ public interface AccountInviteRepository
   @Query(
       "SELECT COUNT(i) > 0 FROM AccountInvite i WHERE i.tenantId = :tenantId"
           + " AND i.id <> :excludedId"
-          + " AND (i.tenantIdReservationToken IS NOT NULL"
-          + "      OR i.waitingForUnit ="
-          + " de.caritas.cob.userservice.api.service.accountinvite.InviteUnitType.TENANT)"
+          + " AND (i.tenantIdReservationToken = :proof"
+          + "      OR (i.waitingForUnit ="
+          + " de.caritas.cob.userservice.api.service.accountinvite.InviteUnitType.TENANT"
+          + "          AND (i.waitingTenantReservationToken = :proof"
+          + "               OR i.waitingTenantReservationToken IS NULL)))"
           + " AND i.status IN :statuses"
           + " AND (i.expiresAt IS NULL OR i.expiresAt > :now)")
-  boolean existsPendingInviteOnTenantNumber(
+  boolean existsPendingInviteUsingTenantReservation(
       @Param("tenantId") Long tenantId,
       @Param("excludedId") Long excludedId,
+      @Param("proof") String proof,
       @Param("statuses") Collection<AccountInviteStatus> statuses,
       @Param("now") LocalDateTime now);
+
+  @Query(
+      "SELECT DISTINCT i.waitingTenantReservationToken FROM AccountInvite i"
+          + " WHERE i.tenantId = :tenantId AND i.status = :waiting"
+          + " AND i.waitingForUnit ="
+          + " de.caritas.cob.userservice.api.service.accountinvite.InviteUnitType.TENANT"
+          + " AND i.waitingTenantReservationToken IS NOT NULL")
+  List<String> findWaitingTenantReservationProofs(
+      @Param("tenantId") Long tenantId, @Param("waiting") AccountInviteStatus waiting);
 
   /**
    * Ids of elapsed invites the expiry sweep settles, after {@code afterId} in id order:
@@ -646,11 +658,6 @@ public interface AccountInviteRepository
       @Param("recipientEmail") String recipientEmail,
       @Param("statuses") Collection<AccountInviteStatus> statuses,
       @Param("now") LocalDateTime now);
-
-  /** The newest TENANT_ADMIN invite holding a tenant-ID reservation token for this tenant. */
-  Optional<AccountInvite>
-      findFirstByTargetRoleAndTenantIdAndTenantIdReservationTokenIsNotNullOrderByCreateDateDesc(
-          AccountInviteTargetRole targetRole, Long tenantId);
 
   boolean existsByTargetRoleAndTenantIdAndStatusAndIdNot(
       AccountInviteTargetRole targetRole, Long tenantId, AccountInviteStatus status, Long id);
