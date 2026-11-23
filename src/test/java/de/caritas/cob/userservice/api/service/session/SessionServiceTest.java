@@ -51,9 +51,11 @@ import com.neovisionaries.i18n.LanguageCode;
 import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantSessionDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantSessionResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.SessionConsultantForConsultantDTO;
+import de.caritas.cob.userservice.api.adapters.web.dto.SessionSupervisionDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.UserDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.UserSessionResponseDTO;
 import de.caritas.cob.userservice.api.config.auth.UserRole;
+import de.caritas.cob.userservice.api.exception.httpresponses.ConflictException;
 import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
 import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException;
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
@@ -62,6 +64,7 @@ import de.caritas.cob.userservice.api.manager.consultingtype.ConsultingTypeManag
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.ConsultantAgency;
 import de.caritas.cob.userservice.api.model.ConsultantStatus;
+import de.caritas.cob.userservice.api.model.ConversationType;
 import de.caritas.cob.userservice.api.model.GroupChatParticipant;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.Session.SessionStatus;
@@ -76,6 +79,7 @@ import de.caritas.cob.userservice.api.service.agency.AgencyService;
 import de.caritas.cob.userservice.api.service.user.UserService;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
 import de.caritas.cob.userservice.api.testHelper.TestConstants;
+import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
@@ -93,6 +97,7 @@ import org.mockito.Mockito;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.http.HttpStatus;
 import org.springframework.test.util.ReflectionTestUtils;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.client.HttpClientErrorException;
 
 @ExtendWith(MockitoExtension.class)
@@ -174,6 +179,7 @@ class SessionServiceTest {
           POSTCODE,
           AGENCY_ID,
           "XXX",
+          null,
           "x@y.de",
           null,
           null,
@@ -181,6 +187,11 @@ class SessionServiceTest {
           CONSULTING_TYPE_ID_SUCHT + "",
           "",
           true,
+          false,
+          null,
+          null,
+          null,
+          null,
           null,
           null,
           null,
@@ -190,10 +201,26 @@ class SessionServiceTest {
           null);
 
   @InjectMocks private SessionService sessionService;
+
+  @Mock
+  private de.caritas.cob.userservice.api.service.chat.MembersOnlyChatAccess membersOnlyChatAccess;
+
   @Mock private SessionRepository sessionRepository;
   @Mock private ConsultantTopicRepository consultantTopicRepository;
   @Mock private GroupChatParticipantRepository groupChatParticipantRepository;
   @Mock private SessionSupervisorRepository sessionSupervisorRepository;
+  @Mock private SessionSupervisionMarkerService supervisionMarkerService;
+
+  @Mock
+  private de.caritas.cob.userservice.api.service.enquiry.EnquiryRejectionPendingReadAccess
+      rejectionReadAccess;
+
+  @Mock private SessionOwnershipService sessionOwnershipService;
+
+  @Mock
+  private de.caritas.cob.userservice.api.port.out.DirectInvitationMemberRepository
+      directInvitationMembers;
+
   @Mock private AgencyService agencyService;
   @Mock private ConsultantService consultantService;
   @Mock private ConsultingTypeManager consultingTypeManager;
@@ -204,6 +231,24 @@ class SessionServiceTest {
   @BeforeEach
   public void setUp() {
     CONSULTANT_AGENCY_SET.add(CONSULTANT_AGENCY_1);
+  }
+
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.EnumSource(
+      value = Session.RegistrationType.class,
+      names = {"ANONYMOUS", "REGISTERED"})
+  void assignmentPreservesConversationTypeFallback(Session.RegistrationType registration) {
+    Session target = new Session();
+    target.setRegistrationType(registration);
+    sessionService.updateConsultantAndStatusForSession(
+        target, null, Session.SessionStatus.IN_PROGRESS);
+    org.assertj.core.api.Assertions.assertThat(target.getConversationType())
+        .isEqualTo(
+            registration == Session.RegistrationType.ANONYMOUS
+                ? de.caritas.cob.userservice.api.model.ConversationType.LIVE_CHAT
+                : de.caritas.cob.userservice.api.model.ConversationType.AGENCY_COUNSELLING);
+    verify(sessionOwnershipService)
+        .updateOwnerAndStatus(target, null, Session.SessionStatus.IN_PROGRESS);
   }
 
   @Test
@@ -266,7 +311,7 @@ class SessionServiceTest {
   void updateConsultantAndStatusForSession_Should_SaveSession() {
 
     sessionService.updateConsultantAndStatusForSession(SESSION, CONSULTANT, SessionStatus.NEW);
-    verify(sessionRepository, times(1)).save(SESSION);
+    verify(sessionOwnershipService).updateOwnerAndStatus(SESSION, CONSULTANT, SessionStatus.NEW);
   }
 
   @Test
@@ -364,6 +409,35 @@ class SessionServiceTest {
     assertThat(
         sessionService.getSessionsForUserId(USER_ID),
         everyItem(instanceOf(UserSessionResponseDTO.class)));
+  }
+
+  @Test
+  void getSessionsForUserId_Should_CarryTheConsultantsChosenAvatar() {
+    // #1047: the advice seeker's session payload has to name the avatar the counsellor chose.
+    Consultant withAvatar = ACCEPTED_SESSION.getConsultant();
+    withAvatar.setAvatarKind(de.caritas.cob.userservice.api.model.ConsultantAvatarKind.ICON);
+    withAvatar.setAvatarId("motif-24");
+    when(sessionRepository.findByUserUserId(USER_ID)).thenReturn(List.of(ACCEPTED_SESSION));
+    when(agencyService.getAgencies(any())).thenReturn(AGENCY_DTO_LIST);
+
+    var result = sessionService.getSessionsForUserId(USER_ID);
+
+    assertEquals("ICON", result.get(0).getConsultant().getAvatarKind());
+    assertEquals("motif-24", result.get(0).getConsultant().getAvatarId());
+  }
+
+  @Test
+  void getSessionsForUserId_Should_LeaveTheAvatarNull_When_TheConsultantMadeNoChoice() {
+    Consultant withoutAvatar = ACCEPTED_SESSION.getConsultant();
+    withoutAvatar.setAvatarKind(null);
+    withoutAvatar.setAvatarId(null);
+    when(sessionRepository.findByUserUserId(USER_ID)).thenReturn(List.of(ACCEPTED_SESSION));
+    when(agencyService.getAgencies(any())).thenReturn(AGENCY_DTO_LIST);
+
+    var result = sessionService.getSessionsForUserId(USER_ID);
+
+    assertNull(result.get(0).getConsultant().getAvatarKind());
+    assertNull(result.get(0).getConsultant().getAvatarId());
   }
 
   @Test
@@ -605,6 +679,79 @@ class SessionServiceTest {
             && sessionDTO.getLastName() != null);
   }
 
+  // ---------------------------------------------------------------------------
+  // saveSession — ADR-006 modality default (teamSession != INTERNAL_GROUP)
+  // ---------------------------------------------------------------------------
+
+  @Test
+  void saveSession_Should_DefaultTeamAgencySessionToAgencyCounselling_NotInternalGroup() {
+    // A "Team-Beratungsstelle" 1:1 case: teamSession=true means every counsellor of the agency
+    // may see it. It is NOT an internal group chat — those stamp their type explicitly.
+    Session session = easyRandom.nextObject(Session.class);
+    session.setTeamSession(true);
+    session.setRegistrationType(REGISTERED);
+    session.setConversationType(null);
+    when(sessionRepository.save(session)).thenReturn(session);
+
+    sessionService.saveSession(session);
+
+    assertEquals(ConversationType.AGENCY_COUNSELLING, session.getConversationType());
+  }
+
+  @Test
+  void saveSession_Should_DefaultAnonymousTeamAgencySessionToLiveChat() {
+    Session session = easyRandom.nextObject(Session.class);
+    session.setTeamSession(true);
+    session.setRegistrationType(ANONYMOUS);
+    session.setConversationType(null);
+    when(sessionRepository.save(session)).thenReturn(session);
+
+    sessionService.saveSession(session);
+
+    assertEquals(ConversationType.LIVE_CHAT, session.getConversationType());
+  }
+
+  @Test
+  void saveSession_Should_KeepAnExplicitConversationType() {
+    Session session = easyRandom.nextObject(Session.class);
+    session.setTeamSession(true);
+    session.setRegistrationType(REGISTERED);
+    session.setConversationType(ConversationType.INTERNAL_GROUP);
+    when(sessionRepository.save(session)).thenReturn(session);
+
+    sessionService.saveSession(session);
+
+    assertEquals(ConversationType.INTERNAL_GROUP, session.getConversationType());
+  }
+
+  @Test
+  void saveSession_Should_DefaultRegisteredSingleSessionToAgencyCounselling() {
+    Session session = easyRandom.nextObject(Session.class);
+    session.setTeamSession(false);
+    session.setRegistrationType(REGISTERED);
+    session.setConversationType(null);
+    when(sessionRepository.save(session)).thenReturn(session);
+
+    sessionService.saveSession(session);
+
+    assertEquals(ConversationType.AGENCY_COUNSELLING, session.getConversationType());
+  }
+
+  @Test
+  void fetchSessionForConsultant_Should_CarryTheSupervisionMarkerForTheRequester() {
+    Session session = easyRandom.nextObject(Session.class);
+    session.setConsultant(CONSULTANT_WITH_AGENCY);
+    session.setUser(USER_WITH_MATRIX_ID);
+    when(sessionRepository.findById(session.getId())).thenReturn(Optional.of(session));
+    var marker = new SessionSupervisionDTO().supervisedByMe(true);
+    when(supervisionMarkerService.buildFor(session, CONSULTANT_WITH_AGENCY)).thenReturn(marker);
+
+    ConsultantSessionDTO result =
+        sessionService.fetchSessionForConsultant(session.getId(), CONSULTANT_WITH_AGENCY);
+
+    assertEquals(marker, result.getSupervision());
+  }
+
   @Test
   void fetchSessionForConsultant_Should_ThrowNotFoundException_When_SessionIsNotFound() {
 
@@ -705,6 +852,21 @@ class SessionServiceTest {
   }
 
   @Test
+  void fetchSessionForConsultant_DoesNotExposeNonTeamMetadataToUnassignedOfferRecipient() {
+    Session session = easyRandom.nextObject(Session.class);
+    session.setConsultant(CONSULTANT_WITH_AGENCY_2);
+    session.setUser(USER_WITH_MATRIX_ID);
+    session.setTeamSession(false);
+    session.setAgencyId(
+        CONSULTANT_WITH_AGENCY.getConsultantAgencies().iterator().next().getAgencyId());
+    when(sessionRepository.findById(session.getId())).thenReturn(Optional.of(session));
+
+    assertThrows(
+        ForbiddenException.class,
+        () -> sessionService.fetchSessionForConsultant(session.getId(), CONSULTANT_WITH_AGENCY));
+  }
+
+  @Test
   void fetchSessionForConsultant_Should_Return_ConsultantSessionDTO_WhenConsultantIsAssigned() {
 
     Session session = easyRandom.nextObject(Session.class);
@@ -791,6 +953,73 @@ class SessionServiceTest {
     List<UserSessionResponseDTO> sessionsForUserId = sessionService.getSessionsForUserId(USER_ID);
 
     assertNull(sessionsForUserId.iterator().next().getAgency());
+  }
+
+  @Test
+  void getSessionsForUser_Should_ReturnTheAskersOwnSessionAlias_When_sessionHasDisplayName() {
+    // #2175: the asker must be able to see the name a counsellor sees in this conversation.
+    Session session = easyRandom.nextObject(Session.class);
+    session.setSessionData(
+        new ArrayList<>(
+            List.of(
+                new de.caritas.cob.userservice.api.model.SessionData(
+                    session,
+                    de.caritas.cob.userservice.api.model.SessionData.SessionDataType.REGISTRATION,
+                    "displayName",
+                    "Blauer Falke"),
+                new de.caritas.cob.userservice.api.model.SessionData(
+                    session,
+                    de.caritas.cob.userservice.api.model.SessionData.SessionDataType.REGISTRATION,
+                    "age",
+                    "17"))));
+    when(sessionRepository.findByUserUserId(USER_ID)).thenReturn(singletonList(session));
+
+    var user = sessionService.getSessionsForUserId(USER_ID).get(0).getUser();
+
+    assertEquals("Blauer Falke", user.getDisplayName());
+    assertEquals(session.getUser().getUserId(), user.getId());
+    assertEquals(
+        new de.caritas.cob.userservice.api.helper.UsernameTranscoder()
+            .decodeUsername(session.getUser().getUsername()),
+        user.getUsername());
+    // Only the alias is added; registration data stays out of the asker list.
+    assertNull(user.getSessionData());
+  }
+
+  static java.util.stream.Stream<org.junit.jupiter.params.provider.Arguments>
+      sessionsWithoutAlias() {
+    return java.util.stream.Stream.of(
+        org.junit.jupiter.params.provider.Arguments.of("no session data", null, false),
+        org.junit.jupiter.params.provider.Arguments.of("empty session data", null, true),
+        org.junit.jupiter.params.provider.Arguments.of("null alias value", null, null),
+        org.junit.jupiter.params.provider.Arguments.of("blank alias value", "   ", null));
+  }
+
+  @org.junit.jupiter.params.ParameterizedTest(name = "{0}")
+  @org.junit.jupiter.params.provider.MethodSource("sessionsWithoutAlias")
+  void getSessionsForUser_Should_ReturnNoAlias_When_sessionHasNoUsableDisplayName(
+      String caseName, String aliasValue, Boolean emptyList) {
+    Session session = easyRandom.nextObject(Session.class);
+    if (Boolean.FALSE.equals(emptyList)) {
+      session.setSessionData(null);
+    } else if (Boolean.TRUE.equals(emptyList)) {
+      session.setSessionData(new ArrayList<>());
+    } else {
+      session.setSessionData(
+          new ArrayList<>(
+              List.of(
+                  new de.caritas.cob.userservice.api.model.SessionData(
+                      session,
+                      de.caritas.cob.userservice.api.model.SessionData.SessionDataType.REGISTRATION,
+                      "displayName",
+                      aliasValue))));
+    }
+    when(sessionRepository.findByUserUserId(USER_ID)).thenReturn(singletonList(session));
+
+    var user = sessionService.getSessionsForUserId(USER_ID).get(0).getUser();
+
+    assertNull(user.getDisplayName());
+    assertEquals(session.getUser().getUserId(), user.getId());
   }
 
   @Test
@@ -1054,10 +1283,22 @@ class SessionServiceTest {
   }
 
   @Test
-  void isAnonymousStyleRegistration_Should_ReturnTrue_When_UsernameStartsWithAnonymous() {
+  void isAnonymousStyleRegistration_Should_ReturnFalse_When_OnlyTheUsernameLooksAnonymous() {
+    // ORISO-UserService#1697: stored registration facts decide, never the User-ID text.
     Session session = easyRandom.nextObject(Session.class);
+    session.setRegistrationType(Session.RegistrationType.REGISTERED);
     session.setPostcode("12345");
     session.getUser().setUsername("Anonymous-abc123");
+
+    assertThat(sessionService.isAnonymousStyleRegistration(session)).isFalse();
+  }
+
+  @Test
+  void isAnonymousStyleRegistration_Should_ReturnTrue_When_AnimalGuestIsRegisteredAsAnonymous() {
+    Session session = easyRandom.nextObject(Session.class);
+    session.setRegistrationType(Session.RegistrationType.ANONYMOUS);
+    session.setPostcode("12345");
+    session.getUser().setUsername("katze_sam_4821");
 
     assertThat(sessionService.isAnonymousStyleRegistration(session)).isTrue();
   }
@@ -1065,6 +1306,7 @@ class SessionServiceTest {
   @Test
   void isAnonymousStyleRegistration_Should_ReturnFalse_When_NormalRegisteredSession() {
     Session session = easyRandom.nextObject(Session.class);
+    session.setRegistrationType(Session.RegistrationType.REGISTERED);
     session.setPostcode("12345");
     session.getUser().setUsername("regular-user");
 
@@ -1216,6 +1458,19 @@ class SessionServiceTest {
   }
 
   @Test
+  void getVisibleAnonymousLiveChatEnquiriesByIds_Should_RunReadOnlyTransactional()
+      throws Exception {
+    Method method =
+        SessionService.class.getMethod(
+            "getVisibleAnonymousLiveChatEnquiriesByIds", Consultant.class, Set.class);
+
+    Transactional transactional = method.getAnnotation(Transactional.class);
+
+    assertNotNull(transactional);
+    assertTrue(transactional.readOnly());
+  }
+
+  @Test
   void
       getDirectlyAssignedSessionsByIdsCrossTenant_Should_ReturnSession_When_ConsultantIsAssignedAdvisor() {
     Consultant consultant = mock(Consultant.class);
@@ -1229,6 +1484,19 @@ class SessionServiceTest {
         sessionService.getDirectlyAssignedSessionsByIdsCrossTenant(consultant, Set.of(103510L));
 
     assertThat(result).hasSize(1);
+  }
+
+  @Test
+  void getDirectlyAssignedSessionsByIdsCrossTenant_Should_RunReadOnlyTransactional()
+      throws Exception {
+    Method method =
+        SessionService.class.getMethod(
+            "getDirectlyAssignedSessionsByIdsCrossTenant", Consultant.class, Set.class);
+
+    Transactional transactional = method.getAnnotation(Transactional.class);
+
+    assertNotNull(transactional);
+    assertTrue(transactional.readOnly());
   }
 
   @Test
@@ -1408,23 +1676,6 @@ class SessionServiceTest {
   }
 
   @Test
-  void saveSessionShouldDefaultTeamSessionsToInternalGroupBeforeRegistrationType() {
-    var session =
-        Session.builder()
-            .registrationType(ANONYMOUS)
-            .postcode("00000")
-            .status(SessionStatus.NEW)
-            .teamSession(true)
-            .build();
-    when(sessionRepository.save(session)).thenReturn(session);
-
-    sessionService.saveSession(session);
-
-    assertThat(session.getConversationType())
-        .isEqualTo(de.caritas.cob.userservice.api.model.ConversationType.INTERNAL_GROUP);
-  }
-
-  @Test
   void saveSessionShouldPreserveAnExplicitModalityOverConflictingLegacyFields() {
     var session =
         Session.builder()
@@ -1440,5 +1691,88 @@ class SessionServiceTest {
 
     assertThat(session.getConversationType())
         .isEqualTo(de.caritas.cob.userservice.api.model.ConversationType.SELF_HELP);
+  }
+
+  private static Session enquiry(Long tenantId, Consultant consultant) {
+    var user = new User();
+    user.setUserId("asker");
+    var session = new Session();
+    session.setId(7L);
+    session.setTenantId(tenantId);
+    session.setAgencyId(3L);
+    session.setUser(user);
+    session.setMatrixRoomId("!room:example");
+    session.setConsultant(consultant);
+    session.setStatus(SessionStatus.INITIAL);
+    return session;
+  }
+
+  @Test
+  void finalizeEnquiryRefusesASessionThatNoLongerExists() {
+    when(sessionRepository.findByIdForUpdate(7L)).thenReturn(Optional.empty());
+
+    assertThrows(
+        NotFoundException.class,
+        () -> sessionService.finalizeEnquiry(enquiry(1L, null), "de", "!room:example"));
+    verify(sessionRepository, never()).save(any());
+  }
+
+  @Test
+  void finalizeEnquiryRefusesARejectedSession() {
+    var current = enquiry(1L, null);
+    current.setStatus(SessionStatus.REJECTED);
+    when(sessionRepository.findByIdForUpdate(7L)).thenReturn(Optional.of(current));
+
+    assertThrows(
+        ConflictException.class,
+        () -> sessionService.finalizeEnquiry(enquiry(1L, null), "de", "!room:example"));
+    verify(sessionRepository, never()).save(any());
+  }
+
+  @Test
+  void finalizeEnquiryRefusesAnEnquiryThatWasAlreadySent() {
+    var current = enquiry(1L, null);
+    current.setEnquiryMessageDate(java.time.LocalDateTime.now());
+    when(sessionRepository.findByIdForUpdate(7L)).thenReturn(Optional.of(current));
+
+    assertThrows(
+        ConflictException.class,
+        () -> sessionService.finalizeEnquiry(enquiry(1L, null), "de", "!room:example"));
+    verify(sessionRepository, never()).save(any());
+  }
+
+  @Test
+  void finalizeEnquiryRefusesASessionOfAnotherTenant() {
+    when(sessionRepository.findByIdForUpdate(7L)).thenReturn(Optional.of(enquiry(2L, null)));
+
+    assertThrows(
+        ConflictException.class,
+        () -> sessionService.finalizeEnquiry(enquiry(1L, null), "de", "!room:example"));
+    verify(sessionRepository, never()).save(any());
+  }
+
+  @Test
+  void finalizeEnquiryMakesAnUnassignedEnquiryNew() {
+    var current = enquiry(1L, null);
+    when(sessionRepository.findByIdForUpdate(7L)).thenReturn(Optional.of(current));
+    when(sessionRepository.save(current)).thenReturn(current);
+
+    var saved = sessionService.finalizeEnquiry(enquiry(1L, null), "de", "!room:example");
+
+    assertThat(saved.getStatus()).isEqualTo(SessionStatus.NEW);
+    assertThat(saved.getEnquiryMessageDate()).isNotNull();
+  }
+
+  @Test
+  void finalizeEnquiryPutsAnAssignedEnquiryInProgress() {
+    var consultant = new Consultant();
+    var current = enquiry(1L, consultant);
+    when(sessionRepository.findByIdForUpdate(7L)).thenReturn(Optional.of(current));
+    when(sessionRepository.save(current)).thenReturn(current);
+
+    var saved = sessionService.finalizeEnquiry(enquiry(1L, consultant), "de", "!room:example");
+
+    assertThat(saved.getStatus()).isEqualTo(SessionStatus.IN_PROGRESS);
+    assertThat(saved.getEnquiryMessageDate()).isNotNull();
   }
 }

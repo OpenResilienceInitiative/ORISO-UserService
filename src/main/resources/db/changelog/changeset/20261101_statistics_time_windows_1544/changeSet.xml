@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+  xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-3.2.xsd">
+  <!-- Dashboard time windows as statistics settings (UserService#1544). One introduction line per
+       setting records today's fixed windows (5 weeks, 4 months), so each has a "valid since" date
+       from the start. changed_by_id NULL = recorded by the system. -->
+  <changeSet id="20261101-statistics-time-windows" author="oriso">
+    <insert tableName="statistics_setting_change">
+      <column name="setting_key" value="requestChartWeeks"/>
+      <column name="new_value" value="5"/>
+      <column name="effective_from" valueComputed="CURRENT_TIMESTAMP"/>
+    </insert>
+    <insert tableName="statistics_setting_change">
+      <column name="setting_key" value="topicMonths"/>
+      <column name="new_value" value="4"/>
+      <column name="effective_from" valueComputed="CURRENT_TIMESTAMP"/>
+    </insert>
+    <rollback>
+      <delete tableName="statistics_setting_change">
+        <where>setting_key IN ('requestChartWeeks', 'topicMonths') AND old_value IS NULL AND changed_by_id IS NULL</where>
+      </delete>
+    </rollback>
+  </changeSet>
+</databaseChangeLog>

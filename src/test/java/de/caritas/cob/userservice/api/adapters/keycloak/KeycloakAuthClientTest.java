@@ -116,7 +116,7 @@ class KeycloakAuthClientTest {
         .thenReturn(new ResponseEntity<>(loginResponse, HttpStatus.OK));
     var encodedUsername =
         new de.caritas.cob.userservice.api.helper.UsernameTranscoder()
-            .encodeUsername("blinky.fish@oriso.org");
+            .encodeUsername("blinky.fish@example.org");
 
     assertTrue(keycloakAuthClient.verifyIgnoringOtp(encodedUsername, PASSWORD));
 
@@ -126,7 +126,7 @@ class KeycloakAuthClientTest {
         .postForEntity(anyString(), requestCaptor.capture(), eq(KeycloakLoginResponseDTO.class));
     @SuppressWarnings("unchecked")
     var body = (MultiValueMap<String, String>) requestCaptor.getValue().getBody();
-    assertThat(body.getFirst("username"), is("blinky.fish@oriso.org"));
+    assertThat(body.getFirst("username"), is("blinky.fish@example.org"));
   }
 
   @Test

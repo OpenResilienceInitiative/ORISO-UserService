@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+  xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-3.2.xsd">
+  <!-- Fixed statistics stands for admin roles against differencing attacks (UserService#1547).
+       The unique key allows one stand per cutoff, whichever replica writes first. One introduction
+       line per setting records the default, so each has a "valid since" date from the start.
+       changed_by_id NULL = recorded by the system. -->
+  <changeSet id="20261102-statistics-dashboard-snapshot" author="oriso">
+    <createTable tableName="statistics_dashboard_snapshot">
+      <column name="id" type="BIGINT" autoIncrement="true">
+        <constraints primaryKey="true" nullable="false"/>
+      </column>
+      <column name="scope" type="VARCHAR(16)">
+        <constraints nullable="false"/>
+      </column>
+      <column name="tenant_id" type="BIGINT">
+        <constraints nullable="false"/>
+      </column>
+      <column name="snapshot_interval" type="VARCHAR(16)">
+        <constraints nullable="false"/>
+      </column>
+      <column name="cutoff_at" type="DATETIME">
+        <constraints nullable="false"/>
+      </column>
+      <column name="computed_at" type="DATETIME">
+        <constraints nullable="false"/>
+      </column>
+      <column name="payload" type="LONGTEXT">
+        <constraints nullable="false"/>
+      </column>
+    </createTable>
+    <addUniqueConstraint tableName="statistics_dashboard_snapshot"
+      constraintName="uq_statistics_dashboard_snapshot"
+      columnNames="scope, tenant_id, snapshot_interval, cutoff_at"/>
+    <insert tableName="statistics_setting_change">
+      <column name="setting_key" value="agencySnapshotInterval"/>
+      <column name="new_value" value="DAILY"/>
+      <column name="effective_from" valueComputed="CURRENT_TIMESTAMP"/>
+    </insert>
+    <insert tableName="statistics_setting_change">
+      <column name="setting_key" value="tenantSnapshotInterval"/>
+      <column name="new_value" value="DAILY"/>
+      <column name="effective_from" valueComputed="CURRENT_TIMESTAMP"/>
+    </insert>
+    <insert tableName="statistics_setting_change">
+      <column name="setting_key" value="platformSnapshotInterval"/>
+      <column name="new_value" value="DAILY"/>
+      <column name="effective_from" valueComputed="CURRENT_TIMESTAMP"/>
+    </insert>
+    <rollback>
+      <delete tableName="statistics_setting_change">
+        <where>setting_key IN ('agencySnapshotInterval', 'tenantSnapshotInterval', 'platformSnapshotInterval')</where>
+      </delete>
+      <dropTable tableName="statistics_dashboard_snapshot"/>
+    </rollback>
+  </changeSet>
+</databaseChangeLog>

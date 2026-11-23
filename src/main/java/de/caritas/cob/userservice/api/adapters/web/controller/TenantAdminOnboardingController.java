@@ -1,11 +1,22 @@
 package de.caritas.cob.userservice.api.adapters.web.controller;
 
+import de.caritas.cob.userservice.api.identity.IdentityOtpType;
 import de.caritas.cob.userservice.api.model.AccountInvite;
+import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteService;
+import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteTargetRole;
+import de.caritas.cob.userservice.api.service.accountinvite.TopicPermissionPolicy;
+import de.caritas.cob.userservice.api.service.accountinvite.onboarding.CounsellorOnboardingService;
+import de.caritas.cob.userservice.api.service.accountinvite.onboarding.CounsellorOnboardingService.CounsellorOnboardingState;
+import de.caritas.cob.userservice.api.service.accountinvite.onboarding.CounsellorOnboardingService.CounsellorRegistrationResult;
+import de.caritas.cob.userservice.api.service.accountinvite.onboarding.CounsellorOnboardingService.RegisterCounsellorCommand;
+import de.caritas.cob.userservice.api.service.accountinvite.onboarding.CounsellorOnboardingService.TopicOption;
 import de.caritas.cob.userservice.api.service.accountinvite.onboarding.TenantAdminOnboardingService;
 import de.caritas.cob.userservice.api.service.accountinvite.onboarding.TenantAdminOnboardingService.OnboardingInviteState;
 import de.caritas.cob.userservice.api.service.accountinvite.onboarding.TenantAdminOnboardingService.RegisterTenantAdminCommand;
 import de.caritas.cob.userservice.api.service.accountinvite.onboarding.TenantAdminOnboardingService.TenantAdminRegistrationResult;
 import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
+import java.util.List;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
@@ -16,13 +27,17 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RestController;
 
 /**
- * PUBLIC tenant-admin onboarding endpoints (#569 chain fix; UserService side of the Admin panel's
- * TEN-INV-U8 flow). All three endpoints are anonymous by design — the invitee has no account yet;
- * the raw invite token in the path is the only credential. Mapped with and without the {@code
+ * PUBLIC onboarding endpoints behind an invite link (#569 chain fix; extended by #997). One set of
+ * routes serves BOTH invite roles that onboard on the Admin panel — the invite's {@code targetRole}
+ * decides server-side which flow answers: {@code TENANT_ADMIN} (TEN-INV-U8, {@link
+ * TenantAdminOnboardingService}) and {@code COUNSELLOR} (wizard, {@link
+ * CounsellorOnboardingService}). All endpoints are anonymous by design — the invitee has no account
+ * yet; the raw invite token in the path is the only credential. Mapped with and without the {@code
  * /service} prefix because the API gateway forwards the prefix unchanged (same convention as the
- * other public endpoints). Response/request shapes are pinned to the Admin panel client ({@code
- * src/api/tenantOnboarding/tenantOnboarding.ts}); link-death answers are 410 with a
- * machine-readable {@code reason} body (unknown tokens 404), which the client maps body-first.
+ * other public endpoints). Response/request shapes are pinned to the Admin panel clients ({@code
+ * src/api/tenantOnboarding/tenantOnboarding.ts} and {@code
+ * src/api/counsellorOnboarding/counsellorOnboarding.ts}); link-death answers are 410 with a
+ * machine-readable {@code reason} body (unknown tokens 404), which the clients map body-first.
  */
 @RestController
 @RequiredArgsConstructor
@@ -31,7 +46,12 @@ public class TenantAdminOnboardingController {
   /** Onboarding phase of a consumed-but-resumable link (#569 resume contract). */
   static final String PHASE_PENDING_2FA_ACTIVATION = "PENDING_2FA_ACTIVATION";
 
+  /** Phase of a completed registration whose invite carries no open 2FA gate. */
+  static final String PHASE_COMPLETED = "COMPLETED";
+
   private final @NonNull TenantAdminOnboardingService onboardingService;
+  private final @NonNull CounsellorOnboardingService counsellorOnboardingService;
+  private final @NonNull AccountInviteService accountInviteService;
 
   @GetMapping({
     "/users/account-invites/{token}/onboarding",
@@ -39,6 +59,10 @@ public class TenantAdminOnboardingController {
   })
   public ResponseEntity<TenantAdminOnboardingInviteResponseDTO> resolveOnboardingInvite(
       @PathVariable String token) {
+    if (CounsellorOnboardingService.runsTheCounsellorWizard(targetRoleOf(token))) {
+      CounsellorOnboardingState state = counsellorOnboardingService.resolveOnboardingInvite(token);
+      return ResponseEntity.ok(TenantAdminOnboardingInviteResponseDTO.from(state));
+    }
     OnboardingInviteState state = onboardingService.resolveOnboardingInvite(token);
     return ResponseEntity.ok(TenantAdminOnboardingInviteResponseDTO.from(state));
   }
@@ -50,6 +74,11 @@ public class TenantAdminOnboardingController {
   public ResponseEntity<TenantAdminRegistrationResponseDTO> registerTenantAdmin(
       @PathVariable String token,
       @RequestBody(required = false) TenantAdminRegistrationRequestDTO request) {
+    if (CounsellorOnboardingService.runsTheCounsellorWizard(targetRoleOf(token))) {
+      CounsellorRegistrationResult result =
+          counsellorOnboardingService.registerCounsellor(token, toCounsellorCommand(request));
+      return ResponseEntity.ok(TenantAdminRegistrationResponseDTO.from(result));
+    }
     TenantAdminRegistrationResult result =
         onboardingService.registerTenantAdmin(token, toCommand(request));
     return ResponseEntity.ok(TenantAdminRegistrationResponseDTO.from(result));
@@ -62,8 +91,113 @@ public class TenantAdminOnboardingController {
   public ResponseEntity<Void> activateTwoFactor(
       @PathVariable String token,
       @RequestBody(required = false) TwoFactorActivationRequestDTO request) {
-    onboardingService.activateTwoFactor(token, request == null ? null : request.otp);
+    String otp = request == null ? null : request.otp;
+    if (CounsellorOnboardingService.runsTheCounsellorWizard(targetRoleOf(token))) {
+      if (request != null && request.method == IdentityOtpType.EMAIL) {
+        counsellorOnboardingService.activateEmailTwoFactor(token, otp);
+      } else {
+        counsellorOnboardingService.activateTwoFactor(token, otp);
+      }
+    } else {
+      if (request != null && request.method == IdentityOtpType.EMAIL) {
+        onboardingService.activateEmailTwoFactor(token, otp);
+      } else {
+        onboardingService.activateTwoFactor(token, otp);
+      }
+    }
     return ResponseEntity.ok().build();
+  }
+
+  @PostMapping({
+    "/users/account-invites/{token}/onboarding/two-factor/email",
+    "/service/users/account-invites/{token}/onboarding/two-factor/email"
+  })
+  public ResponseEntity<Void> startEmailTwoFactor(@PathVariable String token) {
+    if (CounsellorOnboardingService.runsTheCounsellorWizard(targetRoleOf(token))) {
+      counsellorOnboardingService.startEmailTwoFactor(token);
+    } else {
+      onboardingService.startEmailTwoFactor(token);
+    }
+    return ResponseEntity.noContent().build();
+  }
+
+  /**
+   * Wizard step 1 "I am not authorised to sign" (ORISO-Admin#722): creates a DPA sign link for the
+   * invite's reserved tenant and — when a recipient address is given — delivers it by mail. The
+   * invite token in the path is the credential, exactly like the other onboarding endpoints.
+   */
+  @PostMapping({
+    "/users/account-invites/{token}/onboarding/dpa-forward",
+    "/service/users/account-invites/{token}/onboarding/dpa-forward"
+  })
+  public ResponseEntity<DpaForwardResponseDTO> forwardDpa(
+      @PathVariable String token,
+      @jakarta.validation.Valid @RequestBody(required = false) DpaForwardRequestDTO request) {
+    TenantAdminOnboardingService.DpaForwardResult result =
+        onboardingService.forwardDpa(token, request == null ? null : request.recipientEmail);
+    return ResponseEntity.ok(DpaForwardResponseDTO.from(result));
+  }
+
+  public static class DpaForwardRequestDTO {
+    /** Optional: address of the authorised signer; without it only the link is returned. */
+    @jakarta.validation.constraints.Email public String recipientEmail;
+  }
+
+  public static class DpaForwardResponseDTO {
+    /** Public standalone signing page URL carrying the raw single-use sign token. */
+    public String signUrl;
+
+    /** Link expiry as ISO local date-time string (14-day validity window). */
+    public String expiresAt;
+
+    /**
+     * Whether the DPA_FORWARD mail actually went out. Stated positively on purpose: a client that
+     * does not know this field yet reads it as absent/false and then shows the copyable link, which
+     * is the safe outcome. The inverse ("mailFailed") would let an omission read as success.
+     */
+    public boolean mailSent;
+
+    static DpaForwardResponseDTO from(TenantAdminOnboardingService.DpaForwardResult result) {
+      DpaForwardResponseDTO dto = new DpaForwardResponseDTO();
+      dto.signUrl = result.signUrl();
+      dto.expiresAt = result.expiresAt();
+      dto.mailSent = result.mailSent();
+      return dto;
+    }
+  }
+
+  /**
+   * Role probe deciding which onboarding flow answers (unknown tokens 404 here already). It reads
+   * the role alone and takes no row lock — the selected flow loads the same invite under its own
+   * PESSIMISTIC_WRITE lock immediately afterwards, and loading the entity here as well would
+   * request that lock twice per request (#1008 review). The role-specific services re-validate the
+   * role against the row they locked, so a mismatch can never slip through.
+   */
+  private AccountInviteTargetRole targetRoleOf(String token) {
+    return accountInviteService.findTargetRoleByToken(token);
+  }
+
+  private static RegisterCounsellorCommand toCounsellorCommand(
+      TenantAdminRegistrationRequestDTO request) {
+    TenantAdminRegistrationRequestDTO safe =
+        request == null ? new TenantAdminRegistrationRequestDTO() : request;
+    AccountDataDTO account = safe.account == null ? new AccountDataDTO() : safe.account;
+    PersonDataDTO person = safe.person == null ? new PersonDataDTO() : safe.person;
+    DisplayNamesDataDTO names = safe.names == null ? new DisplayNamesDataDTO() : safe.names;
+    AvatarDataDTO avatar = safe.avatar == null ? new AvatarDataDTO() : safe.avatar;
+    return new RegisterCounsellorCommand(
+        account.username,
+        account.password,
+        person.salutation,
+        person.position,
+        person.title,
+        names.publicName,
+        names.internalDisplayName,
+        safe.topicIds,
+        avatar.kind,
+        avatar.id,
+        safe.agency == null ? null : safe.agency.name,
+        safe.alsoCounsellor);
   }
 
   private static RegisterTenantAdminCommand toCommand(TenantAdminRegistrationRequestDTO request) {
@@ -84,13 +218,22 @@ public class TenantAdminOnboardingController {
         dpa.signerOrganisation,
         account.password,
         safe.reservedTenantId,
-        safe.tenantIdReservationToken);
+        safe.tenantIdReservationToken,
+        organisation.legalName,
+        organisation.contactEmail,
+        organisation.contactPhone);
   }
 
   public static class OrganisationDataDTO {
     public String name;
     public String subdomain;
     public String address;
+
+    /** Optional sender block for the mail footer (Frank, 2026-09-23). */
+    public String legalName;
+
+    public String contactEmail;
+    public String contactPhone;
   }
 
   public static class DpaAcceptanceDataDTO {
@@ -102,7 +245,37 @@ public class TenantAdminOnboardingController {
   }
 
   public static class AccountDataDTO {
+    /** Only used by the counsellor wizard (#997); tenant admins log in with their email. */
+    public String username;
+
     public String password;
+  }
+
+  /** Counsellor wizard "Person" step fields (#994 stable salutation keys). */
+  public static class PersonDataDTO {
+    public String salutation;
+    public String position;
+    public String title;
+  }
+
+  /** Counsellor wizard "Name" step fields (#996 dual display name). */
+  public static class DisplayNamesDataDTO {
+    public String publicName;
+    public String internalDisplayName;
+  }
+
+  /**
+   * Counsellor wizard "Avatar" step (#1046). Kept as free text on purpose: an unknown or garbage
+   * kind from this PUBLIC endpoint must be ignored (no choice stored), never answered with a 500.
+   */
+  public static class AvatarDataDTO {
+    public String kind;
+    public String id;
+  }
+
+  /** Counsellor wizard: the new Beratungsstelle of an invite on a reserved agency ID. */
+  public static class AgencyDataDTO {
+    public String name;
   }
 
   public static class TenantAdminRegistrationRequestDTO {
@@ -114,10 +287,30 @@ public class TenantAdminOnboardingController {
     public Long reservedTenantId;
 
     public String tenantIdReservationToken;
+
+    /** Counsellor wizard (#997) only. */
+    public PersonDataDTO person;
+
+    public DisplayNamesDataDTO names;
+
+    /** Counsellor wizard avatar choice (#1046). */
+    public AvatarDataDTO avatar;
+
+    /** Counsellor wizard topic selection — validated against coverage ∪ active tenant topics. */
+    public List<Long> topicIds;
+
+    /** Counsellor wizard: only for invites whose agency does not exist yet. */
+    public AgencyDataDTO agency;
+
+    /** Agency-admin invites only; omitted = the inviter's proposal from the resolve answer. */
+    public Boolean alsoCounsellor;
   }
 
   public static class TwoFactorActivationRequestDTO {
     public String otp;
+
+    /** Omission retains the app-only contract used by older wizard clients. */
+    public IdentityOtpType method;
   }
 
   public static class TwoFactorSetupDTO {
@@ -127,6 +320,9 @@ public class TenantAdminOnboardingController {
     /** QR code PNG (base64) when Keycloak provides one; the client renders text-only when null. */
     public String qrCodeBase64;
 
+    public List<IdentityOtpType> methods = List.of(IdentityOtpType.EMAIL, IdentityOtpType.APP);
+    public IdentityOtpType defaultMethod = IdentityOtpType.EMAIL;
+
     static TwoFactorSetupDTO of(String secret, String qrCodeBase64) {
       TwoFactorSetupDTO dto = new TwoFactorSetupDTO();
       dto.secret = secret;
@@ -135,10 +331,67 @@ public class TenantAdminOnboardingController {
     }
   }
 
+  /** A selectable topic of a counsellor invite's coverage (#997). */
+  public static class TopicOptionDTO {
+    public Long id;
+    public String name;
+
+    static TopicOptionDTO from(TopicOption option) {
+      TopicOptionDTO dto = new TopicOptionDTO();
+      dto.id = option.id();
+      dto.name = option.name();
+      return dto;
+    }
+  }
+
   public static class TenantAdminOnboardingInviteResponseDTO {
+    /** The invite's target role — tells the client which wizard variant runs (#997). */
+    public String targetRole;
+
     public String recipientEmail;
     public String firstName;
     public String lastName;
+
+    /**
+     * Counsellor invites only (ORISO-Admin#1274): the inviter's avatar / display-name suggestion
+     * the form prefills. All three are null when the invite carries no suggestion, and the invitee
+     * may change them.
+     */
+    public String avatarKind;
+
+    public String avatarId;
+    public String displayName;
+
+    /** Counsellor invites only (#997): the tenant/agency/department routing of the invite. */
+    public Long tenantId;
+
+    public Long agencyId;
+
+    /** Persisted invitation origin: AUTO/MANUAL reserve a new agency, EXISTING joins one. */
+    public String agencyIdAllocationMode;
+
+    public Long departmentId;
+
+    /** Counsellor invites only (#997): the invite's coverage — preselected in the wizard. */
+    public List<TopicOptionDTO> topics;
+
+    /** Counsellor invites only: the tenant's active topics the invitee may add. */
+    public List<TopicOptionDTO> availableTopics;
+
+    /**
+     * Counsellor invites only: false when the agency ID is still a reservation — the wizard then
+     * asks for the name of the new Beratungsstelle.
+     */
+    public Boolean agencyExists;
+
+    /** Platform limit for configuring the new reserved centre. */
+    public Boolean oneTopicPerAgencyEnabled;
+
+    /** Agency-admin invites only: the inviter's proposal; the invitee may override it. */
+    public Boolean alsoCounsellor;
+
+    /** Counsellor invites only; only CREATE fills {@code availableTopics} (the wizard's "+"). */
+    public String topicPermission;
 
     /**
      * The tenant ID the invite reserved (TenantService {@code TenantIdReservationDTO.tenantId}).
@@ -159,37 +412,127 @@ public class TenantAdminOnboardingController {
      */
     public String dpaContent;
 
+    /**
+     * Tenant-admin invites only: true when joining an existing Träger, so the wizard skips the
+     * organisation and DPA steps and registers with {@code account.password} alone.
+     */
+    public Boolean joinsExistingTenant;
+
+    /**
+     * Why {@link #dpaContent} is absent — {@code NOT_PUBLISHED} when the platform operator has
+     * published no DPA yet (a content task), {@code UPSTREAM_ERROR} when the lookup itself failed,
+     * i.e. TenantService could not be read or the technical-user login was rejected (a platform
+     * configuration task). Null whenever the contract text is present, and null on the counsellor
+     * variant and when {@link #joinsExistingTenant} is true, neither of which has a DPA step.
+     *
+     * <p>Without this the Admin panel could only tell the invitee to reload the page, which once
+     * hid a server-side misconfiguration on staging for hours.
+     */
+    public String dpaUnavailableReason;
+
     /** {@code PENDING_2FA_ACTIVATION} when the flow re-enters at the 2FA step; null otherwise. */
     public String phase;
+
+    /** Server-derived purpose; the setup variant must not call registration endpoints. */
+    public String onboardingPurpose;
 
     /** Re-issued TOTP setup material for a resumable link; null renders the verify-only variant. */
     public TwoFactorSetupDTO twoFactor;
 
+    /**
+     * When step 1 forwarded the contract documents (ISO local date-time), else null. The forward
+     * lives on the invite, so a reload must restore the waiting view instead of step 1 (#1065).
+     */
+    public String dpaForwardedAt;
+
+    /**
+     * When the representative's confirmation landed on the invite (ISO local date-time), else null.
+     * Set: the wizard skips the consent block and continues straight to the account step.
+     */
+    public String dpaSignedAt;
+
     static TenantAdminOnboardingInviteResponseDTO from(OnboardingInviteState state) {
       AccountInvite invite = state.invite();
       TenantAdminOnboardingInviteResponseDTO dto = new TenantAdminOnboardingInviteResponseDTO();
+      dto.targetRole = AccountInviteTargetRole.TENANT_ADMIN.name();
+      dto.onboardingPurpose = invite.getPurpose().name();
       dto.recipientEmail = invite.getRecipientEmail();
       dto.firstName = invite.getFirstName();
       dto.lastName = invite.getLastName();
-      dto.reservedTenantId = invite.getTenantId();
-      dto.tenantIdReservationToken = invite.getTenantIdReservationToken();
+      boolean joinsExisting = state.joinsExistingTenant();
+      dto.joinsExistingTenant = joinsExisting;
+      if (joinsExisting) {
+        dto.tenantId = invite.getTenantId();
+      } else {
+        dto.reservedTenantId = invite.getTenantId();
+        dto.tenantIdReservationToken = invite.getTenantIdReservationToken();
+      }
       dto.expiresAt = invite.getExpiresAt();
       dto.dpaContent = state.dpaContent();
-      if (state.pendingTwoFactorResume()) {
-        dto.phase = PHASE_PENDING_2FA_ACTIVATION;
-        if (invite.getTotpPendingSecret() != null) {
-          // The raw token is the only credential, so re-showing the secret to the token holder
-          // exposes nothing new; the QR code is not re-issued (secret-only re-entry).
-          dto.twoFactor = TwoFactorSetupDTO.of(invite.getTotpPendingSecret(), null);
-        }
-      }
+      dto.dpaUnavailableReason =
+          state.dpaUnavailableReason() == null ? null : state.dpaUnavailableReason().name();
+      dto.dpaForwardedAt = isoOrNull(invite.getDpaForwardedAt());
+      dto.dpaSignedAt = isoOrNull(invite.getDpaSignedAt());
+      applyTwoFactorResume(dto, invite, state.pendingTwoFactorResume());
       return dto;
+    }
+
+    private static String isoOrNull(LocalDateTime value) {
+      return value == null ? null : value.format(DateTimeFormatter.ISO_LOCAL_DATE_TIME);
+    }
+
+    static TenantAdminOnboardingInviteResponseDTO from(CounsellorOnboardingState state) {
+      AccountInvite invite = state.invite();
+      TenantAdminOnboardingInviteResponseDTO dto = new TenantAdminOnboardingInviteResponseDTO();
+      dto.targetRole = invite.getTargetRole().name();
+      dto.onboardingPurpose = invite.getPurpose().name();
+      dto.alsoCounsellor = invite.getAlsoCounsellor();
+      dto.recipientEmail = invite.getRecipientEmail();
+      dto.firstName = invite.getFirstName();
+      dto.lastName = invite.getLastName();
+      dto.avatarKind =
+          invite.getSuggestedAvatarKind() == null ? null : invite.getSuggestedAvatarKind().name();
+      dto.avatarId = invite.getSuggestedAvatarId();
+      dto.displayName = invite.getSuggestedDisplayName();
+      dto.tenantId = invite.getTenantId();
+      dto.agencyId = invite.getAgencyId();
+      dto.agencyIdAllocationMode =
+          invite.getAgencyIdAllocationMode() == null
+              ? null
+              : invite.getAgencyIdAllocationMode().name();
+      dto.departmentId = invite.getDepartmentId();
+      dto.topics = state.topics().stream().map(TopicOptionDTO::from).toList();
+      dto.availableTopics = state.availableTopics().stream().map(TopicOptionDTO::from).toList();
+      dto.agencyExists = state.agencyExists();
+      dto.oneTopicPerAgencyEnabled = state.oneTopicPerAgencyEnabled();
+      dto.topicPermission = TopicPermissionPolicy.effective(invite).name();
+      dto.expiresAt = invite.getExpiresAt();
+      applyTwoFactorResume(dto, invite, state.pendingTwoFactorResume());
+      return dto;
+    }
+
+    private static void applyTwoFactorResume(
+        TenantAdminOnboardingInviteResponseDTO dto, AccountInvite invite, boolean resume) {
+      if (resume) {
+        dto.phase = PHASE_PENDING_2FA_ACTIVATION;
+        dto.twoFactor = TwoFactorSetupDTO.of(invite.getTotpPendingSecret(), null);
+      }
     }
   }
 
   public static class TenantAdminRegistrationResponseDTO {
-    /** The created (inactive) tenant — equals the reserved ID. */
+    /** The created (inactive) tenant — equals the reserved ID. Tenant-admin registrations only. */
     public Long tenantId;
+
+    /** The created consultant. Counsellor registrations (#997) only. */
+    public String consultantId;
+
+    /**
+     * Counsellor registrations only: {@code PENDING_2FA_ACTIVATION} while the mandatory 2FA
+     * activation is open, {@code COMPLETED} when the invite's 2FA gate was waived — the wizard then
+     * skips the 2FA step. Tenant-admin registrations always continue with the 2FA step.
+     */
+    public String phase;
 
     public TwoFactorSetupDTO twoFactor;
 
@@ -197,6 +540,16 @@ public class TenantAdminOnboardingController {
       TenantAdminRegistrationResponseDTO dto = new TenantAdminRegistrationResponseDTO();
       dto.tenantId = result.tenantId();
       dto.twoFactor = TwoFactorSetupDTO.of(result.totpSecret(), result.totpQrCodeBase64());
+      return dto;
+    }
+
+    static TenantAdminRegistrationResponseDTO from(CounsellorRegistrationResult result) {
+      TenantAdminRegistrationResponseDTO dto = new TenantAdminRegistrationResponseDTO();
+      dto.consultantId = result.consultantId();
+      dto.phase = result.twoFactorRequired() ? PHASE_PENDING_2FA_ACTIVATION : PHASE_COMPLETED;
+      if (result.twoFactorRequired()) {
+        dto.twoFactor = TwoFactorSetupDTO.of(result.totpSecret(), result.totpQrCodeBase64());
+      }
       return dto;
     }
   }

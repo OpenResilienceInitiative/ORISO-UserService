@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+  xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.5.xsd">
+  <!-- Built-in system default invite templates (counsellor and Träger invite, de and en),
+       so an invite e-mail is never sent without text. No context: they belong in every
+       environment, production included. -->
+  <changeSet id="20261001-invite-email-template-system-default-column" author="oriso">
+    <sqlFile path="add-column.sql" relativeToChangelogFile="true" encoding="UTF-8"/>
+    <rollback>
+      <dropColumn tableName="invite_email_template" columnName="system_default"/>
+    </rollback>
+  </changeSet>
+  <changeSet id="20261001-invite-email-template-system-defaults-seed" author="oriso">
+    <sqlFile path="seed-system-defaults.sql" relativeToChangelogFile="true" encoding="UTF-8"/>
+    <rollback>
+      <!-- Only the rows this seed writes, found by their seeded names: a default that already
+           existed (and so was skipped) or was renamed keeps its row, and the column drop turns
+           it into an ordinary platform template. -->
+      <sql>DELETE FROM invite_email_template
+        WHERE system_default = TRUE AND tenant_id IS NULL
+          AND name IN ('Standardvorlage Berater-Einladung (Deutsch)',
+                       'Default counsellor invite (English)',
+                       'Standardvorlage Träger-Einladung (Deutsch)',
+                       'Default organisation invite (English)')</sql>
+    </rollback>
+  </changeSet>
+</databaseChangeLog>

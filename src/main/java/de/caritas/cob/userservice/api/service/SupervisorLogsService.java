@@ -1,15 +1,10 @@
 package de.caritas.cob.userservice.api.service;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
+import de.caritas.cob.userservice.api.admin.service.admin.AdminScope;
 import de.caritas.cob.userservice.api.supervision.SupervisionNotes;
-import de.caritas.cob.userservice.api.tenant.TenantContext;
-import java.nio.charset.StandardCharsets;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.time.LocalDateTime;
-import java.util.Base64;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
@@ -27,17 +22,20 @@ import org.springframework.stereotype.Service;
 public class SupervisorLogsService {
 
   private final @NonNull NamedParameterJdbcTemplate namedParameterJdbcTemplate;
-  private final @NonNull AuthenticatedUser authenticatedUser;
-  private final @NonNull AdminAuditAgencyScope adminAuditAgencyScope;
-  private final ObjectMapper objectMapper = new ObjectMapper();
+  private final @NonNull AdminScope adminScope;
 
   public SupervisorLogsResult listSupervisorLogs(int page, int perPage) {
     final int safePerPage = Math.min(Math.max(perPage, 1), 200);
     final int safePage = Math.max(page, 1);
     final int offset = (safePage - 1) * safePerPage;
 
-    final Long tenantId = resolveEffectiveTenantId();
-    final Optional<Set<Long>> agencyIds = adminAuditAgencyScope.resolveAgencyIds();
+    // One reach for both filters: the platform reads every Träger, everyone else their own.
+    final AdminScope.Reach reach = adminScope.current();
+    final Long tenantId = reach.tenantId();
+    final Optional<Set<Long>> agencyIds =
+        reach instanceof AdminScope.Agencies agencies
+            ? Optional.of(agencies.ids())
+            : Optional.empty();
 
     // Fail closed: a Beratungsstellen-Admin without a single agency assignment reads nothing —
     // never the whole tenant, and never an `IN ()` that the database would reject.
@@ -166,48 +164,6 @@ public class SupervisorLogsService {
           .reasonCode(note.reasonCode)
           .consent(note.consent)
           .build();
-    }
-  }
-
-  private Long resolveEffectiveTenantId() {
-    Long tokenTenantId = getTenantIdFromAccessToken();
-    if (tokenTenantId != null) {
-      // tenantId=0 is global context (super-admin/technical): no tenant restriction.
-      return tokenTenantId == 0L ? null : tokenTenantId;
-    }
-    return TenantContext.isTechnicalOrSuperAdminContext() ? null : TenantContext.getCurrentTenant();
-  }
-
-  private Long getTenantIdFromAccessToken() {
-    try {
-      String accessToken = authenticatedUser.getAccessToken();
-      if (accessToken == null || accessToken.isBlank()) {
-        return null;
-      }
-      String[] tokenParts = accessToken.split("\\.");
-      if (tokenParts.length < 2) {
-        return null;
-      }
-      String payload =
-          new String(Base64.getUrlDecoder().decode(tokenParts[1]), StandardCharsets.UTF_8);
-      JsonNode payloadNode = objectMapper.readTree(payload);
-      JsonNode tenantIdNode = payloadNode.get("tenantId");
-      if (tenantIdNode == null || tenantIdNode.isNull()) {
-        return null;
-      }
-      if (tenantIdNode.isNumber()) {
-        return tenantIdNode.asLong();
-      }
-      if (tenantIdNode.isTextual()) {
-        String tenantIdText = tenantIdNode.asText();
-        if (tenantIdText.isBlank()) {
-          return null;
-        }
-        return Long.parseLong(tenantIdText);
-      }
-      return null;
-    } catch (Exception exception) {
-      return null;
     }
   }
 

@@ -1,0 +1,11 @@
+Scenario: old browser interactive authentication after cache expiry and service restart
+RED isolated baseline: git archive 05ec3eb14 under /tmp/us1224-regression-baseline
+Command: JAVA_HOME=/Library/Java/JavaVirtualMachines/temurin-21.jdk/Contents/Home ./mvnw -B -q '-Dtest=MatrixBrowserDeviceConcurrencyTest#issuedInteractiveAuthenticationSurvivesServiceRestartAndCacheExpiry' test
+Result: exit 1; 1 test, 1 failure, 0 errors, 0 skipped
+Observed: clock advances 51 minutes, the original service logs device B in after cache expiry,
+and a freshly constructed independent service logs device C in. Device A's original issued
+UIA credential is then checked over HTTP and rejected 403, expected 200.
+The clock changes cache time only; no internal cache inspection or password derivation assertion.
+
+GREEN changed workspace: same fixture suite, 3 tests, 0 failures, 0 errors, 0 skipped;
+exit 0; 0.968 seconds. Original A UIA is accepted HTTP 200 after both later logins.

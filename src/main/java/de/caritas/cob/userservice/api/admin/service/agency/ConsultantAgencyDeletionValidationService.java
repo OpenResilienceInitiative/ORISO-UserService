@@ -10,11 +10,13 @@ import static org.apache.commons.lang3.BooleanUtils.isFalse;
 
 import de.caritas.cob.userservice.api.adapters.web.dto.AgencyDTO;
 import de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHttpStatusException;
+import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.ConsultantAgency;
 import de.caritas.cob.userservice.api.model.Session.SessionStatus;
 import de.caritas.cob.userservice.api.port.out.ConsultantAgencyRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
+import java.time.LocalDateTime;
 import java.util.function.Predicate;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
@@ -36,6 +38,17 @@ public class ConsultantAgencyDeletionValidationService {
    * @param consultantAgency the {@link ConsultantAgency} to be deleted
    */
   public void validateAndMarkForDeletion(ConsultantAgency consultantAgency) {
+    validateAndMarkForDeletion(consultantAgency, nowInUtc());
+  }
+
+  /**
+   * Like {@link #validateAndMarkForDeletion(ConsultantAgency)}, stamping the given delete date.
+   *
+   * @param consultantAgency the {@link ConsultantAgency} to be deleted
+   * @param deletedAt the delete date to stamp on the relation
+   */
+  public void validateAndMarkForDeletion(
+      ConsultantAgency consultantAgency, LocalDateTime deletedAt) {
     if (isTheLastConsultantInAgency(consultantAgency)) {
       AgencyDTO agency = this.agencyService.getAgencyWithoutCaching(consultantAgency.getAgencyId());
       if (isNull(agency)) {
@@ -57,8 +70,24 @@ public class ConsultantAgencyDeletionValidationService {
         }
       }
     }
-    consultantAgency.setDeleteDate(nowInUtc());
+    consultantAgency.setDeleteDate(deletedAt);
     consultantAgencyRepository.save(consultantAgency);
+  }
+
+  /**
+   * Counterpart of {@link #validateAndMarkForDeletion(ConsultantAgency, LocalDateTime)} for a
+   * cancelled consultant deletion: restores exactly the relations that were removed together with
+   * the consultant (same delete date). Relations the consultant had left earlier carry another date
+   * and stay removed.
+   */
+  public void restoreRelationsMarkedWith(Consultant consultant, LocalDateTime deletedAt) {
+    consultantAgencyRepository
+        .findByConsultantIdAndDeleteDate(consultant.getId(), deletedAt)
+        .forEach(
+            relation -> {
+              relation.setDeleteDate(null);
+              consultantAgencyRepository.save(relation);
+            });
   }
 
   private boolean isTheLastConsultantInAgency(ConsultantAgency consultantAgency) {

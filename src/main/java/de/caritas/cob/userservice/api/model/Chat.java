@@ -1,7 +1,9 @@
 package de.caritas.cob.userservice.api.model;
 
 import com.fasterxml.jackson.annotation.JsonIgnore;
+import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
 import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException;
+import de.caritas.cob.userservice.api.service.chat.GroupChatInviteTokens;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
@@ -12,11 +14,14 @@ import jakarta.persistence.Id;
 import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
 import jakarta.persistence.OneToMany;
+import jakarta.persistence.PrePersist;
 import jakarta.persistence.SequenceGenerator;
 import jakarta.persistence.Table;
 import jakarta.validation.constraints.Size;
 import java.time.DateTimeException;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.LocalTime;
 import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.time.ZonedDateTime;
@@ -120,6 +125,15 @@ public class Chat {
   @Column(name = "is_active", nullable = false)
   private boolean active;
 
+  /**
+   * A chat only its members may see and join: the room for a subset of selected colleagues
+   * (ORISO-UserService#1418). Every other chat is open to the colleagues {@code
+   * GroupChatConsultantAccess} admits by the Träger's recipient scope.
+   */
+  @Column(name = "members_only", nullable = false)
+  @org.hibernate.annotations.ColumnDefault("false")
+  private boolean membersOnly;
+
   @Column(name = "max_participants", columnDefinition = "tinyint(4) unsigned NULL")
   @JdbcTypeCode(SqlTypes.TINYINT)
   private Integer maxParticipants;
@@ -159,6 +173,30 @@ public class Chat {
   @JdbcTypeCode(SqlTypes.JSON)
   @Column(name = "group_chat_rules_translations", columnDefinition = "json")
   private Map<String, List<String>> groupChatRulesTranslations;
+
+  /**
+   * Gesprächskreis (#1662): which account a person without one gets through the invite link. The
+   * default is today's behaviour: the guest chooses "Ohne Konto beitreten" or "Konto anlegen".
+   * Group-join temporaries keep their 24 h lifetime (DeleteTemporaryAccountsScheduler).
+   */
+  @Builder.Default
+  @jakarta.persistence.Enumerated(jakarta.persistence.EnumType.STRING)
+  @org.hibernate.annotations.ColumnDefault("'GUEST_CHOOSES'")
+  @Column(name = "guest_account_mode", length = 16, nullable = false)
+  private GuestAccountMode guestAccountMode = GuestAccountMode.GUEST_CHOOSES;
+
+  /** Secret part of the invite link (#1237); never serialised. */
+  @JsonIgnore
+  @Exclude
+  @Column(name = "invite_token", length = 64)
+  private String inviteToken;
+
+  @PrePersist
+  void ensureInviteToken() {
+    if (inviteToken == null) {
+      inviteToken = GroupChatInviteTokens.newToken();
+    }
+  }
 
   @Override
   public boolean equals(Object o) {
@@ -202,13 +240,7 @@ public class Chat {
       throw new InternalServerErrorException(
           String.format("Chat with id %s does not have a valid interval.", id));
     }
-    ZoneId zoneId;
-    try {
-      zoneId = ZoneId.of(timezone == null ? "UTC" : timezone);
-    } catch (DateTimeException invalidPersistedTimezone) {
-      zoneId = ZoneOffset.UTC;
-    }
-    var localAnchor = initialStartDate.atZone(ZoneOffset.UTC).withZoneSameInstant(zoneId);
+    var localAnchor = initialStartDate.atZone(ZoneOffset.UTC).withZoneSameInstant(zoneId());
     ZonedDateTime occurrence =
         switch (chatInterval) {
           case DAILY -> localAnchor.plusDays(occurrenceIndex);
@@ -219,5 +251,32 @@ public class Chat {
           case YEARLY -> localAnchor.plusYears(occurrenceIndex);
         };
     return occurrence.withZoneSameInstant(ZoneOffset.UTC).toLocalDateTime();
+  }
+
+  /** The current occurrence start as wall-clock time in the chat's own timezone. */
+  @JsonIgnore
+  public LocalDateTime localStartDate() {
+    return startDate.atZone(ZoneOffset.UTC).withZoneSameInstant(zoneId()).toLocalDateTime();
+  }
+
+  /** Wall-clock time in {@code zoneId} to the UTC instant stored in start dates. */
+  public static LocalDateTime toUtc(LocalDate date, LocalTime time, ZoneId zoneId) {
+    var local = LocalDateTime.of(date, time);
+    // atZone would silently move a time skipped at DST start by an hour.
+    if (zoneId.getRules().getValidOffsets(local).isEmpty()) {
+      throw new BadRequestException(
+          String.format("Start time %s does not exist in timezone %s.", local, zoneId));
+    }
+    return local.atZone(zoneId).withZoneSameInstant(ZoneOffset.UTC).toLocalDateTime();
+  }
+
+  /** The chat's timezone; falls back to UTC for legacy rows without a valid zone. */
+  @JsonIgnore
+  public ZoneId zoneId() {
+    try {
+      return ZoneId.of(timezone == null ? "UTC" : timezone);
+    } catch (DateTimeException invalidPersistedTimezone) {
+      return ZoneOffset.UTC;
+    }
   }
 }

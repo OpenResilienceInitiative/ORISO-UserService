@@ -12,10 +12,10 @@ import de.caritas.cob.userservice.api.model.Chat.ChatInterval;
 import de.caritas.cob.userservice.api.model.Chat.ChatModality;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.ConversationType;
+import de.caritas.cob.userservice.api.model.GuestAccountMode;
 import java.time.DateTimeException;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
-import java.time.ZoneOffset;
 import org.springframework.stereotype.Component;
 
 @Component
@@ -40,11 +40,7 @@ public class ChatConverter {
     }
     LocalDateTime startDate = nowInUtc();
     if (nonNull(chatDTO.getStartDate()) && nonNull(chatDTO.getStartTime())) {
-      startDate =
-          LocalDateTime.of(chatDTO.getStartDate(), chatDTO.getStartTime())
-              .atZone(zoneId)
-              .withZoneSameInstant(ZoneOffset.UTC)
-              .toLocalDateTime();
+      startDate = Chat.toUtc(chatDTO.getStartDate(), chatDTO.getStartTime(), zoneId);
     }
 
     int repeatCount =
@@ -70,23 +66,50 @@ public class ChatConverter {
             .timezone(timezone)
             .chatModality(
                 nonNull(chatDTO.getModality()) ? chatDTO.getModality() : ChatModality.TEXT)
-            .conversationType(
-                nonNull(chatDTO.getRepeatCount())
-                        || nonNull(chatDTO.getChatInterval())
-                        || isTrue(chatDTO.getRepetitive())
-                    ? ConversationType.SELF_HELP
-                    : ConversationType.INTERNAL_GROUP)
+            .conversationType(conversationTypeOf(chatDTO))
             .updateDate(nowInUtc())
             .createDate(nowInUtc())
             .hintMessage(chatDTO.getHintMessage())
             .sourceLanguage(chatDTO.getSourceLanguage())
             .hintMessageTranslations(chatDTO.getHintMessageTranslations())
-            .groupChatRulesTranslations(chatDTO.getGroupChatRulesTranslations());
+            .groupChatRulesTranslations(chatDTO.getGroupChatRulesTranslations())
+            .guestAccountMode(
+                nonNull(chatDTO.getGuestAccountMode())
+                    ? chatDTO.getGuestAccountMode()
+                    : GuestAccountMode.GUEST_CHOOSES);
 
     if (nonNull(agencyDTO)) {
       builder.consultingTypeId(agencyDTO.getConsultingType());
     }
 
     return builder.build();
+  }
+
+  /**
+   * Classifies a create request by group-chat format (ADR-006): anything that repeats is a
+   * conversation circle ({@link ConversationType#SELF_HELP}), everything else an internal team chat
+   * ({@link ConversationType#INTERNAL_GROUP}). The DTO carries no explicit format field, so this
+   * rule is the single source for both the persisted modality and the feature gate (US#1171).
+   */
+  public static ConversationType conversationTypeOf(ChatDTO chatDTO) {
+    return nonNull(chatDTO.getRepeatCount())
+            || nonNull(chatDTO.getChatInterval())
+            || isTrue(chatDTO.getRepetitive())
+        ? ConversationType.SELF_HELP
+        : ConversationType.INTERNAL_GROUP;
+  }
+
+  /**
+   * The persisted format of a group chat. Legacy rows without {@code conversation_type} are
+   * classified by the same rule as {@link #conversationTypeOf(ChatDTO)}: anything that repeats is a
+   * conversation circle.
+   */
+  public static ConversationType conversationTypeOf(Chat chat) {
+    if (nonNull(chat.getConversationType())) {
+      return chat.getConversationType();
+    }
+    return chat.isRepetitive() || chat.getRepeatCount() > 1 || nonNull(chat.getChatInterval())
+        ? ConversationType.SELF_HELP
+        : ConversationType.INTERNAL_GROUP;
   }
 }

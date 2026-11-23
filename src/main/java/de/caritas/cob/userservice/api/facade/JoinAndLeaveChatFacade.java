@@ -5,21 +5,29 @@ import static org.apache.commons.lang3.StringUtils.isBlank;
 
 import de.caritas.cob.userservice.api.actions.chat.ChatReCreator;
 import de.caritas.cob.userservice.api.actions.chat.MatrixChatShutdownService;
+import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
 import de.caritas.cob.userservice.api.exception.httpresponses.ConflictException;
+import de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHttpStatusException;
 import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException;
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
+import de.caritas.cob.userservice.api.exception.httpresponses.customheader.HttpStatusExceptionReason;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.helper.ChatPermissionVerifier;
 import de.caritas.cob.userservice.api.model.Chat;
 import de.caritas.cob.userservice.api.model.Consultant;
+import de.caritas.cob.userservice.api.model.ConversationType;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.service.ChatService;
 import de.caritas.cob.userservice.api.service.ConsultantService;
 import de.caritas.cob.userservice.api.service.chat.GroupChatRoleService;
+import de.caritas.cob.userservice.api.service.chat.GroupCounsellingDpaPolicy;
+import de.caritas.cob.userservice.api.service.chat.GroupWaitingRoomService;
+import de.caritas.cob.userservice.api.service.chat.RecurringGroupStopCoordinator;
 import de.caritas.cob.userservice.api.service.matrix.GroupChatMembershipService;
 import de.caritas.cob.userservice.api.service.user.UserService;
 import java.util.Optional;
 import lombok.RequiredArgsConstructor;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 
 /** Facade for capsuling to join a chat. */
@@ -35,6 +43,10 @@ public class JoinAndLeaveChatFacade {
   private final GroupChatMembershipService groupChatMembershipService;
   private final MatrixChatShutdownService matrixChatShutdownService;
   private final GroupChatRoleService groupChatRoleService;
+  private final GroupCounsellingDpaPolicy groupCounsellingDpaPolicy;
+  private final MatrixSynapseService matrixSynapseService;
+  private final RecurringGroupStopCoordinator recurringStops;
+  private final GroupWaitingRoomService groupWaitingRoom;
 
   /**
    * Join a chat.
@@ -45,15 +57,83 @@ public class JoinAndLeaveChatFacade {
   public void joinChat(Long chatId, AuthenticatedUser authenticatedUser) {
     Chat chat = getChat(chatId);
     this.chatPermissionVerifier.verifyPermissionForChat(chat);
+    if (chat.isRepetitive()
+        && ChatConverter.conversationTypeOf(chat) == ConversationType.SELF_HELP) {
+      recurringStops.withLockedOccurrence(
+          chat,
+          locked -> {
+            this.chatPermissionVerifier.verifyPermissionForChat(locked);
+            joinCurrentOccurrence(locked, authenticatedUser, chatId);
+            return null;
+          });
+      return;
+    }
+    joinCurrentOccurrence(chat, authenticatedUser, chatId);
+  }
 
+  private void joinCurrentOccurrence(
+      Chat chat, AuthenticatedUser authenticatedUser, Long requestedChatId) {
     requireMatrixRoom(chat);
     String matrixUserId = retrieveMatrixUserId(authenticatedUser);
-    if (isBlank(matrixUserId) || !groupChatMembershipService.addMemberToRoom(chat, matrixUserId)) {
+    if (!isBlank(matrixUserId)
+        && ChatConverter.conversationTypeOf(chat) == ConversationType.SELF_HELP) {
+      // A current JOIN establishes continuation for this caller in every occurrence.
+      var joinedMembers =
+          matrixSynapseService
+              .getRoomMembers(groupChatMembershipService.resolveMatrixRoomId(chat))
+              .orElseThrow(this::unavailableMembership);
+      if (joinedMembers.stream()
+          .anyMatch(
+              member ->
+                  member == null
+                      || !member.startsWith("@")
+                      || member.indexOf(':') < 2
+                      || member.endsWith(":"))) {
+        throw unavailableMembership();
+      }
+      if (joinedMembers.contains(matrixUserId)) {
+        return;
+      }
+      requireAdmissionToCallCircle(chat, authenticatedUser, requestedChatId);
+      groupCounsellingDpaPolicy.requireAuthorizedEnrolment(chat, matrixUserId);
+    }
+    if (isBlank(matrixUserId)) {
+      throw new InternalServerErrorException(
+          String.format("User with id %s has no Matrix user ID.", authenticatedUser.getUserId()));
+    }
+    if (!groupChatMembershipService.addMemberToRoom(chat, matrixUserId)) {
+      // Matrix refuses to re-invite a banned member; say so instead of failing with 500.
+      if (groupChatMembershipService.isBannedFromRoom(chat, matrixUserId).orElse(false)) {
+        throw new CustomValidationHttpStatusException(
+            HttpStatusExceptionReason.USER_BANNED_FROM_CHAT, HttpStatus.FORBIDDEN);
+      }
       throw new InternalServerErrorException(
           String.format(
               "User with id %s could not join the Matrix group chat.",
               authenticatedUser.getUserId()));
     }
+  }
+
+  /**
+   * ORISO-UserService#1747: in an audio or video self-help circle an advice seeker knocks and a
+   * moderator lets them in (ORISO-Frontend#2237). The client only joins after that, but the server
+   * has to hold the line too: otherwise anyone with the invitation link could call {@code /join}
+   * and skip the waiting room. Counsellors and people already in the room are not affected.
+   */
+  private void requireAdmissionToCallCircle(
+      Chat chat, AuthenticatedUser authenticatedUser, Long requestedChatId) {
+    if (authenticatedUser.isConsultant() || !GroupWaitingRoomService.requiresAdmission(chat)) {
+      return;
+    }
+    if (!groupWaitingRoom.isAdmitted(requestedChatId, authenticatedUser.getUserId())) {
+      throw new CustomValidationHttpStatusException(
+          HttpStatusExceptionReason.GROUP_ADMISSION_REQUIRED, HttpStatus.FORBIDDEN);
+    }
+  }
+
+  private CustomValidationHttpStatusException unavailableMembership() {
+    return new CustomValidationHttpStatusException(
+        HttpStatusExceptionReason.DPA_POLICY_UNAVAILABLE, HttpStatus.BAD_GATEWAY);
   }
 
   public void verifyCanModerate(Long chatId) {
@@ -74,7 +154,38 @@ public class JoinAndLeaveChatFacade {
     Chat chat = getChat(chatId);
     this.chatPermissionVerifier.verifyPermissionForChat(chat);
     requireMatrixRoom(chat);
+    if (chat.isRepetitive()
+        && ChatConverter.conversationTypeOf(chat) == ConversationType.SELF_HELP) {
+      LastDeparture last =
+          recurringStops.withLockedOccurrence(
+              chat,
+              locked -> {
+                this.chatPermissionVerifier.verifyPermissionForChat(locked);
+                requireMatrixRoom(locked);
+                var leaver = leaveAndFindLast(locked, authenticatedUser);
+                return leaver == null ? null : new LastDeparture(locked, leaver);
+              });
+      if (last != null) {
+        if (last.chat().nextStart() != null) {
+          recurringStops.stopAfterLastLeave(last.chat(), last.matrixUserId());
+        } else {
+          recurringStops.withLockedOccurrence(
+              last.chat(),
+              locked -> {
+                if (!groupChatMembershipService.hasRemainingHumanMembers(
+                    locked, last.matrixUserId())) finishLastLeave(locked);
+                return null;
+              });
+        }
+      }
+      return;
+    }
+    if (leaveAndFindLast(chat, authenticatedUser) != null) finishLastLeave(chat);
+  }
 
+  private record LastDeparture(Chat chat, String matrixUserId) {}
+
+  private String leaveAndFindLast(Chat chat, AuthenticatedUser authenticatedUser) {
     Optional<Consultant> leavingConsultant =
         consultantService.getConsultantViaAuthenticatedUser(authenticatedUser);
     Optional<User> leavingUser =
@@ -90,6 +201,9 @@ public class JoinAndLeaveChatFacade {
       throw new InternalServerErrorException(
           String.format("User with id %s has no Matrix user ID.", authenticatedUser.getUserId()));
     }
+    if (chat.isRepetitive()) {
+      chatReCreator.removeFromPreparedRoom(chat, leavingMatrixUserId);
+    }
     if (leavingConsultant.isPresent()) {
       groupChatRoleService.leaveSeries(chat, leavingConsultant.get());
     } else {
@@ -97,10 +211,12 @@ public class JoinAndLeaveChatFacade {
       leavingUser.ifPresent(leaver -> chatService.deleteUserChatRelation(chat, leaver));
     }
 
-    if (groupChatMembershipService.hasRemainingHumanMembers(chat, leavingMatrixUserId)) {
-      return;
-    }
+    return groupChatMembershipService.hasRemainingHumanMembers(chat, leavingMatrixUserId)
+        ? null
+        : leavingMatrixUserId;
+  }
 
+  private void finishLastLeave(Chat chat) {
     if (chat.isRepetitive()) {
       if (chat.nextStart() != null) {
         var matrixRoomId = chatReCreator.recreateMessengerChat(chat);
@@ -112,7 +228,11 @@ public class JoinAndLeaveChatFacade {
       }
     } else {
       chatService.deleteChat(chat);
-      matrixChatShutdownService.shutdownRoom(chat);
+      if (!chat.isMembersOnly()) {
+        // A members-only room was purged strictly by deleteChat, in its transaction. A second purge
+        // here could fail after everything is gone and report an error for a stop that worked.
+        matrixChatShutdownService.shutdownRoom(chat);
+      }
     }
   }
 

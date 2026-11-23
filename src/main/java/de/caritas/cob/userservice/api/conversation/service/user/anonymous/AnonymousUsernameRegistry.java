@@ -1,90 +1,95 @@
 package de.caritas.cob.userservice.api.conversation.service.user.anonymous;
 
-import static java.lang.Integer.parseInt;
-import static java.util.Collections.sort;
-import static org.apache.commons.lang3.StringUtils.substringAfter;
-
 import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
+import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
+import de.caritas.cob.userservice.api.exception.httpresponses.ConflictException;
+import de.caritas.cob.userservice.api.exception.httpresponses.ServiceUnavailableException;
 import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
 import de.caritas.cob.userservice.api.port.out.IdentityUsernameAvailability;
 import de.caritas.cob.userservice.api.service.ConsultantService;
+import de.caritas.cob.userservice.api.service.GeneratedPseudonyms;
+import de.caritas.cob.userservice.api.service.identity.GuestIdentityCatalog;
 import de.caritas.cob.userservice.api.service.user.UserService;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
-import java.util.LinkedList;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
-/** Registry to generate, hold and handle all current anonymous usernames. */
+/**
+ * Hands out the User-ID of an anonymous guest. Every guest gets an animal handle from the one
+ * global identity catalog ({@code katze_sam_4821}) — the one the guest rolled on the entry page, or
+ * one the server rolls for clients that do not send a choice. Counter names such as {@code anon_7}
+ * are never minted again (ORISO-Frontend#2346); existing ones stay valid.
+ */
 @Component
 @RequiredArgsConstructor
 public class AnonymousUsernameRegistry {
+
+  /** Rolls before giving up; a collision is rare, an exhausted namespace means an outage. */
+  static final int MAX_ATTEMPTS = 32;
+
+  private static final String SERVER_ROLL_LOCALE = "de";
 
   private final @NonNull UserService userService;
   private final @NonNull ConsultantService consultantService;
   private final @NonNull IdentityUsernameAvailability identityUsernameAvailability;
   private final @NonNull MatrixSynapseService matrixSynapseService;
+  private final @NonNull GuestIdentityCatalog guestIdentityCatalog;
+  private final @NonNull GeneratedPseudonyms generatedPseudonyms;
   private final UsernameTranscoder usernameTranscoder = new UsernameTranscoder();
 
-  // Dedicated transcoder for building the Matrix localpart during the occupancy check. It is kept
-  // separate from usernameTranscoder (which encodes the single returned username) so the Matrix
-  // check never perturbs callers that verify how often the returned value is encoded.
-  private final UsernameTranscoder matrixLocalpartTranscoder = new UsernameTranscoder();
-
-  @Value("${anonymous.username.prefix}")
-  private String usernamePrefix;
-
-  private static final LinkedList<Integer> ID_REGISTRY = new LinkedList<>();
-
   /**
-   * Generates an unique anonymous username.
+   * Rolls a free animal handle for a guest whose client did not send one.
    *
-   * @return encoded unique anonymous username
+   * @return the encoded username
+   * @throws ServiceUnavailableException when no free handle turned up within {@link #MAX_ATTEMPTS}
    */
   public synchronized String generateUniqueUsername() {
-
-    String username;
-    do {
-      username = generateUsername();
-      ID_REGISTRY.add(obtainUsernameId(username));
-    } while (isUsernameOccupied(username));
-
-    return usernameTranscoder.encodeUsername(username);
-  }
-
-  private String generateUsername() {
-    return usernamePrefix + obtainSmallestPossibleId();
-  }
-
-  private int obtainSmallestPossibleId() {
-
-    var smallestId = 1;
-    sort(ID_REGISTRY);
-
-    for (int i : ID_REGISTRY) {
-      if (smallestId < i) {
-        return smallestId;
+    for (int attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+      var candidate = guestIdentityCatalog.next(SERVER_ROLL_LOCALE).username();
+      if (!isUsernameOccupied(candidate)) {
+        return usernameTranscoder.encodeUsername(candidate);
       }
-      smallestId = i + 1;
     }
+    throw new ServiceUnavailableException("Guest names are temporarily unavailable");
+  }
 
-    return smallestId;
+  /**
+   * Keeps the handle the guest rolled. Anonymity rests on the dice, so only a handle the generator
+   * can produce is accepted — never a typed name.
+   *
+   * @param handle the plain handle the guest chose, e.g. {@code katze_sam_4821}
+   * @return the encoded username
+   * @throws BadRequestException when the generator cannot produce the handle
+   * @throws ConflictException when the handle is already taken; the guest rolls again
+   */
+  public synchronized String claimChosenUsername(String handle) {
+    if (!generatedPseudonyms.containsHandle(handle)) {
+      throw new BadRequestException("The guest name was not rolled by the name generator");
+    }
+    if (isUsernameOccupied(handle)) {
+      throw new ConflictException("The guest name is already taken");
+    }
+    return usernameTranscoder.encodeUsername(handle);
+  }
+
+  /**
+   * Nothing to release: names are checked against the database, Keycloak and Matrix rather than
+   * held in memory. Kept so the deletion workflow can call it for every asker, whatever the name.
+   *
+   * @param encodedUsername the encoded username of a deleted asker
+   */
+  public void removeRegistryIdByUsername(String encodedUsername) {
+    // Intentionally empty.
   }
 
   private boolean isUsernameOccupied(String username) {
-    // The in-memory ID_REGISTRY resets on every restart, so after a restart the generator hands
-    // out low ids again. Besides the local DB we must therefore also consult Keycloak: a username
-    // that still exists there (e.g. a previous anonymous user) would otherwise trigger a 409
-    // "username already exists" when creating the Keycloak account during invite-link redeem.
-    //
-    // The anonymous username namespace is GLOBAL, not per-tenant: Matrix user IDs are global
-    // (@anon_18:<server>) and the anonymous live-chat queue is deliberately cross-tenant. The DB
-    // lookups below are tenant-filtered, so without the technical-context bypass a caller in
-    // tenant 83 cannot see an anon user of tenant 1, hands the name out again, and Matrix rejects
-    // it with M_USER_IN_USE -> 500 on every redeem (self-perpetuating: the same id is picked
-    // again on each retry). Keycloak is already global and needs no bypass.
-    return runCrossTenant(
+    // The guest namespace is GLOBAL, not per tenant: Matrix user IDs are global and the anonymous
+    // live-chat queue is deliberately cross-tenant. The DB lookups below are tenant-filtered, so
+    // without the technical-context bypass a caller in tenant 83 would not see a guest of tenant
+    // 1, hand the name out again, and Matrix would reject it with M_USER_IN_USE. Keycloak is
+    // already global.
+    return TenantContext.supplyAcrossTenants(
             () ->
                 userService.findUserByUsername(username).isPresent()
                     || consultantService.getConsultantByUsername(username).isPresent())
@@ -93,55 +98,12 @@ public class AnonymousUsernameRegistry {
   }
 
   /**
-   * Matrix user IDs are global, so a localpart occupied in Matrix must not be handed out again even
-   * when it is absent from MariaDB and Keycloak (an orphan left behind by a rolled-back or
-   * externally cleaned-up account). Without this check such an orphan is deemed free, {@code
-   * createUser} fails with {@code M_USER_IN_USE}, and — because the generator is deterministic —
-   * every retry collides on the same id, so invite-link redeem returns 500 indefinitely.
-   *
-   * <p>The Matrix localpart has been written in two forms over time (the encoded username and, for
-   * older accounts, the plain one), so both are checked.
+   * A localpart can survive in Matrix while absent from MariaDB and Keycloak (a rolled-back or
+   * externally cleaned-up account). It has been written in two forms over time — the encoded
+   * username and, for older accounts, the plain one — so both are checked.
    */
   private boolean existsInMatrix(String username) {
-    return matrixSynapseService.userExists(matrixLocalpartTranscoder.encodeUsername(username))
+    return matrixSynapseService.userExists(usernameTranscoder.encodeUsername(username))
         || matrixSynapseService.userExists(username);
-  }
-
-  /**
-   * Runs a lookup in technical tenant context so {@code TenantAspect} disables the Hibernate {@code
-   * tenantFilter}; the caller's tenant is restored afterwards so no other query in the same request
-   * leaks across tenants.
-   */
-  private boolean runCrossTenant(java.util.function.BooleanSupplier lookup) {
-    var callerTenant = TenantContext.getCurrentTenant();
-    try {
-      TenantContext.setCurrentTenant(TenantContext.TECHNICAL_TENANT_ID);
-      return lookup.getAsBoolean();
-    } finally {
-      if (callerTenant == null) {
-        TenantContext.clear();
-      } else {
-        TenantContext.setCurrentTenant(callerTenant);
-      }
-    }
-  }
-
-  private int obtainUsernameId(String username) {
-    return parseInt(substringAfter(username, usernamePrefix));
-  }
-
-  /**
-   * Removes a name from the registry.
-   *
-   * @param encodedUsername the encoded username to remove from the registry
-   */
-  public synchronized void removeRegistryIdByUsername(String encodedUsername) {
-    try {
-      var decodedUsername = usernameTranscoder.decodeUsername(encodedUsername);
-      Integer usernameId = obtainUsernameId(decodedUsername);
-      ID_REGISTRY.remove(usernameId);
-    } catch (Exception ex) {
-      // do nothing
-    }
   }
 }

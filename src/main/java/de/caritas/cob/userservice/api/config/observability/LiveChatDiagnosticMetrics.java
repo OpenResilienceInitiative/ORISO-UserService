@@ -18,6 +18,7 @@ public class LiveChatDiagnosticMetrics {
   static final String ROOM_CREATION = "oriso.matrix.room.creation";
   static final String EVENT_PROCESSING = "oriso.matrix.event.processing";
   static final String SIDE_EFFECTS = "oriso.matrix.side_effect.operations";
+  static final String AVAILABILITY_LOOKUP_FAILURES = "oriso.live_chat.availability.lookup.failures";
 
   private final MeterRegistry meterRegistry;
 
@@ -63,6 +64,20 @@ public class LiveChatDiagnosticMetrics {
                 .increment());
   }
 
+  /**
+   * An availability lookup threw and the endpoint answered "0 available" instead. A guest cannot
+   * tell that zero from a real one, so this counter is the only way to see how often it happens.
+   */
+  public void recordAvailabilityLookupFailure(AvailabilityEndpoint endpoint) {
+    safely(
+        () ->
+            Counter.builder(AVAILABILITY_LOOKUP_FAILURES)
+                .description("Availability lookups that failed and were reported as zero")
+                .tags("endpoint", endpoint.value)
+                .register(meterRegistry)
+                .increment());
+  }
+
   public void recordRoomCreation(boolean encryptionEnabled, Outcome outcome) {
     counter(ROOM_CREATION, "encryption", encryptionEnabled ? "enabled" : "disabled", outcome);
   }
@@ -104,6 +119,19 @@ public class LiveChatDiagnosticMetrics {
       case "m.call.hangup" -> "call_hangup";
       default -> "other";
     };
+  }
+
+  public enum AvailabilityEndpoint {
+    /** {@code GET /conversations/anonymous/availability} — the door, before a session exists. */
+    ANONYMOUS_DOOR("anonymous_door"),
+    /** {@code GET /conversations/anonymous/{id}} — the waiting-room poll. */
+    ENQUIRY_DETAILS("enquiry_details");
+
+    private final String value;
+
+    AvailabilityEndpoint(String value) {
+      this.value = value;
+    }
   }
 
   public enum RoutingStage {

@@ -11,9 +11,9 @@ import java.util.regex.Pattern;
  * <p>Examples:
  *
  * <pre>
- *   MatrixIds.localpart("@alice:matrix.oriso.org")  →  "alice"
- *   MatrixIds.isRoomId("!abc123:matrix.oriso.org")   →  true
- *   MatrixIds.isUserId("@alice:matrix.oriso.org")    →  true
+ *   MatrixIds.localpart("@alice:matrix.example.org")  →  "alice"
+ *   MatrixIds.isRoomId("!abc123:matrix.example.org")   →  true
+ *   MatrixIds.isUserId("@alice:matrix.example.org")    →  true
  * </pre>
  */
 public final class MatrixIds {

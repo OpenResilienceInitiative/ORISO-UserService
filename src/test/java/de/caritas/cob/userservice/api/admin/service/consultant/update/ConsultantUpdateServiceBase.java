@@ -5,6 +5,7 @@ import static de.caritas.cob.userservice.api.exception.httpresponses.customheade
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.is;
 import static org.hamcrest.Matchers.notNullValue;
+import static org.hamcrest.Matchers.nullValue;
 import static org.junit.jupiter.api.Assertions.fail;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.Mockito.when;
@@ -13,19 +14,25 @@ import de.caritas.cob.userservice.api.adapters.web.dto.AgencyDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.UpdateAdminConsultantDTO;
 import de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHttpStatusException;
 import de.caritas.cob.userservice.api.model.Consultant;
+import de.caritas.cob.userservice.api.model.ConsultantAvatarKind;
 import de.caritas.cob.userservice.api.port.out.IdentityAccountRemover;
+import de.caritas.cob.userservice.api.port.out.IdentityAccountStatusLookup;
 import de.caritas.cob.userservice.api.port.out.IdentityAuthentication;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import de.caritas.cob.userservice.api.port.out.IdentityDeactivator;
 import de.caritas.cob.userservice.api.port.out.IdentityDummyEmailUpdater;
 import de.caritas.cob.userservice.api.port.out.IdentityEmailAddressUpdater;
 import de.caritas.cob.userservice.api.port.out.IdentityEmailOwnerLookup;
+import de.caritas.cob.userservice.api.port.out.IdentityLocaleLookup;
+import de.caritas.cob.userservice.api.port.out.IdentityPasswordChangeRequirement;
 import de.caritas.cob.userservice.api.port.out.IdentityPasswordUpdater;
 import de.caritas.cob.userservice.api.port.out.IdentityProfileLookup;
 import de.caritas.cob.userservice.api.port.out.IdentityProfileUpdater;
+import de.caritas.cob.userservice.api.port.out.IdentityReactivator;
 import de.caritas.cob.userservice.api.port.out.IdentityRoleLookup;
 import de.caritas.cob.userservice.api.port.out.IdentityRoleUpdater;
 import de.caritas.cob.userservice.api.port.out.IdentitySecondFactor;
+import de.caritas.cob.userservice.api.port.out.IdentityTenantUpdater;
 import de.caritas.cob.userservice.api.port.out.IdentityUsernameAvailability;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
 import java.time.LocalDateTime;
@@ -43,17 +50,22 @@ public class ConsultantUpdateServiceBase {
   @MockitoBean(
       extraInterfaces = {
         IdentityAccountRemover.class,
+        IdentityAccountStatusLookup.class,
         IdentityAuthentication.class,
         IdentityDeactivator.class,
+        IdentityReactivator.class,
         IdentityDummyEmailUpdater.class,
         IdentityEmailAddressUpdater.class,
         IdentityEmailOwnerLookup.class,
+        IdentityLocaleLookup.class,
+        IdentityPasswordChangeRequirement.class,
         IdentityPasswordUpdater.class,
         IdentityProfileLookup.class,
         IdentityProfileUpdater.class,
         IdentityRoleLookup.class,
         IdentityRoleUpdater.class,
         IdentitySecondFactor.class,
+        IdentityTenantUpdater.class,
         IdentityUsernameAvailability.class
       })
   protected IdentityClient identityClient;
@@ -99,6 +111,167 @@ public class ConsultantUpdateServiceBase {
     assertThat(
         updatedConsultant.getDataPrivacyConfirmation().getDayOfMonth(),
         is(LocalDateTime.now().getDayOfMonth()));
+  }
+
+  public void updateConsultant_Should_persistPersonalInfo_With_nullUntouchedAndBlankClearing() {
+    var initial = new UpdateAdminConsultantDTO();
+    initial.setAbsent(false);
+    initial.setFirstname("first");
+    initial.setLastname("last");
+    initial.setEmail("personalinfo@address.de");
+    initial.formalLanguage(true);
+    initial.setSalutation("counsellor_female");
+    initial.setPosition("Head of counselling centre");
+    initial.setTitle("Dipl.-Soz.Päd.");
+    initial.setAdminRemarks("Initial internal note");
+
+    Consultant afterInitial =
+        this.consultantUpdateService.updateConsultant(getValidConsultantId(), initial);
+
+    assertThat(afterInitial.getSalutation(), is("counsellor_female"));
+    assertThat(afterInitial.getPosition(), is("Head of counselling centre"));
+    assertThat(afterInitial.getTitle(), is("Dipl.-Soz.Päd."));
+    assertThat(afterInitial.getAdminRemarks(), is("Initial internal note"));
+
+    // Null values leave the stored personal info untouched (self-service path safety).
+    var untouched = new UpdateAdminConsultantDTO();
+    untouched.setAbsent(false);
+    untouched.setFirstname("first");
+    untouched.setLastname("last");
+    untouched.setEmail("personalinfo@address.de");
+    untouched.formalLanguage(true);
+
+    Consultant afterUntouched =
+        this.consultantUpdateService.updateConsultant(getValidConsultantId(), untouched);
+
+    assertThat(afterUntouched.getSalutation(), is("counsellor_female"));
+    assertThat(afterUntouched.getPosition(), is("Head of counselling centre"));
+    assertThat(afterUntouched.getTitle(), is("Dipl.-Soz.Päd."));
+    assertThat(afterUntouched.getAdminRemarks(), is("Initial internal note"));
+
+    // Empty strings clear the stored values.
+    var clearing = new UpdateAdminConsultantDTO();
+    clearing.setAbsent(false);
+    clearing.setFirstname("first");
+    clearing.setLastname("last");
+    clearing.setEmail("personalinfo@address.de");
+    clearing.formalLanguage(true);
+    clearing.setSalutation("");
+    clearing.setPosition("");
+    clearing.setTitle("");
+    clearing.setAdminRemarks("");
+
+    Consultant afterClearing =
+        this.consultantUpdateService.updateConsultant(getValidConsultantId(), clearing);
+
+    assertThat(afterClearing.getSalutation(), nullValue());
+    assertThat(afterClearing.getPosition(), nullValue());
+    assertThat(afterClearing.getTitle(), nullValue());
+    assertThat(afterClearing.getAdminRemarks(), nullValue());
+  }
+
+  public void updateConsultant_Should_persistBothDisplayNames_With_nullUntouchedAndBlankClearing() {
+    var initial = new UpdateAdminConsultantDTO();
+    initial.setAbsent(false);
+    initial.setFirstname("first");
+    initial.setLastname("last");
+    initial.setEmail("dualnames@address.de");
+    initial.formalLanguage(true);
+    initial.setDisplayName("Anna B.");
+    initial.setInternalDisplayName("Anna Beispiel (Standort Nord)");
+
+    Consultant afterInitial =
+        this.consultantUpdateService.updateConsultant(getValidConsultantId(), initial);
+
+    assertThat(afterInitial.getDisplayName(), is("Anna B."));
+    assertThat(afterInitial.getInternalDisplayName(), is("Anna Beispiel (Standort Nord)"));
+    assertThat(
+        afterInitial.getInternalDisplayNameOrFallback(), is("Anna Beispiel (Standort Nord)"));
+
+    // Null values leave both names untouched.
+    var untouched = new UpdateAdminConsultantDTO();
+    untouched.setAbsent(false);
+    untouched.setFirstname("first");
+    untouched.setLastname("last");
+    untouched.setEmail("dualnames@address.de");
+    untouched.formalLanguage(true);
+
+    Consultant afterUntouched =
+        this.consultantUpdateService.updateConsultant(getValidConsultantId(), untouched);
+
+    assertThat(afterUntouched.getDisplayName(), is("Anna B."));
+    assertThat(afterUntouched.getInternalDisplayName(), is("Anna Beispiel (Standort Nord)"));
+
+    // Clearing the internal name makes internal contexts fall back to the public name.
+    var clearing = new UpdateAdminConsultantDTO();
+    clearing.setAbsent(false);
+    clearing.setFirstname("first");
+    clearing.setLastname("last");
+    clearing.setEmail("dualnames@address.de");
+    clearing.formalLanguage(true);
+    clearing.setInternalDisplayName("");
+
+    Consultant afterClearing =
+        this.consultantUpdateService.updateConsultant(getValidConsultantId(), clearing);
+
+    assertThat(afterClearing.getInternalDisplayName(), nullValue());
+    assertThat(afterClearing.getDisplayName(), is("Anna B."));
+    assertThat(afterClearing.getInternalDisplayNameOrFallback(), is("Anna B."));
+  }
+
+  public void updateConsultant_Should_persistAvatar_With_nullUntouchedAndBlankIdClearing() {
+    var initial = baseUpdate();
+    initial.setAvatarKind(UpdateAdminConsultantDTO.AvatarKindEnum.ICON);
+    initial.setAvatarId("motif-24");
+
+    Consultant afterInitial =
+        this.consultantUpdateService.updateConsultant(getValidConsultantId(), initial);
+
+    assertThat(afterInitial.getAvatarKind(), is(ConsultantAvatarKind.ICON));
+    assertThat(afterInitial.getAvatarId(), is("motif-24"));
+
+    // Null on both avatar fields leaves the stored choice untouched.
+    Consultant afterUntouched =
+        this.consultantUpdateService.updateConsultant(getValidConsultantId(), baseUpdate());
+
+    assertThat(afterUntouched.getAvatarKind(), is(ConsultantAvatarKind.ICON));
+    assertThat(afterUntouched.getAvatarId(), is("motif-24"));
+
+    // Clearing only the motif id must not leave an icon without a motif — it demotes to INITIALS.
+    var clearingId = baseUpdate();
+    clearingId.setAvatarId("");
+
+    Consultant afterClearingId =
+        this.consultantUpdateService.updateConsultant(getValidConsultantId(), clearingId);
+
+    assertThat(afterClearingId.getAvatarKind(), is(ConsultantAvatarKind.INITIALS));
+    assertThat(afterClearingId.getAvatarId(), nullValue());
+  }
+
+  public void updateConsultant_Should_dropMotifId_When_kindIsNotIcon() {
+    var initial = baseUpdate();
+    initial.setAvatarKind(UpdateAdminConsultantDTO.AvatarKindEnum.ICON);
+    initial.setAvatarId("motif-24");
+    this.consultantUpdateService.updateConsultant(getValidConsultantId(), initial);
+
+    var switched = baseUpdate();
+    switched.setAvatarKind(UpdateAdminConsultantDTO.AvatarKindEnum.INITIALS);
+
+    Consultant afterSwitch =
+        this.consultantUpdateService.updateConsultant(getValidConsultantId(), switched);
+
+    assertThat(afterSwitch.getAvatarKind(), is(ConsultantAvatarKind.INITIALS));
+    assertThat(afterSwitch.getAvatarId(), nullValue());
+  }
+
+  private UpdateAdminConsultantDTO baseUpdate() {
+    var update = new UpdateAdminConsultantDTO();
+    update.setAbsent(false);
+    update.setFirstname("first");
+    update.setLastname("last");
+    update.setEmail("avatar@address.de");
+    update.formalLanguage(true);
+    return update;
   }
 
   public void updateConsultant_Should_throwCustomResponseException_When_absenceIsInvalid() {

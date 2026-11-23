@@ -11,6 +11,7 @@ import de.caritas.cob.userservice.topicservice.generated.web.TopicControllerApi;
 import de.caritas.cob.userservice.topicservice.generated.web.model.TopicDTO;
 import java.util.Collection;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import java.util.function.Function;
@@ -21,6 +22,8 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.cache.annotation.Cacheable;
 import org.springframework.http.HttpHeaders;
 import org.springframework.stereotype.Service;
+import org.springframework.web.context.request.RequestContextHolder;
+import org.springframework.web.context.request.ServletRequestAttributes;
 
 @Service
 @RequiredArgsConstructor
@@ -43,8 +46,32 @@ public class TopicService {
     // Public endpoints needs to be called without Authentication header as not to cause a 401 error
     TopicControllerApi controllerApi = topicServiceApiControllerFactory.createControllerApi();
     addTenantHeaders(controllerApi.getApiClient());
+    controllerApi
+        .getApiClient()
+        .addDefaultHeader(HttpHeaders.COOKIE, "lang=" + publicTopicLanguage());
     log.info("Calling topic service to get all active topics");
     return controllerApi.getAllActiveTopics();
+  }
+
+  /** Topics for a management tenant already checked by the caller. */
+  public List<TopicDTO> getActiveTopicsForTenant(Long tenantId) {
+    var controller = topicServiceApiControllerFactory.createScopedControllerApi();
+    controller.getApiClient().addDefaultHeader("tenantId", tenantId.toString());
+    controller.getApiClient().addDefaultHeader(HttpHeaders.COOKIE, "lang=" + publicTopicLanguage());
+    var topics = controller.getAllActiveTopics();
+    return topics == null ? List.of() : topics;
+  }
+
+  /** Existing links may refer to inactive topics. Do not use the unscoped topic cache. */
+  public Map<Long, TopicDTO> getTopicNamesForTenant(Long tenantId) {
+    var controller = topicServiceApiControllerFactory.createScopedControllerApi();
+    var headers = securityHeaderSupplier.getKeycloakAndCsrfHttpHeaders();
+    headers.set("tenantId", tenantId.toString());
+    headers.set(HttpHeaders.COOKIE, "lang=" + publicTopicLanguage());
+    headers.forEach(
+        (key, value) -> controller.getApiClient().addDefaultHeader(key, value.getFirst()));
+    var topics = controller.getAllTopics();
+    return topics == null ? Map.of() : getAllTopicsMap(topics);
   }
 
   /**
@@ -60,6 +87,30 @@ public class TopicService {
       return null;
     }
     return getAllActiveTopicsMap().get(topicId);
+  }
+
+  /** The public topic service selects translated names from its allowlisted lang cookie. */
+  private String publicTopicLanguage() {
+    var attributes = RequestContextHolder.getRequestAttributes();
+    if (!(attributes instanceof ServletRequestAttributes servlet)) {
+      return "de";
+    }
+    var acceptLanguage = servlet.getRequest().getHeader(HttpHeaders.ACCEPT_LANGUAGE);
+    if (acceptLanguage == null || acceptLanguage.isBlank()) {
+      return "de";
+    }
+    var headers = new HttpHeaders();
+    headers.set(HttpHeaders.ACCEPT_LANGUAGE, acceptLanguage);
+    try {
+      return headers.getAcceptLanguage().stream()
+          .filter(range -> range.getWeight() > 0)
+          .map(range -> Locale.forLanguageTag(range.getRange()).getLanguage())
+          .filter(language -> "en".equals(language) || "de".equals(language))
+          .findFirst()
+          .orElse("de");
+    } catch (IllegalArgumentException ignored) {
+      return "de";
+    }
   }
 
   private void addTenantHeaders(ApiClient apiClient) {

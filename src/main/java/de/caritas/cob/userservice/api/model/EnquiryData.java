@@ -22,4 +22,16 @@ public class EnquiryData {
   private String type;
   private String consultantEmail;
   private String matrixEventId;
+  private String uiLocale;
+
+  public EnquiryData(
+      User user,
+      Long sessionId,
+      String message,
+      String language,
+      String type,
+      String consultantEmail,
+      String matrixEventId) {
+    this(user, sessionId, message, language, type, consultantEmail, matrixEventId, null);
+  }
 }

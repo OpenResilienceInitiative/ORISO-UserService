@@ -1,0 +1,77 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+  xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-3.2.xsd">
+  <!-- ORISO-Frontend#2305: appointments between two counsellors, tied to their private internal
+       chat, and each counsellor's list of colleagues whose appointments are accepted
+       automatically. Times, ids and the room only; no advice seeker. -->
+  <changeSet id="20261117-calendar-colleague-appointment-2305" author="oriso">
+    <preConditions onFail="MARK_RAN">
+      <not><tableExists tableName="calendar_colleague_appointment"/></not>
+    </preConditions>
+    <createTable tableName="calendar_colleague_appointment">
+      <column name="id" type="CHAR(36)"><constraints primaryKey="true" nullable="false"/></column>
+      <column name="organizer_id" type="VARCHAR(36)"><constraints nullable="false"/></column>
+      <column name="invitee_id" type="VARCHAR(36)"><constraints nullable="false"/></column>
+      <column name="chat_id" type="BIGINT(21)"/>
+      <column name="matrix_room_id" type="VARCHAR(255)"/>
+      <column name="start_time" type="DATETIME(6)"><constraints nullable="false"/></column>
+      <column name="end_time" type="DATETIME(6)"><constraints nullable="false"/></column>
+      <column name="kind" type="VARCHAR(16)"><constraints nullable="false"/></column>
+      <column name="status" type="VARCHAR(16)"><constraints nullable="false"/></column>
+      <column name="created_at" type="DATETIME(6)"><constraints nullable="false"/></column>
+    </createTable>
+    <rollback><dropTable tableName="calendar_colleague_appointment"/></rollback>
+  </changeSet>
+  <!-- One index per changeSet, so a run that stopped half-way is repaired (MariaDB DDL does not
+       roll back). The table's rollback removes them with it. -->
+  <changeSet id="20261117-calendar-colleague-appointment-2305-index-organizer" author="oriso">
+    <preConditions onFail="MARK_RAN">
+      <not>
+        <indexExists tableName="calendar_colleague_appointment"
+          indexName="idx_calendar_colleague_appointment_organizer"/>
+      </not>
+    </preConditions>
+    <createIndex tableName="calendar_colleague_appointment"
+      indexName="idx_calendar_colleague_appointment_organizer">
+      <column name="organizer_id"/>
+      <column name="start_time"/>
+    </createIndex>
+    <rollback/>
+  </changeSet>
+  <changeSet id="20261117-calendar-colleague-appointment-2305-index-invitee" author="oriso">
+    <preConditions onFail="MARK_RAN">
+      <not>
+        <indexExists tableName="calendar_colleague_appointment"
+          indexName="idx_calendar_colleague_appointment_invitee"/>
+      </not>
+    </preConditions>
+    <createIndex tableName="calendar_colleague_appointment"
+      indexName="idx_calendar_colleague_appointment_invitee">
+      <column name="invitee_id"/>
+      <column name="start_time"/>
+    </createIndex>
+    <rollback/>
+  </changeSet>
+  <changeSet id="20261117-calendar-auto-accept-2305" author="oriso">
+    <preConditions onFail="MARK_RAN">
+      <not><tableExists tableName="calendar_auto_accept"/></not>
+    </preConditions>
+    <createTable tableName="calendar_auto_accept">
+      <column name="id" type="CHAR(36)"><constraints primaryKey="true" nullable="false"/></column>
+      <column name="consultant_id" type="VARCHAR(36)"><constraints nullable="false"/></column>
+      <column name="colleague_id" type="VARCHAR(36)"><constraints nullable="false"/></column>
+    </createTable>
+    <rollback><dropTable tableName="calendar_auto_accept"/></rollback>
+  </changeSet>
+  <changeSet id="20261117-calendar-auto-accept-2305-unique" author="oriso">
+    <preConditions onFail="MARK_RAN">
+      <not>
+        <indexExists tableName="calendar_auto_accept" indexName="uq_calendar_auto_accept"/>
+      </not>
+    </preConditions>
+    <addUniqueConstraint tableName="calendar_auto_accept"
+      columnNames="consultant_id, colleague_id" constraintName="uq_calendar_auto_accept"/>
+    <rollback/>
+  </changeSet>
+</databaseChangeLog>

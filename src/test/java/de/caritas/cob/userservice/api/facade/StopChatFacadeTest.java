@@ -15,6 +15,7 @@ import de.caritas.cob.userservice.api.actions.registry.ActionsRegistry;
 import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
 import de.caritas.cob.userservice.api.model.Chat;
 import de.caritas.cob.userservice.api.service.chat.GroupChatPermissionService;
+import de.caritas.cob.userservice.api.service.chat.RecurringGroupStopCoordinator;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -23,6 +24,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
+import org.springframework.transaction.annotation.Transactional;
 
 @ExtendWith(MockitoExtension.class)
 @MockitoSettings(strictness = Strictness.LENIENT)
@@ -33,6 +35,8 @@ class StopChatFacadeTest {
   @Mock private GroupChatPermissionService groupChatPermissionService;
 
   @Mock private ActionsRegistry actionsRegistry;
+
+  @Mock private RecurringGroupStopCoordinator recurringStops;
 
   private final ActionCommandMockProvider mockProvider = new ActionCommandMockProvider();
 
@@ -62,5 +66,15 @@ class StopChatFacadeTest {
 
     verify(this.mockProvider.getActionMock(StopChatActionCommand.class), times(1))
         .execute(ACTIVE_CHAT);
+  }
+
+  @Test
+  void stopChatShouldRunInOneTransactionSoAFailedRoomShutdownRollsTheDeletionBack()
+      throws Exception {
+    var stopChat =
+        StopChatFacade.class.getMethod(
+            "stopChat", Chat.class, de.caritas.cob.userservice.api.model.Consultant.class);
+
+    assertTrue(stopChat.isAnnotationPresent(Transactional.class));
   }
 }

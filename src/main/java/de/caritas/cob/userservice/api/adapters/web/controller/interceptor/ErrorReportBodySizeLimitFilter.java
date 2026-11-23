@@ -91,26 +91,26 @@ public class ErrorReportBodySizeLimitFilter extends OncePerRequestFilter {
 
     @Override
     public int read() throws IOException {
-      checkLimit(1);
       int b = delegate.read();
       if (b != -1) {
-        bytesRead++;
+        count(1);
       }
       return b;
     }
 
     @Override
     public int read(byte[] b, int off, int len) throws IOException {
-      checkLimit(len);
+      // Count bytes actually read: Jackson asks for 8000 at a time, whatever the body size.
       int read = delegate.read(b, off, len);
       if (read > 0) {
-        bytesRead += read;
+        count(read);
       }
       return read;
     }
 
-    private void checkLimit(int upcomingRead) throws IOException {
-      if (bytesRead + upcomingRead > maxBytes) {
+    private void count(int read) throws IOException {
+      bytesRead += read;
+      if (bytesRead > maxBytes) {
         throw new IOException(
             "Request body exceeds maximum allowed size of " + maxBytes + " bytes");
       }

@@ -1,31 +1,44 @@
 package de.caritas.cob.userservice.api.adapters.web.controller;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
+import ch.qos.logback.classic.Level;
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
 import de.caritas.cob.userservice.api.adapters.web.dto.AnonymousEnquiry;
 import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantSessionListResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.mapping.ConversationDtoMapper;
+import de.caritas.cob.userservice.api.config.observability.LiveChatDiagnosticMetrics;
+import de.caritas.cob.userservice.api.config.observability.LiveChatDiagnosticMetrics.AvailabilityEndpoint;
 import de.caritas.cob.userservice.api.conversation.facade.AcceptAnonymousEnquiryFacade;
 import de.caritas.cob.userservice.api.conversation.facade.CreateAnonymousEnquiryFacade;
 import de.caritas.cob.userservice.api.conversation.facade.FinishAnonymousConversationFacade;
 import de.caritas.cob.userservice.api.conversation.model.ConversationListType;
 import de.caritas.cob.userservice.api.conversation.service.ConversationListResolver;
+import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.port.in.Messaging;
 import de.caritas.cob.userservice.api.service.consultingtype.TopicConsultantRoutingService;
 import java.time.LocalDateTime;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
 
 @ExtendWith(MockitoExtension.class)
@@ -39,21 +52,33 @@ class ConversationControllerTest {
   @Mock private Messaging messenger;
   @Mock private TopicConsultantRoutingService topicConsultantRoutingService;
   @Mock private AuthenticatedUser authenticatedUser;
+  @Mock private LiveChatDiagnosticMetrics liveChatDiagnosticMetrics;
 
   private ConversationController controller;
+  private Logger logger;
+  private ListAppender<ILoggingEvent> logAppender;
 
   @BeforeEach
   void setUp() {
     controller =
         new ConversationController(
             conversationListResolver,
-            createAnonymousEnquiryFacade,
             acceptAnonymousEnquiryFacade,
             finishAnonymousConversationFacade,
             mapper,
             messenger,
             topicConsultantRoutingService,
-            authenticatedUser);
+            authenticatedUser,
+            liveChatDiagnosticMetrics);
+    logger = (Logger) LoggerFactory.getLogger(ConversationController.class);
+    logAppender = new ListAppender<>();
+    logAppender.start();
+    logger.addAppender(logAppender);
+  }
+
+  @AfterEach
+  void releaseLog() {
+    logger.detachAppender(logAppender);
   }
 
   @Test
@@ -114,7 +139,7 @@ class ConversationControllerTest {
     when(mapper.createDateOf(sessionMap)).thenReturn(LocalDateTime.now());
     when(topicConsultantRoutingService.findAvailableConsultantIds(7L))
         .thenThrow(new RuntimeException("presence down"));
-    when(messenger.countPendingEnquiriesAheadOf(11L, 3, 7L, mapper.createDateOf(sessionMap)))
+    when(messenger.countPendingEnquiriesAheadOf(11L, 3, 7L, mapper.createDateOf(sessionMap), 99L))
         .thenReturn(2L);
     when(mapper.anonymousEnquiryOf(sessionMap, 0, 2L)).thenReturn(enquiry);
 
@@ -123,6 +148,57 @@ class ConversationControllerTest {
     assertEquals(HttpStatus.OK, response.getStatusCode());
     assertEquals(enquiry, response.getBody());
     verify(mapper).anonymousEnquiryOf(sessionMap, 0, 2L);
+  }
+
+  @Test
+  void getAnonymousEnquiryDetails_topicAvailabilityThrows_warnsAndCountsTheSwallowedFailure() {
+    // Business reason (#1270): the waiting room turns two zeros into "nobody is live". A swallowed
+    // failure must therefore leave a trace, or Dev cannot tell it from a real zero.
+    Map<String, Object> sessionMap = Map.of("status", "NEW");
+    when(messenger.findSession(99L)).thenReturn(Optional.of(sessionMap));
+    when(authenticatedUser.getUserId()).thenReturn("asker-1");
+    when(mapper.adviceSeekerIdOf(sessionMap)).thenReturn("asker-1");
+    when(mapper.consultingTypeIdOf(sessionMap)).thenReturn(3);
+    when(mapper.mainTopicIdOf(sessionMap)).thenReturn(7L);
+    when(mapper.agencyIdOf(sessionMap)).thenReturn(11L);
+    when(mapper.createDateOf(sessionMap)).thenReturn(LocalDateTime.now());
+    when(topicConsultantRoutingService.findAvailableConsultantIds(7L))
+        .thenThrow(new IllegalStateException("presence down for asker-1"));
+
+    controller.getAnonymousEnquiryDetails(99L);
+
+    assertThat(logAppender.list)
+        .singleElement()
+        .satisfies(
+            event -> {
+              assertThat(event.getLevel()).isEqualTo(Level.WARN);
+              assertThat(event.getFormattedMessage())
+                  .contains("topicId=7")
+                  .contains("IllegalStateException");
+              // KDG: no session id, user id, exception message or stack trace in the log.
+              assertThat(event.getFormattedMessage())
+                  .doesNotContain("99")
+                  .doesNotContain("asker-1");
+              assertThat(event.getThrowableProxy()).isNull();
+            });
+    verify(liveChatDiagnosticMetrics)
+        .recordAvailabilityLookupFailure(AvailabilityEndpoint.ENQUIRY_DETAILS);
+  }
+
+  @Test
+  void getAnonymousEnquiryDetails_noFailure_logsNothingAndCountsNothing() {
+    // Business reason: a real zero must stay distinguishable from a failure.
+    Map<String, Object> sessionMap = Map.of("status", "NEW");
+    when(messenger.findSession(98L)).thenReturn(Optional.of(sessionMap));
+    when(authenticatedUser.getUserId()).thenReturn("asker-1");
+    when(mapper.adviceSeekerIdOf(sessionMap)).thenReturn("asker-1");
+    when(mapper.mainTopicIdOf(sessionMap)).thenReturn(7L);
+    when(topicConsultantRoutingService.findAvailableConsultantIds(7L)).thenReturn(List.of());
+
+    controller.getAnonymousEnquiryDetails(98L);
+
+    assertThat(logAppender.list).isEmpty();
+    verifyNoInteractions(liveChatDiagnosticMetrics);
   }
 
   @Test
@@ -138,7 +214,7 @@ class ConversationControllerTest {
     when(mapper.mainTopicIdOf(sessionMap)).thenReturn(null);
     when(mapper.agencyIdOf(sessionMap)).thenReturn(12L);
     when(mapper.createDateOf(sessionMap)).thenReturn(createdAt);
-    when(messenger.countPendingEnquiriesAheadOf(12L, null, null, createdAt)).thenReturn(0L);
+    when(messenger.countPendingEnquiriesAheadOf(12L, null, null, createdAt, 100L)).thenReturn(0L);
     when(mapper.anonymousEnquiryOf(sessionMap, 0, 0L)).thenReturn(enquiry);
 
     var response = controller.getAnonymousEnquiryDetails(100L);
@@ -146,5 +222,34 @@ class ConversationControllerTest {
     assertEquals(HttpStatus.OK, response.getStatusCode());
     assertEquals(enquiry, response.getBody());
     verify(topicConsultantRoutingService, never()).findAvailableConsultantIds(any());
+  }
+
+  @Test
+  void getAnonymousEnquiryDetails_keepsTheQueueEntryAlive() {
+    // Business reason: this poll is the only sign of life a waiting live-chat guest gives. Without
+    // it the entry ages out of the queue after live.chat.queue.activePeriodMinutes (#1404).
+    Map<String, Object> sessionMap = Map.of("status", "NEW");
+    when(messenger.findSession(101L)).thenReturn(Optional.of(sessionMap));
+    when(authenticatedUser.getUserId()).thenReturn("asker-3");
+    when(mapper.adviceSeekerIdOf(sessionMap)).thenReturn("asker-3");
+    when(mapper.createDateOf(sessionMap)).thenReturn(LocalDateTime.now());
+
+    controller.getAnonymousEnquiryDetails(101L);
+
+    verify(messenger).touchLiveChatQueueHeartbeat(101L);
+  }
+
+  @Test
+  void getAnonymousEnquiryDetails_doesNotKeepTheQueueEntryAliveForSomebodyElse() {
+    // Business reason: the heartbeat must sit behind the ownership check, so a foreign caller can
+    // neither read the enquiry nor hold its queue entry open.
+    Map<String, Object> sessionMap = Map.of("status", "NEW");
+    when(messenger.findSession(102L)).thenReturn(Optional.of(sessionMap));
+    when(authenticatedUser.getUserId()).thenReturn("somebody-else");
+    when(mapper.adviceSeekerIdOf(sessionMap)).thenReturn("asker-3");
+
+    assertThrows(ForbiddenException.class, () -> controller.getAnonymousEnquiryDetails(102L));
+
+    verify(messenger, never()).touchLiveChatQueueHeartbeat(any());
   }
 }

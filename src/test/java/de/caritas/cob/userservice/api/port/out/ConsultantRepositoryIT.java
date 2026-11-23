@@ -9,11 +9,11 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import com.google.api.client.util.Sets;
 import com.google.common.collect.Lists;
 import com.neovisionaries.i18n.LanguageCode;
-import de.caritas.cob.userservice.api.model.Appointment;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.ConsultantAgency;
 import de.caritas.cob.userservice.api.model.ConsultantStatus;
 import de.caritas.cob.userservice.api.model.Language;
+import jakarta.persistence.EntityManager;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.PositiveOrZero;
 import java.time.LocalDateTime;
@@ -54,9 +54,9 @@ class ConsultantRepositoryIT {
 
   @Autowired private ConsultantRepository underTest;
 
-  @Autowired private ConsultantAgencyRepository consultantAgencyRepository;
+  @Autowired private EntityManager entityManager;
 
-  @Autowired private AppointmentRepository appointmentRepository;
+  @Autowired private ConsultantAgencyRepository consultantAgencyRepository;
 
   @BeforeEach
   public void backup() {
@@ -76,19 +76,63 @@ class ConsultantRepositoryIT {
   }
 
   @Test
-  void deleteShouldDeleteConsultantAndAppointment() {
-    givenACreatedConsultantWithAnAppointment();
+  void loginProfileShouldExcludeSoftDeletedAgencyRelationsWithoutDeletingHistory() {
+    var consultantId = originalConsultant.getId();
+    var expectedIds =
+        originalConsultant.getConsultantAgencies().stream()
+            .map(ConsultantAgency::getAgencyId)
+            .collect(Collectors.toCollection(HashSet::new));
+    saveConsultantAgency(originalConsultant, 900001L);
+    saveConsultantAgency(originalConsultant, 900002L);
+    var removed =
+        originalConsultant.getConsultantAgencies().stream()
+            .filter(relation -> relation.getAgencyId().equals(900002L))
+            .findFirst()
+            .orElseThrow();
+    removed.setDeleteDate(LocalDateTime.now());
+    consultantAgencyRepository.save(removed);
+    entityManager.flush();
+    var removedId = removed.getId();
+    entityManager.clear();
 
-    assertTrue(underTest.existsById(consultant.getId()));
-    var appointment = consultant.getAppointments().iterator().next();
-    assertTrue(appointmentRepository.existsById(appointment.getId()));
-    var countConsultants = underTest.count();
+    var reloaded = underTest.findByIdAndDeleteDateIsNull(consultantId).orElseThrow();
+    expectedIds.add(900001L);
+    assertEquals(
+        expectedIds,
+        reloaded.getConsultantAgencies().stream()
+            .map(ConsultantAgency::getAgencyId)
+            .collect(Collectors.toSet()));
+    assertNotNull(consultantAgencyRepository.findById(removedId).orElseThrow().getDeleteDate());
+  }
 
-    underTest.delete(consultant);
+  @Test
+  void findByAgencyIdShouldExcludeConsultantsWhoseAgencyRelationIsSoftDeleted() {
+    var consultantId = originalConsultant.getId();
+    saveConsultantAgency(originalConsultant, 900003L);
+    saveConsultantAgency(originalConsultant, 900004L);
+    var removed =
+        originalConsultant.getConsultantAgencies().stream()
+            .filter(relation -> relation.getAgencyId().equals(900004L))
+            .findFirst()
+            .orElseThrow();
+    removed.setDeleteDate(LocalDateTime.now());
+    consultantAgencyRepository.save(removed);
+    entityManager.flush();
+    entityManager.clear();
 
-    assertEquals(countConsultants - 1, underTest.count());
-    assertFalse(underTest.existsById(consultant.getId()));
-    assertFalse(appointmentRepository.existsById(appointment.getId()));
+    var stillAssigned = underTest.findByConsultantAgenciesAgencyIdAndDeleteDateIsNull(900003L);
+    assertTrue(stillAssigned.stream().anyMatch(found -> found.getId().equals(consultantId)));
+
+    var removedAssignment = underTest.findByConsultantAgenciesAgencyIdAndDeleteDateIsNull(900004L);
+    assertFalse(removedAssignment.stream().anyMatch(found -> found.getId().equals(consultantId)));
+
+    var byRemovedAgencyOnly =
+        underTest.findByConsultantAgenciesAgencyIdInAndDeleteDateIsNull(List.of(900004L));
+    assertFalse(byRemovedAgencyOnly.stream().anyMatch(found -> found.getId().equals(consultantId)));
+
+    var byBothAgencies =
+        underTest.findByConsultantAgenciesAgencyIdInAndDeleteDateIsNull(List.of(900003L, 900004L));
+    assertTrue(byBothAgencies.stream().anyMatch(found -> found.getId().equals(consultantId)));
   }
 
   @Test
@@ -232,6 +276,54 @@ class ConsultantRepositoryIT {
   }
 
   @Test
+  void findAllByInfixShouldFindConsultantByInternalDisplayName() {
+    var infix = RandomStringUtils.randomAlphanumeric(16);
+    // A seeded consultant can contain the random infix by chance, so only the delta is asserted.
+    var preExisting = underTest.findAllByInfix(infix, null, Pageable.unpaged()).getTotalElements();
+    var consultant = givenConsultantMatchingInternalDisplayName(infix);
+    matchingIds.add(consultant.getId());
+
+    var consultantPage = underTest.findAllByInfix(infix, null, Pageable.unpaged());
+
+    assertEquals(preExisting + 1, consultantPage.getTotalElements());
+    var foundIds =
+        consultantPage.stream().map(Consultant.ConsultantBase::getId).collect(Collectors.toSet());
+    assertTrue(foundIds.contains(consultant.getId()));
+  }
+
+  @Test
+  void findAllByInfixAndAgencyIdsShouldFindConsultantByInternalDisplayName() {
+    var infix = RandomStringUtils.randomAlphanumeric(16);
+    var agencyId = easyRandom.nextLong(1000, Long.MAX_VALUE);
+    var consultant = givenConsultantMatchingInternalDisplayName(infix);
+    saveConsultantAgency(consultant, agencyId);
+    underTest.save(consultant);
+    matchingIds.add(consultant.getId());
+
+    var consultantPage =
+        underTest.findAllByInfixAndAgencyIds(infix, List.of(agencyId), null, Pageable.unpaged());
+
+    var foundIds =
+        consultantPage.stream().map(Consultant.ConsultantBase::getId).collect(Collectors.toSet());
+    assertTrue(foundIds.contains(consultant.getId()));
+  }
+
+  private Consultant givenConsultantMatchingInternalDisplayName(String infix) {
+    var dbConsultant = underTest.findAll().iterator().next();
+    var consultant = new Consultant();
+    BeanUtils.copyProperties(dbConsultant, consultant);
+    consultant.setId(UUID.randomUUID().toString());
+    consultant.setUsername(RandomStringUtils.randomAlphabetic(8));
+    consultant.setMatrixUserId(RandomStringUtils.randomAlphabetic(8));
+    consultant.setFirstName(aStringWithoutInfix(infix));
+    consultant.setLastName(aStringWithoutInfix(infix));
+    consultant.setEmail(aValidEmailWithoutInfix(infix));
+    consultant.setDisplayName(aStringWithoutInfix(infix));
+    consultant.setInternalDisplayName("Team " + infix + " Nord");
+    return underTest.save(consultant);
+  }
+
+  @Test
   void findAllByInfixShouldReturnEmptyResultIfNoneMatching() {
     var infix = RandomStringUtils.randomAlphanumeric(4);
     // A seeded consultant can contain the random infix by chance, so only the delta is asserted.
@@ -246,6 +338,27 @@ class ConsultantRepositoryIT {
     var foundIds =
         consultantPage.stream().map(Consultant.ConsultantBase::getId).collect(Collectors.toSet());
     nonMatchingIds.forEach(id -> assertFalse(foundIds.contains(id)));
+  }
+
+  @Test
+  void findByIdInAndDeleteDateIsNullShouldLoadOnlyRequestedActiveConsultants() {
+    var infix = RandomStringUtils.randomAlphanumeric(16);
+    var active = underTest.save(givenConsultantMatchingEmail(infix));
+    matchingIds.add(active.getId());
+    var deleted = givenConsultantMatchingEmail(infix);
+    deleted.setStatus(ConsultantStatus.IN_DELETION);
+    deleted.setDeleteDate(LocalDateTime.now());
+    deleted = underTest.save(deleted);
+    matchingIds.add(deleted.getId());
+    var notRequested = underTest.save(givenConsultantMatchingEmail(infix));
+    matchingIds.add(notRequested.getId());
+
+    var found =
+        underTest.findByIdInAndDeleteDateIsNull(
+            List.of(active.getId(), deleted.getId(), "unknown-consultant-id"));
+
+    assertEquals(
+        Set.of(active.getId()), found.stream().map(Consultant::getId).collect(Collectors.toSet()));
   }
 
   @Test
@@ -606,30 +719,6 @@ class ConsultantRepositoryIT {
       underTest.save(consultant);
       nonMatchingIds.add(consultant.getId());
     }
-  }
-
-  private void givenACreatedConsultantWithAnAppointment() {
-    var dbConsultant = underTest.findAll().iterator().next();
-    consultant = new Consultant();
-    BeanUtils.copyProperties(dbConsultant, consultant);
-    consultant.setId(UUID.randomUUID().toString());
-    consultant.setUsername(RandomStringUtils.randomAlphabetic(8));
-    consultant.setEmail(aValidEmail());
-    consultant.setMatrixUserId(RandomStringUtils.randomAlphabetic(8));
-    underTest.save(consultant);
-
-    var appointment = easyRandom.nextObject(Appointment.class);
-    appointment.setConsultant(consultant);
-    appointment.setId(null);
-    var desc = appointment.getDescription();
-    if (desc.length() > 300) {
-      appointment.setDescription(desc.substring(0, 300));
-    }
-
-    consultant.setAppointments(Set.of(appointment));
-    underTest.save(consultant);
-
-    consultant = underTest.findById(consultant.getId()).orElseThrow();
   }
 
   private String aValidEmail() {

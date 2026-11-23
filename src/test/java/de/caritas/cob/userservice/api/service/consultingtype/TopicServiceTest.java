@@ -17,15 +17,22 @@ import de.caritas.cob.userservice.topicservice.generated.web.model.TopicDTO;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
 import org.springframework.http.HttpHeaders;
+import org.springframework.mock.web.MockHttpServletRequest;
+import org.springframework.web.context.request.RequestAttributes;
+import org.springframework.web.context.request.RequestContextHolder;
+import org.springframework.web.context.request.ServletRequestAttributes;
 
 @ExtendWith(MockitoExtension.class)
 @MockitoSettings(strictness = Strictness.LENIENT)
@@ -48,6 +55,118 @@ class TopicServiceTest {
     when(controllerApi.getApiClient()).thenReturn(apiClient);
     when(securityHeaderSupplier.getKeycloakAndCsrfHttpHeaders()).thenReturn(new HttpHeaders());
     doNothing().when(tenantHeaderSupplier).addTenantHeader(any(HttpHeaders.class));
+  }
+
+  @AfterEach
+  void clearRequestContext() {
+    RequestContextHolder.resetRequestAttributes();
+  }
+
+  @ParameterizedTest
+  @CsvSource({
+    "en,en",
+    "de,de",
+    "en-US,en",
+    "fr,de",
+    "invalid!,de",
+    "'de;q=0.5,en;q=0.9',en",
+    "'fr-CH,en;q=0.9,de;q=0.8',en",
+    "'fr-CH,de;q=0.9,en;q=0.8',de",
+    "'en;q=0,fr',de",
+    "'',de",
+    "'   ',de"
+  })
+  void getAllActiveTopics_Should_ForwardOnlySupportedLanguageCookie(
+      String acceptLanguage, String expectedLanguage) {
+    var request = new MockHttpServletRequest();
+    request.addHeader(HttpHeaders.ACCEPT_LANGUAGE, acceptLanguage);
+    request.addHeader(HttpHeaders.COOKIE, "session=test-session; arbitrary=value");
+    RequestContextHolder.setRequestAttributes(new ServletRequestAttributes(request));
+
+    service.getAllActiveTopics();
+
+    verify(apiClient).addDefaultHeader(HttpHeaders.COOKIE, "lang=" + expectedLanguage);
+    verify(apiClient, never())
+        .addDefaultHeader(HttpHeaders.COOKIE, request.getHeader(HttpHeaders.COOKIE));
+    verify(securityHeaderSupplier, never()).getKeycloakAndCsrfHttpHeaders();
+  }
+
+  @Test
+  void getAllActiveTopics_Should_DefaultToGermanForNonServletRequestContext() {
+    RequestContextHolder.setRequestAttributes(mock(RequestAttributes.class));
+
+    service.getAllActiveTopics();
+
+    verify(apiClient).addDefaultHeader(HttpHeaders.COOKIE, "lang=de");
+  }
+
+  @Test
+  void getAllActiveTopics_Should_DefaultToGermanWithoutRequest() {
+    service.getAllActiveTopics();
+
+    verify(apiClient).addDefaultHeader(HttpHeaders.COOKIE, "lang=de");
+  }
+
+  @Test
+  void getAllActiveTopics_Should_DefaultToGermanWithoutLanguageHeader() {
+    RequestContextHolder.setRequestAttributes(
+        new ServletRequestAttributes(new MockHttpServletRequest()));
+
+    service.getAllActiveTopics();
+
+    verify(apiClient).addDefaultHeader(HttpHeaders.COOKIE, "lang=de");
+  }
+
+  @Test
+  void activeManagementTopics_useTheExplicitTenantAndPublicLanguage() {
+    when(topicServiceApiControllerFactory.createScopedControllerApi()).thenReturn(controllerApi);
+    var request = new MockHttpServletRequest();
+    request.addHeader(HttpHeaders.ACCEPT_LANGUAGE, "en");
+    RequestContextHolder.setRequestAttributes(new ServletRequestAttributes(request));
+
+    service.getActiveTopicsForTenant(2L);
+
+    verify(apiClient).addDefaultHeader("tenantId", "2");
+    verify(apiClient).addDefaultHeader(HttpHeaders.COOKIE, "lang=en");
+    verify(tenantHeaderSupplier, never()).addTenantHeader(any());
+    verify(securityHeaderSupplier, never()).getKeycloakAndCsrfHttpHeaders();
+  }
+
+  @Test
+  void managementTopicNames_includeInactiveTopicsFromTheSelectedTenant() {
+    var headers = new HttpHeaders();
+    headers.setBearerAuth("test-token");
+    headers.set("X-CSRF-Token", "test-csrf");
+    when(securityHeaderSupplier.getKeycloakAndCsrfHttpHeaders()).thenReturn(headers);
+    when(topicServiceApiControllerFactory.createScopedControllerApi()).thenReturn(controllerApi);
+    var topic = new TopicDTO().id(99L).name("Schuldenberatung");
+    when(controllerApi.getAllTopics()).thenReturn(List.of(topic));
+
+    assertThat(service.getTopicNamesForTenant(2L)).containsExactlyEntriesOf(Map.of(99L, topic));
+    verify(apiClient).addDefaultHeader("tenantId", "2");
+    verify(apiClient).addDefaultHeader(HttpHeaders.AUTHORIZATION, "Bearer test-token");
+    verify(apiClient).addDefaultHeader("X-CSRF-Token", "test-csrf");
+    verify(apiClient).addDefaultHeader(HttpHeaders.COOKIE, "lang=de");
+    verify(topicServiceApiControllerFactory, never()).createControllerApi();
+    verify(controllerApi, never()).getAllActiveTopics();
+    verify(tenantHeaderSupplier, never()).addTenantHeader(any());
+  }
+
+  @Test
+  void managementTopicNames_returnsAnEmptyMapWhenScopedApiReturnsNoBody() {
+    when(topicServiceApiControllerFactory.createScopedControllerApi()).thenReturn(controllerApi);
+    when(controllerApi.getAllTopics()).thenReturn(null);
+
+    assertThat(service.getTopicNamesForTenant(2L)).isEmpty();
+    verify(topicServiceApiControllerFactory, never()).createControllerApi();
+  }
+
+  @Test
+  void getAllTopics_Should_NotAddPublicLanguageCookieToAuthenticatedLookup() {
+    service.getAllTopics();
+
+    verify(apiClient, never())
+        .addDefaultHeader(org.mockito.ArgumentMatchers.eq(HttpHeaders.COOKIE), any());
   }
 
   // ─── getAllTopics ──────────────────────────────────────────────────────────

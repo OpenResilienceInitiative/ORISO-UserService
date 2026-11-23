@@ -5,49 +5,40 @@ import static org.apache.commons.lang3.StringUtils.isBlank;
 import java.util.Locale;
 
 /**
- * Colour arithmetic and the platform palette for the branded e-mail layout (ORISO-UserService#914).
+ * Colour rules of the branded e-mail layout: the same design-token logic as the web frontend
+ * (ADR-026 amendment 2026-10-02, ORISO-UserService#1252, ORISO-Docs#143).
  *
  * <p>Mail clients give us no cascade to fall back on: whatever colour pair we inline is what the
- * recipient sees. Tenants configure their theme colours freely — a tenant {@code primaryColor} of
- * {@code #f8e71c} is a yellow that renders white text effectively invisible. So every foreground
- * colour in the layout is *derived* from the configured accent instead of assumed:
+ * recipient sees. A tenant's {@code theming.primaryColor} is therefore used <b>as configured</b>
+ * for the header stripe and the button fill, and every foreground colour is derived from it the way
+ * ORISO-Frontend's {@code computeOrisoPalette} does:
  *
  * <ul>
- *   <li>{@link #readableTextColor(String)} picks the better of near-black / white by WCAG contrast
- *       ratio, so light accents get dark text automatically.
- *   <li>{@link #onLightBackground(String)} darkens accents that would disappear on the white
- *       content area (link text, wordmark) until they clear the 4.5:1 body-text threshold.
- *   <li>{@link #borderColor(String)} gives a nearly invisible button a visible outline.
+ *   <li>{@link #usablePrimary(String)} accepts a seed unless it is not a hex colour or is too pale
+ *       (near-grey, HCT chroma below {@value #TOO_PALE_CHROMA}); mail and web app reject the same
+ *       seeds. A light but chromatic colour such as yellow is accepted.
+ *   <li>{@link #onPrimary(String)} is the button label: white if the seed reaches 4.5:1 against
+ *       white, otherwise the same-hue dark tone 10 (the web app's {@code --m3-on-primary}).
+ *   <li>{@link #onLightBackground(String)} darkens a colour until it clears 4.5:1 on the white
+ *       content area, for link text; stripe and button keep the tenant colour.
  * </ul>
  *
- * <p>The neutral surfaces are <em>not</em> defined here — they are literals in {@code
- * classpath:email/layout/*.html}, taken one-for-one from the product's own tokens in {@code
- * ORISO-Admin/src/app.css}: {@code #e4e2e2} (--admin-workspace-background), {@code #ffffff}
- * (--m3-surface-container-lowest), {@code #f0edee} (--m3-surface-container), {@code #c4c7c8}
- * (--admin-field-outline), {@code #1b1b1c} (--m3-on-surface), {@code #444748}
- * (--m3-on-surface-variant) and {@code #747878} (--m3-outline).
+ * <p>The HCT arithmetic lives in {@link Hct}. Parity with the web app is asserted against the
+ * Frontend-owned golden fixture by {@code EmailColorsParityTest}. Neutral surface colours belong to
+ * the canonical generated mail resources.
  */
 public final class EmailColors {
 
-  /**
-   * The product's own dark accent, {@code --oriso-app-accent-dark} in {@code
-   * ORISO-Admin/src/app.css}. Used whenever a tenant configured no colour of its own.
-   *
-   * <p>Per the binding colour rule of #914 the <b>light</b> rendering uses the <b>dark</b> accent —
-   * that is what {@code theming.primaryColor} is, a light-mode token. The mirrored constant for the
-   * dark rendering (the light/rose accent) deliberately does not exist yet; see {@link
-   * EmailBrandingResolver} for the single seam and for what unblocks it.
-   */
-  public static final String PLATFORM_ACCENT_DARK = "#a5000a";
+  /** The web app's {@code TOO_PALE_CHROMA} (orisoTuning.ts): below this a seed is ignored. */
+  static final double TOO_PALE_CHROMA = 12;
 
   /** {@code --m3-on-surface}. */
   static final String DARK_TEXT = "#1b1b1c";
 
-  static final String LIGHT_TEXT = "#ffffff";
   static final String WHITE = "#ffffff";
 
-  /** WCAG AA for normal body text. */
-  private static final double AA_NORMAL_TEXT = 4.5d;
+  /** WCAG AA for normal body text; the web app's {@code CONTRAST_AA}. */
+  static final double AA_NORMAL_TEXT = 4.5d;
 
   private EmailColors() {}
 
@@ -92,17 +83,35 @@ public final class EmailColors {
   }
 
   /**
-   * Foreground colour to use on top of {@code background}: near-black or white, whichever has the
-   * higher contrast ratio. This is the guard against "light text on a light background".
+   * The seed a tenant colour yields, or {@code null} when the web app would ignore it as well: not
+   * a hex colour, or too pale to carry a brand palette (see {@link #isTooPale(String)}). A light
+   * chromatic colour is usable; the web app does not reject it either.
    */
-  public static String readableTextColor(String background) {
-    String normalized = normalize(background);
-    if (normalized == null) {
-      return LIGHT_TEXT;
+  public static String usablePrimary(String color) {
+    String normalized = normalize(color);
+    if (normalized == null || isTooPale(normalized)) {
+      return null;
     }
-    return contrastRatio(normalized, DARK_TEXT) >= contrastRatio(normalized, LIGHT_TEXT)
-        ? DARK_TEXT
-        : LIGHT_TEXT;
+    return normalized;
+  }
+
+  /** Near-achromatic colours (black, white, grey) cannot carry a brand palette. */
+  public static boolean isTooPale(String normalizedColor) {
+    return Hct.fromHex(normalizedColor).chroma() < TOO_PALE_CHROMA;
+  }
+
+  /**
+   * Label colour on a button filled with {@code primary}, derived like the web app's {@code
+   * --m3-on-primary}: white if the colour reaches 4.5:1 against white, otherwise tone 10 of the
+   * same hue and chroma, a dark tone of the brand colour.
+   */
+  public static String onPrimary(String primary) {
+    String normalized = normalize(primary);
+    if (normalized == null) {
+      throw new IllegalArgumentException("A #rrggbb colour is required");
+    }
+    Hct hct = Hct.fromHex(normalized);
+    return Hct.ratioOfTones(100, hct.tone()) >= AA_NORMAL_TEXT ? WHITE : hct.toneHex(10);
   }
 
   /**
@@ -123,18 +132,6 @@ public final class EmailColors {
       candidate = darken(candidate, 0.12d);
     }
     return DARK_TEXT;
-  }
-
-  /**
-   * Outline for a filled button: the accent itself when it is clearly distinguishable from the
-   * white card, otherwise a darkened variant so a near-white accent still reads as a button.
-   */
-  public static String borderColor(String background) {
-    String normalized = normalize(background);
-    if (normalized == null) {
-      return PLATFORM_ACCENT_DARK;
-    }
-    return contrastRatio(normalized, WHITE) >= 1.5d ? normalized : darken(normalized, 0.35d);
   }
 
   /** WCAG 2.x contrast ratio between two opaque colours; always {@code >= 1.0}. */
@@ -161,7 +158,7 @@ public final class EmailColors {
   static String darken(String color, double factor) {
     String normalized = normalize(color);
     if (normalized == null) {
-      return PLATFORM_ACCENT_DARK;
+      throw new IllegalArgumentException("A #rrggbb colour is required");
     }
     int r = scale(Integer.parseInt(normalized.substring(1, 3), 16), factor);
     int g = scale(Integer.parseInt(normalized.substring(3, 5), 16), factor);

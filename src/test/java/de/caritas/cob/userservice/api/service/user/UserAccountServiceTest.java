@@ -15,6 +15,7 @@ import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.verifyNoMoreInteractions;
 import static org.mockito.Mockito.when;
 
+import com.neovisionaries.i18n.LanguageCode;
 import de.caritas.cob.userservice.api.adapters.web.dto.NotificationsSettingsDTO;
 import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
 import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException;
@@ -28,16 +29,18 @@ import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
 import de.caritas.cob.userservice.api.port.out.IdentityDeactivator;
 import de.caritas.cob.userservice.api.port.out.IdentityEmailAddressUpdater;
 import de.caritas.cob.userservice.api.service.ConsultantService;
-import de.caritas.cob.userservice.api.service.appointment.AppointmentService;
 import de.caritas.cob.userservice.api.service.notification.SupervisorAddedEmailNotificationService;
 import de.caritas.cob.userservice.api.service.statistics.StatisticsService;
 import de.caritas.cob.userservice.api.service.statistics.event.DeleteAccountStatisticsEvent;
+import de.caritas.cob.userservice.api.workflow.delete.model.DeletionLifecycleState;
 import de.caritas.cob.userservice.api.workflow.delete.service.DeletionLifecycleService;
 import java.util.Optional;
 import org.apache.commons.lang3.RandomStringUtils;
 import org.jeasy.random.EasyRandom;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.EnumSource;
 import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
@@ -49,16 +52,29 @@ public class UserAccountServiceTest {
 
   private static final EasyRandom EASY_RANDOM = new EasyRandom();
 
+  @Mock
+  private de.caritas.cob.userservice.api.service.AskerEmailCollectionPolicy emailCollectionPolicy;
+
   @InjectMocks private UserAccountService accountProvider;
+
+  @Mock
+  private de.caritas.cob.userservice.api.service.livechat.LiveChatAccountClaimService
+      liveChatClaims;
+
   @Mock private UserService userService;
+
+  @Mock
+  private de.caritas.cob.userservice.api.workflow.delete.service.AskerEnquiryCloser
+      askerEnquiryCloser;
+
+  @Mock private de.caritas.cob.userservice.api.port.out.SessionRepository sessions;
+  @Mock private de.caritas.cob.userservice.api.admin.service.tenant.TenantService tenantService;
   @Mock private ConsultantService consultantService;
   @Mock private AuthenticatedUser authenticatedUser;
   @Mock private IdentityClient identityClient;
   @Mock private IdentityEmailAddressUpdater identityEmailAddressUpdater;
   @Mock private IdentityDeactivator identityDeactivator;
   @Mock private UserHelper userHelper;
-  @Mock private AppointmentService appointmentService;
-
   @Mock private IdentityClientConfig identityClientConfig;
 
   @Mock private StatisticsService statisticsService;
@@ -66,6 +82,115 @@ public class UserAccountServiceTest {
   @Mock private SupervisorAddedEmailNotificationService supervisorAddedEmailNotificationService;
 
   @Mock private DeletionLifecycleService deletionLifecycleService;
+
+  @org.junit.jupiter.api.BeforeEach
+  void currentTenantAllowsEmailByDefault() {
+    org.springframework.test.util.ReflectionTestUtils.setField(
+        accountProvider,
+        "emailCollectionPolicy",
+        new de.caritas.cob.userservice.api.service.AskerEmailCollectionPolicy(
+            tenantService,
+            sessions,
+            mock(de.caritas.cob.userservice.api.port.out.UserChatRepository.class),
+            mock(org.springframework.transaction.PlatformTransactionManager.class)));
+    org.mockito.Mockito.lenient()
+        .when(tenantService.getRestrictedTenantDataFresh(org.mockito.ArgumentMatchers.anyLong()))
+        .thenAnswer(
+            invocation ->
+                new de.caritas.cob.userservice.tenantservice.generated.web.model
+                        .RestrictedTenantDTO()
+                    .id(invocation.getArgument(0))
+                    .settings(
+                        new de.caritas.cob.userservice.tenantservice.generated.web.model.Settings()
+                            .featureAskerEmailEnabled(true)));
+  }
+
+  /** A random asker that is not a temporary account (#1662 gives those no e-mail address). */
+  private static User permanentAsker() {
+    User user = EASY_RANDOM.nextObject(User.class);
+    user.setTemporaryAccount(false);
+    return user;
+  }
+
+  private void givenOwnedCounsellingSession(User user) {
+    var session = new de.caritas.cob.userservice.api.model.Session();
+    session.setUser(user);
+    session.setConversationType(
+        de.caritas.cob.userservice.api.model.ConversationType.AGENCY_COUNSELLING);
+    when(sessions.findByUser(user)).thenReturn(java.util.List.of(session));
+  }
+
+  @Test
+  void disabledAskerEmailCollectionRejectsChangeBeforeAnyIdentityWrite() {
+    var user = permanentAsker();
+    user.setTenantId(42L);
+    user.setEmail("old@example.org");
+    when(authenticatedUser.getUserId()).thenReturn("user");
+    when(userService.getUser("user")).thenReturn(Optional.of(user));
+    org.mockito.Mockito.lenient()
+        .when(tenantService.getRestrictedTenantDataFresh(42L))
+        .thenReturn(
+            new de.caritas.cob.userservice.tenantservice.generated.web.model.RestrictedTenantDTO()
+                .id(42L)
+                .settings(
+                    new de.caritas.cob.userservice.tenantservice.generated.web.model.Settings()
+                        .featureAskerEmailEnabled(false)));
+    org.assertj.core.api.Assertions.assertThatThrownBy(
+            () -> accountProvider.changeUserAccountEmailAddress(Optional.of("new@example.org")))
+        .isInstanceOf(
+            de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException.class);
+    verifyNoInteractions(identityEmailAddressUpdater);
+  }
+
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.ValueSource(
+      strings = {
+        "featureAskerEmailCollectionAgencyCounsellingEnabled",
+        "featureAskerEmailCollectionSelfHelpEnabled"
+      })
+  void restrictedCollectionCannotBeBypassedByTheGlobalProfileWithoutAnOwnedContext(String key) {
+    var user = permanentAsker();
+    user.setTenantId(42L);
+    user.setEmail("old@example.org");
+    when(authenticatedUser.getUserId()).thenReturn("user");
+    when(userService.getUser("user")).thenReturn(Optional.of(user));
+    var settings =
+        new com.fasterxml.jackson.databind.ObjectMapper()
+            .convertValue(
+                java.util.Map.of("featureAskerEmailEnabled", true, key, false),
+                de.caritas.cob.userservice.tenantservice.generated.web.model.Settings.class);
+    when(tenantService.getRestrictedTenantDataFresh(42L))
+        .thenReturn(
+            new de.caritas.cob.userservice.tenantservice.generated.web.model.RestrictedTenantDTO()
+                .id(42L)
+                .settings(settings));
+    org.assertj.core.api.Assertions.assertThatThrownBy(
+            () -> accountProvider.changeUserAccountEmailAddress(Optional.of("new@example.org")))
+        .isInstanceOf(
+            de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException.class);
+    verifyNoInteractions(identityEmailAddressUpdater, supervisorAddedEmailNotificationService);
+    org.assertj.core.api.Assertions.assertThat(user.getEmail()).isEqualTo("old@example.org");
+  }
+
+  @Test
+  void legacySingleTenantEmailChangeStillEnforcesConfiguredCollectionProhibition() {
+    var user = permanentAsker();
+    user.setTenantId(null);
+    user.setEmail("old@example.org");
+    when(authenticatedUser.getUserId()).thenReturn("user");
+    when(userService.getUser("user")).thenReturn(Optional.of(user));
+    when(tenantService.getSingleTenancyTenantDataFresh())
+        .thenReturn(
+            new de.caritas.cob.userservice.tenantservice.generated.web.model.RestrictedTenantDTO()
+                .id(42L)
+                .settings(
+                    new de.caritas.cob.userservice.tenantservice.generated.web.model.Settings()
+                        .featureAskerEmailEnabled(false)));
+    org.assertj.core.api.Assertions.assertThatThrownBy(
+            () -> accountProvider.changeUserAccountEmailAddress(Optional.of("new@example.org")))
+        .isInstanceOf(ForbiddenException.class);
+    verifyNoInteractions(identityEmailAddressUpdater);
+  }
 
   @Test
   public void findUserByEmail_Should_CallUserService() {
@@ -197,14 +322,54 @@ public class UserAccountServiceTest {
     consultant.setEmail("newMail");
     verify(this.consultantService, times(1)).saveConsultant(consultant);
     verify(this.userService, times(2)).getUser(any());
+    // getUser cannot return a soft-deleted account, so the writability guard falls back to the
+    // lookup that can.
+    verify(this.userService).findDeletedById(any());
     verifyNoMoreInteractions(this.userService);
     verifyNoInteractions(userHelper);
+  }
+
+  // #1662: a temporary account never saves an e-mail address; clearing one stays possible.
+
+  @Test
+  public void changeUserAccountEmailAddress_Should_Return403_When_TheAccountIsTemporary() {
+    User guest = permanentAsker();
+    guest.setTenantId(42L);
+    guest.setTemporaryAccount(true);
+    when(this.authenticatedUser.getUserId()).thenReturn("user");
+    when(this.userService.getUser("user")).thenReturn(Optional.of(guest));
+
+    org.junit.jupiter.api.Assertions.assertThrows(
+        de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException.class,
+        () -> accountProvider.changeUserAccountEmailAddress(Optional.of("new@example.org")));
+    verifyNoInteractions(identityEmailAddressUpdater);
+    verify(userService, never()).saveUser(any());
+  }
+
+  @Test
+  public void changeUserAccountEmailAddress_Should_ClearTheAddress_When_TheAccountIsTemporary() {
+    User guest = permanentAsker();
+    guest.setTenantId(42L);
+    guest.setTemporaryAccount(true);
+    guest.setEmail("guest@example.org");
+    when(this.authenticatedUser.getUserId()).thenReturn("user");
+    when(this.userService.getUser("user")).thenReturn(Optional.of(guest));
+    when(userHelper.getDummyEmail("user")).thenReturn("user@dummy.example");
+
+    accountProvider.changeUserAccountEmailAddress(Optional.empty());
+
+    var saved = ArgumentCaptor.forClass(User.class);
+    verify(userService).saveUser(saved.capture());
+    assertThat(saved.getValue().getEmail()).isEqualTo("user@dummy.example");
+    verify(identityEmailAddressUpdater).deleteCurrentUserEmail();
   }
 
   @Test
   public void
       changeUserAccountEmailAddress_Should_changeNonEmptyAddressInKeycloakAndUserRepository_When_authenticatedUserIsUser() {
-    User user = EASY_RANDOM.nextObject(User.class);
+    User user = permanentAsker();
+    user.setTenantId(42L);
+    givenOwnedCounsellingSession(user);
     when(this.authenticatedUser.getUserId()).thenReturn("user");
     when(this.userService.getUser("user")).thenReturn(Optional.of(user));
 
@@ -212,18 +377,38 @@ public class UserAccountServiceTest {
     this.accountProvider.changeUserAccountEmailAddress(Optional.of(newMail));
 
     verify(identityEmailAddressUpdater).updateCurrentUserEmail(newMail);
-    verify(this.appointmentService, times(1)).updateAskerEmail(user.getUserId(), newMail);
     user.setEmail(newMail);
     verify(this.userService, times(1)).saveUser(user);
     verify(this.consultantService, times(2)).getConsultant(any());
+    // the writability check also looks for a consultant in the safeguard window
+    verify(this.consultantService).findConsultantIncludingDeleted(any());
     verifyNoMoreInteractions(this.consultantService);
     verifyNoInteractions(userHelper);
   }
 
   @Test
+  public void changeUserAccountEmailAddress_Should_UseGermanNotice_WhenUserLanguageIsMissing() {
+    User user = permanentAsker();
+    user.setTenantId(42L);
+    givenOwnedCounsellingSession(user);
+    user.setLanguageCode(null);
+    when(authenticatedUser.getUserId()).thenReturn("user");
+    when(userService.getUser("user")).thenReturn(Optional.of(user));
+
+    accountProvider.changeUserAccountEmailAddress(Optional.of("newMail"));
+
+    verify(identityEmailAddressUpdater).updateCurrentUserEmail("newMail");
+    verify(supervisorAddedEmailNotificationService)
+        .notifyEmailAddressChanged(
+            user.getUsername(), "newMail", user.getTenantId(), null, null, LanguageCode.de);
+  }
+
+  @Test
   public void
       changeUserAccountEmailAddress_Should_changeNonEmptyAddressInKeycloakAndUserRepository_When_authenticatedUserHasNoLegacyChatId() {
-    User user = EASY_RANDOM.nextObject(User.class);
+    User user = permanentAsker();
+    user.setTenantId(42L);
+    givenOwnedCounsellingSession(user);
     user.setMatrixUserId(null);
     when(this.authenticatedUser.getUserId()).thenReturn("user");
     when(this.userService.getUser("user")).thenReturn(Optional.of(user));
@@ -232,10 +417,11 @@ public class UserAccountServiceTest {
     this.accountProvider.changeUserAccountEmailAddress(Optional.of(newMail));
 
     verify(identityEmailAddressUpdater).updateCurrentUserEmail(newMail);
-    verify(this.appointmentService, times(1)).updateAskerEmail(user.getUserId(), newMail);
     user.setEmail(newMail);
     verify(this.userService, times(1)).saveUser(user);
     verify(this.consultantService, times(2)).getConsultant(any());
+    // the writability check also looks for a consultant in the safeguard window
+    verify(this.consultantService).findConsultantIncludingDeleted(any());
     verifyNoMoreInteractions(this.consultantService);
     verifyNoInteractions(userHelper);
   }
@@ -257,13 +443,14 @@ public class UserAccountServiceTest {
     consultant.setEmail(dummyEmail);
     verify(consultantService).saveConsultant(consultant);
     verify(userService, times(2)).getUser(any());
+    verify(userService).findDeletedById(any());
     verifyNoMoreInteractions(userService);
   }
 
   @Test
   public void
       changeUserAccountEmailAddress_Should_changeEmptyAddressInKeycloakAndUserRepository_When_authenticatedUserIsUser() {
-    var user = EASY_RANDOM.nextObject(User.class);
+    var user = permanentAsker();
     var userId = RandomStringUtils.randomAlphabetic(16);
     var dummyEmail = RandomStringUtils.randomAlphabetic(16);
     when(authenticatedUser.getUserId()).thenReturn(userId);
@@ -276,11 +463,12 @@ public class UserAccountServiceTest {
 
     verify(identityEmailAddressUpdater).deleteCurrentUserEmail();
     verify(identityEmailAddressUpdater, never()).updateCurrentUserEmail(anyString());
-    verify(this.appointmentService, times(1)).updateAskerEmail(user.getUserId(), dummyEmail);
     user.setEmail(dummyEmail);
     verify(userService).saveUser(user);
     assertAllAdviceSeekerNotificationsAreEnabled(user);
     verify(consultantService, times(2)).getConsultant(any());
+    // the writability check also looks for a consultant in the safeguard window
+    verify(this.consultantService).findConsultantIncludingDeleted(any());
     verifyNoMoreInteractions(consultantService);
   }
 
@@ -333,33 +521,142 @@ public class UserAccountServiceTest {
     verify(userService, never()).saveUser(any());
   }
 
-  @Test
-  public void
-      ensureCurrentAccountIsWritable_Should_ThrowForbiddenException_When_UserIsInReadOnlySafeguard() {
+  /**
+   * Every one of these goes through findDeletedById, not getUser. getUser is
+   * findByUserIdAndDeleteDateIsNull, so it cannot return a soft-deleted account — stubbing it with
+   * one forces a result production can never produce and the safeguard would pass while never
+   * running.
+   */
+  @ParameterizedTest
+  @EnumSource(
+      value = DeletionLifecycleState.class,
+      names = {
+        "READ_ONLY_SAFEGUARD",
+        "REACTIVATION_IN_PROGRESS",
+        "REACTIVATION_REPAIR_REQUIRED",
+        "HARD_DELETE_IN_PROGRESS",
+        "HARD_DELETE_PARTIAL_FAILURE"
+      })
+  void ensureCurrentAccountIsWritable_Should_ThrowForbiddenException_When_UserIsFrozen(
+      DeletionLifecycleState frozenState) {
     var user = new User();
     user.setDeleteDate(java.time.LocalDateTime.now());
-    user.setDeletionLifecycleState(
-        de.caritas.cob.userservice.api.workflow.delete.model.DeletionLifecycleState
-            .READ_ONLY_SAFEGUARD);
+    user.setDeletionLifecycleState(frozenState);
     when(authenticatedUser.getUserId()).thenReturn(USER_ID);
-    when(userService.getUser(USER_ID)).thenReturn(Optional.of(user));
+    when(userService.getUser(USER_ID)).thenReturn(Optional.empty());
+    when(userService.findDeletedById(USER_ID)).thenReturn(Optional.of(user));
 
     assertThrows(ForbiddenException.class, () -> accountProvider.updateUserMobileToken("token"));
   }
 
-  @Test
-  public void
-      ensureCurrentAccountIsWritable_Should_ThrowForbiddenException_When_ConsultantIsInReadOnlySafeguard() {
+  @ParameterizedTest
+  @EnumSource(
+      value = DeletionLifecycleState.class,
+      names = {"PENDING_DELETION", "HARD_DELETED"})
+  void ensureCurrentAccountIsWritable_Should_NotThrow_When_LifecycleStateIsNotFrozen(
+      DeletionLifecycleState writableState) {
+    var user = new User();
+    user.setDeleteDate(java.time.LocalDateTime.now());
+    user.setDeletionLifecycleState(writableState);
+    when(authenticatedUser.getUserId()).thenReturn(USER_ID);
+    when(userService.getUser(USER_ID)).thenReturn(Optional.empty());
+    when(userService.findDeletedById(USER_ID)).thenReturn(Optional.of(user));
+
+    accountProvider.updateUserMobileToken("token");
+  }
+
+  @ParameterizedTest
+  @EnumSource(
+      value = DeletionLifecycleState.class,
+      names = {
+        "READ_ONLY_SAFEGUARD",
+        "REACTIVATION_IN_PROGRESS",
+        "REACTIVATION_REPAIR_REQUIRED",
+        "HARD_DELETE_IN_PROGRESS",
+        "HARD_DELETE_PARTIAL_FAILURE"
+      })
+  void ensureCurrentAccountIsWritable_Should_ThrowForbiddenException_When_ConsultantIsFrozen(
+      DeletionLifecycleState frozenState) {
     when(userService.getUser(USER_ID)).thenReturn(Optional.empty());
     Consultant consultant = new Consultant();
     consultant.setDeleteDate(java.time.LocalDateTime.now());
-    consultant.setDeletionLifecycleState(
-        de.caritas.cob.userservice.api.workflow.delete.model.DeletionLifecycleState
-            .READ_ONLY_SAFEGUARD);
+    consultant.setDeletionLifecycleState(frozenState);
     when(authenticatedUser.getUserId()).thenReturn(USER_ID);
-    when(consultantService.getConsultant(USER_ID)).thenReturn(Optional.of(consultant));
+    // getConsultant is findByIdAndDeleteDateIsNull: it can never return a soft-deleted account,
+    // so the safeguard has to look the consultant up including deleted ones.
+    when(consultantService.getConsultant(USER_ID)).thenReturn(Optional.empty());
+    when(consultantService.findConsultantIncludingDeleted(USER_ID))
+        .thenReturn(Optional.of(consultant));
 
     assertThrows(ForbiddenException.class, () -> accountProvider.addMobileAppToken("token"));
+    verify(consultantService, never()).addMobileAppToken(any(), any());
+  }
+
+  @Test
+  void aTemporaryAccountCannotRegisterADeviceForPushNotifications() {
+    var guest = new User();
+    guest.setUserId(USER_ID);
+    guest.setTemporaryAccount(true);
+    when(authenticatedUser.getUserId()).thenReturn(USER_ID);
+    when(userService.getUser(USER_ID)).thenReturn(Optional.of(guest));
+
+    assertThrows(ForbiddenException.class, () -> accountProvider.updateUserMobileToken("token"));
+    assertThrows(ForbiddenException.class, () -> accountProvider.addMobileAppToken("token"));
+    verify(userService, never()).saveUser(any());
+    verify(userService, never()).addMobileAppToken(any(), any());
+  }
+
+  @Test
+  void aTemporaryAccountMayStillClearItsDeviceToken() {
+    var guest = new User();
+    guest.setUserId(USER_ID);
+    guest.setTemporaryAccount(true);
+    guest.setMobileToken("old-device-token");
+    when(authenticatedUser.getUserId()).thenReturn(USER_ID);
+    when(userService.getUser(USER_ID)).thenReturn(Optional.of(guest));
+    when(userService.getUserForUpdate(USER_ID)).thenReturn(Optional.of(guest));
+
+    accountProvider.updateUserMobileToken("");
+
+    var saved = org.mockito.ArgumentCaptor.forClass(User.class);
+    verify(userService).saveUser(saved.capture());
+    org.assertj.core.api.Assertions.assertThat(saved.getValue().getMobileToken()).isEmpty();
+  }
+
+  @Test
+  void theMobileTokenIsWrittenToTheRowReadUnderTheKeepLock() {
+    // #1662: a copy read before a concurrent "Konto behalten" must not merge temporary_account
+    // back; the write uses the row read under the lock the keep takes.
+    var stale = new User();
+    stale.setUserId(USER_ID);
+    stale.setTemporaryAccount(true);
+    var locked = new User();
+    locked.setUserId(USER_ID);
+    locked.setTemporaryAccount(false);
+    locked.setMobileToken("old-device-token");
+    when(authenticatedUser.getUserId()).thenReturn(USER_ID);
+    when(userService.getUser(USER_ID)).thenReturn(Optional.of(stale));
+    when(userService.getUserForUpdate(USER_ID)).thenReturn(Optional.of(locked));
+
+    accountProvider.updateUserMobileToken("");
+
+    var saved = org.mockito.ArgumentCaptor.forClass(User.class);
+    verify(userService).saveUser(saved.capture());
+    org.assertj.core.api.Assertions.assertThat(saved.getValue()).isSameAs(locked);
+    org.assertj.core.api.Assertions.assertThat(saved.getValue().isTemporaryAccount()).isFalse();
+    org.assertj.core.api.Assertions.assertThat(saved.getValue().getMobileToken()).isEmpty();
+  }
+
+  @Test
+  public void ensureCurrentAccountIsWritable_Should_NotThrow_When_ConsultantIsActive() {
+    when(userService.getUser(USER_ID)).thenReturn(Optional.empty());
+    when(userService.findDeletedById(USER_ID)).thenReturn(Optional.empty());
+    when(authenticatedUser.getUserId()).thenReturn(USER_ID);
+    when(consultantService.getConsultant(USER_ID)).thenReturn(Optional.of(new Consultant()));
+
+    accountProvider.addMobileAppToken("token");
+
+    verify(consultantService).addMobileAppToken(USER_ID, "token");
   }
 
   @Test
@@ -374,6 +671,23 @@ public class UserAccountServiceTest {
     accountProvider.deactivateAndFlagUserAccountForDeletion();
 
     verify(userService).saveUser(USER);
+    verify(askerEnquiryCloser).closeOpenEnquiries(USER);
+  }
+
+  @Test
+  public void selfDeletionDoesNotDisableIdentityWhenConversionIsPending() {
+    when(authenticatedUser.getUserId()).thenReturn(USER_ID);
+    when(userService.getUser(USER_ID)).thenReturn(Optional.of(USER));
+    Mockito.doThrow(
+            new de.caritas.cob.userservice.api.exception.httpresponses.ConflictException("pending"))
+        .when(liveChatClaims)
+        .claimIntentionalDeletion(USER.getUserId());
+    org.junit.jupiter.api.Assertions.assertThrows(
+        de.caritas.cob.userservice.api.exception.httpresponses.ConflictException.class,
+        () -> accountProvider.deactivateAndFlagUserAccountForDeletion());
+    verify(identityDeactivator, never()).deactivateUser(any());
+    verify(userService, never()).saveUser(any());
+    verify(askerEnquiryCloser, never()).closeOpenEnquiries(any());
   }
 
   @Test
@@ -394,6 +708,7 @@ public class UserAccountServiceTest {
   public void updateUserMobileToken_Should_updateUsersMobileToken_When_mobileTokenIsValidString() {
     when(authenticatedUser.getUserId()).thenReturn(USER_ID);
     when(userService.getUser(USER_ID)).thenReturn(Optional.of(USER));
+    when(userService.getUserForUpdate(USER_ID)).thenReturn(Optional.of(USER));
 
     this.accountProvider.updateUserMobileToken("mobileToken");
 
@@ -406,6 +721,7 @@ public class UserAccountServiceTest {
   public void updateUserMobileToken_Should_updateUsersMobileToken_When_mobileTokenIsNull() {
     when(authenticatedUser.getUserId()).thenReturn(USER_ID);
     when(userService.getUser(USER_ID)).thenReturn(Optional.of(USER));
+    when(userService.getUserForUpdate(USER_ID)).thenReturn(Optional.of(USER));
 
     this.accountProvider.updateUserMobileToken(null);
 
@@ -418,6 +734,7 @@ public class UserAccountServiceTest {
   public void updateUserMobileToken_Should_updateUsersMobileToken_When_mobileTokenIsEmptyString() {
     when(authenticatedUser.getUserId()).thenReturn(USER_ID);
     when(userService.getUser(USER_ID)).thenReturn(Optional.of(USER));
+    when(userService.getUserForUpdate(USER_ID)).thenReturn(Optional.of(USER));
 
     this.accountProvider.updateUserMobileToken("");
 

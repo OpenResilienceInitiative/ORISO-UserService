@@ -15,14 +15,18 @@ import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
 import lombok.ToString;
+import org.hibernate.annotations.DynamicUpdate;
 import org.hibernate.annotations.Filter;
-import org.hibernate.annotations.FilterDef;
 import org.hibernate.annotations.JdbcTypeCode;
-import org.hibernate.annotations.ParamDef;
 import org.hibernate.type.SqlTypes;
 
-/** Persistent in-app notification event for a concrete recipient user. */
+/**
+ * Persistent in-app notification event for a concrete recipient user. Dynamic updates: marking a
+ * row as read and marking it as a mention (ORISO-UserService#1510) can overlap, and each must write
+ * only its own column.
+ */
 @Entity
+@DynamicUpdate
 @Table(
     name = "event_notification",
     uniqueConstraints =
@@ -35,12 +39,7 @@ import org.hibernate.type.SqlTypes;
 @Setter
 @Builder
 @ToString
-@FilterDef(
-    name = "tenantFilter",
-    parameters = {@ParamDef(name = "tenantId", type = Long.class)})
-@Filter(
-    name = "tenantFilter",
-    condition = "(tenant_id = :tenantId OR (:tenantId = 1 AND tenant_id IS NULL))")
+@Filter(name = TenantFilter.NAME, condition = TenantFilter.CONDITION_WITH_LEGACY_ROWS_OF_TENANT_ONE)
 public class EventNotification implements TenantAware {
 
   @Id

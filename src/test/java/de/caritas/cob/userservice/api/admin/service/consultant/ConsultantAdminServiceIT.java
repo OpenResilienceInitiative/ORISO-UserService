@@ -24,7 +24,6 @@ import de.caritas.cob.userservice.api.model.ConsultantAgency;
 import de.caritas.cob.userservice.api.model.ConsultantStatus;
 import de.caritas.cob.userservice.api.port.out.ConsultantAgencyRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
-import de.caritas.cob.userservice.api.service.appointment.AppointmentService;
 import java.util.HashSet;
 import java.util.stream.Collectors;
 import org.jeasy.random.EasyRandom;
@@ -56,8 +55,6 @@ public class ConsultantAdminServiceIT {
   @MockitoBean private CreateConsultantSaga createConsultantSaga;
 
   @MockitoBean private ConsultantUpdateService consultantUpdateService;
-
-  @MockitoBean private AppointmentService appointmentService;
 
   @MockitoBean private AccountManager accountManager;
 

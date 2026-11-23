@@ -98,7 +98,18 @@ public class StatelessCsrfFilter extends OncePerRequestFilter {
       // authenticates this one exact endpoint with its dedicated policy token, so it cannot
       // provide the browser CSRF cookie/header pair. Keep the exemption exact: sibling internal
       // endpoints must still pass the normal CSRF check.
-      if ("/internal/matrixrtc/call-policy".equals(request.getRequestURI())) {
+      if ("POST".equals(request.getMethod())
+          && "/internal/matrix/group-join-policy".equals(request.getRequestURI())) return true;
+      // The AddonService is a machine client as well and holds only a technical service token.
+      // getRequestURI() includes the servlet context path, so accept the route with and without
+      // the /service prefix, exactly.
+      if ("POST".equals(request.getMethod())
+          && ("/users/event-notifications/addon".equals(request.getRequestURI())
+              || "/service/users/event-notifications/addon".equals(request.getRequestURI()))) {
+        return true;
+      }
+      if ("/internal/matrixrtc/call-policy".equals(request.getRequestURI())
+          || "/internal/matrixrtc/media-access".equals(request.getRequestURI())) {
         return true;
       }
       // Magic link endpoints are public login bootstrap endpoints and must work without a CSRF
@@ -112,20 +123,41 @@ public class StatelessCsrfFilter extends OncePerRequestFilter {
       // the two exact routes (optionally under a /service prefix), never an arbitrary substring.
       if (request.getRequestURI() != null) {
         String lowerUri = request.getRequestURI().toLowerCase();
+        // Public, read-only name suggestions are used before any session exists.
+        if ("POST".equals(request.getMethod())
+            && (lowerUri.equals("/users/identity-suggestions")
+                || lowerUri.equals("/service/users/identity-suggestions"))) {
+          return true;
+        }
         if (lowerUri.endsWith("/users/password-reset/request")
             || lowerUri.endsWith("/users/password-reset/confirm")) {
           return true;
         }
         // Account-invite acceptance is another public bootstrap endpoint. The random invite token
         // is the bearer secret; the recipient does not have a login session or CSRF cookie yet.
-        if (lowerUri.matches(".*/users/account-invites/[^/]+/accept$")) {
+        if (lowerUri.matches(".*/users/account-invites/[^/]+/(accept|setup)$")) {
+          return true;
+        }
+        // The DPA signed-notice hint is a machine callback from TenantService, not a browser
+        // request: DpaSignedNoticeHintService posts with restTemplate.postForLocation(url, null),
+        // so it carries no cookie and no header pair and would be rejected with 403 before ever
+        // reaching the controller — and TenantService swallows that 403, so the notice would fail
+        // silently. Exempting it adds no exposure: the route is already permitAll, carries no body
+        // and no authority, and UserService reads every fact back over the authenticated
+        // technical-user channel and deduplicates through the exactly-once ledger. Kept exact, like
+        // the MatrixRTC exemption above: sibling tenant routes still pass the normal check.
+        if (lowerUri.matches(".*/users/tenants/[^/]+/dpa-signed-notices$")) {
           return true;
         }
       }
       // Invite-link redeem is a public bootstrap endpoint too — anyone opening the shared link
-      // hits it before any session / CSRF cookie exists.
+      // hits it before any session / CSRF cookie exists. Kept to context/redeem: the signed-in
+      // direct-link conversation route (#1475) passes the normal check.
       if (request.getRequestURI() != null
-          && request.getRequestURI().toLowerCase().contains("/users/invitelinks/")) {
+          && request
+              .getRequestURI()
+              .toLowerCase()
+              .matches(".*/users/invitelinks/[^/]+/(context|redeem)$")) {
         return true;
       }
       // Registration is public and may be called with or without the /service prefix.

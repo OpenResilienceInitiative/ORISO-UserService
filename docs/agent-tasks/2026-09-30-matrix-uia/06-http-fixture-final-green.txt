@@ -1,0 +1,21 @@
+Final HTTP fixture and existing service/logging regression verification
+Command: JAVA_HOME=/Library/Java/JavaVirtualMachines/temurin-21.jdk/Contents/Home ./mvnw -B -q -Dtest=MatrixBrowserDeviceConcurrencyTest,MatrixSynapseServiceTest,MatrixSynapseServiceCredentialLoggingTest test
+Result: exit 0; 74 tests, 0 failures, 0 errors, 0 skipped
+
+MatrixBrowserDeviceConcurrencyTest: 7 tests, 0 failures/errors/skipped; 0.244 seconds
+- Delayed A interactive authentication after independent service B login
+- Overlapping A/B logins across service instances, both credentials still usable
+- Original issued authentication after token-cache TTL expiry and service restart
+- Independent account password authentication and rejection of cross-account password
+- Null, empty and blank credential roots fail without an HTTP password update,
+  and without invalidating the original device's authentication
+
+MatrixSynapseServiceTest: 65 tests, 0 failures/errors/skipped; 0.502 seconds
+MatrixSynapseServiceCredentialLoggingTest: 2 tests, 0 failures/errors/skipped; 1.290 seconds
+Credential logging fixture includes a synthetic registration root. Actual transmitted UIA
+password, admin password and registration root remain absent from RestTemplate DEBUG logs.
+
+All fixture interleavings use explicit bounded latches over real loopback HTTP and RestTemplate.
+No arbitrary sleeps, private credential derivation assertions, or real test-account secrets.
+This fixture proves application HTTP behavior, not a complete Matrix crypto implementation;
+the separate real Synapse IT supplies protocol and backup lifecycle evidence.

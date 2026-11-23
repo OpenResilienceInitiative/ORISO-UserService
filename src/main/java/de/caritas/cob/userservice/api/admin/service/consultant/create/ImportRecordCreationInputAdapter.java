@@ -86,6 +86,25 @@ public class ImportRecordCreationInputAdapter implements ConsultantCreationInput
   }
 
   /**
+   * Whether the imported counsellor must establish a second factor. Always true: every new staff
+   * account must have 2FA, and an import creates accounts with a generated password that only the
+   * platform knows.
+   */
+  @Override
+  public boolean isTwoFactorRequired() {
+    return true;
+  }
+
+  /**
+   * Whether the imported counsellor must replace their password. Always true, for the same reason
+   * as the second factor: the counsellor did not choose the generated initial password.
+   */
+  @Override
+  public boolean isPasswordChangeRequired() {
+    return true;
+  }
+
+  /**
    * Provides the absent flag.
    *
    * @return the absent flag

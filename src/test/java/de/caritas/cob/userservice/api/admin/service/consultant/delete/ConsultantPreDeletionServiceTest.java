@@ -38,6 +38,9 @@ public class ConsultantPreDeletionServiceTest {
 
   @Mock private ConsultantAgencyDeletionValidationService validationService;
 
+  private static final java.time.LocalDateTime DELETED_AT =
+      java.time.LocalDateTime.of(2026, 9, 25, 10, 0);
+
   @Mock private SessionRepository sessionRepository;
 
   @Mock private IdentityDeactivator identityDeactivator;
@@ -51,7 +54,8 @@ public class ConsultantPreDeletionServiceTest {
         .thenReturn(singletonList(mock(Session.class)));
 
     try {
-      this.consultantPreDeletionService.performPreDeletionSteps(consultant, FORCE_DELETE_SESSIONS);
+      this.consultantPreDeletionService.performPreDeletionSteps(
+          consultant, FORCE_DELETE_SESSIONS, DELETED_AT);
       fail("Exception was not thrown");
     } catch (CustomValidationHttpStatusException e) {
       assertThat(
@@ -66,20 +70,50 @@ public class ConsultantPreDeletionServiceTest {
     Consultant consultant = new EasyRandom().nextObject(Consultant.class);
     when(this.sessionRepository.findByConsultantAndStatusIn(any(), any())).thenReturn(emptyList());
 
-    this.consultantPreDeletionService.performPreDeletionSteps(consultant, FORCE_DELETE_SESSIONS);
+    this.consultantPreDeletionService.performPreDeletionSteps(
+        consultant, FORCE_DELETE_SESSIONS, DELETED_AT);
 
-    verify(this.validationService, times(consultant.getConsultantAgencies().size()))
-        .validateAndMarkForDeletion(any());
+    for (var relation : consultant.getConsultantAgencies()) {
+      verify(this.validationService).validateAndMarkForDeletion(relation, DELETED_AT);
+    }
   }
 
   @Test
-  public void
-      performPreDeletionSteps_Should_setConsultantInactiveInKeycloak_When_consultantCanBeDeleted() {
+  public void performPreDeletionSteps_Should_notTouchTheIdentityYet() {
     Consultant consultant = new EasyRandom().nextObject(Consultant.class);
     when(this.sessionRepository.findByConsultantAndStatusIn(any(), any())).thenReturn(emptyList());
 
-    this.consultantPreDeletionService.performPreDeletionSteps(consultant, FORCE_DELETE_SESSIONS);
+    this.consultantPreDeletionService.performPreDeletionSteps(
+        consultant, FORCE_DELETE_SESSIONS, DELETED_AT);
+
+    // The irreversible step comes last, after the private rooms are left (see the admin service).
+    org.mockito.Mockito.verifyNoInteractions(this.identityDeactivator);
+  }
+
+  @Test
+  public void deactivateIdentity_Should_setConsultantInactiveInKeycloak() {
+    Consultant consultant = new EasyRandom().nextObject(Consultant.class);
+
+    this.consultantPreDeletionService.deactivateIdentity(consultant);
 
     verify(this.identityDeactivator, times(1)).deactivateUser(consultant.getId());
+  }
+
+  @Test
+  public void activateIdentity_Should_enableTheKeycloakLogin() {
+    Consultant consultant = new EasyRandom().nextObject(Consultant.class);
+
+    this.consultantPreDeletionService.activateIdentity(consultant);
+
+    verify(this.identityDeactivator).activateUser(consultant.getId());
+  }
+
+  @Test
+  public void restoreAgencyRelations_Should_delegateToTheValidationService() {
+    Consultant consultant = new EasyRandom().nextObject(Consultant.class);
+
+    this.consultantPreDeletionService.restoreAgencyRelations(consultant, DELETED_AT);
+
+    verify(this.validationService).restoreRelationsMarkedWith(consultant, DELETED_AT);
   }
 }

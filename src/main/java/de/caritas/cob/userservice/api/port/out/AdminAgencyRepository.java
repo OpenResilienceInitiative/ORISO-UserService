@@ -21,11 +21,18 @@ public interface AdminAgencyRepository extends CrudRepository<AdminAgency, Long>
   @Transactional
   void deleteByAdminId(String adminId);
 
-  // Explicit projection query with distinct aliases. The derived query would map both getId()
-  // (AdminAgency.id) and getAdminId() (the joined admin.id) to the alias "id", which Hibernate 6
-  // rejects with an AliasCollisionException.
+  // Distinct aliases: a derived query maps two columns to "id". Admin is a query root because
+  // Hibernate does not apply the tenant filter to a to-one join.
   @Query(
       "SELECT a.id AS id, a.agencyId AS agencyId, ad.id AS adminId "
-          + "FROM AdminAgency a LEFT JOIN a.admin ad WHERE ad.id IN :adminIds")
+          + "FROM Admin ad, AdminAgency a WHERE a.admin = ad AND ad.id IN :adminIds")
   List<AdminAgencyBase> findByAdminIdIn(@Param("adminIds") Set<String> adminIds);
+
+  // Admin is a query root so the tenant filter applies (see above). AGENCY admins only: tenant and
+  // platform admins are not "the admin of the counselling centre".
+  @Query(
+      "SELECT DISTINCT ad.id FROM Admin ad, AdminAgency a "
+          + "WHERE a.admin = ad AND a.agencyId = :agencyId AND ad.type = "
+          + "de.caritas.cob.userservice.api.model.Admin.AdminType.AGENCY")
+  List<String> findAgencyAdminIdsByAgencyId(@Param("agencyId") Long agencyId);
 }

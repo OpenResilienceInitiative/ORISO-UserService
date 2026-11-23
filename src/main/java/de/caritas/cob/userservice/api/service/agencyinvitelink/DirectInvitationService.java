@@ -1,0 +1,489 @@
+package de.caritas.cob.userservice.api.service.agencyinvitelink;
+
+import static de.caritas.cob.userservice.api.service.agencyinvitelink.InviteLinkChatType.DIRECT_MEDIA;
+import static de.caritas.cob.userservice.api.service.matrix.MatrixSessionSystemMessageService.SYSTEM_NOTIFICATION_PREFIX;
+
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import de.caritas.cob.userservice.api.adapters.web.dto.NewRegistrationResponseDto;
+import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
+import de.caritas.cob.userservice.api.exception.httpresponses.ConflictException;
+import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
+import de.caritas.cob.userservice.api.model.AgencyInviteLink;
+import de.caritas.cob.userservice.api.model.Consultant;
+import de.caritas.cob.userservice.api.model.Session;
+import de.caritas.cob.userservice.api.model.SessionAppointment;
+import de.caritas.cob.userservice.api.model.User;
+import de.caritas.cob.userservice.api.port.out.AgencyInviteLinkRepository;
+import de.caritas.cob.userservice.api.port.out.DirectInvitationMemberRepository;
+import de.caritas.cob.userservice.api.port.out.SessionAppointmentRepository;
+import de.caritas.cob.userservice.api.port.out.SessionRepository;
+import de.caritas.cob.userservice.api.service.archive.SessionArchiveService;
+import de.caritas.cob.userservice.api.service.matrix.MatrixSessionSystemMessageService;
+import de.caritas.cob.userservice.api.service.notification.EventNotificationService;
+import java.time.Clock;
+import java.time.Instant;
+import java.time.LocalDateTime;
+import java.time.ZoneOffset;
+import java.util.Collection;
+import java.util.HashMap;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import java.util.Optional;
+import java.util.UUID;
+import java.util.function.Supplier;
+import java.util.stream.Collectors;
+import lombok.NonNull;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.hibernate.Hibernate;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.HttpStatus;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.server.ResponseStatusException;
+
+/**
+ * Direct invitations with an appointment (ORISO-Frontend#2252): the appointment is the same {@code
+ * session_appointment} as "Termin anlegen"; everybody who opens the link shares one appointment
+ * conversation (or joins the 1:1 the invitation was created from); the link expires after the end
+ * plus its validity; a person in the conversation can ask for a new link, and the counsellor can
+ * issue one. All link times are UTC.
+ */
+@Service
+@RequiredArgsConstructor
+@Slf4j
+public class DirectInvitationService {
+
+  public static final String RENEWED_TYPE = "DIRECT_INVITATION_RENEWED";
+
+  private static final String COUNSELLOR = InviteLinkKind.COUNSELLOR.name();
+  private static final ObjectMapper JSON = new ObjectMapper();
+
+  private final @NonNull AgencyInviteLinkRepository links;
+  private final @NonNull SessionAppointmentRepository appointments;
+  private final @NonNull DirectInvitationMemberRepository members;
+  private final @NonNull SessionRepository sessions;
+  private final @NonNull DirectInvitationRoomMembership rooms;
+  private final @NonNull EventNotificationService notifications;
+  private final @NonNull MatrixSessionSystemMessageService systemMessages;
+  private final @NonNull SessionArchiveService archive;
+  private final @NonNull Clock clock;
+  private final @NonNull DirectInvitationMemberships memberships;
+
+  @Value("${app.base.url:}")
+  String appBaseUrl;
+
+  /** The time every invitation field is written and compared in: UTC, from the shared clock. */
+  public LocalDateTime now() {
+    return LocalDateTime.now(clock);
+  }
+
+  /** The schedule of an invitation with an appointment; empty for a link without one. */
+  public Optional<DirectInvitationSchedule> scheduleOf(AgencyInviteLink link) {
+    return appointmentOf(link).map(a -> scheduleOf(link, a));
+  }
+
+  /** The schedule from an appointment already loaded, without reading it again. */
+  public static DirectInvitationSchedule scheduleOf(
+      AgencyInviteLink link, SessionAppointment appointment) {
+    return DirectInvitationSchedule.of(
+        utc(appointment.getStartTime()),
+        utc(appointment.getEndTime()),
+        link.getValidityAfterEndMinutes());
+  }
+
+  public Optional<SessionAppointment> appointmentOf(AgencyInviteLink link) {
+    return link.getAppointmentId() == null
+        ? Optional.empty()
+        : appointments.findById(link.getAppointmentId());
+  }
+
+  /** The appointments of many links, read in one query (the counsellor's link list). */
+  public Map<UUID, SessionAppointment> appointmentsOf(Collection<AgencyInviteLink> many) {
+    var ids =
+        many.stream()
+            .map(AgencyInviteLink::getAppointmentId)
+            .filter(Objects::nonNull)
+            .collect(Collectors.toSet());
+    if (ids.isEmpty()) {
+      return Map.of();
+    }
+    var found = new HashMap<UUID, SessionAppointment>();
+    appointments.findAllById(ids).forEach(a -> found.put(a.getId(), a));
+    return found;
+  }
+
+  /** A new invitation gets a new appointment that has no conversation yet. */
+  public void attachAppointment(
+      AgencyInviteLink link, LocalDateTime start, LocalDateTime end, Integer validity) {
+    var schedule = DirectInvitationSchedule.of(start, end, validity);
+    requireFuture(schedule);
+    var appointment = new SessionAppointment();
+    appointment.setStatus(SessionAppointment.Status.SCHEDULED);
+    appointment.setKind(kindOf(link));
+    appointment.setStartTime(start.toInstant(ZoneOffset.UTC));
+    appointment.setEndTime(end.toInstant(ZoneOffset.UTC));
+    link.setAppointmentId(appointments.save(appointment).getId());
+    apply(link, schedule);
+  }
+
+  /**
+   * How the invitation's appointment takes place, from the link's medium: the app shows a chat,
+   * phone or camera symbol for it. Without a kind it falls back to the camera, so a chat
+   * appointment looked like a video call.
+   */
+  static SessionAppointment.Kind kindOf(AgencyInviteLink link) {
+    if (link.getChatType() == null) {
+      return null;
+    }
+    return switch (link.getChatType()) {
+      case "CHAT" -> SessionAppointment.Kind.CHAT;
+      case "AUDIO" -> SessionAppointment.Kind.PHONE;
+      case "VIDEO" -> SessionAppointment.Kind.VIDEO;
+      default -> null;
+    };
+  }
+
+  /** An invitation from a 1:1 meets at an appointment of that conversation. */
+  public void attachExistingAppointment(
+      AgencyInviteLink link, SessionAppointment appointment, Integer validity) {
+    if (appointment.getStatus() == SessionAppointment.Status.CANCELLED) {
+      throw new ConflictException("A cancelled appointment takes no invitation.");
+    }
+    var schedule =
+        DirectInvitationSchedule.of(
+            utc(appointment.getStartTime()), utc(appointment.getEndTime()), validity);
+    link.setAppointmentId(appointment.getId());
+    apply(link, schedule);
+  }
+
+  /**
+   * Moves the appointment and/or changes the validity; the expiry follows. A moved appointment
+   * moves the expiry of every invitation that meets at it, each with its own validity. Lock order:
+   * the invitations (in id order), then the appointment, as when a person opens one.
+   */
+  @Transactional
+  public void change(
+      AgencyInviteLink link, LocalDateTime start, LocalDateTime end, Integer validity) {
+    if (link.getAppointmentId() == null) {
+      throw new ConflictException("The link has no appointment.");
+    }
+    boolean moves = start != null || end != null;
+    var others =
+        moves
+            ? links.findByAppointmentIdForUpdate(link.getAppointmentId()).stream()
+                .filter(other -> !Objects.equals(other.getId(), link.getId()))
+                .toList()
+            : List.<AgencyInviteLink>of();
+    var appointment =
+        appointments
+            .findByIdForUpdate(link.getAppointmentId())
+            .orElseThrow(() -> new NotFoundException("Appointment not found"));
+    var current =
+        DirectInvitationSchedule.of(
+            utc(appointment.getStartTime()),
+            utc(appointment.getEndTime()),
+            link.getValidityAfterEndMinutes());
+    var schedule =
+        new DirectInvitationSchedule(
+            start != null ? start : current.start(),
+            end != null ? end : current.end(),
+            validity != null ? validity : current.validityAfterEndMinutes());
+    if (moves) {
+      requireFuture(schedule);
+      requireMovable(link, appointment);
+      appointment.setStartTime(schedule.start().toInstant(ZoneOffset.UTC));
+      appointment.setEndTime(schedule.end().toInstant(ZoneOffset.UTC));
+      appointments.save(appointment);
+      // An invitation that ended stays ended (its status); the sweep sees an earlier expiry.
+      for (var other : others) {
+        apply(
+            other,
+            DirectInvitationSchedule.of(
+                schedule.start(), schedule.end(), other.getValidityAfterEndMinutes()));
+        links.save(other);
+      }
+    }
+    apply(link, schedule);
+  }
+
+  /**
+   * The first person creates the appointment conversation; the appointment row is locked, so two
+   * first visits create one conversation. That creation is the only Matrix work under the lock.
+   * Anybody later is only looked up here and joins through {@link #joinLater}, after this
+   * transaction released the lock.
+   */
+  @Transactional
+  public Opened openAppointmentConversation(
+      AgencyInviteLink link, User user, Supplier<NewRegistrationResponseDto> newConversation) {
+    // The invitation first, then its appointment: an expiry, switch-off or delete that committed
+    // meanwhile is seen here, so nobody creates a conversation on an ended invitation.
+    requireStillOpen(links.findByIdForUpdate(link.getId()).orElse(null));
+    var appointment =
+        appointments
+            .findByIdForUpdate(link.getAppointmentId())
+            .orElseThrow(DirectLinkInactiveException::new);
+    if (appointment.getStatus() == SessionAppointment.Status.CANCELLED) {
+      throw new DirectLinkInactiveException();
+    }
+    /* Loaded here, not a lazy reference: the caller reads the room after this transaction ended
+    (open-in-view is off), and a reference answered every return visit with HTTP 500
+    (ORISO-UserService#1694). */
+    var session = (Session) Hibernate.unproxy(appointment.getSession());
+    if (session == null) {
+      var created = newConversation.get();
+      if (created == null
+          || created.getMatrixRoomId() == null
+          || created.getMatrixRoomId().isBlank()) {
+        throw new ResponseStatusException(HttpStatus.BAD_GATEWAY, "conversation_room_unavailable");
+      }
+      session =
+          sessions
+              .findById(created.getSessionId())
+              .orElseThrow(
+                  () ->
+                      new ResponseStatusException(
+                          HttpStatus.BAD_GATEWAY, "conversation_room_unavailable"));
+      appointment.setSession(session);
+      appointments.save(appointment);
+      if (!link.isJoinsExistingSession()) {
+        sessions.markDirectInvitationConversation(session.getId());
+      }
+      memberships.recordCreator(session, user, link);
+      return new Opened(session, true, false);
+    }
+    // A row decides, also for the person who created the conversation: a guest removed at expiry
+    // joins again after a renewal. The client of a 1:1 has no row and is in their room already.
+    var existing = members.findBySessionIdAndUserId(session.getId(), user.getUserId());
+    if (existing.isPresent()) {
+      return new Opened(session, false, !DirectInvitationMemberships.isMember(existing.get()));
+    }
+    if (session.getUser() != null
+        && Objects.equals(session.getUser().getUserId(), user.getUserId())) {
+      return new Opened(session, false, false);
+    }
+    return new Opened(session, false, true);
+  }
+
+  private void requireStillOpen(AgencyInviteLink locked) {
+    if (locked == null || InviteLinkStatus.DISABLED.name().equals(locked.getStatus())) {
+      throw new DirectLinkInactiveException();
+    }
+    if (InviteLinkStatus.EXPIRED.name().equals(locked.getStatus())
+        || (locked.getExpiresAt() != null && locked.getExpiresAt().isBefore(now()))) {
+      throw new DirectLinkExpiredException();
+    }
+    if (!InviteLinkStatus.ACTIVE.name().equals(locked.getStatus())) {
+      throw new DirectLinkInactiveException();
+    }
+  }
+
+  /**
+   * A later person joins the room, outside any lock. {@link DirectInvitationMemberships} decides
+   * the membership: the attempt is recorded (removal due) before Matrix is asked, confirmed under
+   * the invitation's row lock afterwards, and abandoned on any failure, so an invitation that ends
+   * during the join, or a join that fails, never leaves a member behind.
+   */
+  public Opened joinLater(AgencyInviteLink link, User user, Opened opened) {
+    if (!opened.joinPending()) {
+      return opened;
+    }
+    var session = opened.session();
+    var attempt = memberships.reserve(session, user, link);
+    if (attempt.isEmpty()) {
+      return new Opened(session, false, false);
+    }
+    try {
+      if (link.isJoinsExistingSession()) {
+        rooms.addInvitedGuestToExistingRoom(session, user);
+      } else {
+        rooms.addToAppointmentRoom(session, user);
+      }
+    } catch (RuntimeException failure) {
+      memberships.abandon(session, user, link.getId(), attempt.get());
+      throw failure;
+    }
+    if (!memberships.confirm(session, user, link.getId(), attempt.get())) {
+      throw new DirectLinkInactiveException();
+    }
+    return new Opened(session, true, false);
+  }
+
+  /**
+   * "Neuen Link senden": a new token for the same appointment; the old one answers "expired". An
+   * expired invitation is switched on again and its appointment conversation reopened. The new link
+   * goes into the conversation as a system notice.
+   */
+  @Transactional
+  public AgencyInviteLink renew(Consultant owner, Long linkId, Integer validity) {
+    // Locked by the first read: two renewals at once must not both replace the same token, and
+    // an earlier unlocked read would leave a copy the locking query does not refresh.
+    var link =
+        links
+            .findByIdForUpdate(linkId)
+            .filter(found -> isOwnDirectLink(found, owner))
+            .orElseThrow(() -> new NotFoundException("Direct link %s not found", linkId));
+    var appointment =
+        appointmentOf(link)
+            .orElseThrow(() -> new ConflictException("A link without appointment never expires."));
+    if (validity != null) {
+      DirectInvitationSchedule.requireValidity(validity);
+    }
+    var schedule =
+        DirectInvitationSchedule.of(
+            utc(appointment.getStartTime()),
+            utc(appointment.getEndTime()),
+            validity != null ? validity : link.getValidityAfterEndMinutes());
+    var now = now();
+    var expiresAt = schedule.renewedExpiry(now);
+    if (!expiresAt.isAfter(now)) {
+      throw new ConflictException("The new link would already be expired; choose a validity.");
+    }
+    link.getReplacedTokens().add(link.getToken());
+    link.setToken(CounsellorDirectLinkService.generateToken());
+    link.setValidityAfterEndMinutes(schedule.validityAfterEndMinutes());
+    link.setExpiresAt(expiresAt);
+    if (InviteLinkStatus.EXPIRED.name().equals(link.getStatus())) {
+      link.setStatus(InviteLinkStatus.ACTIVE.name());
+    }
+    link.setUpdateDate(now);
+    var saved = links.save(link);
+    var session = appointment.getSession();
+    if (session != null) {
+      if (!link.isJoinsExistingSession()) {
+        archive.reopenBySystem(session);
+      }
+      postRenewedNotice(session, saved);
+    }
+    return saved;
+  }
+
+  /** The counsellor's own counsellor direct link, checked on the row as it was read. */
+  static boolean isOwnDirectLink(AgencyInviteLink link, Consultant owner) {
+    return Objects.equals(owner.getId(), link.getConsultantId())
+        && COUNSELLOR.equals(link.getLinkKind())
+        && DIRECT_MEDIA.contains(link.getChatType());
+  }
+
+  /** A switched-off invitation is switched on again: its appointment conversation reopens. */
+  @Transactional
+  public void reopenConversation(AgencyInviteLink link) {
+    if (link.isJoinsExistingSession()) {
+      return;
+    }
+    appointmentOf(link).map(SessionAppointment::getSession).ifPresent(archive::reopenBySystem);
+  }
+
+  /**
+   * "Neuen Link anfragen": only a person in the invitation's conversation may ask; anybody else
+   * learns nothing (404). The expired and the replaced token both work. A notice that could not be
+   * stored answers 503, never "sent".
+   */
+  @Transactional
+  public void requestRenewal(String token, User user) {
+    var link =
+        links
+            .findByToken(token)
+            .or(() -> links.findFirstByPreviousToken(token))
+            .filter(l -> COUNSELLOR.equals(l.getLinkKind()))
+            .orElseThrow(() -> new NotFoundException("Invite link not found"));
+    var appointment =
+        appointmentOf(link)
+            .orElseThrow(() -> new ConflictException("A link without appointment never expires."));
+    var session = appointment.getSession();
+    if (session == null || !isInConversation(session, user)) {
+      throw new NotFoundException("Invite link not found");
+    }
+    try {
+      notifications.createDirectInvitationRenewalRequestedNotification(
+          session, link.getId(), user.getUserId(), token);
+    } catch (RuntimeException failure) {
+      log.warn(
+          "The new-link request for invitation {} was not stored: {}",
+          link.getId(),
+          failure.getClass().getSimpleName());
+      throw new ResponseStatusException(
+          HttpStatus.SERVICE_UNAVAILABLE, "renewal_request_not_stored", failure);
+    }
+  }
+
+  /** The invitation's people: the asker of the conversation and everybody who came in by link. */
+  private boolean isInConversation(Session session, User user) {
+    if (session.getUser() != null
+        && Objects.equals(session.getUser().getUserId(), user.getUserId())) {
+      return true;
+    }
+    return members.findBySessionIdAndUserId(session.getId(), user.getUserId()).isPresent();
+  }
+
+  private void postRenewedNotice(Session session, AgencyInviteLink link) {
+    try {
+      var payload = new LinkedHashMap<String, Object>();
+      payload.put("type", RENEWED_TYPE);
+      payload.put("linkId", link.getId());
+      payload.put("url", entryUrl(link.getToken()));
+      if (link.getExpiresAt() != null) {
+        payload.put("expiresAt", link.getExpiresAt().atOffset(ZoneOffset.UTC).toString());
+      }
+      var posted =
+          systemMessages.postSystemMessage(
+              session, SYSTEM_NOTIFICATION_PREFIX + JSON.writeValueAsString(payload), true);
+      if (!posted) {
+        log.warn("The renewed link of invitation {} was not posted", link.getId());
+      }
+    } catch (JsonProcessingException | RuntimeException failure) {
+      log.warn(
+          "The renewed link of invitation {} could not be posted: {}",
+          link.getId(),
+          failure.getClass().getSimpleName());
+    }
+  }
+
+  public String entryUrl(String token) {
+    var base = appBaseUrl == null ? "" : appBaseUrl.replaceAll("/+$", "");
+    return base + "/invite/" + token;
+  }
+
+  private static void apply(AgencyInviteLink link, DirectInvitationSchedule schedule) {
+    link.setValidityAfterEndMinutes(schedule.validityAfterEndMinutes());
+    link.setExpiresAt(schedule.expiresAt());
+    link.setScheduledAt(schedule.start());
+  }
+
+  /**
+   * The rules "Termin verschieben" applies to the same row (SessionAppointmentService#reschedule):
+   * a cancelled appointment stays where it is, and the appointment of an invitation from a 1:1
+   * belongs to that conversation, so a finished or archived 1:1 refuses the move.
+   */
+  private static void requireMovable(AgencyInviteLink link, SessionAppointment appointment) {
+    if (appointment.getStatus() == SessionAppointment.Status.CANCELLED) {
+      throw new ConflictException("A cancelled appointment cannot be moved.");
+    }
+    var session = appointment.getSession();
+    if (link.isJoinsExistingSession()
+        && session != null
+        && (session.getStatus() == Session.SessionStatus.DONE
+            || session.getStatus() == Session.SessionStatus.IN_ARCHIVE)) {
+      throw new ConflictException("A finished conversation takes no new or moved appointments.");
+    }
+  }
+
+  private void requireFuture(DirectInvitationSchedule schedule) {
+    if (!schedule.start().isAfter(now())) {
+      throw new BadRequestException("An appointment must start in the future.");
+    }
+  }
+
+  static LocalDateTime utc(Instant instant) {
+    return instant == null ? null : LocalDateTime.ofInstant(instant, ZoneOffset.UTC);
+  }
+
+  /**
+   * The conversation the person is in now, whether this visit put them there, and whether they
+   * still have to join its room ({@link #joinLater}).
+   */
+  public record Opened(Session session, boolean created, boolean joinPending) {}
+}

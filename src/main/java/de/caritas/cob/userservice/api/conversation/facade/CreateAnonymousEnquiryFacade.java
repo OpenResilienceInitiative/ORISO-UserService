@@ -12,6 +12,7 @@ import de.caritas.cob.userservice.api.conversation.service.user.anonymous.Anonym
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
 import de.caritas.cob.userservice.api.helper.UserHelper;
 import de.caritas.cob.userservice.api.manager.consultingtype.ConsultingTypeManager;
+import de.caritas.cob.userservice.api.tenant.TenantContext;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -22,24 +23,16 @@ import org.springframework.stereotype.Service;
 public class CreateAnonymousEnquiryFacade {
 
   private final @NonNull AnonymousUserCreatorService anonymousUserCreatorService;
+  private final @NonNull de.caritas.cob.userservice.api.service.dpa.NewCounsellingDpaPolicy
+      dpaPolicy;
   private final @NonNull AnonymousConversationCreatorService anonymousConversationCreatorService;
   private final @NonNull AnonymousUsernameRegistry usernameRegistry;
   private final @NonNull UserHelper userHelper;
   private final @NonNull ConsultingTypeManager consultingTypeManager;
+  private final @NonNull de.caritas.cob.userservice.api.admin.service.tenant.TenantService
+      tenantService;
 
   private static final String DEFAULT_ANONYMOUS_POSTCODE = "00000";
-
-  /**
-   * Creates an anonymous user account and its corresponding anonymous conversation resp. session
-   * and returns all needed user credentials.
-   *
-   * @param createAnonymousEnquiryDTO {@link CreateAnonymousEnquiryDTO}
-   * @return {@link CreateAnonymousEnquiryResponseDTO}
-   */
-  public CreateAnonymousEnquiryResponseDTO createAnonymousEnquiry(
-      CreateAnonymousEnquiryDTO createAnonymousEnquiryDTO) {
-    return createAnonymousEnquiry(createAnonymousEnquiryDTO, false);
-  }
 
   /**
    * @param skipConsultingTypeAnonymousCheck when {@code true} the consulting-type-level "anonymous
@@ -49,12 +42,27 @@ public class CreateAnonymousEnquiryFacade {
   public CreateAnonymousEnquiryResponseDTO createAnonymousEnquiry(
       CreateAnonymousEnquiryDTO createAnonymousEnquiryDTO,
       boolean skipConsultingTypeAnonymousCheck) {
+    return createAnonymousEnquiry(
+        createAnonymousEnquiryDTO, skipConsultingTypeAnonymousCheck, null);
+  }
 
+  /**
+   * @param chosenUsername the animal handle the guest rolled on the entry page, or {@code null} to
+   *     let the server roll one. A handle the generator cannot produce is refused (400), a taken
+   *     one reported (409) — in both cases before anything is created.
+   */
+  public CreateAnonymousEnquiryResponseDTO createAnonymousEnquiry(
+      CreateAnonymousEnquiryDTO createAnonymousEnquiryDTO,
+      boolean skipConsultingTypeAnonymousCheck,
+      String chosenUsername) {
+
+    tenantService.requireOperationalTenant(TenantContext.getCurrentTenant());
     if (!skipConsultingTypeAnonymousCheck) {
       checkIfConsultingTypeHasAnonymousConsulting(createAnonymousEnquiryDTO.getConsultingType());
     }
 
-    var userDto = buildUserDto(createAnonymousEnquiryDTO);
+    dpaPolicy.requireForTenant(TenantContext.getCurrentTenant());
+    var userDto = buildUserDto(createAnonymousEnquiryDTO, chosenUsername);
     AnonymousUserCredentials credentials = anonymousUserCreatorService.createAnonymousUser(userDto);
     var session =
         anonymousConversationCreatorService.createAnonymousConversation(userDto, credentials);
@@ -76,10 +84,15 @@ public class CreateAnonymousEnquiryFacade {
     }
   }
 
-  private UserDTO buildUserDto(CreateAnonymousEnquiryDTO createAnonymousEnquiryDTO) {
+  private UserDTO buildUserDto(
+      CreateAnonymousEnquiryDTO createAnonymousEnquiryDTO, String chosenUsername) {
+    var username =
+        chosenUsername == null
+            ? usernameRegistry.generateUniqueUsername()
+            : usernameRegistry.claimChosenUsername(chosenUsername);
     return UserDTO.builder()
         .consultingType(String.valueOf(createAnonymousEnquiryDTO.getConsultingType()))
-        .username(usernameRegistry.generateUniqueUsername())
+        .username(username)
         .password(userHelper.getRandomPassword())
         .postcode(DEFAULT_ANONYMOUS_POSTCODE)
         .termsAccepted("true")

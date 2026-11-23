@@ -14,16 +14,15 @@ import de.caritas.cob.userservice.api.helper.json.JsonSerializationUtils;
 import de.caritas.cob.userservice.api.model.Admin;
 import de.caritas.cob.userservice.api.model.Admin.AdminBase;
 import de.caritas.cob.userservice.api.model.AdminAgency.AdminAgencyBase;
-import de.caritas.cob.userservice.api.model.Appointment;
-import de.caritas.cob.userservice.api.model.Appointment.AppointmentStatus;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.Consultant.ConsultantBase;
 import de.caritas.cob.userservice.api.model.ConsultantAgency.ConsultantAgencyBase;
+import de.caritas.cob.userservice.api.model.ConsultantAvatarKind;
+import de.caritas.cob.userservice.api.model.ConsultantAvatars;
 import de.caritas.cob.userservice.api.model.ConsultantStatus;
 import de.caritas.cob.userservice.api.model.NotificationsAware;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.User;
-import java.time.Instant;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -33,7 +32,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
-import java.util.UUID;
+import java.util.function.BiConsumer;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
@@ -47,17 +46,6 @@ import org.springframework.stereotype.Service;
 public class UserServiceMapper {
 
   private final UsernameTranscoder usernameTranscoder;
-
-  public Map<String, Object> mapOf(Appointment appointment) {
-    var map = new HashMap<String, Object>();
-    map.put("id", appointment.getId().toString());
-    map.put("description", appointment.getDescription());
-    map.put("datetime", appointment.getDatetime().toString());
-    map.put("status", appointment.getStatus().toString().toLowerCase());
-    map.put("consultantId", appointment.getConsultant().getId());
-
-    return map;
-  }
 
   public Map<String, Object> mapOf(User user) {
     var map = new HashMap<String, Object>();
@@ -85,6 +73,7 @@ public class UserServiceMapper {
         "notifyNewChatMessageFromAdviceSeeker",
         consultant.getNotifyNewChatMessageFromAdviceSeeker());
     map.put("walkThroughEnabled", consultant.getWalkThroughEnabled());
+    map.put("liveChatViaSidebar", consultant.getLiveChatViaSidebar());
     map.put("matrixUserId", consultant.getMatrixUserId());
     map.put("preferredLanguage", consultant.getLanguageCode().toString());
     map.put("publicSlug", consultant.getPublicSlug());
@@ -287,6 +276,9 @@ public class UserServiceMapper {
     map.put("isTeamConsultant", nonNull(fullConsultant) && fullConsultant.isTeamConsultant());
     map.put("isSupervisor", nonNull(fullConsultant) && fullConsultant.isSupervisor());
     map.put("displayName", nonNull(fullConsultant) ? fullConsultant.getDisplayName() : null);
+    map.put(
+        "internalDisplayName",
+        nonNull(fullConsultant) ? fullConsultant.getInternalDisplayName() : null);
     map.put("publicSlug", nonNull(fullConsultant) ? fullConsultant.getPublicSlug() : null);
     map.put(
         "pendingPublicSlug",
@@ -404,10 +396,6 @@ public class UserServiceMapper {
     return chatMap.get("userId");
   }
 
-  public String consultantIdOf(Map<String, Object> appointmentMap) {
-    return (String) appointmentMap.get("consultantId");
-  }
-
   public Consultant consultantOf(Consultant consultant, Map<String, Object> patchMap) {
     if (patchMap.containsKey("email")) {
       consultant.setEmail((String) patchMap.get("email"));
@@ -430,6 +418,12 @@ public class UserServiceMapper {
     }
     if (patchMap.containsKey("walkThroughEnabled")) {
       consultant.setWalkThroughEnabled((Boolean) patchMap.get("walkThroughEnabled"));
+    }
+    if (patchMap.containsKey("liveChatViaSidebar")) {
+      consultant.setLiveChatViaSidebar((Boolean) patchMap.get("liveChatViaSidebar"));
+    }
+    if (patchMap.containsKey("avatarKind") || patchMap.containsKey("avatarId")) {
+      patchConsultantAvatar(consultant, patchMap);
     }
     if (patchMap.containsKey("notifyEnquiriesRepeating")) {
       consultant.setNotifyEnquiriesRepeating((Boolean) patchMap.get("notifyEnquiriesRepeating"));
@@ -502,8 +496,36 @@ public class UserServiceMapper {
     if (patchMap.containsKey("emailNotifications")) {
       patchEmailNotificationSettings(adviceSeeker, patchMap);
     }
+    if (patchMap.containsKey("avatarId")) {
+      var avatarId = (String) patchMap.get("avatarId");
+      adviceSeeker.setAvatarId(avatarId == null || avatarId.isBlank() ? null : avatarId.trim());
+    }
 
     return adviceSeeker;
+  }
+
+  /**
+   * The counsellor's own pick in the app (#1240). What the request omits keeps its stored value, as
+   * in the admin form (#1046), except that a motif id sent alone means ICON. The pair goes through
+   * {@link ConsultantAvatars#apply}, so explicit INITIALS keeps initials, while an empty id without
+   * a kind restores the default.
+   */
+  private void patchConsultantAvatar(Consultant consultant, Map<String, Object> patchMap) {
+    var avatarId =
+        patchMap.containsKey("avatarId")
+            ? (String) patchMap.get("avatarId")
+            : consultant.getAvatarId();
+    ConsultantAvatarKind avatarKind;
+    if (patchMap.containsKey("avatarKind")) {
+      avatarKind = ConsultantAvatarKind.fromNameOrNull((String) patchMap.get("avatarKind"));
+    } else if (avatarId != null && !avatarId.isBlank()) {
+      avatarKind = ConsultantAvatarKind.ICON;
+    } else if (patchMap.containsKey("avatarId")) {
+      avatarKind = null;
+    } else {
+      avatarKind = consultant.getAvatarKind();
+    }
+    ConsultantAvatars.apply(consultant, avatarKind, avatarId);
   }
 
   private void patchEmailNotificationSettings(
@@ -522,54 +544,65 @@ public class UserServiceMapper {
     user.setNotificationsSettings(JsonSerializationUtils.serializeToJsonString(patchedSettings));
   }
 
+  /**
+   * One switch of the notification matrix, as a getter/setter pair.
+   *
+   * <p>A list rather than a chain of ifs on purpose. The failure mode of the chain is a forgotten
+   * block, and a forgotten block does not fail — it silently drops one switch on every save, which
+   * is the hardest kind of bug to notice in a settings screen. `NotificationsSettingsMergeTest`
+   * walks the DTO by reflection so a field added to the API spec and not added here fails the
+   * build.
+   */
+  record NotificationSetting(
+      Function<NotificationsSettingsDTO, Boolean> read,
+      BiConsumer<NotificationsSettingsDTO, Boolean> write) {}
+
+  static final List<NotificationSetting> NOTIFICATION_SETTINGS =
+      List.of(
+          new NotificationSetting(
+              NotificationsSettingsDTO::getAppointmentNotificationEnabled,
+              NotificationsSettingsDTO::setAppointmentNotificationEnabled),
+          new NotificationSetting(
+              NotificationsSettingsDTO::getNewChatMessageNotificationEnabled,
+              NotificationsSettingsDTO::setNewChatMessageNotificationEnabled),
+          new NotificationSetting(
+              NotificationsSettingsDTO::getInitialEnquiryNotificationEnabled,
+              NotificationsSettingsDTO::setInitialEnquiryNotificationEnabled),
+          new NotificationSetting(
+              NotificationsSettingsDTO::getReassignmentNotificationEnabled,
+              NotificationsSettingsDTO::setReassignmentNotificationEnabled),
+          new NotificationSetting(
+              NotificationsSettingsDTO::getAssignmentNotificationEnabled,
+              NotificationsSettingsDTO::setAssignmentNotificationEnabled),
+          new NotificationSetting(
+              NotificationsSettingsDTO::getInternalChatNotificationEnabled,
+              NotificationsSettingsDTO::setInternalChatNotificationEnabled),
+          new NotificationSetting(
+              NotificationsSettingsDTO::getFeedbackNotificationEnabled,
+              NotificationsSettingsDTO::setFeedbackNotificationEnabled),
+          new NotificationSetting(
+              NotificationsSettingsDTO::getServiceNoticeNotificationEnabled,
+              NotificationsSettingsDTO::setServiceNoticeNotificationEnabled));
+
   private NotificationsSettingsDTO patchNotificationsSettingsDTO(
       NotificationsAware user, EmailNotificationsDTO emailNotifications) {
     NotificationsSettingsDTO newSettings = emailNotifications.getSettings();
     NotificationsSettingsDTO existingSettings =
         deserializeNotificationSettingsDTOOrDefaultIfNull(user);
-    if (newSettings.getAppointmentNotificationEnabled() != null) {
-      existingSettings.setAppointmentNotificationEnabled(
-          newSettings.getAppointmentNotificationEnabled());
-    }
 
-    if (newSettings.getNewChatMessageNotificationEnabled() != null) {
-      existingSettings.setNewChatMessageNotificationEnabled(
-          newSettings.getNewChatMessageNotificationEnabled());
-    }
-
-    if (newSettings.getInitialEnquiryNotificationEnabled() != null) {
-      existingSettings.setInitialEnquiryNotificationEnabled(
-          newSettings.getInitialEnquiryNotificationEnabled());
-    }
-
-    if (newSettings.getReassignmentNotificationEnabled() != null) {
-      existingSettings.setReassignmentNotificationEnabled(
-          newSettings.getReassignmentNotificationEnabled());
+    // A null means "not sent in this patch", not "switch it off": the settings
+    // screen sends one switch at a time.
+    for (NotificationSetting setting : NOTIFICATION_SETTINGS) {
+      Boolean value = setting.read().apply(newSettings);
+      if (value != null) {
+        setting.write().accept(existingSettings, value);
+      }
     }
     return existingSettings;
   }
 
   private boolean nullAsFalse(Boolean topicsInRegistrationEnabled) {
     return Boolean.TRUE.equals(topicsInRegistrationEnabled);
-  }
-
-  public Appointment appointmentOf(Map<String, Object> appointmentMap, Consultant consultant) {
-    var appointment = new Appointment();
-    if (appointmentMap.containsKey("id")) {
-      appointment.setId(UUID.fromString((String) appointmentMap.get("id")));
-    }
-    if (appointmentMap.containsKey("description")) {
-      appointment.setDescription((String) appointmentMap.get("description"));
-    }
-    appointment.setDatetime(Instant.parse((String) appointmentMap.get("datetime")));
-    var status = (String) appointmentMap.get("status");
-    appointment.setStatus(AppointmentStatus.valueOf(status.toUpperCase()));
-    appointment.setConsultant(consultant);
-    if (appointmentMap.containsKey("bookingId")) {
-      appointment.setBookingId((Integer) appointmentMap.get("bookingId"));
-    }
-
-    return appointment;
   }
 
   public List<Long> agencyIdsOf(List<ConsultantAgencyBase> consultantAgencies) {

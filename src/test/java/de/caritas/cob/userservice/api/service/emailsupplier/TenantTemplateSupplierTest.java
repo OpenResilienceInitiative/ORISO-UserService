@@ -2,6 +2,7 @@ package de.caritas.cob.userservice.api.service.emailsupplier;
 
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.is;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -19,6 +20,8 @@ import org.jeasy.random.EasyRandom;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.Mockito;
@@ -37,6 +40,47 @@ class TenantTemplateSupplierTest {
   @Mock ApplicationSettingsService applicationSettingsService;
 
   private final EasyRandom easyRandom = new EasyRandom();
+
+  @ParameterizedTest
+  @ValueSource(booleans = {false, true})
+  void optionalTenantContentOrClaimDoesNotBlockMailAttributes(boolean hasContent) {
+    TenantContext.setCurrentTenantData(new TenantData(7L, "fixture"));
+    ReflectionTestUtils.setField(
+        tenantTemplateSupplier, "applicationBaseUrl", "https://app.synthetic.oriso.test");
+    var tenant = new RestrictedTenantDTO().id(7L).subdomain("fixture").name("Fixture");
+    if (hasContent)
+      tenant.setContent(new de.caritas.cob.userservice.tenantservice.generated.web.model.Content());
+    when(tenantService.getRestrictedTenantData("fixture")).thenReturn(tenant);
+
+    var attributes = tenantTemplateSupplier.getTemplateAttributes();
+
+    org.assertj.core.api.Assertions.assertThat(attributes)
+        .filteredOn(attribute -> "tenant_claim".equals(attribute.getKey()))
+        .singleElement()
+        .satisfies(
+            attribute ->
+                org.assertj.core.api.Assertions.assertThat(attribute.getValue()).isEmpty());
+    org.assertj.core.api.Assertions.assertThat(attributes)
+        .filteredOn(attribute -> "url".equals(attribute.getKey()))
+        .singleElement()
+        .satisfies(
+            attribute ->
+                org.assertj.core.api.Assertions.assertThat(attribute.getValue())
+                    .isEqualTo("https://fixture.app.synthetic.oriso.test"));
+  }
+
+  @Test
+  void notificationUrlRejectsMissingTenantSubdomainInStandardMultitenancy() {
+    RestrictedTenantDTO tenant = new RestrictedTenantDTO().subdomain(null);
+    ReflectionTestUtils.setField(
+        tenantTemplateSupplier, "applicationBaseUrl", "https://onlineberatung.net");
+
+    IllegalStateException failure =
+        assertThrows(
+            IllegalStateException.class, () -> tenantTemplateSupplier.getTenantBaseUrl(tenant));
+
+    assertThat(failure.getMessage(), is("Tenant subdomain is required for an email URL"));
+  }
 
   @AfterEach
   void tearDown() {
@@ -148,6 +192,121 @@ class TenantTemplateSupplierTest {
     assertThat(templateAttributes.getFirst().getKey(), is("url"));
     assertThat(templateAttributes.getFirst().getValue(), is("https://onlineberatung.net"));
     verifyNoInteractions(tenantService, applicationSettingsService);
+  }
+
+  @Test
+  void getTenantBaseUrl_RejectsMissingTenantSubdomain() {
+    ReflectionTestUtils.setField(
+        tenantTemplateSupplier, "applicationBaseUrl", "https://onlineberatung.net");
+    RestrictedTenantDTO tenantData = new RestrictedTenantDTO().subdomain(null);
+
+    IllegalStateException error =
+        assertThrows(
+            IllegalStateException.class, () -> tenantTemplateSupplier.getTenantBaseUrl(tenantData));
+
+    assertThat(error.getMessage(), is("Tenant subdomain is required for an email URL"));
+  }
+
+  @Test
+  void getTenantBaseUrl_RejectsOverlongTenantSubdomain() {
+    ReflectionTestUtils.setField(
+        tenantTemplateSupplier, "applicationBaseUrl", "https://onlineberatung.net");
+    RestrictedTenantDTO tenantData = new RestrictedTenantDTO().subdomain("a".repeat(64));
+
+    IllegalStateException error =
+        assertThrows(
+            IllegalStateException.class, () -> tenantTemplateSupplier.getTenantBaseUrl(tenantData));
+
+    assertThat(error.getMessage(), is("Tenant subdomain is missing or invalid for mail URL"));
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {"-bad", "a.b"})
+  void getTenantBaseUrl_RejectsMalformedTenantSubdomain(String subdomain) {
+    ReflectionTestUtils.setField(
+        tenantTemplateSupplier, "applicationBaseUrl", "https://onlineberatung.net");
+
+    IllegalStateException error =
+        assertThrows(
+            IllegalStateException.class,
+            () ->
+                tenantTemplateSupplier.getTenantBaseUrl(
+                    new RestrictedTenantDTO().subdomain(subdomain)));
+
+    assertThat(error.getMessage(), is("Tenant subdomain is missing or invalid for mail URL"));
+  }
+
+  @Test
+  void getTenantBaseUrl_AcceptsCombinedHostnameAtDnsLimit() {
+    String baseHost = ("b".repeat(60) + ".").repeat(3) + "example.org";
+    ReflectionTestUtils.setField(
+        tenantTemplateSupplier, "applicationBaseUrl", "https://" + baseHost);
+
+    String url =
+        tenantTemplateSupplier.getTenantBaseUrl(
+            new RestrictedTenantDTO().subdomain("a".repeat(58)));
+
+    assertThat(url, is("https://" + "a".repeat(58) + "." + baseHost));
+  }
+
+  @Test
+  void getTenantBaseUrl_RejectsCombinedHostnameAboveDnsLimit() {
+    String baseHost = ("b".repeat(60) + ".").repeat(3) + "example.org";
+    ReflectionTestUtils.setField(
+        tenantTemplateSupplier, "applicationBaseUrl", "https://" + baseHost);
+
+    IllegalStateException error =
+        assertThrows(
+            IllegalStateException.class,
+            () ->
+                tenantTemplateSupplier.getTenantBaseUrl(
+                    new RestrictedTenantDTO().subdomain("a".repeat(59))));
+
+    assertThat(error.getMessage(), is("Tenant mail hostname exceeds the DNS length limit"));
+  }
+
+  @Test
+  void getTenantBaseUrl_RejectsMissingApplicationBaseUrl() {
+    RestrictedTenantDTO tenantData = new RestrictedTenantDTO().subdomain(VALID_SUBDOMAIN);
+
+    IllegalStateException error =
+        assertThrows(
+            IllegalStateException.class, () -> tenantTemplateSupplier.getTenantBaseUrl(tenantData));
+
+    assertThat(error.getMessage(), is("app.base.url is missing for tenant mail URL"));
+  }
+
+  @Test
+  void getTenantBaseUrl_RejectsMalformedApplicationBaseUrl() {
+    ReflectionTestUtils.setField(tenantTemplateSupplier, "applicationBaseUrl", "https://");
+    RestrictedTenantDTO tenantData = new RestrictedTenantDTO().subdomain(VALID_SUBDOMAIN);
+
+    IllegalStateException error =
+        assertThrows(
+            IllegalStateException.class, () -> tenantTemplateSupplier.getTenantBaseUrl(tenantData));
+
+    assertThat(error.getMessage(), is("app.base.url is invalid for tenant mail URL"));
+  }
+
+  @ParameterizedTest
+  @ValueSource(
+      strings = {
+        "ftp://onlineberatung.net",
+        "https://user@onlineberatung.net",
+        "https://onlineberatung.net?query=1",
+        "https://onlineberatung.net#fragment"
+      })
+  void getTenantBaseUrl_RejectsUnsupportedApplicationBaseUrl(String appBaseUrl) {
+    ReflectionTestUtils.setField(tenantTemplateSupplier, "applicationBaseUrl", appBaseUrl);
+
+    IllegalStateException error =
+        assertThrows(
+            IllegalStateException.class,
+            () ->
+                tenantTemplateSupplier.getTenantBaseUrl(
+                    new RestrictedTenantDTO().subdomain(VALID_SUBDOMAIN)));
+
+    assertThat(error.getMessage(), is("app.base.url is invalid for tenant mail URL"));
   }
 
   private void assertTemplateAttributesAreCorrectWithUrl(

@@ -46,6 +46,37 @@ class TenantServiceTest {
             new StubTenantServiceApiControllerFactory(tenantControllerApi), testCacheManager());
   }
 
+  @Test
+  void operationalAdmissionPreservesThePrivateCauseButUsesAFixedPublicReason() {
+    var factory = org.mockito.Mockito.mock(TenantServiceApiControllerFactory.class);
+    var remote = org.mockito.Mockito.mock(TenantControllerApi.class);
+    var failure = new org.springframework.web.client.RestClientException("private provider body");
+    org.mockito.Mockito.when(factory.createControllerApi()).thenReturn(remote);
+    org.mockito.Mockito.when(remote.getRestrictedTenantDataByTenantId(1L)).thenThrow(failure);
+    var service =
+        new TenantService(
+            factory, new org.springframework.cache.concurrent.ConcurrentMapCacheManager());
+    var thrown =
+        org.junit.jupiter.api.Assertions.assertThrows(
+            org.springframework.web.server.ResponseStatusException.class,
+            () -> service.requireOperationalTenant(1L));
+    assertThat(thrown.getStatusCode()).isEqualTo(org.springframework.http.HttpStatus.BAD_GATEWAY);
+    assertThat(thrown.getReason()).isEqualTo("Tenant operational status unavailable");
+    assertThat(thrown).hasCause(failure);
+  }
+
+  @Test
+  void singleTenantLookupUsesAuthoritativeEndpointOnEveryCall() {
+    var expected = new RestrictedTenantDTO().id(42L);
+    tenantControllerApi.singleTenantResult = expected;
+    assertThat(tenantService.getSingleTenancyTenantDataFresh()).isSameAs(expected);
+    var updated = new RestrictedTenantDTO().id(87L);
+    tenantControllerApi.singleTenantResult = updated;
+    assertThat(tenantService.getSingleTenancyTenantDataFresh()).isSameAs(updated);
+    assertThat(tenantControllerApi.singleTenantCalls.get()).isEqualTo(2);
+    assertThat(tenantControllerApi.tenantIdCalls.get()).isZero();
+  }
+
   // Tenant resolution must reach the external tenant service on a cache miss.
   @Test
   void getRestrictedTenantData_validSubdomain_returnsDtoFromApi() {
@@ -308,6 +339,15 @@ class TenantServiceTest {
   }
 
   static final class StubTenantControllerApi extends TenantControllerApi {
+
+    RestrictedTenantDTO singleTenantResult;
+    final AtomicInteger singleTenantCalls = new AtomicInteger();
+
+    @Override
+    public RestrictedTenantDTO getRestrictedSingleTenancyTenantData() {
+      singleTenantCalls.incrementAndGet();
+      return singleTenantResult;
+    }
 
     RestrictedTenantDTO subdomainResult;
     RestrictedTenantDTO tenantIdResult;

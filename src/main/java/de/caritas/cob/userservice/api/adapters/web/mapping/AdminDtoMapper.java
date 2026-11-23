@@ -2,6 +2,7 @@ package de.caritas.cob.userservice.api.adapters.web.mapping;
 
 import static org.springframework.hateoas.server.mvc.WebMvcLinkBuilder.methodOn;
 
+import de.caritas.cob.userservice.api.adapters.web.controller.StatisticsReaderController;
 import de.caritas.cob.userservice.api.adapters.web.controller.UserAdminController;
 import de.caritas.cob.userservice.api.adapters.web.dto.AdminDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.AdminLinks;
@@ -11,8 +12,10 @@ import de.caritas.cob.userservice.api.adapters.web.dto.AgencyAdminResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.HalLink;
 import de.caritas.cob.userservice.api.adapters.web.dto.HalLink.MethodEnum;
 import de.caritas.cob.userservice.api.adapters.web.dto.PaginationLinks;
+import de.caritas.cob.userservice.api.admin.service.admin.AccountLoginStatusService;
 import de.caritas.cob.userservice.api.admin.service.tenant.TenantService;
 import de.caritas.cob.userservice.api.model.Admin;
+import de.caritas.cob.userservice.api.port.out.SearchFilter;
 import de.caritas.cob.userservice.generated.api.adapters.web.controller.UseradminApi;
 import de.caritas.cob.userservice.tenantservice.generated.web.model.RestrictedTenantDTO;
 import java.util.ArrayList;
@@ -33,6 +36,7 @@ import org.springframework.web.client.HttpClientErrorException;
 public class AdminDtoMapper implements DtoMapperUtils {
 
   private final @NonNull TenantService tenantService;
+  private final AccountLoginStatusService accountLoginStatusService;
 
   @Value("${multitenancy.enabled}")
   private boolean multiTenancyEnabled;
@@ -44,13 +48,40 @@ public class AdminDtoMapper implements DtoMapperUtils {
       Integer perPage,
       String field,
       String order) {
+    return adminSearchResultOf(resultMap, query, page, perPage, field, order, SearchFilter.NONE);
+  }
+
+  public AdminSearchResultDTO adminSearchResultOf(
+      Map<String, Object> resultMap,
+      String query,
+      Integer page,
+      Integer perPage,
+      String field,
+      String order,
+      SearchFilter filter) {
+    return adminSearchResultOf(
+        resultMap, query, page, perPage, field, order, filter, Admin.AdminType.AGENCY);
+  }
+
+  public AdminSearchResultDTO adminSearchResultOf(
+      Map<String, Object> resultMap,
+      String query,
+      Integer page,
+      Integer perPage,
+      String field,
+      String order,
+      SearchFilter filter,
+      Admin.AdminType adminType) {
     var admins = new ArrayList<AdminResponseDTO>();
 
     var adminMaps = (List<Map<String, Object>>) resultMap.get("admins");
+    var activeById =
+        accountLoginStatusService.activeByIds(
+            adminMaps.stream().map(adminMap -> (String) adminMap.get("id")).toList());
     adminMaps.forEach(
         adminMap -> {
           var response = new AdminResponseDTO();
-          response.setEmbedded(adminDtoOf(adminMap));
+          response.setEmbedded(adminDtoOf(adminMap, activeById.get((String) adminMap.get("id"))));
           response.setLinks(consultantLinksOf(adminMap));
           admins.add(response);
         });
@@ -59,12 +90,14 @@ public class AdminDtoMapper implements DtoMapperUtils {
     result.setTotal((Integer) resultMap.get("totalElements"));
     result.setEmbedded(admins);
 
-    var pagination = new PaginationLinks().self(pageLinkOf(query, page, perPage, field, order));
+    var pagination =
+        new PaginationLinks()
+            .self(pageLinkOf(query, page, perPage, field, order, filter, adminType));
     if (!(boolean) resultMap.get("isFirstPage")) {
-      pagination.previous(pageLinkOf(query, page - 1, perPage, field, order));
+      pagination.previous(pageLinkOf(query, page - 1, perPage, field, order, filter, adminType));
     }
     if (!(boolean) resultMap.get("isLastPage")) {
-      pagination.next(pageLinkOf(query, page + 1, perPage, field, order));
+      pagination.next(pageLinkOf(query, page + 1, perPage, field, order, filter, adminType));
     }
     result.setLinks(pagination);
 
@@ -94,11 +127,29 @@ public class AdminDtoMapper implements DtoMapperUtils {
     return halLinkOf(httpEntity, method);
   }
 
-  private HalLink pageLinkOf(String query, int page, int perPage, String field, String order) {
+  private HalLink pageLinkOf(
+      String query,
+      int page,
+      int perPage,
+      String field,
+      String order,
+      SearchFilter filter,
+      Admin.AdminType adminType) {
+    var controller = methodOn(UserAdminController.class);
     var httpEntity =
-        methodOn(UserAdminController.class).searchAgencyAdmins(query, page, perPage, field, order);
+        switch (adminType) {
+          case TENANT ->
+              controller.searchTenantAdmins(query, page, perPage, field, order, filter.tenantId());
+          case AGENCY ->
+              controller.searchAgencyAdmins(
+                  query, page, perPage, field, order, filter.tenantId(), filter.agencyIds());
+          case STATISTICS ->
+              methodOn(StatisticsReaderController.class).search(query, page, perPage, field, order);
+          default ->
+              throw new IllegalArgumentException("unsupported admin search type: " + adminType);
+        };
 
-    return halLinkOf(httpEntity, MethodEnum.GET);
+    return expandedHalLinkOf(httpEntity, MethodEnum.GET);
   }
 
   public HalLink adminLinkOf(String id, MethodEnum method) {
@@ -118,16 +169,23 @@ public class AdminDtoMapper implements DtoMapperUtils {
     return halLinkOf(httpEntity, method);
   }
 
-  private AdminDTO adminDtoOf(Map<String, Object> adminUserMap) {
+  private AdminDTO adminDtoOf(Map<String, Object> adminUserMap, Boolean active) {
     var adminDTO = new AdminDTO();
     adminDTO.setId((String) adminUserMap.get("id"));
+    adminDTO.setActive(active);
     adminDTO.setEmail((String) adminUserMap.get("email"));
     adminDTO.setFirstname((String) adminUserMap.get("firstName"));
     adminDTO.setLastname((String) adminUserMap.get("lastName"));
     adminDTO.setUsername((String) adminUserMap.get("username"));
     adminDTO.setCreateDate((String) adminUserMap.get("createdAt"));
     adminDTO.setUpdateDate((String) adminUserMap.get("updatedAt"));
-    adminDTO.setPublicName(null);
+    // publicName was dead scaffolding hardcoded to null (#996). Admin accounts have no
+    // separate display name, so their public name is the full name.
+    adminDTO.setPublicName(
+        fullNameOf(
+            (String) adminUserMap.get("firstName"),
+            (String) adminUserMap.get("lastName"),
+            (String) adminUserMap.get("username")));
     adminDTO.setRoleInOrg(roleInOrgOf((Admin.AdminType) adminUserMap.get("type")));
     adminDTO.setVacated(false);
     adminDTO.setAdminRights(true);
@@ -153,6 +211,15 @@ public class AdminDtoMapper implements DtoMapperUtils {
     adminDTO.setAgencies(agencies);
 
     return adminDTO;
+  }
+
+  private String fullNameOf(String firstName, String lastName, String usernameFallback) {
+    var fullName =
+        ((firstName == null ? "" : firstName.trim())
+                + " "
+                + (lastName == null ? "" : lastName.trim()))
+            .trim();
+    return fullName.isBlank() ? usernameFallback : fullName;
   }
 
   private void enrichResponseWithTenantInformation(

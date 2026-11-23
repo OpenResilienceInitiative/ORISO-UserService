@@ -26,9 +26,7 @@ import lombok.Setter;
 import lombok.ToString;
 import lombok.ToString.Exclude;
 import org.hibernate.annotations.Filter;
-import org.hibernate.annotations.FilterDef;
 import org.hibernate.annotations.JdbcTypeCode;
-import org.hibernate.annotations.ParamDef;
 import org.hibernate.type.SqlTypes;
 import org.springframework.data.annotation.CreatedDate;
 import org.springframework.data.annotation.LastModifiedDate;
@@ -44,10 +42,7 @@ import org.springframework.data.jpa.domain.support.AuditingEntityListener;
 @Setter
 @ToString
 @EntityListeners(AuditingEntityListener.class)
-@FilterDef(
-    name = "tenantFilter",
-    parameters = {@ParamDef(name = "tenantId", type = Long.class)})
-@Filter(name = "tenantFilter", condition = "tenant_id = :tenantId")
+@Filter(name = TenantFilter.NAME, condition = TenantFilter.CONDITION)
 public class User implements TenantAware, NotificationsAware {
 
   @Id
@@ -71,6 +66,20 @@ public class User implements TenantAware, NotificationsAware {
 
   @Column(name = "matrix_user_id")
   private String matrixUserId;
+
+  @Column(name = "chat_recovery_mode", updatable = false)
+  private String chatRecoveryMode;
+
+  @Column(name = "chat_recovery_policy_revision", updatable = false)
+  private Long chatRecoveryPolicyRevision;
+
+  public String getEffectiveChatRecoveryMode() {
+    return chatRecoveryMode == null ? "RECOVERY_KEY" : chatRecoveryMode;
+  }
+
+  public long getEffectiveChatRecoveryPolicyRevision() {
+    return chatRecoveryPolicyRevision == null ? 0L : chatRecoveryPolicyRevision;
+  }
 
   @Column(name = "language_formal", nullable = false, columnDefinition = "tinyint")
   @JdbcTypeCode(SqlTypes.TINYINT)
@@ -114,6 +123,19 @@ public class User implements TenantAware, NotificationsAware {
   @Column(name = "deletion_pause_created_at", columnDefinition = "datetime")
   private LocalDateTime deletionPauseCreatedAt;
 
+  /** Why the last nightly run kept this row: step and fixed reason, never content (#1521). */
+  @Column(name = "deletion_failure_reason", length = 512)
+  private String deletionFailureReason;
+
+  @Column(name = "deletion_failed_at", columnDefinition = "datetime")
+  private LocalDateTime deletionFailedAt;
+
+  @Column(name = "reactivation_operation_id", length = 36)
+  private String reactivationOperationId;
+
+  @Column(name = "reactivation_operation_started_at", columnDefinition = "datetime")
+  private LocalDateTime reactivationOperationStartedAt;
+
   @Column(name = "tenant_id")
   private Long tenantId;
 
@@ -148,8 +170,42 @@ public class User implements TenantAware, NotificationsAware {
   @JdbcTypeCode(SqlTypes.TINYINT)
   private boolean notificationsEnabled;
 
-  @Column(name = "notifications_settings")
+  // The real column is varchar(4000) (see the userservice schema); without a
+  // length here Hibernate generates varchar(255) for the test DDL, and the
+  // settings JSON overflows it as soon as the notification matrix grows.
+  @Column(name = "notifications_settings", length = 4000)
   private String notificationsSettings;
+
+  /**
+   * Joined a self-help group "without an account" (FE#1499): the browser holds the only login, so
+   * the account is deleted once no login can still be alive ({@code
+   * user.temporary.deleteWorkflow}).
+   */
+  @Column(name = "temporary_account", nullable = false, columnDefinition = "bit default false")
+  private boolean temporaryAccount;
+
+  /**
+   * Lifetimes and retention copied at creation for a temporary account from a direct link (ADR-029,
+   * #1476). Null for every other account, including self-help-group guests.
+   */
+  @jakarta.persistence.Embedded private TemporaryAccountSnapshot temporaryAccountSnapshot;
+
+  /**
+   * #1662: the guest account mode a temporary guest entered under (the link's or circle's mode as
+   * capped at registration). "Konto behalten" is judged by it, so a later switch of the link only
+   * affects new guests. Null for permanent accounts and for temporary accounts created before it
+   * was stored.
+   */
+  @Enumerated(EnumType.STRING)
+  @Column(name = "guest_account_mode_at_entry", length = 16)
+  private GuestAccountMode guestAccountModeAtEntry;
+
+  /**
+   * The animal the advice seeker chose in their profile (#1240), as its lower-case file stem. Null
+   * shows the default the app derives from the user id.
+   */
+  @Column(name = "avatar_id", length = 40)
+  private String avatarId;
 
   public User(
       @Size(max = 36) @NonNull String userId,

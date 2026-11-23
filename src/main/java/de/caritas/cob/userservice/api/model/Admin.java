@@ -19,8 +19,6 @@ import lombok.NonNull;
 import lombok.Setter;
 import lombok.ToString;
 import org.hibernate.annotations.Filter;
-import org.hibernate.annotations.FilterDef;
-import org.hibernate.annotations.ParamDef;
 import org.hibernate.search.annotations.Analyzer;
 import org.hibernate.search.annotations.Field;
 import org.hibernate.search.annotations.Indexed;
@@ -30,6 +28,7 @@ import org.springframework.data.annotation.LastModifiedDate;
 import org.springframework.data.jpa.domain.support.AuditingEntityListener;
 
 @Entity
+@org.hibernate.annotations.DynamicUpdate
 @Table(
     name = "admin",
     indexes = {
@@ -46,10 +45,7 @@ import org.springframework.data.jpa.domain.support.AuditingEntityListener;
 @Builder
 @Indexed
 @EntityListeners(AuditingEntityListener.class)
-@FilterDef(
-    name = "tenantFilter",
-    parameters = {@ParamDef(name = "tenantId", type = Long.class)})
-@Filter(name = "tenantFilter", condition = "tenant_id = :tenantId")
+@Filter(name = TenantFilter.NAME, condition = TenantFilter.CONDITION)
 public class Admin implements TenantAware {
 
   protected static final String EMAIL_ANALYZER = "emailAnalyzer";
@@ -59,8 +55,15 @@ public class Admin implements TenantAware {
     TENANT,
     SUPER,
     /** Global Support Admin (ADR-018) — additive support identity, separate from Platform Admin. */
-    SUPPORT
+    SUPPORT,
+    /** Read-only platform statistics account (ORISO-UserService#1666); always on tenant 0. */
+    STATISTICS
   }
+
+  /** Explicit management pause; independent identity and lifecycle restrictions stay intact. */
+  @org.hibernate.annotations.ColumnDefault("false")
+  @Column(name = "managed_paused", nullable = false)
+  private boolean managedPaused;
 
   @Id
   @Column(name = "admin_id", updatable = false, nullable = false)
@@ -101,8 +104,13 @@ public class Admin implements TenantAware {
   @SortableField
   private String email;
 
+  /** Shown to counsellors instead of the login e-mail when set (ORISO-Admin#1534). */
+  @Column(name = "contact_email")
+  @Size(max = 255)
+  private String contactEmail;
+
   @Enumerated(EnumType.STRING)
-  @Column(length = 6, nullable = false)
+  @Column(length = 16, nullable = false)
   private AdminType type;
 
   @Column(name = "id_old", updatable = false)

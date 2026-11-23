@@ -17,6 +17,21 @@ import org.springframework.data.repository.query.Param;
  */
 public interface AdminStatisticsRepository extends Repository<Session, Long> {
 
+  /**
+   * The one definition of an active counsellor behind the small-cell minimum (UserService#1560):
+   * the minimum protects the people who can be behind a figure, so a registered account counts only
+   * while it is usable - fully created, not deleted or in a deletion process, not paused by
+   * management and not absent. Table alias {@code c} is the {@code consultant} table.
+   */
+  String ACTIVE_CONSULTANT =
+      "c.delete_date IS NULL AND c.status = 'CREATED' "
+          // Absent today (ORISO-Frontend#2303): switched on and today within the optional range.
+          + "AND NOT (c.is_absent = 1"
+          + " AND (c.absence_start IS NULL OR c.absence_start <= CURRENT_DATE)"
+          + " AND (c.absence_end IS NULL OR c.absence_end >= CURRENT_DATE)) "
+          + "AND c.managed_paused = FALSE "
+          + "AND (c.deletion_lifecycle_state IS NULL OR c.deletion_lifecycle_state = 'ACTIVE')";
+
   interface GroupCountProjection {
     Long getGroupId();
 
@@ -36,6 +51,31 @@ public interface AdminStatisticsRepository extends Repository<Session, Long> {
      * cleanly, which is why that divergence only surfaced against real MariaDB.
      */
     LocalDate getDay();
+
+    Long getTotal();
+  }
+
+  /**
+   * New sessions per hour in the stored time (UTC). A fixed stand counts German calendar days, and
+   * only the Java side can turn an hour into its German day the same way on every database.
+   */
+  interface HourlyCountProjection {
+    Long getGroupId();
+
+    /** See {@link DailyCountProjection#getDay()} for why this is a {@link LocalDate}. */
+    LocalDate getDay();
+
+    /** {@link Number}: the concrete type of {@code EXTRACT} differs between the databases. */
+    Number getHourOfDay();
+
+    Long getTotal();
+  }
+
+  /** Rows of {@code communication_stat} per group and kind (see {@code CommunicationStat.Kind}). */
+  interface KindCountProjection {
+    Long getGroupId();
+
+    String getKind();
 
     Long getTotal();
   }
@@ -93,6 +133,21 @@ public interface AdminStatisticsRepository extends Repository<Session, Long> {
   @Query(
       nativeQuery = true,
       value =
+          "SELECT s.agency_id AS groupId, CAST(s.create_date AS DATE) AS day, "
+              + "EXTRACT(HOUR FROM s.create_date) AS hourOfDay, COUNT(*) AS total "
+              + "FROM session s "
+              + "WHERE s.tenant_id = :tenantId "
+              + "AND s.create_date >= :fromDate AND s.create_date < :toDate "
+              + "GROUP BY s.agency_id, CAST(s.create_date AS DATE), "
+              + "EXTRACT(HOUR FROM s.create_date)")
+  List<HourlyCountProjection> countHourlyNewSessionsByAgency(
+      @Param("tenantId") Long tenantId,
+      @Param("fromDate") LocalDateTime fromDate,
+      @Param("toDate") LocalDateTime toDate);
+
+  @Query(
+      nativeQuery = true,
+      value =
           "SELECT s.agency_id AS groupId, s.main_topic_id AS topicId, COUNT(*) AS total "
               + "FROM session s "
               + "WHERE s.tenant_id = :tenantId AND s.main_topic_id IS NOT NULL "
@@ -110,15 +165,23 @@ public interface AdminStatisticsRepository extends Repository<Session, Long> {
               + "FROM consultant_agency ca "
               + "JOIN consultant c ON c.consultant_id = ca.consultant_id "
               + "WHERE ca.tenant_id = :tenantId "
-              + "AND ca.delete_date IS NULL AND c.delete_date IS NULL "
-              + "GROUP BY ca.agency_id")
+              + "AND ca.delete_date IS NULL AND ca.status = 'CREATED' AND "
+              + ACTIVE_CONSULTANT
+              + " GROUP BY ca.agency_id")
   List<GroupCountProjection> countConsultantsByAgency(@Param("tenantId") Long tenantId);
 
+  /**
+   * The people behind the tenant total: the same population as the agency rows ({@link
+   * #countConsultantsByAgency}), each counted once, so the total and its rows can be compared.
+   */
   @Query(
       nativeQuery = true,
       value =
-          "SELECT COUNT(*) FROM consultant c "
-              + "WHERE c.tenant_id = :tenantId AND c.delete_date IS NULL")
+          "SELECT COUNT(DISTINCT ca.consultant_id) FROM consultant_agency ca "
+              + "JOIN consultant c ON c.consultant_id = ca.consultant_id "
+              + "WHERE ca.tenant_id = :tenantId AND ca.agency_id IS NOT NULL "
+              + "AND ca.delete_date IS NULL AND ca.status = 'CREATED' AND "
+              + ACTIVE_CONSULTANT)
   long countConsultantsForTenant(@Param("tenantId") Long tenantId);
 
   @Query(
@@ -146,6 +209,35 @@ public interface AdminStatisticsRepository extends Repository<Session, Long> {
               + "AND COALESCE(c.create_date, c.initial_start_date) >= :fromDate "
               + "AND COALESCE(c.create_date, c.initial_start_date) < :toDate")
   long countGroupChatsForTenant(
+      @Param("tenantId") Long tenantId,
+      @Param("fromDate") LocalDateTime fromDate,
+      @Param("toDate") LocalDateTime toDate);
+
+  /**
+   * Counsellor messages ({@code consultant_message_stat}) per agency. Reads only the plain tenant
+   * and agency columns, never the pseudonymous counsellor key.
+   */
+  @Query(
+      nativeQuery = true,
+      value =
+          "SELECT m.agency_id AS groupId, COUNT(*) AS total FROM consultant_message_stat m "
+              + "WHERE m.tenant_id = :tenantId "
+              + "AND m.sent_date >= :fromDate AND m.sent_date < :toDate "
+              + "GROUP BY m.agency_id")
+  List<GroupCountProjection> countCounsellorMessagesByAgency(
+      @Param("tenantId") Long tenantId,
+      @Param("fromDate") LocalDateTime fromDate,
+      @Param("toDate") LocalDateTime toDate);
+
+  @Query(
+      nativeQuery = true,
+      value =
+          "SELECT cs.agency_id AS groupId, cs.kind AS kind, COUNT(*) AS total "
+              + "FROM communication_stat cs "
+              + "WHERE cs.tenant_id = :tenantId "
+              + "AND cs.occurred_at >= :fromDate AND cs.occurred_at < :toDate "
+              + "GROUP BY cs.agency_id, cs.kind")
+  List<KindCountProjection> countCommunicationByAgency(
       @Param("tenantId") Long tenantId,
       @Param("fromDate") LocalDateTime fromDate,
       @Param("toDate") LocalDateTime toDate);
@@ -192,6 +284,19 @@ public interface AdminStatisticsRepository extends Repository<Session, Long> {
   @Query(
       nativeQuery = true,
       value =
+          "SELECT s.tenant_id AS groupId, CAST(s.create_date AS DATE) AS day, "
+              + "EXTRACT(HOUR FROM s.create_date) AS hourOfDay, COUNT(*) AS total "
+              + "FROM session s "
+              + "WHERE s.tenant_id IS NOT NULL "
+              + "AND s.create_date >= :fromDate AND s.create_date < :toDate "
+              + "GROUP BY s.tenant_id, CAST(s.create_date AS DATE), "
+              + "EXTRACT(HOUR FROM s.create_date)")
+  List<HourlyCountProjection> countHourlyNewSessionsByTenant(
+      @Param("fromDate") LocalDateTime fromDate, @Param("toDate") LocalDateTime toDate);
+
+  @Query(
+      nativeQuery = true,
+      value =
           "SELECT s.tenant_id AS groupId, s.main_topic_id AS topicId, COUNT(*) AS total "
               + "FROM session s "
               + "WHERE s.tenant_id IS NOT NULL AND s.main_topic_id IS NOT NULL "
@@ -203,9 +308,13 @@ public interface AdminStatisticsRepository extends Repository<Session, Long> {
   @Query(
       nativeQuery = true,
       value =
-          "SELECT c.tenant_id AS groupId, COUNT(*) AS total FROM consultant c "
-              + "WHERE c.tenant_id IS NOT NULL AND c.delete_date IS NULL "
-              + "GROUP BY c.tenant_id")
+          "SELECT ca.tenant_id AS groupId, COUNT(DISTINCT ca.consultant_id) AS total "
+              + "FROM consultant_agency ca "
+              + "JOIN consultant c ON c.consultant_id = ca.consultant_id "
+              + "WHERE ca.tenant_id IS NOT NULL AND ca.agency_id IS NOT NULL "
+              + "AND ca.delete_date IS NULL AND ca.status = 'CREATED' AND "
+              + ACTIVE_CONSULTANT
+              + " GROUP BY ca.tenant_id")
   List<GroupCountProjection> countConsultantsByTenant();
 
   @Query(
@@ -219,5 +328,26 @@ public interface AdminStatisticsRepository extends Repository<Session, Long> {
               + "AND COALESCE(c.create_date, c.initial_start_date) < :toDate "
               + "GROUP BY co.tenant_id")
   List<GroupCountProjection> countGroupChatsByTenant(
+      @Param("fromDate") LocalDateTime fromDate, @Param("toDate") LocalDateTime toDate);
+
+  @Query(
+      nativeQuery = true,
+      value =
+          "SELECT m.tenant_id AS groupId, COUNT(*) AS total FROM consultant_message_stat m "
+              + "WHERE m.tenant_id IS NOT NULL "
+              + "AND m.sent_date >= :fromDate AND m.sent_date < :toDate "
+              + "GROUP BY m.tenant_id")
+  List<GroupCountProjection> countCounsellorMessagesByTenant(
+      @Param("fromDate") LocalDateTime fromDate, @Param("toDate") LocalDateTime toDate);
+
+  @Query(
+      nativeQuery = true,
+      value =
+          "SELECT cs.tenant_id AS groupId, cs.kind AS kind, COUNT(*) AS total "
+              + "FROM communication_stat cs "
+              + "WHERE cs.tenant_id IS NOT NULL "
+              + "AND cs.occurred_at >= :fromDate AND cs.occurred_at < :toDate "
+              + "GROUP BY cs.tenant_id, cs.kind")
+  List<KindCountProjection> countCommunicationByTenant(
       @Param("fromDate") LocalDateTime fromDate, @Param("toDate") LocalDateTime toDate);
 }

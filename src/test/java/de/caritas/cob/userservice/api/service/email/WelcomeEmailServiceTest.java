@@ -1,0 +1,150 @@
+package de.caritas.cob.userservice.api.service.email;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
+
+import com.neovisionaries.i18n.LanguageCode;
+import de.caritas.cob.userservice.api.model.User;
+import de.caritas.cob.userservice.api.service.email.layout.EmailBrandingFixture;
+import de.caritas.cob.userservice.api.service.email.sender.SenderOrganisationFixture;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
+import org.mockito.Spy;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.mockito.junit.jupiter.MockitoSettings;
+import org.mockito.quality.Strictness;
+import org.springframework.test.util.ReflectionTestUtils;
+
+@ExtendWith(MockitoExtension.class)
+@MockitoSettings(strictness = Strictness.LENIENT)
+class WelcomeEmailServiceTest {
+
+  @Mock private PlatformSmtpSettingsProvider platformSmtpSettings;
+  @Mock private OrisoEmailDispatcher dispatcher;
+
+  // Real, so the test asserts that a mail comes out rather than that a method
+  // was called.
+  @Spy private OrisoEmailRenderer emailRenderer = new OrisoEmailRenderer();
+
+  @Spy
+  private OrisoEmailBrand emailBrand =
+      new OrisoEmailBrand(
+          SenderOrganisationFixture.platformOwner(),
+          EmailBrandingFixture.platform("https://app.example.org"));
+
+  @InjectMocks private WelcomeEmailService service;
+
+  private final PlatformSmtpSettingsProvider.Settings smtp =
+      new PlatformSmtpSettingsProvider.Settings(
+          "smtp.example.org", 587, false, "user", "secret", "no-reply@example.org", "#123456");
+
+  @BeforeEach
+  void setUp() {
+    ReflectionTestUtils.setField(service, "applicationBaseUrl", "https://app.example.org");
+    ReflectionTestUtils.setField(service, "emailDummySuffix", "@dummy.invalid");
+    when(platformSmtpSettings.requireConfigured()).thenReturn(smtp);
+  }
+
+  private static User user(String email) {
+    var user = new User();
+    user.setEmail(email);
+    user.setTenantId(1L);
+    user.setLanguageCode(LanguageCode.de);
+    return user;
+  }
+
+  @Test
+  void sendsTheGeneratedUserNameToTheAddressGiven() {
+    service.sendWelcomeEmail(user("jemand@example.org"), "ruhiges-yak-1428");
+
+    var email = ArgumentCaptor.forClass(OrisoEmailRenderer.RenderedEmail.class);
+    verify(dispatcher).send(eq(smtp), eq("jemand@example.org"), email.capture());
+
+    // The user name is the whole point: ORISO cannot recover it, so a mail that
+    // does not carry it is worse than no mail.
+    assertThat(email.getValue().html()).contains("ruhiges-yak-1428");
+    assertThat(email.getValue().text()).contains("ruhiges-yak-1428");
+    assertThat(email.getValue().subject()).isEqualTo("Willkommen bei Online-Beratung");
+  }
+
+  @Test
+  void usesGermanProductDefaultWhenWelcomeRecipientHasNoLanguage() {
+    User recipient = user("jemand@example.org");
+    recipient.setLanguageCode(null);
+
+    service.sendWelcomeEmail(recipient, "ruhiges-yak-1428");
+
+    var email = ArgumentCaptor.forClass(OrisoEmailRenderer.RenderedEmail.class);
+    verify(dispatcher).send(eq(smtp), eq("jemand@example.org"), email.capture());
+    assertThat(email.getValue().subject()).isEqualTo("Willkommen bei Online-Beratung");
+  }
+
+  @Test
+  void staysSilentWhenAnAnonymousAccountHasNoRealAddress() {
+    // The normal case for an anonymous registration, not an error: the user
+    // name is shown on screen at the end of registration either way.
+    // `User.email` is non-null by contract — an anonymous account carries a
+    // synthetic address ending in the configured dummy suffix rather than no
+    // address at all, so that is the case worth guarding.
+    service.sendWelcomeEmail(user("anon-1234@dummy.invalid"), "ruhiges-yak-1428");
+    service.sendWelcomeEmail(user(""), "ruhiges-yak-1428");
+
+    verify(dispatcher, never()).send(any(), anyString(), any());
+  }
+
+  @Test
+  void staysSilentWithoutAUserNameToCarry() {
+    // A mail saying "keep this safe" and then showing nothing is worse than
+    // no mail at all.
+    service.sendWelcomeEmail(user("jemand@example.org"), null);
+    service.sendWelcomeEmail(user("jemand@example.org"), "  ");
+
+    verify(dispatcher, never()).send(any(), anyString(), any());
+  }
+
+  @Test
+  void sendsUsingPlatformEvenWhenTheTenantHasNoSmtpSettings() {
+    service.sendWelcomeEmail(user("jemand@example.org"), "ruhiges-yak-1428");
+
+    verify(dispatcher).send(eq(smtp), eq("jemand@example.org"), any());
+  }
+
+  @Test
+  void sendsUsingPlatformForAUserWithoutATenant() {
+    var user = user("jemand@example.org");
+    user.setTenantId(null);
+
+    service.sendWelcomeEmail(user, "ruhiges-yak-1428");
+
+    verify(dispatcher).send(eq(smtp), eq("jemand@example.org"), any());
+  }
+
+  @Test
+  void brandingFailureLeavesRegistrationMailUnsent() {
+    doThrow(new IllegalStateException("invalid tenant URL"))
+        .when(emailBrand)
+        .valuesForTenant("https://app.example.org", 1L);
+
+    service.sendWelcomeEmail(user("jemand@example.org"), "ruhiges-yak-1428");
+
+    verify(dispatcher, never()).send(any(), anyString(), any());
+    verify(platformSmtpSettings, never()).requireConfigured();
+  }
+
+  @Test
+  void survivesANullUser() {
+    service.sendWelcomeEmail(null, "ruhiges-yak-1428");
+
+    verify(dispatcher, never()).send(any(), anyString(), any());
+  }
+}

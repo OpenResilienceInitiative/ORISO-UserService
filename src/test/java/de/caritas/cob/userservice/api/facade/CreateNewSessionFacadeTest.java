@@ -17,9 +17,12 @@ import de.caritas.cob.userservice.api.adapters.web.dto.NewRegistrationResponseDt
 import de.caritas.cob.userservice.api.adapters.web.dto.UserDTO;
 import de.caritas.cob.userservice.api.exception.MissingConsultingTypeException;
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
+import de.caritas.cob.userservice.api.facade.rollback.RollbackFacade;
 import de.caritas.cob.userservice.api.manager.consultingtype.ConsultingTypeManager;
 import de.caritas.cob.userservice.api.model.NewSessionValidationConstraint;
 import de.caritas.cob.userservice.api.model.User;
+import de.caritas.cob.userservice.api.model.UserAgency;
+import de.caritas.cob.userservice.api.service.UserAgencyService;
 import de.caritas.cob.userservice.api.service.statistics.StatisticsService;
 import de.caritas.cob.userservice.api.service.statistics.event.AssignSessionStatisticsEvent;
 import de.caritas.cob.userservice.consultingtypeservice.generated.web.model.ExtendedConsultingTypeResponseDTO;
@@ -31,6 +34,7 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.data.auditing.AuditingHandler;
 import org.springframework.http.HttpStatus;
 
 @ExtendWith(MockitoExtension.class)
@@ -232,5 +236,41 @@ class CreateNewSessionFacadeTest {
     assertThat(mapped.getConsultingType()).isEqualTo(CONSULTING_TYPE);
     assertThat(mapped.getMainTopicId()).isEqualTo(3L);
     assertThat(mapped.getAge()).isEqualTo("27");
+  }
+
+  @Test
+  void
+      initializeNewSession_Should_createNewEnquiry_When_existingAskerAlreadyHasAChatRelationToTheGroupChatAgency() {
+    // #1646: "further counselling" at a centre the asker already knows. The consulting type
+    // is a group-chat type, and the asker already has a user-agency relation to that centre.
+    // The request must create the new enquiry instead of failing with 400.
+    var userAgencyService = org.mockito.Mockito.mock(UserAgencyService.class);
+    var auditingHandler = org.mockito.Mockito.mock(AuditingHandler.class);
+    var rollbackFacade = org.mockito.Mockito.mock(RollbackFacade.class);
+    var realChatRelationFacade =
+        new CreateUserChatRelationFacade(userAgencyService, rollbackFacade, auditingHandler);
+    var facade =
+        new CreateNewSessionFacade(
+            consultingTypeManager, realChatRelationFacade, createSessionFacade, statisticsService);
+    var askerEntity = new User();
+    askerEntity.setUserId("asker-1");
+    when(userAgencyService.getUserAgenciesByUser(askerEntity))
+        .thenReturn(List.of(new UserAgency(askerEntity, AGENCY_ID)));
+    var extended = consultingTypeWithGroupChat(true);
+    when(consultingTypeManager.getConsultingTypeSettings("1")).thenReturn(extended);
+    when(createSessionFacade.createUserSession(
+            any(UserDTO.class), eq(askerEntity), eq(extended), eq(List.of())))
+        .thenReturn(501L);
+    var furtherCounselling = new NewRegistrationDto();
+    furtherCounselling.setPostcode("13353");
+    furtherCounselling.setAgencyId(AGENCY_ID);
+    furtherCounselling.setConsultingType("1");
+    furtherCounselling.setMainTopicId(1L);
+
+    var result = facade.initializeNewSession(furtherCounselling, askerEntity, List.of());
+
+    assertThat(result.getSessionId()).isEqualTo(501L);
+    assertThat(result.getStatus()).isEqualTo(HttpStatus.CREATED);
+    verify(userAgencyService, never()).saveUserAgency(any());
   }
 }

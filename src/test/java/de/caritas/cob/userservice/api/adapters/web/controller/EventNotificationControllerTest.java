@@ -1,26 +1,53 @@
 package de.caritas.cob.userservice.api.adapters.web.controller;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
+import static org.mockito.Mockito.atLeastOnce;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
+import de.caritas.cob.userservice.api.helper.ConsultantDisplayNameResolver;
+import de.caritas.cob.userservice.api.model.Consultant;
+import de.caritas.cob.userservice.api.model.ConsultantAgency;
+import de.caritas.cob.userservice.api.model.EventNotification;
+import de.caritas.cob.userservice.api.model.Session;
+import de.caritas.cob.userservice.api.model.TeamDiscussion;
+import de.caritas.cob.userservice.api.model.User;
+import de.caritas.cob.userservice.api.port.out.ConsultantAgencyRepository;
+import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
+import de.caritas.cob.userservice.api.port.out.EventNotificationRepository;
+import de.caritas.cob.userservice.api.port.out.NotificationRoomLevelRepository;
+import de.caritas.cob.userservice.api.port.out.SessionRepository;
+import de.caritas.cob.userservice.api.port.out.TeamDiscussionParticipantRepository;
+import de.caritas.cob.userservice.api.port.out.TeamDiscussionRepository;
+import de.caritas.cob.userservice.api.port.out.UserRepository;
 import de.caritas.cob.userservice.api.service.matrix.RedisMessageMirrorService;
+import de.caritas.cob.userservice.api.service.notification.EventNotificationDeduplicationWriter;
 import de.caritas.cob.userservice.api.service.notification.EventNotificationService;
 import de.caritas.cob.userservice.api.service.notification.PrivacyEnvelope;
 import de.caritas.cob.userservice.api.service.notification.TeamDiscussionNotificationService;
+import de.caritas.cob.userservice.api.workflow.delete.service.IdentityTombstoneService;
 import jakarta.validation.constraints.Min;
 import java.lang.reflect.Method;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
+import org.mockito.Mockito;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.http.HttpStatus;
 
@@ -29,6 +56,19 @@ class EventNotificationControllerTest {
 
   @Mock private EventNotificationService eventNotificationService;
   @Mock private TeamDiscussionNotificationService teamDiscussionNotificationService;
+
+  @Mock
+  private de.caritas.cob.userservice.api.service.notification.MessageMentionNotificationService
+      messageMentionNotificationService;
+
+  @Mock
+  private de.caritas.cob.userservice.api.service.notification.FeedbackMessageEmailService
+      feedbackMessageEmailService;
+
+  @Mock
+  private de.caritas.cob.userservice.api.service.notification.InternalChatEmailService
+      internalChatEmailService;
+
   @Mock private AuthenticatedUser authenticatedUser;
   @Mock private RedisMessageMirrorService redisMessageMirrorService;
 
@@ -41,14 +81,244 @@ class EventNotificationControllerTest {
         new EventNotificationController(
             eventNotificationService,
             teamDiscussionNotificationService,
+            messageMentionNotificationService,
+            feedbackMessageEmailService,
+            internalChatEmailService,
             authenticatedUser,
+            mock(
+                de.caritas.cob.userservice.api.service.notification.MessageEventCurrentAccessService
+                    .class),
             Optional.of(redisMessageMirrorService));
     controllerWithoutMirror =
         new EventNotificationController(
             eventNotificationService,
             teamDiscussionNotificationService,
+            messageMentionNotificationService,
+            feedbackMessageEmailService,
+            internalChatEmailService,
             authenticatedUser,
+            mock(
+                de.caritas.cob.userservice.api.service.notification.MessageEventCurrentAccessService
+                    .class),
             Optional.empty());
+  }
+
+  /** ORISO-UserService#1510: first the marked row, then the fan-out that finds it written. */
+  @Test
+  void aCounsellorsMentionIsMarkedBeforeTheFanOut() {
+    when(authenticatedUser.getUserId()).thenReturn("u-1");
+    when(authenticatedUser.getRoles()).thenReturn(Set.of("consultant"));
+    when(authenticatedUser.isConsultant()).thenReturn(true);
+    var request = new EventNotificationController.MessageEventRequestDTO();
+    request.setRoomId("room-2");
+    request.setMatrixEventId("$event-1");
+    request.setMentionedUserIds(List.of("@colleague:oriso"));
+
+    controllerWithMirror.createMessageEventNotification(request);
+
+    var order = Mockito.inOrder(messageMentionNotificationService, eventNotificationService);
+    order
+        .verify(messageMentionNotificationService)
+        .notifyMentioned(
+            Mockito.eq("room-2"),
+            Mockito.eq("u-1"),
+            Mockito.eq(List.of("@colleague:oriso")),
+            Mockito.isNull(),
+            Mockito.any(PrivacyEnvelope.class));
+    order
+        .verify(eventNotificationService)
+        .createMessageNotificationFromRoom(
+            Mockito.eq("room-2"),
+            Mockito.eq("u-1"),
+            Mockito.any(),
+            Mockito.eq(false),
+            Mockito.any(PrivacyEnvelope.class));
+  }
+
+  /** The endpoint is open to advice seekers too; a mention is not theirs to send. */
+  @Test
+  void anAdviceSeekerCannotMentionAnyone() {
+    when(authenticatedUser.getUserId()).thenReturn("asker-1");
+    when(authenticatedUser.getRoles()).thenReturn(Set.of("user"));
+    when(authenticatedUser.isConsultant()).thenReturn(false);
+    var request = new EventNotificationController.MessageEventRequestDTO();
+    request.setRoomId("room-2");
+    request.setMatrixEventId("$event-1");
+    request.setMentionedUserIds(List.of("@colleague:oriso"));
+
+    controllerWithMirror.createMessageEventNotification(request);
+
+    Mockito.verifyNoInteractions(messageMentionNotificationService);
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {"ordinary", "feedback"})
+  void deniedPrimaryRoomWriterStopsEveryDownstreamNotification(String kind) {
+    var access =
+        mock(
+            de.caritas.cob.userservice.api.service.notification.MessageEventCurrentAccessService
+                .class);
+    var controller =
+        new EventNotificationController(
+            eventNotificationService,
+            teamDiscussionNotificationService,
+            messageMentionNotificationService,
+            feedbackMessageEmailService,
+            internalChatEmailService,
+            authenticatedUser,
+            access,
+            Optional.of(redisMessageMirrorService));
+    var request = new EventNotificationController.MessageEventRequestDTO();
+    request.setRoomId("!case:matrix.example");
+    request.setMatrixEventId("$event");
+    request.setFeedbackMailIntent("feedback".equals(kind));
+    org.mockito.Mockito.doThrow(
+            new de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException(
+                "No current case access"))
+        .when(access)
+        .assertPrimaryRoomWriter("!case:matrix.example", authenticatedUser);
+
+    org.junit.jupiter.api.Assertions.assertThrows(
+        de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException.class,
+        () -> controller.createMessageEventNotification(request));
+    verifyNoInteractions(
+        eventNotificationService,
+        teamDiscussionNotificationService,
+        feedbackMessageEmailService,
+        internalChatEmailService,
+        redisMessageMirrorService);
+  }
+
+  /** api-error-contract: a failed durable step never answers 2xx; the client retries. */
+  @Test
+  void internalChatIntentDatabaseFailureIsNotAcknowledged() {
+    var request = new EventNotificationController.MessageEventRequestDTO();
+    request.setRoomId("!internal:matrix.example");
+    request.setMatrixEventId("$event");
+    org.mockito.Mockito.doThrow(
+            new org.springframework.dao.DataIntegrityViolationException("column cannot be null"))
+        .when(internalChatEmailService)
+        .onMessageIntent("!internal:matrix.example", "$event", authenticatedUser);
+
+    org.junit.jupiter.api.Assertions.assertThrows(
+        org.springframework.dao.DataAccessException.class,
+        () -> controllerWithoutMirror.createMessageEventNotification(request));
+    verifyNoInteractions(eventNotificationService);
+  }
+
+  @Test
+  void explicitFeedbackIntentPersistsBeforeResponseButOrdinaryAsideDoesNot() {
+    when(authenticatedUser.isConsultant()).thenReturn(true);
+    var protectedAside = new EventNotificationController.MessageEventRequestDTO();
+    protectedAside.setRoomId("!protected:matrix.example");
+    protectedAside.setMatrixEventId("$aside");
+    protectedAside.setSupervisorMessage(true);
+
+    assertThat(
+            controllerWithoutMirror.createMessageEventNotification(protectedAside).getStatusCode())
+        .isEqualTo(HttpStatus.NO_CONTENT);
+    verifyNoInteractions(feedbackMessageEmailService);
+
+    var feedback = new EventNotificationController.MessageEventRequestDTO();
+    feedback.setRoomId("!protected:matrix.example");
+    feedback.setMatrixEventId("$feedback");
+    feedback.setFeedbackMailIntent(true);
+
+    assertThat(controllerWithoutMirror.createMessageEventNotification(feedback).getStatusCode())
+        .isEqualTo(HttpStatus.NO_CONTENT);
+    verify(feedbackMessageEmailService)
+        .onFeedbackIntent("!protected:matrix.example", "$feedback", authenticatedUser);
+  }
+
+  @Test
+  void feedbackIntentWithoutMatrixEventIsRejectedBeforeAnyNotification() {
+    var feedback = new EventNotificationController.MessageEventRequestDTO();
+    feedback.setRoomId("!protected:matrix.example");
+    feedback.setFeedbackMailIntent(true);
+
+    assertThat(controllerWithoutMirror.createMessageEventNotification(feedback).getStatusCode())
+        .isEqualTo(HttpStatus.BAD_REQUEST);
+    verifyNoInteractions(feedbackMessageEmailService, eventNotificationService);
+  }
+
+  // ---------------------------------------------------------------------------
+  // ADR-002 §2 / #1201: the client posts the sender's name in the request body. The server must
+  // not repeat it to a third party -- it knows who the sender is (senderUserId comes from the
+  // authenticated principal, not from the body) and resolves the name itself.
+  // ---------------------------------------------------------------------------
+
+  @Test
+  void createMessageEventNotification_Should_NotLetTheClientNameTheSenderToTheAdviceSeeker() {
+    var eventNotificationRepository = mock(EventNotificationRepository.class);
+    var sessionRepository = mock(SessionRepository.class);
+    var userRepository = mock(UserRepository.class);
+    var consultantRepository = mock(ConsultantRepository.class);
+    var identityTombstoneService = mock(IdentityTombstoneService.class);
+    var deduplicationWriter = mock(EventNotificationDeduplicationWriter.class);
+    var realService =
+        new EventNotificationService(
+            eventNotificationRepository,
+            sessionRepository,
+            userRepository,
+            consultantRepository,
+            org.mockito.Mockito.mock(org.springframework.beans.factory.ObjectProvider.class),
+            identityTombstoneService,
+            deduplicationWriter,
+            mock(de.caritas.cob.userservice.api.service.matrix.MatrixFeedUpdateSignalService.class),
+            new ConsultantDisplayNameResolver());
+    var controller =
+        new EventNotificationController(
+            realService,
+            teamDiscussionNotificationService,
+            messageMentionNotificationService,
+            feedbackMessageEmailService,
+            internalChatEmailService,
+            authenticatedUser,
+            mock(
+                de.caritas.cob.userservice.api.service.notification.MessageEventCurrentAccessService
+                    .class),
+            Optional.empty());
+
+    when(authenticatedUser.getUserId()).thenReturn("counsellor-1");
+    when(consultantRepository.findByIdAndDeleteDateIsNull("counsellor-1"))
+        .thenReturn(
+            Optional.of(
+                Consultant.builder()
+                    .id("counsellor-1")
+                    .username("beraterin1")
+                    .firstName("Angela")
+                    .lastName("Musterfrau")
+                    .displayName(null)
+                    .email("angela@example.org")
+                    .build()));
+    var adviceSeeker = mock(User.class);
+    when(adviceSeeker.getUserId()).thenReturn("asker-1");
+    var session = mock(Session.class);
+    when(session.getUser()).thenReturn(adviceSeeker);
+    when(session.getId()).thenReturn(100L);
+    when(sessionRepository.findByMatrixRoomId("!room-1:matrix.example"))
+        .thenReturn(Optional.of(session));
+
+    var request = new EventNotificationController.MessageEventRequestDTO();
+    request.setRoomId("!room-1:matrix.example");
+    request.setMessagePreview("hello");
+    // The lie: a client is free to put anything here, and the frontend in fact falls back to the
+    // real name when the counsellor has no pseudonym.
+    request.setSenderDisplayName("Angela Musterfrau");
+
+    controller.createMessageEventNotification(request);
+
+    var saved = ArgumentCaptor.forClass(EventNotification.class);
+    verify(eventNotificationRepository, atLeastOnce()).save(saved.capture());
+    assertThat(saved.getAllValues())
+        .isNotEmpty()
+        .allSatisfy(
+            row -> {
+              assertThat(row.getText()).doesNotContain("Angela", "Musterfrau");
+              assertThat(row.getParams()).doesNotContain("Angela", "Musterfrau");
+            });
+    assertThat(saved.getAllValues())
+        .anySatisfy(row -> assertThat(row.getText()).contains("beraterin1"));
   }
 
   @Test
@@ -62,20 +332,20 @@ class EventNotificationControllerTest {
             .perPage(50)
             .unreadCount(0)
             .build();
-    when(eventNotificationService.getFeed("u-1", 0, 50)).thenReturn(feed);
+    when(eventNotificationService.getFeed("u-1", 0, 50, Set.of())).thenReturn(feed);
 
-    var response = controllerWithMirror.getFeed(0, 50);
+    var response = controllerWithMirror.getFeed(0, 50, null);
 
     assertEquals(HttpStatus.OK, response.getStatusCode());
     assertEquals(0, response.getBody().getPage());
-    verify(eventNotificationService).getFeed("u-1", 0, 50);
+    verify(eventNotificationService).getFeed("u-1", 0, 50, Set.of());
   }
 
   @Test
   void getFeed_customPagePerPage_delegatesWithGivenValues() {
     // Business reason: consumers need deterministic pagination for infinite-scroll behavior.
     when(authenticatedUser.getUserId()).thenReturn("u-1");
-    when(eventNotificationService.getFeed("u-1", 3, 15))
+    when(eventNotificationService.getFeed("u-1", 3, 15, Set.of()))
         .thenReturn(
             EventNotificationService.NotificationFeedResponse.builder()
                 .items(List.of())
@@ -84,16 +354,17 @@ class EventNotificationControllerTest {
                 .unreadCount(0)
                 .build());
 
-    var response = controllerWithMirror.getFeed(3, 15);
+    var response = controllerWithMirror.getFeed(3, 15, null);
 
     assertEquals(HttpStatus.OK, response.getStatusCode());
-    verify(eventNotificationService).getFeed("u-1", 3, 15);
+    verify(eventNotificationService).getFeed("u-1", 3, 15, Set.of());
   }
 
   @Test
   void getFeed_parameterAnnotations_includeExpectedMinConstraints() throws Exception {
     // Business reason: min constraints guard against invalid paging values reaching service layer.
-    Method method = EventNotificationController.class.getMethod("getFeed", int.class, int.class);
+    Method method =
+        EventNotificationController.class.getMethod("getFeed", int.class, int.class, String.class);
     Min pageMin = (Min) method.getParameters()[0].getAnnotations()[1];
     Min perPageMin = (Min) method.getParameters()[1].getAnnotations()[1];
     assertEquals(0, pageMin.value());
@@ -112,7 +383,20 @@ class EventNotificationControllerTest {
     var response = controllerWithMirror.updateActiveView(request);
 
     assertEquals(HttpStatus.NO_CONTENT, response.getStatusCode());
-    verify(eventNotificationService).updateActiveView("u-1", "room-1", "thread-1", false);
+    verify(eventNotificationService).updateActiveView("u-1", "room-1", "thread-1", false, false);
+  }
+
+  @Test
+  void updateActiveView_mainChatHidden_isPassedOn() {
+    when(authenticatedUser.getUserId()).thenReturn("u-1");
+    var request = new EventNotificationController.ActiveViewRequestDTO();
+    request.setRoomId("room-1");
+    request.setThreadRootId("thread-1");
+    request.setMainChatHidden(true);
+
+    controllerWithMirror.updateActiveView(request);
+
+    verify(eventNotificationService).updateActiveView("u-1", "room-1", "thread-1", true, true);
   }
 
   @Test
@@ -124,7 +408,7 @@ class EventNotificationControllerTest {
     var response = controllerWithMirror.updateActiveView(request);
 
     assertEquals(HttpStatus.NO_CONTENT, response.getStatusCode());
-    verify(eventNotificationService).updateActiveView("u-1", null, null, true);
+    verify(eventNotificationService).updateActiveView("u-1", null, null, true, false);
   }
 
   @Test
@@ -156,7 +440,7 @@ class EventNotificationControllerTest {
 
     assertEquals(HttpStatus.NO_CONTENT, response.getStatusCode());
     verify(eventNotificationService)
-        .createMessageNotificationFromRoom("room-2", "u-1", "hello", false, "Sender", null);
+        .createMessageNotificationFromRoom("room-2", "u-1", "hello", false, (PrivacyEnvelope) null);
   }
 
   @Test
@@ -179,7 +463,7 @@ class EventNotificationControllerTest {
     assertEquals(HttpStatus.NO_CONTENT, response.getStatusCode());
     verify(eventNotificationService)
         .createThreadReplyNotificationFromRoom(
-            "room-3", "u-2", "reply", "thread-3", true, "Sender-3", "parent", null);
+            "room-3", "u-2", "reply", "thread-3", true, "parent", null);
   }
 
   @Test
@@ -211,7 +495,8 @@ class EventNotificationControllerTest {
 
     assertEquals(HttpStatus.NO_CONTENT, response.getStatusCode());
     verify(eventNotificationService)
-        .createMessageNotificationFromRoom("room-5", "u-4", "preview", false, null, null);
+        .createMessageNotificationFromRoom(
+            "room-5", "u-4", "preview", false, (PrivacyEnvelope) null);
   }
 
   @Test
@@ -233,7 +518,6 @@ class EventNotificationControllerTest {
             org.mockito.ArgumentMatchers.eq("u-5"),
             org.mockito.ArgumentMatchers.eq("preview"),
             org.mockito.ArgumentMatchers.eq(false),
-            org.mockito.ArgumentMatchers.isNull(),
             envelopeCaptor.capture());
     assertEquals("$evt-42", envelopeCaptor.getValue().getMessageId());
   }
@@ -260,7 +544,6 @@ class EventNotificationControllerTest {
             org.mockito.ArgumentMatchers.eq("u-6"),
             org.mockito.ArgumentMatchers.eq("preview"),
             org.mockito.ArgumentMatchers.eq(false),
-            org.mockito.ArgumentMatchers.isNull(),
             envelopeCaptor.capture());
     assertEquals("IMAGE", envelopeCaptor.getValue().getContentClass());
     assertEquals(true, envelopeCaptor.getValue().isHasAttachment());
@@ -285,7 +568,6 @@ class EventNotificationControllerTest {
             org.mockito.ArgumentMatchers.eq("u-6"),
             org.mockito.ArgumentMatchers.isNull(),
             org.mockito.ArgumentMatchers.eq(false),
-            org.mockito.ArgumentMatchers.isNull(),
             envelopeCaptor.capture());
     assertEquals("OTHER", envelopeCaptor.getValue().getContentClass());
   }
@@ -313,7 +595,6 @@ class EventNotificationControllerTest {
             org.mockito.ArgumentMatchers.eq("$root-1"),
             org.mockito.ArgumentMatchers.eq(false),
             org.mockito.ArgumentMatchers.isNull(),
-            org.mockito.ArgumentMatchers.isNull(),
             envelopeCaptor.capture());
     assertEquals("$evt-44", envelopeCaptor.getValue().getMessageId());
   }
@@ -334,5 +615,334 @@ class EventNotificationControllerTest {
             EventNotificationController.MessageEventRequestDTO.class);
     assertEquals(
         true, endpoint.getParameters()[0].isAnnotationPresent(jakarta.validation.Valid.class));
+  }
+
+  // ---------------------------------------------------------------------------
+  // #1377 slice 7 — exclusions and bulk read by event type
+  // ---------------------------------------------------------------------------
+
+  @Test
+  void getFeed_withExcludeEventTypes_passesParsedSetToService() {
+    when(authenticatedUser.getUserId()).thenReturn("u-1");
+    when(eventNotificationService.getFeed("u-1", 0, 50, Set.of("supervisor.added", "call.missed")))
+        .thenReturn(
+            EventNotificationService.NotificationFeedResponse.builder()
+                .items(List.of())
+                .page(0)
+                .perPage(50)
+                .unreadCount(3)
+                .excludedEventTypes(List.of("call.missed", "supervisor.added"))
+                .build());
+
+    var response = controllerWithMirror.getFeed(0, 50, " supervisor.added, call.missed ,,");
+
+    assertEquals(HttpStatus.OK, response.getStatusCode());
+    assertEquals(3, response.getBody().getUnreadCount());
+    assertEquals(
+        List.of("call.missed", "supervisor.added"), response.getBody().getExcludedEventTypes());
+  }
+
+  @Test
+  void getFeed_withTooManyExcludeEventTypes_returnsBadRequest() {
+    String tooMany =
+        java.util.stream.IntStream.rangeClosed(1, EventNotificationController.MAX_EVENT_TYPES + 1)
+            .mapToObj(i -> "type." + i)
+            .reduce((a, b) -> a + "," + b)
+            .orElseThrow();
+
+    var response = controllerWithMirror.getFeed(0, 50, tooMany);
+
+    assertEquals(HttpStatus.BAD_REQUEST, response.getStatusCode());
+    verify(eventNotificationService, never())
+        .getFeed(any(), any(Integer.class), any(Integer.class), any());
+  }
+
+  @Test
+  void getUnreadCount_delegatesWithExclusionsAndEchoesThem() {
+    when(authenticatedUser.getUserId()).thenReturn("u-1");
+    when(eventNotificationService.countUnread("u-1", Set.of("call.missed"))).thenReturn(7L);
+
+    var response = controllerWithMirror.getUnreadCount("call.missed");
+
+    assertEquals(HttpStatus.OK, response.getStatusCode());
+    assertEquals(7L, response.getBody().getUnreadCount());
+    assertEquals(List.of("call.missed"), response.getBody().getExcludedEventTypes());
+  }
+
+  @Test
+  void getUnreadCount_overlongEventType_returnsBadRequest() {
+    var response =
+        controllerWithMirror.getUnreadCount(
+            "x".repeat(EventNotificationController.MAX_EVENT_TYPE_LENGTH + 1));
+
+    assertEquals(HttpStatus.BAD_REQUEST, response.getStatusCode());
+    verify(eventNotificationService, never()).countUnread(any(), any());
+  }
+
+  @Test
+  void markAsReadByEventTypes_delegatesAndReportsCount() {
+    when(authenticatedUser.getUserId()).thenReturn("u-1");
+    when(eventNotificationService.markAsReadByEventTypes(
+            "u-1", Set.of("supervisor.added", "supervisor.removed")))
+        .thenReturn(12);
+
+    var response =
+        controllerWithMirror.markAsReadByEventTypes("supervisor.added,supervisor.removed");
+
+    assertEquals(HttpStatus.OK, response.getStatusCode());
+    assertEquals(12, response.getBody().getUpdated());
+    assertEquals(
+        List.of("supervisor.added", "supervisor.removed"), response.getBody().getEventTypes());
+  }
+
+  @Test
+  void markAsReadByEventTypes_emptyList_isBadRequestNotReadAll() {
+    // Business reason: a missing list must never degrade into "mark everything read".
+    assertEquals(
+        HttpStatus.BAD_REQUEST, controllerWithMirror.markAsReadByEventTypes(null).getStatusCode());
+    assertEquals(
+        HttpStatus.BAD_REQUEST, controllerWithMirror.markAsReadByEventTypes(" , ").getStatusCode());
+    verify(eventNotificationService, never()).markAsReadByEventTypes(any(), any());
+    verify(eventNotificationService, never()).markAllAsRead(any());
+  }
+
+  // ---------------------------------------------------------------------------
+  // ORISO-Frontend#1824 slice S6: controller + real EventNotificationService (repositories
+  // mocked). The writable Timeline preview never PATCHes /active-view, so these prove from the
+  // HTTP entry points that an active view is honoured only for its own room, and that without
+  // any PATCH every message event becomes a Timeline entry.
+  // ---------------------------------------------------------------------------
+
+  private static final String S6_ROOM_A = "!room-a:matrix.example";
+  private static final String S6_ROOM_B = "!room-b:matrix.example";
+  private static final String S6_SIDE_ROOM = "!supervision-side:matrix.example";
+  private static final String S6_TEAM_ROOM = "!team-discussion:matrix.example";
+  private static final String S6_COUNSELLOR = "consultant-1";
+  private static final String S6_ASKER_A = "asker-a";
+  private static final String S6_ASKER_B = "asker-b";
+
+  /** Who the controller believes is calling; switched between requests. */
+  private final AtomicReference<String> s6Caller = new AtomicReference<>();
+
+  private EventNotificationRepository s6EventRows;
+  private EventNotificationDeduplicationWriter s6DedupWriter;
+  private SessionRepository s6Sessions;
+  private EventNotificationService s6RealService;
+
+  private EventNotificationController s6Controller(
+      TeamDiscussionNotificationService teamDiscussionService) {
+    when(authenticatedUser.getUserId()).thenAnswer(invocation -> s6Caller.get());
+    return new EventNotificationController(
+        s6RealService,
+        teamDiscussionService,
+        messageMentionNotificationService,
+        feedbackMessageEmailService,
+        internalChatEmailService,
+        authenticatedUser,
+        mock(
+            de.caritas.cob.userservice.api.service.notification.MessageEventCurrentAccessService
+                .class),
+        Optional.empty());
+  }
+
+  private void s6WireRealService() {
+    s6EventRows = mock(EventNotificationRepository.class);
+    s6DedupWriter = mock(EventNotificationDeduplicationWriter.class);
+    s6Sessions = mock(SessionRepository.class);
+    s6RealService =
+        new EventNotificationService(
+            s6EventRows,
+            s6Sessions,
+            mock(UserRepository.class),
+            mock(ConsultantRepository.class),
+            org.mockito.Mockito.mock(org.springframework.beans.factory.ObjectProvider.class),
+            mock(IdentityTombstoneService.class),
+            s6DedupWriter,
+            mock(de.caritas.cob.userservice.api.service.matrix.MatrixFeedUpdateSignalService.class),
+            new ConsultantDisplayNameResolver());
+  }
+
+  private void s6OneToOneSession(long sessionId, String roomId, String askerId) {
+    var session = new Session();
+    session.setId(sessionId);
+    session.setTenantId(7L);
+    session.setMatrixRoomId(roomId);
+    var asker = new User();
+    asker.setUserId(askerId);
+    session.setUser(asker);
+    var counsellor = new Consultant();
+    counsellor.setId(S6_COUNSELLOR);
+    session.setConsultant(counsellor);
+    when(s6Sessions.findByMatrixRoomId(roomId)).thenReturn(Optional.of(session));
+  }
+
+  /** Every Timeline row the real service persisted, deduplicated or plain. */
+  private List<EventNotification> s6PersistedRows() {
+    List<EventNotification> rows = new ArrayList<>();
+    for (var invocation : Mockito.mockingDetails(s6DedupWriter).getInvocations()) {
+      if ("persistInNewTransaction".equals(invocation.getMethod().getName())) {
+        rows.add(invocation.getArgument(0));
+      }
+    }
+    for (var invocation : Mockito.mockingDetails(s6EventRows).getInvocations()) {
+      if ("save".equals(invocation.getMethod().getName())) {
+        rows.add(invocation.getArgument(0));
+      }
+    }
+    return rows;
+  }
+
+  private HttpStatus s6PatchActiveView(
+      EventNotificationController controller, String caller, String roomId, String threadRootId) {
+    s6Caller.set(caller);
+    var request = new EventNotificationController.ActiveViewRequestDTO();
+    request.setRoomId(roomId);
+    request.setThreadRootId(threadRootId);
+    request.setActive(true);
+    return (HttpStatus) controller.updateActiveView(request).getStatusCode();
+  }
+
+  private HttpStatus s6PostMessageEvent(
+      EventNotificationController controller,
+      String caller,
+      String roomId,
+      String matrixEventId,
+      String threadRootId,
+      boolean supervisorMessage) {
+    s6Caller.set(caller);
+    var request = new EventNotificationController.MessageEventRequestDTO();
+    request.setRoomId(roomId);
+    request.setMatrixEventId(matrixEventId);
+    request.setThreadRootId(threadRootId);
+    request.setSupervisorMessage(supervisorMessage);
+    return (HttpStatus) controller.createMessageEventNotification(request).getStatusCode();
+  }
+
+  @Test
+  void s6_activeViewPatchForRoomA_doesNotSuppressMessageNewForRoomB() {
+    s6WireRealService();
+    s6OneToOneSession(100L, S6_ROOM_A, S6_ASKER_A);
+    s6OneToOneSession(200L, S6_ROOM_B, S6_ASKER_B);
+    var controller = s6Controller(teamDiscussionNotificationService);
+
+    assertThat(s6PatchActiveView(controller, S6_COUNSELLOR, S6_ROOM_A, null))
+        .isEqualTo(HttpStatus.NO_CONTENT);
+    assertThat(s6PostMessageEvent(controller, S6_ASKER_B, S6_ROOM_B, "$b1", null, false))
+        .isEqualTo(HttpStatus.NO_CONTENT);
+    // Control: the same counsellor's view does silence room A itself.
+    assertThat(s6PostMessageEvent(controller, S6_ASKER_A, S6_ROOM_A, "$a1", null, false))
+        .isEqualTo(HttpStatus.NO_CONTENT);
+
+    assertThat(s6PersistedRows())
+        .filteredOn(row -> S6_COUNSELLOR.equals(row.getRecipientUserId()))
+        .singleElement()
+        .satisfies(
+            row -> {
+              assertThat(row.getEventType()).isEqualTo("message.new");
+              assertThat(row.getSourceSessionId()).isEqualTo(200L);
+              assertThat(row.getDeduplicationKey()).isEqualTo("message.new:$b1");
+            });
+  }
+
+  @Test
+  void s6_withoutAnyActiveViewPatch_everyMessageEventCreatesAnEntry() {
+    s6WireRealService();
+    s6OneToOneSession(100L, S6_ROOM_A, S6_ASKER_A);
+    var controller = s6Controller(teamDiscussionNotificationService);
+
+    s6PostMessageEvent(controller, S6_ASKER_A, S6_ROOM_A, "$a1", null, false);
+    s6PostMessageEvent(controller, S6_ASKER_A, S6_ROOM_A, "$a2", null, false);
+    s6PostMessageEvent(controller, S6_ASKER_A, S6_ROOM_A, "$a3", "$a1", false);
+
+    assertThat(s6PersistedRows())
+        .allSatisfy(row -> assertThat(row.getRecipientUserId()).isEqualTo(S6_COUNSELLOR))
+        .extracting(EventNotification::getDeduplicationKey)
+        .containsExactly("message.new:$a1", "message.new:$a2", "thread.reply.new:$a3");
+  }
+
+  @Test
+  void s6_supervisionSideRoomMessageEvent_createsNoTimelineEntry() {
+    s6WireRealService();
+    // ADR-008: the side room lives on session_supervisor.matrix_room_id, never on
+    // session.matrix_room_id, so the session lookup by room id finds nothing.
+    when(s6Sessions.findByMatrixRoomId(S6_SIDE_ROOM)).thenReturn(Optional.empty());
+    var controller = s6Controller(teamDiscussionNotificationService);
+
+    // The supervisor's side-room composer posts with supervisorMessage=true; the counsellor's
+    // reply in the side room posts without it. Neither room id resolves to a session.
+    assertThat(s6PostMessageEvent(controller, "supervisor-1", S6_SIDE_ROOM, "$s1", null, true))
+        .isEqualTo(HttpStatus.NO_CONTENT);
+    assertThat(s6PostMessageEvent(controller, S6_COUNSELLOR, S6_SIDE_ROOM, "$s2", null, false))
+        .isEqualTo(HttpStatus.NO_CONTENT);
+
+    verify(s6Sessions, Mockito.times(2)).findByMatrixRoomId(S6_SIDE_ROOM);
+    assertThat(s6PersistedRows()).isEmpty();
+  }
+
+  @Test
+  void s6_teamDiscussionMessageEvent_isSuppressedOnlyByAnActiveViewOnTheTeamRoom() {
+    s6WireRealService();
+    var enquiry = new Session();
+    enquiry.setId(300L);
+    enquiry.setTenantId(7L);
+    enquiry.setAgencyId(42L);
+    enquiry.setMatrixRoomId(S6_ROOM_A);
+    when(s6Sessions.findById(300L)).thenReturn(Optional.of(enquiry));
+    var discussions = mock(TeamDiscussionRepository.class);
+    when(discussions.findByMatrixRoomId(S6_TEAM_ROOM))
+        .thenReturn(
+            Optional.of(
+                TeamDiscussion.builder()
+                    .id(99L)
+                    .sessionId(300L)
+                    .matrixRoomId(S6_TEAM_ROOM)
+                    .status(TeamDiscussion.Status.OPEN)
+                    .firstNotified(false)
+                    .build()));
+    var agencies = mock(ConsultantAgencyRepository.class);
+    List<ConsultantAgency> circle = new ArrayList<>();
+    for (String id : List.of("consultant-sender", "consultant-a", "consultant-b")) {
+      var consultant = new Consultant();
+      consultant.setId(id);
+      var membership = new ConsultantAgency();
+      membership.setConsultant(consultant);
+      membership.setAgencyId(42L);
+      circle.add(membership);
+    }
+    when(agencies.findByAgencyIdAndDeleteDateIsNull(42L)).thenReturn(circle);
+    var realTeamService =
+        new TeamDiscussionNotificationService(
+            discussions,
+            mock(TeamDiscussionParticipantRepository.class),
+            mock(NotificationRoomLevelRepository.class),
+            agencies,
+            mock(de.caritas.cob.userservice.api.port.out.ConsultantRepository.class),
+            s6Sessions,
+            s6RealService,
+            mock(
+                de.caritas.cob.userservice.api.workflow.accountinactivity.AccountInactivityService
+                    .class));
+    var controller = s6Controller(realTeamService);
+
+    // Colleague A reads the enquiry's own room, colleague B reads the team discussion.
+    s6PatchActiveView(controller, "consultant-a", S6_ROOM_A, null);
+    s6PatchActiveView(controller, "consultant-b", S6_TEAM_ROOM, null);
+    s6Caller.set("consultant-sender");
+    var post = new EventNotificationController.MessageEventRequestDTO();
+    post.setRoomId(S6_TEAM_ROOM);
+    post.setTeamDiscussion(true);
+    post.setSenderDisplayName("Kim");
+    post.setMentionedUserIds(List.of("consultant-a"));
+
+    assertThat(controller.createMessageEventNotification(post).getStatusCode())
+        .isEqualTo(HttpStatus.NO_CONTENT);
+    assertThat(s6PersistedRows())
+        .singleElement()
+        .satisfies(
+            row -> {
+              assertThat(row.getRecipientUserId()).isEqualTo("consultant-a");
+              assertThat(row.getEventType()).isEqualTo("team.discussion.new");
+              assertThat(row.getParams()).contains("\"mentioned\":true");
+            });
   }
 }

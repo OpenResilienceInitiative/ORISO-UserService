@@ -51,7 +51,7 @@ class SuiteInventoryContractTest(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("| Unit | 7 | 0 | 0 | 0 |", result.stdout)
         self.assertIn("| Integration + contract + E2E | 3 | 0 | 0 | 1 |", result.stdout)
-        self.assertIn("7 unit plus 3 integration executions, or 10", result.stdout)
+        self.assertIn("7 unit plus 2 integration executions, or 9", result.stdout)
 
     def test_reports_one_half_when_only_one_job_has_run(self):
         result = self.run_inventory(
@@ -68,7 +68,32 @@ class SuiteInventoryContractTest(unittest.TestCase):
         result = self.run_inventory({}, "--require", "unit")
 
         self.assertEqual(result.returncode, 1)
-        self.assertIn("empty", result.stderr)
+        self.assertIn("no tests ran", result.stderr)
+
+    def test_rejects_a_required_suite_with_only_skipped_tests(self):
+        for suite, class_name in (("unit", "FooTest"), ("integration", "BarIT")):
+            with self.subTest(suite=suite):
+                result = self.run_inventory(
+                    {f"TEST-{class_name}.xml": report(class_name, tests=2, skipped=2)},
+                    "--require",
+                    suite,
+                )
+
+                self.assertEqual(result.returncode, 1)
+                self.assertIn("no tests ran", result.stderr)
+
+    def test_requires_executions_in_both_suites_when_both_are_required(self):
+        result = self.run_inventory(
+            {
+                "TEST-FooTest.xml": report("FooTest", tests=2, skipped=1),
+                "TEST-BarIT.xml": report("BarIT", tests=1, skipped=1),
+            },
+            "--require",
+            "both",
+        )
+
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("Integration + contract + E2E", result.stderr)
 
     def test_rejects_reports_containing_failures(self):
         result = self.run_inventory(

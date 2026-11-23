@@ -180,8 +180,8 @@ public class TestConstants {
   public static final String FIRST_NAME = "vorname";
   public static final String LAST_NAME = "nachname";
   public static final String EMAIL = "email@email.com";
-  public static final String PASSWORD = "TestPw!#123";
-  public static final String PASSWORD_URL_ENCODED = "TestPw!%23123";
+  public static final String PASSWORD = "TestPw!#123456789";
+  public static final String PASSWORD_URL_ENCODED = "TestPw!%23123456789";
   public static final boolean IS_TEAM_CONSULTANT = true;
   public static final boolean IS_LANGUAGE_FORMAL = true;
   public static final String VALID_AGE = "1";
@@ -282,6 +282,7 @@ public class TestConstants {
           POSTCODE,
           AGENCY_ID,
           PASSWORD,
+          null,
           EMAIL,
           null,
           null,
@@ -289,6 +290,11 @@ public class TestConstants {
           Integer.toString(CONSULTING_TYPE_ID_SUCHT),
           "",
           true,
+          false,
+          null,
+          null,
+          null,
+          null,
           null,
           null,
           null,
@@ -302,6 +308,7 @@ public class TestConstants {
           POSTCODE,
           AGENCY_ID,
           PASSWORD,
+          null,
           EMAIL,
           null,
           null,
@@ -309,6 +316,11 @@ public class TestConstants {
           Integer.toString(CONSULTING_TYPE_ID_KREUZBUND),
           "",
           true,
+          false,
+          null,
+          null,
+          null,
+          null,
           null,
           null,
           null,
@@ -330,7 +342,7 @@ public class TestConstants {
   public static final UserDTO USER_DTO_WITHOUT_MANDATORY_STATE =
       new UserDTO(null, null, null, null, null, null, Integer.toString(CONSULTING_TYPE_ID_SUCHT));
   public static final SessionConsultantForUserDTO SESSION_CONSULTANT_FOR_USER_DTO =
-      new SessionConsultantForUserDTO(null, USERNAME, IS_ABSENT, ABSENCE_MESSAGE, null);
+      new SessionConsultantForUserDTO(null, USERNAME, IS_ABSENT, ABSENCE_MESSAGE, null, null, null);
 
   /*
    * /* Messages
@@ -874,8 +886,8 @@ public class TestConstants {
   /*
    * Passwords
    */
-  public static final String ENCODED_PASSWORD = "Tester123%24";
-  public static final String DECODED_PASSWORD = "Tester123$";
+  public static final String ENCODED_PASSWORD = "Tester123456789%24";
+  public static final String DECODED_PASSWORD = "Tester123456789$";
   /*
    * Masterkey
    */

@@ -1,6 +1,7 @@
 package de.caritas.cob.userservice.api.adapters.web.dto;
 
 import com.fasterxml.jackson.annotation.JsonIgnore;
+import com.fasterxml.jackson.annotation.JsonInclude;
 import de.caritas.cob.userservice.api.model.Chat.ChatInterval;
 import de.caritas.cob.userservice.api.model.Chat.ChatModality;
 import de.caritas.cob.userservice.api.model.ConversationType;
@@ -150,4 +151,22 @@ public class UserChatDTO {
   private String timezone;
 
   @ApiModelProperty private List<GroupChatParticipantDTO> participants;
+
+  /**
+   * Secret part of the invite link (#1237). Only filled for counsellors who may see the group; an
+   * advice seeker never receives it.
+   */
+  @ApiModelProperty
+  @JsonInclude(JsonInclude.Include.NON_NULL)
+  private String inviteToken;
+
+  /**
+   * Gesprächskreis (#1662): the guest account mode the counsellor saved for the invite link, as
+   * stored, so the edit form round-trips it. It is not capped: what a guest actually gets is the
+   * saved mode capped by what the platform and the Träger allow at entry, as the public invite
+   * context ({@code GroupInviteRegistration#publicGuestAccountMode}) and the registration report.
+   */
+  @ApiModelProperty
+  @JsonInclude(JsonInclude.Include.NON_NULL)
+  private de.caritas.cob.userservice.api.model.GuestAccountMode guestAccountMode;
 }

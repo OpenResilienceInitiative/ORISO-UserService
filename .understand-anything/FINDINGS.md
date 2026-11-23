@@ -1,5 +1,7 @@
 # Findings: ORISO-UserService
 
+> **Historical snapshot (June 2026).** This document is a point-in-time audit and has not been re-run. File counts, versions and findings refer to the June 2026 state of the repository.
+
 ## Generation Summary
 
 - Generated from latest dev commit: `3e6707fbb14400428ddfe44e0dc36648e4aba41c`

@@ -1,11 +1,15 @@
 package de.caritas.cob.userservice.api;
 
+import static de.caritas.cob.userservice.api.helper.CustomLocalDateTime.nowInUtc;
 import static java.util.Objects.isNull;
 
 import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
 import de.caritas.cob.userservice.api.config.observability.LiveChatDiagnosticMetrics;
+import de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHttpStatusException;
+import de.caritas.cob.userservice.api.exception.httpresponses.customheader.HttpStatusExceptionReason;
 import de.caritas.cob.userservice.api.model.Chat;
 import de.caritas.cob.userservice.api.model.Consultant;
+import de.caritas.cob.userservice.api.model.ConversationType;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.Session.RegistrationType;
 import de.caritas.cob.userservice.api.model.Session.SessionStatus;
@@ -16,8 +20,11 @@ import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
 import de.caritas.cob.userservice.api.service.availability.ConsultantActivityRegistry;
+import de.caritas.cob.userservice.api.service.chat.MembersOnlyChatAccess;
 import de.caritas.cob.userservice.api.service.matrix.GroupChatMembershipService;
 import de.caritas.cob.userservice.api.service.matrix.GroupChatMembershipService.ResolvedRoomMember;
+import de.caritas.cob.userservice.api.service.session.AnonymousSessionRegistration;
+import de.caritas.cob.userservice.api.tenant.TenantContext;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
@@ -26,7 +33,9 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 @Service
 @Slf4j
@@ -42,9 +51,31 @@ public class Messenger implements Messaging {
   private final MatrixSynapseService matrixSynapseService;
   private final ConsultantActivityRegistry consultantActivityRegistry;
   private final LiveChatDiagnosticMetrics diagnosticMetrics;
+  private final de.caritas.cob.userservice.api.service.livechat.LiveChatQueuePolicy
+      liveChatQueuePolicy;
+  private final MembersOnlyChatAccess membersOnlyChatAccess;
+  private final de.caritas.cob.userservice.api.service.matrixrtc.CallParticipantEviction
+      callParticipantEviction;
 
-  @Value("${user.anonymous.deactivateworkflow.periodMinutes}")
+  /**
+   * How long a live-chat queue entry stays visible without a sign of life from the guest who is
+   * waiting behind it (ORISO-Frontend#1404).
+   *
+   * <p>Deliberately its own property rather than the deactivate-workflow period it used to borrow:
+   * that one also deactivates the Keycloak account behind a session and covers IN_PROGRESS chats,
+   * so shortening it would end running conversations after a few quiet minutes. This one only
+   * decides what the queue shows.
+   */
+  @Value("${live.chat.queue.activePeriodMinutes:5}")
   private long liveChatQueueActivePeriodMinutes;
+
+  /**
+   * Don't rewrite {@code updateDate} on every single poll. The waiting room polls every 4s; one
+   * write per guest per this many seconds is enough to keep an entry alive within a window measured
+   * in minutes, and keeps the queue from turning into a write loop.
+   */
+  @Value("${live.chat.queue.heartbeatThrottleSeconds:30}")
+  private long liveChatQueueHeartbeatThrottleSeconds;
 
   @Value("${consultant.availability.activeWindowMs:120000}")
   private long consultantAvailabilityActiveWindowMs;
@@ -88,8 +119,15 @@ public class Messenger implements Messaging {
           chat.getId());
       return false;
     }
-    return matrixSynapseService.banUserFromRoomAsModerator(
-        matrixRoomId, adviceSeeker.getMatrixUserId(), chatOwner.getMatrixUserId());
+    var banned =
+        matrixSynapseService.banUserFromRoomAsModerator(
+            matrixRoomId, adviceSeeker.getMatrixUserId(), chatOwner.getMatrixUserId());
+    if (banned) {
+      // The ban stops new call tokens; a call already running drops them here
+      // (ORISO-Admin#1518 follow-up). Never fails the ban.
+      callParticipantEviction.evictFromRunningCalls(matrixRoomId, adviceSeeker.getMatrixUserId());
+    }
+    return banned;
   }
 
   @Override
@@ -110,29 +148,115 @@ public class Messenger implements Messaging {
 
   @Override
   public long countPendingEnquiriesAheadOf(
-      Long agencyId, Integer consultingTypeId, Long mainTopicId, LocalDateTime beforeDate) {
-    if (beforeDate == null || consultingTypeId == null) {
+      Long agencyId,
+      Integer consultingTypeId,
+      Long mainTopicId,
+      LocalDateTime beforeDate,
+      Long beforeId) {
+    if (beforeDate == null || beforeId == null || consultingTypeId == null) {
       diagnosticMetrics.recordInvalidQueueRequest();
       return 0L;
     }
-    var minUpdateDate = LocalDateTime.now().minusMinutes(liveChatQueueActivePeriodMinutes);
-    var queueDepth =
-        sessionRepository.countPendingEnquiriesAheadOf(
-            SessionStatus.NEW,
-            beforeDate,
-            consultingTypeId,
-            mainTopicId,
-            agencyId,
-            minUpdateDate,
-            RegistrationType.ANONYMOUS);
-    diagnosticMetrics.recordQueueDepth(queueDepth);
-    return queueDepth;
+    long depth = queryEarlierPending(agencyId, consultingTypeId, mainTopicId, beforeDate, beforeId);
+    diagnosticMetrics.recordQueueDepth(depth);
+    return depth;
+  }
+
+  private long queryEarlierPending(
+      Long agencyId,
+      Integer consultingTypeId,
+      Long mainTopicId,
+      LocalDateTime beforeDate,
+      Long beforeId) {
+    // Public topic queues are shared across Träger. Leave the legacy agency/no-topic lookup local.
+    Long queueAgencyId = mainTopicId == null ? agencyId : null;
+    java.util.function.Supplier<Long> count =
+        () ->
+            sessionRepository.countPendingEnquiriesAheadOf(
+                SessionStatus.NEW,
+                beforeDate,
+                beforeId,
+                consultingTypeId,
+                mainTopicId,
+                queueAgencyId,
+                liveChatQueueCutoff(),
+                RegistrationType.ANONYMOUS);
+    return mainTopicId != null ? TenantContext.supplyAcrossTenants(count) : count.get();
+  }
+
+  @Override
+  @Transactional(readOnly = true)
+  public void requireFirstLiveChatEnquiry(Session session) {
+    if (session.getStatus() != SessionStatus.NEW
+        || session.getConsultant() != null
+        || session.getMainTopicId() == null
+        || session.getCreateDate() == null
+        || session.getId() == null
+        || !isTopicLiveChat(session)
+        || liveChatQueuePolicy.freeChoiceEnabled()) {
+      return;
+    }
+    // The accept transactions use READ_COMMITTED. An older assignment that has not committed
+    // is still waiting for this read. A locking scan would contend with both target-row locks.
+    var earlier =
+        queryEarlierPending(
+            session.getAgencyId(),
+            session.getConsultingTypeId(),
+            session.getMainTopicId(),
+            session.getCreateDate(),
+            session.getId());
+    if (earlier > 0) {
+      throw new CustomValidationHttpStatusException(
+          HttpStatusExceptionReason.LIVE_CHAT_QUEUE_NOT_FIRST, HttpStatus.CONFLICT);
+    }
+  }
+
+  private static boolean isTopicLiveChat(Session session) {
+    if (session.getConversationType() != null) {
+      return session.getConversationType() == ConversationType.LIVE_CHAT;
+    }
+    // Stored facts only, never the User-ID text (ORISO-UserService#1697).
+    return AnonymousSessionRegistration.matches(session);
+  }
+
+  private LocalDateTime liveChatQueueCutoff() {
+    // Session timestamps are stored in UTC, independently of the server's local time zone.
+    return nowInUtc().minusMinutes(liveChatQueueActivePeriodMinutes);
+  }
+
+  /**
+   * Mark a waiting live-chat enquiry as still wanted by its guest.
+   *
+   * <p>A queue entry is only as trustworthy as the last sign of life behind it. Closing the tab,
+   * reloading, or walking away leaves the enquiry in NEW forever — the client cannot reliably say
+   * goodbye, which is why {@code anonymousChatSessionCleanup} has no unload hook. So the queue asks
+   * the opposite question: who is still here? The waiting room polls the enquiry details every 4s,
+   * and that poll lands here; anything that stops polling for {@code
+   * live.chat.queue.activePeriodMinutes} drops out of the count and out of the consultant's list.
+   *
+   * <p>Only ever touches an unassigned NEW session, so it cannot disturb a chat a consultant has
+   * already taken. Callers must have established that the caller owns the session.
+   */
+  @Override
+  public void touchLiveChatQueueHeartbeat(Long sessionId) {
+    if (sessionId == null) {
+      return;
+    }
+    var now = nowInUtc();
+    sessionRepository.touchLiveChatQueueHeartbeat(
+        sessionId, SessionStatus.NEW, now, now.minusSeconds(liveChatQueueHeartbeatThrottleSeconds));
   }
 
   @Override
   public boolean removeConsultantFromSession(Long sessionId, String consultantId) {
     var session = sessionRepository.findById(sessionId).orElseThrow();
     var consultant = consultantRepository.findByIdAndDeleteDateIsNull(consultantId).orElseThrow();
+
+    // Who is in a members-only chat is decided by its participants, through the chat's own leave
+    // and remove endpoints; taking someone out of the room here would leave the two apart.
+    membersOnlyChatAccess.requireOrdinary(
+        session,
+        "Participants of a members-only chat are removed through the chat, not through its session");
 
     if (!session.isAdvisedBy(consultant) && !isResponsible(session, consultant)) {
       if (isInChat(session, consultant)) {

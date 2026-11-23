@@ -15,7 +15,11 @@ import static org.hamcrest.Matchers.containsInAnyOrder;
 import static org.junit.jupiter.api.Assertions.*;
 
 import de.caritas.cob.userservice.api.config.auth.Authority.AuthorityValue;
+import java.util.EnumSet;
 import java.util.List;
+import java.util.Set;
+import java.util.stream.Collectors;
+import java.util.stream.Stream;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -51,6 +55,24 @@ class AuthorityTest {
     assertNotNull(result);
     assertThat(result, contains(USER_DEFAULT, ASSIGN_CONSULTANT_TO_SESSION));
     assertEquals(2, result.size());
+  }
+
+  // The assign/remove-consultant route admits these authorities, while the delegate only lets the
+  // session's advice seeker or a permitted consultant through; a new holder must be handled there.
+  @Test
+  void onlyAdviceSeekersAndConsultantsMayAssignOrRemoveConsultantsOfASession() {
+    Set<UserRole> holders =
+        Stream.of(UserRole.values())
+            .filter(
+                role ->
+                    Authority.getAuthoritiesByUserRole(role).stream()
+                        .anyMatch(
+                            authority ->
+                                authority.equals(ASSIGN_CONSULTANT_TO_SESSION)
+                                    || authority.equals(ASSIGN_CONSULTANT_TO_ENQUIRY)))
+            .collect(Collectors.toSet());
+
+    assertEquals(EnumSet.of(UserRole.USER, UserRole.CONSULTANT), holders);
   }
 
   @Test

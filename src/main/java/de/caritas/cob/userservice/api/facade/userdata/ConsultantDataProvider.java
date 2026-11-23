@@ -72,6 +72,8 @@ public class ConsultantDataProvider {
     var agencies = agencyDTOsOf(consultant);
 
     return UserDataResponseDTO.builder()
+        .chatRecoveryMode(consultant.getEffectiveChatRecoveryMode())
+        .chatRecoveryPolicyRevision(consultant.getEffectiveChatRecoveryPolicyRevision())
         .userId(consultant.getId())
         .userName(consultant.getUsername())
         .firstName(consultant.getFirstName())
@@ -82,6 +84,8 @@ public class ConsultantDataProvider {
         .languages(languageStringsOf(consultant.getLanguages()))
         .preferredLanguage(preferredLanguageOf(consultant.getLanguageCode()))
         .encourage2fa(consultant.getEncourage2fa())
+        .twoFactorRequired(consultant.getTwoFactorRequired())
+        .passwordChangeRequired(consultant.getPasswordChangeRequired())
         .magicLinkLoginEnabled(consultant.getMagicLinkLoginEnabled())
         .publicSlug(consultant.getPublicSlug())
         .pendingPublicSlug(consultant.getPendingPublicSlug())
@@ -89,12 +93,17 @@ public class ConsultantDataProvider {
             consultant.getPublicSlugStatus() != null
                 ? consultant.getPublicSlugStatus().name()
                 : null)
+        .avatarKind(consultant.getAvatarKind() != null ? consultant.getAvatarKind().name() : null)
+        .avatarId(consultant.getAvatarId())
         .absenceMessage(consultant.getAbsenceMessage())
+        .absenceStart(absenceDay(consultant, consultant.getAbsenceStart()))
+        .absenceEnd(absenceDay(consultant, consultant.getAbsenceEnd()))
         .isInTeamAgency(consultant.isTeamConsultant())
         .agencies(agencies)
         .userRoles(authenticatedUser.getRoles())
         .grantedAuthorities(authenticatedUser.getGrantedAuthorities())
-        .isWalkThroughEnabled(consultant.getWalkThroughEnabled())
+        .isWalkThroughEnabled(Boolean.TRUE.equals(consultant.getWalkThroughEnabled()))
+        .liveChatViaSidebar(Boolean.TRUE.equals(consultant.getLiveChatViaSidebar()))
         .emailToggles(emailTogglesOf(consultant))
         .hasAnonymousConversations(hasAtLeastOneTypeWithAllowedAnonymousConversations(agencies))
         .hasArchive(hasArchive(consultant))
@@ -183,5 +192,12 @@ public class ConsultantDataProvider {
             List.of(SessionStatus.IN_PROGRESS, SessionStatus.IN_ARCHIVE),
             RegistrationType.REGISTERED);
     return nonNull(count) && count > 0L;
+  }
+
+  /** A day of the absence range, only while that absence still matters (ORISO-Frontend#2303). */
+  private static java.time.LocalDate absenceDay(Consultant consultant, java.time.LocalDate day) {
+    return consultant.isAbsenceOverOn(java.time.LocalDate.now(Consultant.ABSENCE_ZONE))
+        ? null
+        : day;
   }
 }

@@ -1,7 +1,9 @@
 package de.caritas.cob.userservice.api.service;
 
+import static de.caritas.cob.userservice.api.helper.CustomLocalDateTime.nowInUtc;
 import static org.apache.commons.lang3.BooleanUtils.isTrue;
 
+import de.caritas.cob.userservice.api.actions.chat.MatrixChatShutdownService;
 import de.caritas.cob.userservice.api.adapters.web.dto.ChatDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantSessionResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.GroupChatParticipantDTO;
@@ -12,6 +14,7 @@ import de.caritas.cob.userservice.api.adapters.web.dto.UserSessionResponseDTO;
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
 import de.caritas.cob.userservice.api.exception.httpresponses.ConflictException;
 import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
+import de.caritas.cob.userservice.api.facade.ChatConverter;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.model.Chat;
 import de.caritas.cob.userservice.api.model.Chat.ChatInterval;
@@ -19,7 +22,7 @@ import de.caritas.cob.userservice.api.model.Chat.ChatModality;
 import de.caritas.cob.userservice.api.model.ChatAgency;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.ConsultantAgency;
-import de.caritas.cob.userservice.api.model.ConversationType;
+import de.caritas.cob.userservice.api.model.GroupAppointmentMailOutbox.RecipientRole;
 import de.caritas.cob.userservice.api.model.GroupChatParticipant.ParticipantRole;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.model.UserChat;
@@ -28,16 +31,22 @@ import de.caritas.cob.userservice.api.port.out.ChatRepository;
 import de.caritas.cob.userservice.api.port.out.GroupChatParticipantRepository;
 import de.caritas.cob.userservice.api.port.out.UserChatRepository;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
+import de.caritas.cob.userservice.api.service.chat.GroupChatConsultantAccess;
+import de.caritas.cob.userservice.api.service.chat.GroupChatInviteTokenService;
 import de.caritas.cob.userservice.api.service.chat.GroupChatParticipantReconciliationService;
+import de.caritas.cob.userservice.api.service.chat.MembersOnlyChatAccess;
+import de.caritas.cob.userservice.api.service.chat.MembersOnlyRevocation;
+import de.caritas.cob.userservice.api.service.notification.GroupAppointmentMailQueue;
+import de.caritas.cob.userservice.api.service.notification.GroupAppointmentSeriesEventProducer;
+import de.caritas.cob.userservice.api.tenant.TenantContext;
 import java.time.DateTimeException;
-import java.time.LocalDate;
 import java.time.LocalDateTime;
-import java.time.LocalTime;
 import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Collectors;
@@ -56,13 +65,24 @@ import org.springframework.transaction.annotation.Transactional;
 public class ChatService {
 
   private final @NonNull ChatRepository chatRepository;
+  private final @NonNull de.caritas.cob.userservice.api.service.matrixgroup
+          .GroupMatrixLifecycleCleanup
+      participationHistory;
   private final @NonNull ChatAgencyRepository chatAgencyRepository;
   private final @NonNull UserChatRepository userChatRepository;
   private final @NonNull ConsultantService consultantService;
   private final @NonNull GroupChatParticipantRepository groupChatParticipantRepository;
+  private final @NonNull de.caritas.cob.userservice.api.port.out.ChatOccurrenceExceptionRepository
+      chatOccurrenceExceptionRepository;
   private final @NonNull GroupChatParticipantReconciliationService participantReconciliationService;
+  private final @NonNull GroupAppointmentSeriesEventProducer appointmentEvents;
 
   private final @NonNull AgencyService agencyService;
+  private final @NonNull GroupChatConsultantAccess groupChatConsultantAccess;
+  private final @NonNull MembersOnlyChatAccess membersOnlyChatAccess;
+  private final @NonNull MembersOnlyRevocation membersOnlyRevocation;
+  private final @NonNull MatrixChatShutdownService matrixChatShutdownService;
+  private final @NonNull GroupChatInviteTokenService groupChatInviteTokenService;
 
   /**
    * Returns a list of current chats for the provided {@link Consultant}
@@ -80,9 +100,12 @@ public class ChatService {
         agencyIds);
 
     var chats =
-        chatRepository.findByAgencyIds(agencyIds).stream()
-            .filter(chat -> isVisibleToConsultant(chat, consultant))
-            .toList();
+        withMembersOnlyChatsOf(
+            consultant,
+            null,
+            chatRepository.findByAgencyIds(agencyIds).stream()
+                .filter(chat -> isVisibleToConsultant(chat, consultant))
+                .toList());
     log.info("🔍 ChatService: Found {} chats for agencyIds {}", chats.size(), agencyIds);
     chats.forEach(
         chat ->
@@ -96,35 +119,86 @@ public class ChatService {
 
     var chatAgenciesByChatId = loadChatAgenciesByChatId(chats);
 
-    return chats.stream()
-        .map(
-            chat ->
-                convertChatToConsultantSessionResponseDTO(
-                    chat, chatAgenciesByChatId.getOrDefault(chat.getId(), Set.of())))
-        .collect(Collectors.toList());
+    return toConsultantResponses(chats, chatAgenciesByChatId);
+  }
+
+  /**
+   * A members-only chat (#1418) belongs to the people in it, wherever they work: it reaches a
+   * member whose counselling centre or Träger is not the one the chat was created for, which the
+   * agency-based lookup alone would miss. Anybody else never gets it here.
+   *
+   * @param only restricts the lookup to these chat ids; {@code null} for all
+   */
+  private List<Chat> withMembersOnlyChatsOf(
+      Consultant consultant, Set<Long> only, List<Chat> found) {
+    var seriesIds =
+        groupChatParticipantRepository.findByConsultantId(consultant.getId()).stream()
+            .map(participant -> participant.getSeriesId())
+            .filter(Objects::nonNull)
+            .filter(id -> only == null || only.contains(id))
+            .collect(Collectors.toCollection(HashSet::new));
+    found.stream().map(Chat::getId).forEach(seriesIds::remove);
+    if (seriesIds.isEmpty()) {
+      return found;
+    }
+    var extra =
+        TenantContext.supplyAcrossTenants(() -> chatRepository.findByIdsWithChatAgencies(seriesIds))
+            .stream()
+            .filter(Chat::isMembersOnly)
+            .toList();
+    if (extra.isEmpty()) {
+      return found;
+    }
+    return Stream.concat(found.stream(), extra.stream()).toList();
   }
 
   private boolean isVisibleToConsultant(Chat chat, Consultant consultant) {
     var explicitParticipants = groupChatParticipantRepository.findBySeriesId(chat.getId());
-    return explicitParticipants.isEmpty()
+    // A members-only chat belongs to its participants alone: until they are saved, it is nobody's.
+    return (explicitParticipants.isEmpty() && !membersOnlyChatAccess.concerns(chat))
         || explicitParticipants.stream()
             .anyMatch(participant -> consultant.getId().equals(participant.getConsultantId()));
   }
 
   private ConsultantSessionResponseDTO convertChatToConsultantSessionResponseDTO(
-      Chat chat, Set<ChatAgency> chatAgencies) {
+      Chat chat, Set<ChatAgency> chatAgencies, String inviteToken) {
+    var userChat = createUserChat(chat, chatAgencies);
+    userChat.setInviteToken(inviteToken);
     return new ConsultantSessionResponseDTO()
-        .chat(createUserChat(chat, chatAgencies))
+        .chat(userChat)
         .consultant(
             new SessionConsultantForConsultantDTO()
                 .id(chat.getChatOwner().getId())
                 .firstName(chat.getChatOwner().getFirstName())
                 .lastName(chat.getChatOwner().getLastName())
-                .username(chat.getChatOwner().getUsername()));
+                .username(chat.getChatOwner().getUsername())
+                .avatarKind(
+                    chat.getChatOwner().getAvatarKind() == null
+                        ? null
+                        : chat.getChatOwner().getAvatarKind().name())
+                .avatarId(chat.getChatOwner().getAvatarId()));
   }
 
-  private ConsultantSessionResponseDTO convertChatToConsultantSessionResponseDTO(Chat chat) {
-    return convertChatToConsultantSessionResponseDTO(chat, loadChatAgencies(chat.getId()));
+  /** Legacy Series tokens are minted in one locked batch before mapping any consultant response. */
+  private List<ConsultantSessionResponseDTO> toConsultantResponses(
+      List<Chat> chats, Map<Long, Set<ChatAgency>> chatAgenciesByChatId) {
+    var missingTokenIds =
+        chats.stream()
+            .filter(chat -> chat.getInviteToken() == null)
+            .map(Chat::getId)
+            .filter(Objects::nonNull)
+            .toList();
+    var mintedTokens = groupChatInviteTokenService.tokensFor(missingTokenIds);
+    return chats.stream()
+        .map(
+            chat ->
+                convertChatToConsultantSessionResponseDTO(
+                    chat,
+                    chatAgenciesByChatId.getOrDefault(chat.getId(), Set.of()),
+                    chat.getInviteToken() != null
+                        ? chat.getInviteToken()
+                        : mintedTokens.get(chat.getId())))
+        .collect(Collectors.toList());
   }
 
   private String[] getChatModerators(Chat chat, Set<ChatAgency> chatAgencies) {
@@ -151,8 +225,10 @@ public class ChatService {
    */
   public Chat saveChat(Chat chat) {
     if (chat.getConversationType() == null) {
-      chat.setConversationType(ConversationType.INTERNAL_GROUP);
+      chat.setConversationType(ChatConverter.conversationTypeOf(chat));
     }
+    // Every chat mutation goes through here, so this is the one place to stamp it.
+    chat.setUpdateDate(nowInUtc());
     return chatRepository.save(chat);
   }
 
@@ -203,9 +279,15 @@ public class ChatService {
   public List<UserSessionResponseDTO> getChatsForUserId(String userId) {
     List<Chat> chats =
         chatRepository.findByUserId(userId).stream()
+            // A members-only chat is never an advice seeker's, not even before its members are
+            // saved.
+            .filter(chat -> !membersOnlyChatAccess.concerns(chat))
             .filter(chat -> groupChatParticipantRepository.findBySeriesId(chat.getId()).isEmpty())
             .toList();
-    List<Chat> assignedChats = chatRepository.findAssignedByUserId(userId);
+    List<Chat> assignedChats =
+        chatRepository.findAssignedByUserId(userId).stream()
+            .filter(chat -> !membersOnlyChatAccess.concerns(chat))
+            .toList();
     var allChats = new ArrayList<>(chats);
     assignedChats.stream()
         .filter(
@@ -258,18 +340,14 @@ public class ChatService {
             .map(chatAgency -> agencyService.getAgency(chatAgency.getAgencyId()))
             .collect(Collectors.toList());
 
+    // startDate/startTime go out as wall-clock time in chat.timezone, like they come in.
+    var localStart = chat.localStartDate();
     var result =
         new UserChatDTO(
             chat.getId(),
             chat.getTopic(),
-            LocalDate.of(
-                chat.getStartDate().getYear(),
-                chat.getStartDate().getMonth(),
-                chat.getStartDate().getDayOfMonth()),
-            LocalTime.of(
-                chat.getStartDate().getHour(),
-                chat.getStartDate().getMinute(),
-                chat.getStartDate().getSecond()),
+            localStart.toLocalDate(),
+            localStart.toLocalTime().withNano(0),
             chat.getDuration(),
             isTrue(chat.isRepetitive()),
             isTrue(chat.isActive()),
@@ -296,6 +374,10 @@ public class ChatService {
     result.setSourceLanguage(chat.getSourceLanguage());
     result.setHintMessageTranslations(chat.getHintMessageTranslations());
     result.setGroupChatRulesTranslations(chat.getGroupChatRulesTranslations());
+    if (ChatConverter.conversationTypeOf(chat)
+        == de.caritas.cob.userservice.api.model.ConversationType.SELF_HELP) {
+      result.setGuestAccountMode(chat.getGuestAccountMode());
+    }
     return result;
   }
 
@@ -303,15 +385,20 @@ public class ChatService {
     return groupChatParticipantRepository.findBySeriesId(chat.getId()).stream()
         .map(
             participant -> {
-              var displayName =
-                  consultantService
-                      .getConsultant(participant.getConsultantId())
-                      .map(this::resolveParticipantDisplayName)
-                      .orElse(participant.getConsultantId());
+              // Only the name and avatar every participant sees, whichever Traeger they work for.
+              var consultant =
+                  membersOnlyChatAccess.readingAcrossTraeger(
+                      chat, () -> consultantService.getConsultant(participant.getConsultantId()));
               return new GroupChatParticipantDTO()
                   .consultantId(participant.getConsultantId())
                   .role(GroupChatParticipantDTO.RoleEnum.fromValue(participant.getRole().name()))
-                  .displayName(displayName);
+                  .displayName(
+                      consultant
+                          .map(this::resolveParticipantDisplayName)
+                          .orElse(participant.getConsultantId()))
+                  .avatarKind(
+                      consultant.map(Consultant::getAvatarKind).map(Enum::name).orElse(null))
+                  .avatarId(consultant.map(Consultant::getAvatarId).orElse(null));
             })
         .toList();
   }
@@ -370,17 +457,22 @@ public class ChatService {
   }
 
   /**
-   * Returns chat sessions for a consultant by chat IDs. This method retrieves chats from the
-   * database without checking consultant access - access control should be handled at a higher
-   * level (e.g., by checking Matrix room membership or chat ownership).
+   * Returns the chat sessions with the given IDs that the consultant may see. Chats of another
+   * Träger the consultant is not part of are left out (#1237).
    *
    * @param chatIds Set of chat IDs
+   * @param consultant the consultant asking
    * @return List of {@link ConsultantSessionResponseDTO}
    */
-  public List<ConsultantSessionResponseDTO> getChatSessionsForConsultantByIds(Set<Long> chatIds) {
+  public List<ConsultantSessionResponseDTO> getChatSessionsForConsultantByIds(
+      Set<Long> chatIds, Consultant consultant) {
     log.info("🔍 ChatService.getChatSessionsForConsultantByIds - chatIds: {}", chatIds);
 
-    var chats = chatRepository.findByIdsWithChatAgencies(chatIds);
+    var chats =
+        groupChatConsultantAccess.filterAccessible(
+            withMembersOnlyChatsOf(
+                consultant, chatIds, chatRepository.findByIdsWithChatAgencies(chatIds)),
+            consultant);
 
     log.info("🔍 ChatService: Found {} chats in database", chats.size());
     chats.forEach(
@@ -395,13 +487,7 @@ public class ChatService {
 
     var chatAgenciesByChatId = loadChatAgenciesByChatId(chats);
 
-    var result =
-        chats.stream()
-            .map(
-                chat ->
-                    convertChatToConsultantSessionResponseDTO(
-                        chat, chatAgenciesByChatId.getOrDefault(chat.getId(), Set.of())))
-            .collect(Collectors.toList());
+    var result = toConsultantResponses(chats, chatAgenciesByChatId);
 
     log.info("🔍 ChatService: Converted to {} ConsultantSessionResponseDTO", result.size());
 
@@ -425,16 +511,16 @@ public class ChatService {
         .collect(Collectors.toList());
   }
 
+  /**
+   * Returns the chat sessions with the given Matrix room IDs that the consultant may see (#1237).
+   */
   public List<ConsultantSessionResponseDTO> getChatSessionsForConsultantByRoomIds(
-      Set<String> matrixRoomIds) {
-    var chats = chatRepository.findByMatrixRoomIdIn(matrixRoomIds);
+      Set<String> matrixRoomIds, Consultant consultant) {
+    var chats =
+        groupChatConsultantAccess.filterAccessible(
+            chatRepository.findByMatrixRoomIdIn(matrixRoomIds), consultant);
     var chatAgenciesByChatId = loadChatAgenciesByChatId(chats);
-    return chats.stream()
-        .map(
-            chat ->
-                convertChatToConsultantSessionResponseDTO(
-                    chat, chatAgenciesByChatId.getOrDefault(chat.getId(), Set.of())))
-        .collect(Collectors.toList());
+    return toConsultantResponses(chats, chatAgenciesByChatId);
   }
 
   /**
@@ -444,6 +530,28 @@ public class ChatService {
    */
   @Transactional
   public void deleteChat(Chat chat) {
+    deleteChatRecords(chat);
+    if (chat.isMembersOnly()) {
+      // Last, inside this transaction: a room that cannot be purged still holds everyone, so the
+      // whole deletion rolls back and can be repeated. Ordinary chats are shut down by the caller,
+      // best effort.
+      matrixChatShutdownService.shutdownRoom(chat);
+    }
+  }
+
+  /**
+   * Deletes the chat and what hangs on it in the database only, for a caller that has dealt with
+   * the Matrix room itself (the rollback of a failed creation).
+   */
+  @Transactional
+  public void deleteChatRecords(Chat chat) {
+    participationHistory.deleteSeries(chat);
+    // Needs the participations: they name the case of a members-only chat.
+    membersOnlyRevocation.retireCaseOf(chat);
+    // A recurring chat's moved or skipped dates restrict the delete like its participants
+    // (ORISO-Admin#1523).
+    chatOccurrenceExceptionRepository.deleteAll(
+        chatOccurrenceExceptionRepository.findBySeries_Id(chat.getId()));
     groupChatParticipantRepository.deleteBySeriesId(chat.getId());
     chatRepository.delete(chat);
   }
@@ -477,21 +585,36 @@ public class ChatService {
               chatId));
     }
 
-    LocalDateTime startDate = LocalDateTime.of(chatDTO.getStartDate(), chatDTO.getStartTime());
+    int oldRepeatCount = appointmentEvents.seedBeforeEdit(chat);
+    Set<String> oldCounselorIds =
+        groupChatParticipantRepository.findBySeriesId(chatId).stream()
+            .map(member -> member.getConsultantId())
+            .collect(Collectors.toSet());
+
     // Timezone drives the recurrence math (occurrenceStart: DST/monthly/yearly). Persist a new
     // one when the client sends it (validated like the create path), and preserve the existing
     // zone when the DTO omits it rather than silently resetting to UTC.
+    ZoneId zone = chat.zoneId();
     if (chatDTO.getTimezone() != null && !chatDTO.getTimezone().isBlank()) {
       try {
-        ZoneId.of(chatDTO.getTimezone());
+        zone = ZoneId.of(chatDTO.getTimezone());
       } catch (DateTimeException invalidTimezone) {
         throw new BadRequestException(
             "Invalid timezone: " + chatDTO.getTimezone(), invalidTimezone);
       }
+    }
+    // Materialize required values before reconciliation can write to Matrix. Same contract as
+    // create: the request carries wall-clock time in the chat's zone.
+    LocalDateTime startDate = Chat.toUtc(chatDTO.getStartDate(), chatDTO.getStartTime(), zone);
+    int duration = chatDTO.getDuration();
+
+    participantReconciliationService.reconcile(chat, chatDTO.getConsultantIds());
+
+    if (chatDTO.getTimezone() != null && !chatDTO.getTimezone().isBlank()) {
       chat.setTimezone(chatDTO.getTimezone());
     }
     chat.setTopic(chatDTO.getTopic());
-    chat.setDuration(chatDTO.getDuration());
+    chat.setDuration(duration);
     // Defaulting must match the create path (ChatConverter.convertToEntity) so editing a
     // repetitive series without re-sending repeatCount does not silently drop it to a single
     // occurrence: default 12 for repetitive, derive repetitive + interval from repeatCount > 1.
@@ -515,9 +638,21 @@ public class ChatService {
     chat.setSourceLanguage(chatDTO.getSourceLanguage());
     chat.setHintMessageTranslations(chatDTO.getHintMessageTranslations());
     chat.setGroupChatRulesTranslations(chatDTO.getGroupChatRulesTranslations());
+    // #1662: an older app sends no mode; the circle keeps the one it has.
+    if (chatDTO.getGuestAccountMode() != null) {
+      chat.setGuestAccountMode(chatDTO.getGuestAccountMode());
+    }
 
     this.saveChat(chat);
-    participantReconciliationService.reconcile(chat, chatDTO.getConsultantIds());
+    Set<GroupAppointmentMailQueue.Member> newlyJoinedMembers =
+        groupChatParticipantRepository.findBySeriesId(chatId).stream()
+            .map(member -> member.getConsultantId())
+            .filter(id -> !oldCounselorIds.contains(id))
+            .map(id -> new GroupAppointmentMailQueue.Member(RecipientRole.COUNSELOR, id))
+            .collect(Collectors.toSet());
+    appointmentEvents.recordAfterEdit(chat, oldRepeatCount, newlyJoinedMembers);
+    newlyJoinedMembers.forEach(
+        member -> appointmentEvents.recordMemberJoined(chat, member.role(), member.id()));
 
     return new UpdateChatResponseDTO().matrixRoomId(chat.getMatrixRoomId());
   }

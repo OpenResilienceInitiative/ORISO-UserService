@@ -4,6 +4,7 @@ import com.fasterxml.jackson.annotation.JsonIgnore;
 import de.caritas.cob.userservice.api.adapters.web.dto.serialization.DecodeUsernameJsonSerializer;
 import io.swagger.annotations.ApiModel;
 import io.swagger.annotations.ApiModelProperty;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -25,6 +26,12 @@ public class UserDataResponseDTO {
 
   @ApiModelProperty(example = "ajsd89-sdf9-sadk-as8j-asdf8jo")
   private String userId;
+
+  @ApiModelProperty(readOnly = true)
+  private String chatRecoveryMode;
+
+  @ApiModelProperty(readOnly = true)
+  private Long chatRecoveryPolicyRevision;
 
   @ApiModelProperty(example = "max.muster", position = 1)
   @JsonSerialize(using = DecodeUsernameJsonSerializer.class)
@@ -51,6 +58,14 @@ public class UserDataResponseDTO {
   @ApiModelProperty(example = "Bin mal weg...", position = 8)
   private String absenceMessage;
 
+  /** First day of a planned absence (ORISO-Frontend#2303); only while it is not over. */
+  @ApiModelProperty(example = "2026-12-21")
+  private LocalDate absenceStart;
+
+  /** Last day of the absence, inclusive; missing = until switched off. */
+  @ApiModelProperty(example = "2027-01-03")
+  private LocalDate absenceEnd;
+
   @ApiModelProperty(example = "true", position = 9)
   private boolean isInTeamAgency;
 
@@ -70,13 +85,55 @@ public class UserDataResponseDTO {
   private String displayName;
   private Boolean isDisplayNameEditable;
 
+  @com.fasterxml.jackson.annotation.JsonInclude(
+      com.fasterxml.jackson.annotation.JsonInclude.Include.NON_NULL)
+  @ApiModelProperty(readOnly = true)
+  @com.fasterxml.jackson.annotation.JsonProperty(
+      access = com.fasterxml.jackson.annotation.JsonProperty.Access.READ_ONLY)
+  private Boolean isAskerEmailCollectionAllowed;
+
+  /**
+   * Advice seekers only (#1575): true while the account is a temporary guest account that ORISO
+   * deletes later (ADR-029). Absent for consultants and admins.
+   */
+  @com.fasterxml.jackson.annotation.JsonInclude(
+      com.fasterxml.jackson.annotation.JsonInclude.Include.NON_NULL)
+  @ApiModelProperty(readOnly = true)
+  @com.fasterxml.jackson.annotation.JsonProperty(
+      access = com.fasterxml.jackson.annotation.JsonProperty.Access.READ_ONLY)
+  private Boolean temporaryAccount;
+
+  /** #1662: whether "Konto behalten" will succeed for this temporary account. */
+  @ApiModelProperty(readOnly = true)
+  @com.fasterxml.jackson.annotation.JsonProperty(
+      access = com.fasterxml.jackson.annotation.JsonProperty.Access.READ_ONLY)
+  private Boolean temporaryAccountKeepAllowed;
+
   private String publicSlug;
 
   private String pendingPublicSlug;
 
   private String publicSlugStatus;
 
+  /** Counsellor avatar choice (#1046): ICON, INITIALS or PICTURE; null when nothing was chosen. */
+  private String avatarKind;
+
+  /**
+   * Consultants: id of the chosen counsellor motif, only set together with avatarKind = ICON.
+   * Advice seekers (#1240): id of the chosen animal; null when the default applies.
+   */
+  private String avatarId;
+
   @JsonIgnore private Boolean encourage2fa;
+
+  /** Backs twoFactorAuth.isRequired; not a field of its own on the wire. */
+  @JsonIgnore private Boolean twoFactorRequired;
+
+  /**
+   * The account still carries the password its administrator chose. Travels as its own field: it is
+   * a fact about the password, not about a factor.
+   */
+  private Boolean passwordChangeRequired;
 
   private Boolean magicLinkLoginEnabled;
 
@@ -84,9 +141,10 @@ public class UserDataResponseDTO {
 
   private Boolean isWalkThroughEnabled;
 
-  private Set<EmailToggle> emailToggles;
+  /** Consultants only: live-chat availability is controlled from the navigation rail. */
+  private Boolean liveChatViaSidebar;
 
-  private Boolean appointmentFeatureEnabled;
+  private Set<EmailToggle> emailToggles;
 
   private LanguageCode preferredLanguage;
 

@@ -5,6 +5,7 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
+import ch.qos.logback.classic.Level;
 import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
 import de.caritas.cob.userservice.api.admin.service.tenant.TenantService;
 import de.caritas.cob.userservice.api.model.Chat;
@@ -18,13 +19,19 @@ import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.port.out.SessionSupervisorRepository;
 import de.caritas.cob.userservice.api.port.out.TeamDiscussionRepository;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
+import de.caritas.cob.userservice.api.tenant.TenantData;
 import de.caritas.cob.userservice.tenantservice.generated.web.model.RestrictedTenantDTO;
 import de.caritas.cob.userservice.tenantservice.generated.web.model.Settings;
+import de.caritas.cob.userservice.testutils.LogbackCaptor;
 import java.util.List;
 import java.util.Optional;
+import java.util.concurrent.atomic.AtomicReference;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.test.util.ReflectionTestUtils;
@@ -32,8 +39,8 @@ import org.springframework.test.util.ReflectionTestUtils;
 @ExtendWith(MockitoExtension.class)
 class MatrixRtcCallPolicyServiceTest {
 
-  private static final String ROOM_ID = "!source:matrix.oriso.org";
-  private static final String MATRIX_USER_ID = "@participant:matrix.oriso.org";
+  private static final String ROOM_ID = "!source:matrix.example.org";
+  private static final String MATRIX_USER_ID = "@participant:matrix.example.org";
   private static final long TENANT_ID = 7L;
 
   @Mock private SessionRepository sessionRepository;
@@ -44,9 +51,11 @@ class MatrixRtcCallPolicyServiceTest {
   @Mock private MatrixSynapseService matrixSynapseService;
 
   private MatrixRtcCallPolicyService service;
+  private org.springframework.jdbc.core.JdbcTemplate jdbc;
 
   @BeforeEach
   void setUp() {
+    jdbc = activeLifecycle();
     service =
         new MatrixRtcCallPolicyService(
             new MatrixRtcPolicyContextResolver(
@@ -56,9 +65,135 @@ class MatrixRtcCallPolicyServiceTest {
                 teamDiscussionRepository),
             tenantService,
             matrixSynapseService,
-            correlationIdHasher());
-    when(matrixSynapseService.getRoomMembers(ROOM_ID))
+            correlationIdHasher(),
+            jdbc,
+            org.mockito.Mockito.mock(
+                de.caritas.cob.userservice.api.service.matrix.MatrixCallGuestService.class),
+            de.caritas.cob.userservice.testutils.CallStartRules.everyCallRunsForACounsellor());
+    org.mockito.Mockito.lenient()
+        .when(matrixSynapseService.getRoomMembers(ROOM_ID))
         .thenReturn(Optional.of(List.of(MATRIX_USER_ID)));
+  }
+
+  private org.springframework.jdbc.core.JdbcTemplate activeLifecycle() {
+    var jdbc =
+        new org.springframework.jdbc.core.JdbcTemplate(
+            new org.springframework.jdbc.datasource.DriverManagerDataSource(
+                "jdbc:h2:mem:rtclegacy"
+                    + java.util.UUID.randomUUID()
+                    + ";DB_CLOSE_DELAY=-1;NON_KEYWORDS=USER",
+                "sa",
+                ""));
+    jdbc.execute("CREATE TABLE user(user_id VARCHAR(36),matrix_user_id VARCHAR(255))");
+    jdbc.execute("CREATE TABLE consultant(consultant_id VARCHAR(36),matrix_user_id VARCHAR(255))");
+    jdbc.execute("CREATE TABLE account_inactivity(identity_id VARCHAR(36),status VARCHAR(20))");
+    jdbc.execute("CREATE TABLE session(id BIGINT,matrix_room_id VARCHAR(255))");
+    jdbc.execute(
+        "CREATE TABLE group_chat_join_request(id BIGINT AUTO_INCREMENT,session_id BIGINT,"
+            + "user_id VARCHAR(36),via VARCHAR(32),status VARCHAR(16))");
+    jdbc.update("INSERT INTO user VALUES ('person',?)", MATRIX_USER_ID);
+    jdbc.update("INSERT INTO account_inactivity VALUES ('person','ACTIVE')");
+    return jdbc;
+  }
+
+  @AfterEach
+  void clearTenantContext() {
+    TenantContext.clear();
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {"PENDING", "DECLINED", "CANCELLED"})
+  void latestKnockNotAdmittedKeepsTheCallClosed_EvenAfterAnEarlierAdmission(String latest) {
+    jdbc.update("INSERT INTO session VALUES (500, ?)", ROOM_ID);
+    jdbc.update(
+        "INSERT INTO group_chat_join_request(session_id,user_id,via,status)"
+            + " VALUES (500,'person','DIRECT_LINK','ADMITTED')");
+    jdbc.update(
+        "INSERT INTO group_chat_join_request(session_id,user_id,via,status)"
+            + " VALUES (500,'person','DIRECT_LINK',?)",
+        latest);
+
+    try (var logs = LogbackCaptor.forClass(MatrixRtcCallPolicyService.class)) {
+      assertThat(service.resolve(ROOM_ID, MATRIX_USER_ID)).isEqualTo(CallMediaPolicy.denied());
+      assertThat(logs.messages(Level.INFO))
+          .anySatisfy(message -> assertThat(message).contains("KNOCK_NOT_ADMITTED"));
+    }
+  }
+
+  @Test
+  void admittedDirectLinkKnockPassesTheKnockGate() {
+    jdbc.update("INSERT INTO session VALUES (500, ?)", ROOM_ID);
+    jdbc.update(
+        "INSERT INTO group_chat_join_request(session_id,user_id,via,status)"
+            + " VALUES (500,'person','DIRECT_LINK','PENDING')");
+    jdbc.update(
+        "INSERT INTO group_chat_join_request(session_id,user_id,via,status)"
+            + " VALUES (500,'person','DIRECT_LINK','ADMITTED')");
+
+    var session = session(ConversationType.AGENCY_COUNSELLING);
+    when(sessionRepository.findByMatrixRoomId(ROOM_ID)).thenReturn(Optional.of(session));
+    when(tenantService.getRestrictedTenantDataFresh(TENANT_ID)).thenReturn(tenant(new Settings()));
+
+    try (var logs = LogbackCaptor.forClass(MatrixRtcCallPolicyService.class)) {
+      assertThat(service.resolve(ROOM_ID, MATRIX_USER_ID))
+          .isEqualTo(new CallMediaPolicy(true, true));
+      assertThat(logs.messages(Level.INFO))
+          .noneSatisfy(message -> assertThat(message).contains("KNOCK_NOT_ADMITTED"));
+    }
+  }
+
+  /** Only the person's own direct-link knock on this conversation closes the call. */
+  @ParameterizedTest
+  @ValueSource(
+      strings = {
+        "500,'someone-else','DIRECT_LINK'",
+        "500,'person','INVITE_LINK'",
+        "501,'person','DIRECT_LINK'"
+      })
+  void pendingKnockOutsideTheGateScopeLeavesTheCallOpen(String sessionUserVia) {
+    jdbc.update("INSERT INTO session VALUES (500, ?)", ROOM_ID);
+    jdbc.update("INSERT INTO session VALUES (501, '!other:example')");
+    jdbc.update(
+        "INSERT INTO group_chat_join_request(session_id,user_id,via,status) VALUES ("
+            + sessionUserVia
+            + ",'PENDING')");
+
+    var session = session(ConversationType.AGENCY_COUNSELLING);
+    when(sessionRepository.findByMatrixRoomId(ROOM_ID)).thenReturn(Optional.of(session));
+    when(tenantService.getRestrictedTenantDataFresh(TENANT_ID)).thenReturn(tenant(new Settings()));
+
+    assertThat(service.resolve(ROOM_ID, MATRIX_USER_ID)).isEqualTo(new CallMediaPolicy(true, true));
+  }
+
+  @Test
+  void missingMatrixBindingLogsOnlyTheCorrelatedDenialReason() {
+    jdbc.update("DELETE FROM user WHERE matrix_user_id=?", MATRIX_USER_ID);
+
+    try (var logs = LogbackCaptor.forClass(MatrixRtcCallPolicyService.class)) {
+      assertThat(service.resolve(ROOM_ID, MATRIX_USER_ID)).isEqualTo(CallMediaPolicy.denied());
+      assertThat(logs.messages(Level.INFO))
+          .anySatisfy(message -> assertThat(message).contains("MATRIX_IDENTITY_NOT_FOUND"))
+          .noneSatisfy(message -> assertThat(message).contains(MATRIX_USER_ID));
+    }
+  }
+
+  @Test
+  void resolve_Should_LookUpAcrossTenants_AndRestoreTheCallersTenantData() {
+    var callers = new TenantData(null, "synthetic");
+    TenantContext.setCurrentTenantData(callers);
+    var lookedUpIn = new AtomicReference<Long>();
+    when(sessionRepository.findByMatrixRoomId(ROOM_ID))
+        .thenAnswer(
+            call -> {
+              lookedUpIn.set(TenantContext.getCurrentTenant());
+              return Optional.empty();
+            });
+
+    service.resolve(ROOM_ID, MATRIX_USER_ID);
+
+    assertThat(lookedUpIn.get()).isEqualTo(TenantContext.TECHNICAL_TENANT_ID);
+    assertThat(TenantContext.getCurrentTenantData()).isSameAs(callers);
+    assertThat(callers.getTenantId()).isNull();
   }
 
   @Test
@@ -131,6 +266,25 @@ class MatrixRtcCallPolicyServiceTest {
                     .featureAudioCallsGroupChatsEnabled(true)
                     .featureVideoCallsGroupChatsEnabled(false)));
 
+    assertThat(service.resolve(ROOM_ID, MATRIX_USER_ID))
+        .isEqualTo(new CallMediaPolicy(true, false));
+  }
+
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.EnumSource(
+      value = ConversationType.class,
+      names = {"SELF_HELP", "INTERNAL_GROUP"})
+  void groupSessionsUseGroupFlagsEvenWhenTheSessionLookupWins(ConversationType type) {
+    var groupSession = session(type);
+    when(sessionRepository.findByMatrixRoomId(ROOM_ID)).thenReturn(Optional.of(groupSession));
+    when(tenantService.getRestrictedTenantDataFresh(TENANT_ID))
+        .thenReturn(
+            tenant(
+                enabledSettings()
+                    .featureAudioCallsGroupChatsEnabled(true)
+                    .featureVideoCallsGroupChatsEnabled(false)
+                    .featureAudioCallsOneOnOneChatsEnabled(false)
+                    .featureVideoCallsOneOnOneChatsEnabled(true)));
     assertThat(service.resolve(ROOM_ID, MATRIX_USER_ID))
         .isEqualTo(new CallMediaPolicy(true, false));
   }
@@ -212,7 +366,7 @@ class MatrixRtcCallPolicyServiceTest {
   @Test
   void callerMustCurrentlyBelongToTheSourceConversationRoom() {
     when(matrixSynapseService.getRoomMembers(ROOM_ID))
-        .thenReturn(Optional.of(List.of("@someone-else:matrix.oriso.org")));
+        .thenReturn(Optional.of(List.of("@someone-else:matrix.example.org")));
 
     assertThat(service.resolve(ROOM_ID, MATRIX_USER_ID)).isEqualTo(CallMediaPolicy.denied());
     verifyNoInteractions(tenantService);
@@ -274,6 +428,20 @@ class MatrixRtcCallPolicyServiceTest {
     } finally {
       TenantContext.clear();
     }
+  }
+
+  @Test
+  void rejectedConversationCannotObtainRtcWritePolicyDespiteRetainedMembershipAndActiveIdentity() {
+    var rejected = new Session();
+    rejected.setConversationType(ConversationType.AGENCY_COUNSELLING);
+    rejected.setTenantId(TENANT_ID);
+    rejected.setStatus(Session.SessionStatus.REJECTED);
+    when(sessionRepository.findByMatrixRoomId(ROOM_ID)).thenReturn(Optional.of(rejected));
+    org.mockito.Mockito.lenient()
+        .when(tenantService.getRestrictedTenantDataFresh(TENANT_ID))
+        .thenReturn(tenant(enabledSettings()));
+    assertThat(service.resolve(ROOM_ID, MATRIX_USER_ID)).isEqualTo(CallMediaPolicy.denied());
+    verifyNoInteractions(tenantService);
   }
 
   private MatrixRtcCorrelationIdHasher correlationIdHasher() {

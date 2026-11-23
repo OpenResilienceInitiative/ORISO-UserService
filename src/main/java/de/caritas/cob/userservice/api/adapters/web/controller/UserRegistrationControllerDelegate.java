@@ -28,15 +28,17 @@ import de.caritas.cob.userservice.api.service.auth.MagicLinkLoginService;
 import de.caritas.cob.userservice.api.service.auth.PasswordResetService;
 import de.caritas.cob.userservice.api.service.session.SessionService;
 import de.caritas.cob.userservice.api.service.user.UserAccountService;
-import jakarta.transaction.Transactional;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import lombok.val;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.CacheControl;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Component;
+import org.springframework.transaction.annotation.Propagation;
+import org.springframework.transaction.annotation.Transactional;
 
 @Slf4j
 @Component
@@ -158,9 +160,10 @@ class UserRegistrationControllerDelegate {
     return new ResponseEntity<>(response, response.getStatus());
   }
 
-  @Transactional
+  // The assignment and room preparation commit in their own transactions before Matrix work.
+  @Transactional(propagation = Propagation.NEVER)
   ResponseEntity<Void> acceptEnquiry(Long sessionId) {
-    var session = sessionService.getSessionForUpdate(sessionId);
+    var session = sessionService.getSession(sessionId);
 
     // The session id is invalid when no persisted session can be loaded.
     if (session.isEmpty()) {
@@ -172,6 +175,12 @@ class UserRegistrationControllerDelegate {
     this.assignEnquiryFacade.assignRegisteredEnquiry(session.get(), consultant);
 
     return new ResponseEntity<>(HttpStatus.OK);
+  }
+
+  ResponseEntity<Void> checkEnquiryPermission(Long sessionId) {
+    var user = userAccountProvider.retrieveValidatedUser();
+    createEnquiryMessageFacade.checkEnquiryPermission(sessionId, user);
+    return ResponseEntity.noContent().cacheControl(CacheControl.noStore()).build();
   }
 
   ResponseEntity<CreateEnquiryMessageResponseDTO> createEnquiryMessage(
@@ -195,6 +204,7 @@ class UserRegistrationControllerDelegate {
             null,
             enquiryMessage.getMatrixEventId());
 
+    enquiryData.setUiLocale(ErstantwortRequestLocale.current());
     var response = createEnquiryMessageFacade.createEnquiryMessage(enquiryData);
 
     return new ResponseEntity<>(response, HttpStatus.CREATED);

@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+                   xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+                   xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog https://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-latest.xsd">
+  <changeSet id="20261105-live-chat-account-promotion" author="oriso">
+    <validCheckSum>9:e5e9fca58616c73d62b9c8b96a40b04d</validCheckSum>
+    <createTable tableName="live_chat_account_claim">
+      <column name="user_id" type="varchar(36) CHARACTER SET utf8 COLLATE utf8_unicode_ci"><constraints primaryKey="true" nullable="false"/></column>
+      <column name="lifecycle" type="varchar(32)"><constraints nullable="false"/></column>
+      <column name="intent_id" type="varchar(36)"/>
+      <column name="credential_verifier" type="varchar(128)"/>
+    </createTable>
+    <addForeignKeyConstraint baseTableName="live_chat_account_claim" baseColumnNames="user_id" referencedTableName="user" referencedColumnNames="user_id" constraintName="fk_live_chat_claim_user" onDelete="CASCADE"/>
+    <rollback><dropTable tableName="live_chat_account_claim"/></rollback>
+  </changeSet>
+  <changeSet id="20261105-live-chat-finished-origin-validate" author="oriso">
+    <preConditions onFail="HALT" onError="HALT">
+      <or>
+        <and><dbms type="mariadb,mysql"/><sqlCheck expectedResult="0">SELECT COUNT(*) FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = 'live_chat_account_claim' AND column_name = 'finished_origin' AND NOT COALESCE((data_type = 'tinyint' AND column_type = 'tinyint(1)' AND is_nullable = 'NO' AND column_default IN ('0', 'false')), FALSE)</sqlCheck></and>
+        <and><dbms type="h2"/><sqlCheck expectedResult="0">SELECT COUNT(*) FROM information_schema.columns WHERE table_schema = CURRENT_SCHEMA() AND LOWER(table_name) = 'live_chat_account_claim' AND LOWER(column_name) = 'finished_origin' AND NOT COALESCE((data_type IN ('BOOLEAN', 'TINYINT') AND is_nullable = 'NO' AND LOWER(column_default) IN ('0', 'false')), FALSE)</sqlCheck></and>
+      </or>
+    </preConditions>
+    <sql>SELECT 1</sql>
+    <rollback><sql>SELECT 1</sql></rollback>
+  </changeSet>
+  <changeSet id="20261105-live-chat-finished-origin" author="oriso">
+    <preConditions onFail="MARK_RAN" onError="HALT"><not><columnExists tableName="live_chat_account_claim" columnName="finished_origin"/></not></preConditions>
+    <addColumn tableName="live_chat_account_claim"><column name="finished_origin" type="boolean" defaultValueBoolean="false"><constraints nullable="false"/></column></addColumn>
+    <!-- Retain the column on rollback: MARK_RAN also executes this rollback for databases
+         where the previously published changeset originally created the column. -->
+    <rollback><sql>SELECT 1</sql></rollback>
+  </changeSet>
+</databaseChangeLog>

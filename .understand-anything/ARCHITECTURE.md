@@ -1,158 +1,109 @@
 # Architecture Notes: ORISO-UserService
 
+_Refreshed 2026-08-27 against pre-dev commit `285f7582` (1541 analyzed files)._
+
 ## Purpose
 
-The UserService provides different functionalities from creating and updating user accounts and their sessions, providing session lists up to creating and editing Rocket.Chat groups.
+The UserService owns user and consultant accounts, enquiries, counselling sessions, session lists, and the application-side lifecycle of Matrix rooms. It covers registration of new askers, creation of enquiries and their encrypted Matrix rooms, assignment of consultants (including Matrix room memberships), the different consultation kinds (1:1, team, group chat, anonymous), and account-lifecycle workflows (deactivation, deletion, notifications). Rocket.Chat is gone: there is no Rocket.Chat code left under `src/main/java`, and Liquibase changesets `0073`–`0075` removed the Rocket.Chat user/room/feedback-room ID columns from the schema.
+
+## Tech Stack
+
+- Java 21, Spring Boot **4.0.7** (Spring Framework 7.0.x), built with Maven (`pom.xml`, group `de.caritas.cob`, artifact `userservice`).
+- Runtime image: `eclipse-temurin:21-jre` (`Dockerfile`; Canonical's Pebble binary is stripped for CVE hygiene).
+- Auth: Spring Security as an OAuth2 **resource server** (`spring-boot-starter-oauth2-resource-server`) against Keycloak 26.x; the deprecated Keycloak 17.x Spring adapters were removed. `keycloak-admin-client` 26.0.4 for admin operations.
+- Persistence: MariaDB (`mariadb-java-client`) via Spring Data JPA; Liquibase 4.27 migrations; Redis (`spring-boot-starter-data-redis`) for caches, consultant live-availability and one-time tokens; Caffeine local caches. The MongoDB dependency and its auto-configuration exclusion are gone.
+- Messaging/eventing: RabbitMQ (`spring-boot-starter-amqp`, statistics exchange `statistics.topic`), Firebase Admin for mobile push.
+- Observability: `spring-boot-starter-opentelemetry` + Actuator (Sleuth/Zipkin were removed with the Boot 4 migration); `logstash-logback-encoder` for structured logs.
+- OpenAPI Generator 7.17 generates both the server API from `api/*.yaml` and typed clients from `services/*.yaml`.
 
 ## Architecture Layers
 
 ### Api And Routing
 
-HTTP routes, controllers, API clients, and request boundaries.
+`src/main/java/de/caritas/cob/userservice/api/adapters/web/` — controllers, DTOs, and mappings on top of the generated API. Roughly 38 controllers in `adapters/web/controller/`, including:
 
-Key files:
-- `src/main/java/de/caritas/cob/userservice/api/AccountManager.java` - src/main/java/de/caritas/cob/userservice/api/AccountManager.java is a code file under src in this repository.
-- `src/main/java/de/caritas/cob/userservice/api/IdentityManager.java` - src/main/java/de/caritas/cob/userservice/api/IdentityManager.java is a code file under src in this repository.
-- `src/main/java/de/caritas/cob/userservice/api/Messenger.java` - src/main/java/de/caritas/cob/userservice/api/Messenger.java is a code file under src in this repository.
-- `src/main/java/de/caritas/cob/userservice/api/Organizer.java` - src/main/java/de/caritas/cob/userservice/api/Organizer.java is a code file under src in this repository.
-- `src/main/java/de/caritas/cob/userservice/api/PatchConsultantSaga.java` - src/main/java/de/caritas/cob/userservice/api/PatchConsultantSaga.java is a code file under src in this repository.
-- `src/main/java/de/caritas/cob/userservice/api/PatchConsultantSagaRollbackHandler.java` - src/main/java/de/caritas/cob/userservice/api/PatchConsultantSagaRollbackHandler.java is a code file under src in this repository.
-- `src/main/java/de/caritas/cob/userservice/api/UserServiceApplication.java` - src/main/java/de/caritas/cob/userservice/api/UserServiceApplication.java is a code file under src; starts with "@SpringBootApplication(exclude = MongoAutoConfiguration.class, MongoDataAutoConfiguration.class)".
-- `src/main/java/de/caritas/cob/userservice/api/UserServiceMapper.java` - src/main/java/de/caritas/cob/userservice/api/UserServiceMapper.java is a code file under src in this repository.
-- `src/main/java/de/caritas/cob/userservice/api/actions/ActionCommand.java` - src/main/java/de/caritas/cob/userservice/api/actions/ActionCommand.java is a code file under src; starts with "public interface ActionCommandT".
-- `src/main/java/de/caritas/cob/userservice/api/actions/chat/ChatReCreator.java` - src/main/java/de/caritas/cob/userservice/api/actions/chat/ChatReCreator.java is a code file under src in this repository.
-- `src/main/java/de/caritas/cob/userservice/api/actions/chat/StopChatActionCommand.java` - src/main/java/de/caritas/cob/userservice/api/actions/chat/StopChatActionCommand.java is a code file under src; starts with "/** Action to perform all necessary steps to stop an active group chat. */".
-- `src/main/java/de/caritas/cob/userservice/api/actions/registry/ActionContainer.java` - src/main/java/de/caritas/cob/userservice/api/actions/registry/ActionContainer.java is a code file under src; starts with "* Container class to collect fluently actions to peform.".
+- `UserController.java` plus delegates split by concern (`UserAccountControllerDelegate`, `UserRegistrationControllerDelegate`, `UserSessionControllerDelegate`, `UserChatControllerDelegate`, `UserConsultantControllerDelegate`, `UserSupportControllerDelegate`, `UserTwoFactorAuthControllerDelegate`).
+- `ConversationController.java`, `UserAdminController.java`, `AppointmentController.java`, `UserStatisticsController.java`, `AdminStatisticsController.java`, `ConsultantStatisticsController.java`.
+- Matrix-facing endpoints: `MatrixMessageController.java`, `MatrixSyncController.java`, `MatrixRtcCallPolicyController.java`.
+- Newer feature areas: `AccountInviteController.java`, `AgencyInviteLinkController.java`, `CaseHandoverController.java`, `HandshakeController.java`, `SupportRoomController.java`, `SupportAdminController.java`, `TeamDiscussionController.java`, `DraftMessageController.java`, `EventNotificationController.java`, `DoNotDisturbController.java`, `TutorialProgressController.java`, `ConsultantLiveAvailabilityController.java`, `TopicConsultantAvailabilityController.java`, `SessionSupervisorController.java`, `SupervisorLogsController.java`, `InactiveAccountAuditLogsController.java`, `DpaForwardEmailController.java`, `GlobalSmtpTestEmailController.java`, `ErrorReportController.java`, `IdAllocationController.java`, `TenantAdminOnboardingController.java`, `VersionController.java`, `DeprecatedLiveProxyController.java`.
 
 ### Application Core
 
-Core application code and shared utilities.
+`src/main/java/de/caritas/cob/userservice/api/` root holds the hexagonal core managers implementing the `port/in` interfaces:
 
-Key files:
-- `.gitignore` - .gitignore is a code file under repository root in this repository.
-- `.swagger-codegen-ignore` - .swagger-codegen-ignore is a code file under repository root; starts with "# Swagger Codegen Ignore".
-- `LICENSE` - LICENSE is a code file under repository root; starts with "GNU AFFERO GENERAL PUBLIC LICENSE".
-- `check-version.sh` - check-version.sh is a script file under repository root in this repository.
-- `commitlint.config.js` - commitlint.config.js is a code file under repository root; starts with "module.exports =  extends: '@commitlint/config-conventional' ;".
-- `deploy-development.sh` - deploy-development.sh is a script file under repository root in this repository.
-- `mvnw` - mvnw is a code file under repository root in this repository.
-- `run-trivy.sh` - run-trivy.sh is a script file under repository root; starts with "rm report*.sarif".
+- `AccountManager.java` (implements `AccountManaging`)
+- `IdentityManager.java` (implements `IdentityManaging`)
+- `Messenger.java` (implements `Messaging`)
+- `Organizer.java` (implements `Organizing`)
+- `PatchConsultantSaga.java`, `UserServiceMapper.java`, `UserServiceApplication.java` (`@EnableAsync`, `@EnableScheduling`).
+
+Other top-level packages: `actions/` (command pattern for chat/session/user actions with an `ActionsRegistry`), `facade/` (use-case orchestration: `CreateUserFacade`, `CreateEnquiryMessageFacade`, `CreateSessionFacade`/`CreateNewSessionFacade`, chat facades, `EmailNotificationFacade`, `SessionSupervisorFacade`, `TeamDiscussionFacade`, plus `assignsession/`, `sessionlist/`, `userdata/`, `rollback/`), `service/` (domain services, see below), `admin/` (admin API facades, HAL links, violation reports), `conversation/`, `identity/`, `manager/`, `model/` (JPA entities), `container/`, `helper/`, `exception/`, `supervision/`, `tenant/` (multi-tenancy incl. `TenantHibernateInterceptor`), `scheduler/`, `workflow/`, `config/`.
+
+### Ports (Hexagonal Boundary)
+
+- `port/in/`: `AccountManaging`, `IdentityManaging`, `IdentityPolicy`, `Messaging`, `Organizing`.
+- `port/out/`: ~70 interfaces — Spring Data repositories (`UserRepository`, `ConsultantRepository`, `SessionRepository`, `ChatRepository`, `AccountInviteRepository`, `CaseHandoverRequestRepository`, `HandshakeSessionRepository`, `SupportRoomRepository`, `TeamDiscussionRepository`, `DraftMessageRepository`, `EventNotificationRepository`, `TutorialProgressRepository`, …), the `IdentityClient` family of Keycloak-facing interfaces, and messaging gateways (`SessionRoomGateway`, `SessionAssignmentChatGateway`, `MatrixUserClient`).
+
+### Adapters
+
+`src/main/java/de/caritas/cob/userservice/api/adapters/` has exactly three adapters:
+
+- `keycloak/` — `KeycloakClient`, `KeycloakService`, `KeycloakMapper`, config and DTOs; implements the identity ports.
+- `matrix/` — the messaging backend: `MatrixRoomClient`, `MatrixMediaClient`, `MatrixSynapseService`, `MatrixSessionRoomGateway`, `MatrixSessionAssignmentGateway`, `MatrixUrlBuilder` plus config and DTOs. Configured via `matrix.apiUrl` (Synapse) in `application.properties`.
+- `web/` — inbound HTTP (see Api And Routing).
+
+### Domain Services
+
+`src/main/java/de/caritas/cob/userservice/api/service/` mixes top-level services (`ChatService`, `ConsultantService`, `ConsultantAgencyService`, `SessionDataService`, `CaseHandoverService`, `DecryptionService`, `LogService`, …) with ~30 feature subpackages: `accountinvite`, `agency`, `agencyinvitelink`, `appointment`, `archive`, `auth`, `availability`, `chat`, `consultingtype`, `donotdisturb`, `draft`, `email`/`emailsupplier`, `erstantwort`, `handshake`, `identity`, `matrix`, `matrixrtc`, `mobilepushmessage`, `notification`, `provisioning`, `session`, `sessionlist`, `statistics`, `support`, `teamdiscussion`, `tutorial`, `user`, and helpers.
+
+Matrix specifics: `service/matrix/` (`MatrixEventListenerService`, `GroupChatMembershipService`, `MatrixRoomMembershipProvider`, `MatrixSessionSystemMessageService`, `RedisMessageMirrorService`) and `service/matrixrtc/` (call/media policy for MatrixRTC: `MatrixRtcCallPolicyService`, policy token verification, denial reasons).
+
+### Workflows
+
+`src/main/java/de/caritas/cob/userservice/api/workflow/` — scheduled background workflows: `deactivate` (expired group chats, anonymous users), `delete` (account deletion), `enquirynotification`, `groupchatreminder`, `inactiveaccountnotification`, `notificationretention`, and `scheduling` (scheduled-task claiming backed by the `scheduled_task_claim` table for replica safety).
 
 ### Configuration
 
-Runtime, build, package, framework, and environment configuration.
-
-Key files:
-- `.github/actions/docker-build-push/action.yml` - .github/actions/docker-build-push/action.yml is a config file under .github; starts with "name: Reusable Docker Build and Publish steps".
-- `.github/actions/maven-build/action.yml` - .github/actions/maven-build/action.yml is a config file under .github; starts with "name: Reusable Maven Build steps".
-- `.mvn/wrapper/maven-wrapper.properties` - .mvn/wrapper/maven-wrapper.properties is a config file under .mvn; starts with "wrapperVersion=3.3.4".
-- `api/appointmentservice.yaml` - api/appointmentservice.yaml is a config file under api; starts with "openapi: 3.0.1".
-- `api/conversationservice.yaml` - api/conversationservice.yaml is a config file under api; starts with "openapi: 3.0.1".
-- `api/useradminservice.yaml` - api/useradminservice.yaml is a config file under api; starts with "openapi: 3.0.1".
-- `api/userservice.yaml` - api/userservice.yaml is a config file under api; starts with "openapi: 3.0.1".
-- `api/userstatisticsservice.yaml` - api/userstatisticsservice.yaml is a config file under api; starts with "openapi: 3.0.1".
-- `package-lock.json` - package-lock.json is a config file under repository root; starts with ""name": "online-beratung-userservice",".
-- `package.json` - package.json is a config file under repository root; starts with ""name": "online-beratung-userservice",".
-- `pom.xml` - pom.xml is a config file under repository root; starts with "?xml version="1.0" encoding="UTF-8"?".
-- `services/agencyadminservice.yaml` - services/agencyadminservice.yaml is a config file under services; starts with "openapi: 3.0.1".
+- `pom.xml`, `package.json` (commitlint/husky tooling only), `.mvn/wrapper/maven-wrapper.properties`.
+- `api/*.yaml` — OpenAPI specs this service **implements**: `userservice.yaml` (main API, ~57 paths), `useradminservice.yaml`, `conversationservice.yaml`, `appointmentservice.yaml`, `userstatisticsservice.yaml`.
+- `services/*.yaml` — OpenAPI specs of **downstream services** for generated clients: `agencyservice`, `agencyadminservice`, `applicationsettingsservice`, `appointmentService`, `consultingtypeservice`, `keycloakextension`, `mailservice`, `statisticsservice`, `tenantservice`, `tenantadminservice`, `topicservice`. (The former `liveservice.yaml` and `messageservice.yaml` clients are gone.)
+- `src/main/resources/application.properties` plus profiles `-dev`, `-prod`, `-staging`, `-testing` (H2); `logback-spring.xml`, `messages.properties`, `email/layout/` (branded email templates), `monitoring/`, `replica-safety-components.json`.
 
 ### Data And Schema
 
-Database schema, migrations, GraphQL/protobuf/schema files, and seed data.
-
-Key files:
-- `src/main/java/de/caritas/cob/userservice/api/config/migration/TemporaryPublicPrivateKeysTask.java` - src/main/java/de/caritas/cob/userservice/api/config/migration/TemporaryPublicPrivateKeysTask.java is a data file under src in this repository.
-- `src/main/resources/migration/KeycloakRoleNameMigration.py` - src/main/resources/migration/KeycloakRoleNameMigration.py is a data file under src; starts with "server = 'https://DOMAIN_NAME'".
-- `src/main/resources/db/changelog/changeset/0001_initsql/initTables.sql` - src/main/resources/db/changelog/changeset/0001_initsql/initTables.sql is a data file under src; starts with "CREATE TABLE userservice.user (".
-- `src/main/resources/db/changelog/changeset/0001_initsql/initTrigger.sql` - src/main/resources/db/changelog/changeset/0001_initsql/initTrigger.sql is a data file under src; starts with "CREATE TRIGGER userservice.user_update BEFORE UPDATE ON userservice.user FOR EACH ROW BEGIN".
-- `src/main/resources/db/changelog/changeset/0002_monitoringKeys_feedbackChatClumn/feedbackChatColumn-rollback.sql` - src/main/resources/db/changelog/changeset/0002_monitoringKeys_feedbackChatClumn/feedbackChatColumn-rollback.sql is a data file under src; starts with "ALTER TABLE userservice.session".
-- `src/main/resources/db/changelog/changeset/0002_monitoringKeys_feedbackChatClumn/feedbackChatColumn.sql` - src/main/resources/db/changelog/changeset/0002_monitoringKeys_feedbackChatClumn/feedbackChatColumn.sql is a data file under src; starts with "ALTER TABLE userservice.session".
-- `src/main/resources/db/changelog/changeset/0002_monitoringKeys_feedbackChatClumn/monitoringKeys-rollback.sql` - src/main/resources/db/changelog/changeset/0002_monitoringKeys_feedbackChatClumn/monitoringKeys-rollback.sql is a data file under src; starts with "ALTER TABLE userservice.session_monitoring".
-- `src/main/resources/db/changelog/changeset/0002_monitoringKeys_feedbackChatClumn/monitoringKeys.sql` - src/main/resources/db/changelog/changeset/0002_monitoringKeys_feedbackChatClumn/monitoringKeys.sql is a data file under src; starts with "ALTER TABLE userservice.session_monitoring".
-- `src/main/resources/db/changelog/changeset/0003_user_attribute_languageFormal/userLanguageFormalColumn-rollback.sql` - src/main/resources/db/changelog/changeset/0003_user_attribute_languageFormal/userLanguageFormalColumn-rollback.sql is a data file under src; starts with "ALTER TABLE userservice.user".
-- `src/main/resources/db/changelog/changeset/0003_user_attribute_languageFormal/userLanguageFormalColumn.sql` - src/main/resources/db/changelog/changeset/0003_user_attribute_languageFormal/userLanguageFormalColumn.sql is a data file under src; starts with "ALTER TABLE userservice.user".
-- `src/main/resources/db/changelog/changeset/0004_consultant_attribute_languageFormal/consultantLanguageFormalColumn-rollback.sql` - src/main/resources/db/changelog/changeset/0004_consultant_attribute_languageFormal/consultantLanguageFormalColumn-rollback.sql is a data file under src; starts with "ALTER TABLE userservice.consultant".
-- `src/main/resources/db/changelog/changeset/0004_consultant_attribute_languageFormal/consultantLanguageFormalColumn.sql` - src/main/resources/db/changelog/changeset/0004_consultant_attribute_languageFormal/consultantLanguageFormalColumn.sql is a data file under src; starts with "ALTER TABLE userservice.consultant".
+- `src/main/resources/db/changelog/userservice-master.xml` — a **single master changelog for all environments** (part of the Liquibase re-enablement plan).
+- `src/main/resources/db/changelog/changeset/` — 89 changeset directories, `0001_initsql` through `0085_consultant_internal_display_name`. Recent ones track current features: `0076_account_invite_reservation_token`, `0078_handshake`, `0079_support_room`, `0081_account_invite_provisioning`, `0082_scheduled_task_claim`, `0083_consultant_personal_info`, `0084_event_notification_explanation_backfill`.
+- JPA entities live in `api/model/` (User, Consultant, Session, Chat, Admin, …).
 
 ### Deployment And Operations
 
-Docker, Kubernetes, CI/CD, infrastructure, and operational resources.
-
-Key files:
-- `.github/workflows/ci-feature-branch.yml` - .github/workflows/ci-feature-branch.yml is a pipeline file under .github; starts with "name: CI - Feature Branch".
-- `.github/workflows/ci-main.yml` - .github/workflows/ci-main.yml is a pipeline file under .github; starts with "name: CI - Main".
-- `.github/workflows/ci-pull-request.yml` - .github/workflows/ci-pull-request.yml is a pipeline file under .github; starts with "name: CI - Pull Request".
-- `Dockerfile` - Dockerfile is a infra file under repository root; starts with "FROM eclipse-temurin:17-jre".
+- `Dockerfile` (Temurin 21 JRE), `run-trivy.sh` for image scanning.
+- `.github/workflows/`: `ci-feature-branch.yml`, `ci-pull-request.yml`, `ci-main.yml`, `mariadb-contract.yml`, `openapi-contracts.yml`, `release-image.yml`; reusable steps in `.github/actions/maven-build` and `.github/actions/docker-build-push`.
+- Root `tests/` holds non-unit suites: `tests/ci`, `tests/contracts`, `tests/load`.
 
 ### Documentation
 
-Human-facing documentation and project notes.
-
-Key files:
-- `CHANGELOG.md` - CHANGELOG.md is a docs file under repository root in this repository.
-- `INVITE_LINKS_API.md` - INVITE_LINKS_API.md is a docs file under repository root; starts with "# Invite Links API — for the Frontend Developer".
-- `README.md` - README.md is a docs file under repository root; starts with "# Online-Beratung UserService".
-- `documentation/ADR-SECURITY-02-unified-crypto-boundary.md` - documentation/ADR-SECURITY-02-unified-crypto-boundary.md is a docs file under documentation; starts with "# ADR Security-02: Unified Cryptographic Boundary".
-- `readme.md` - readme.md is a docs file under repository root; starts with "# Online-Beratung UserService".
+- `README.md` / `readme.md` — current purpose statement (Matrix room lifecycle, no Rocket.Chat).
+- `docs/` — operational contracts: `api-error-contract.md`, `live-chat-observability.md`, `replica-safety.md`, `schema-migrations.md`.
+- `documentation/` — ADRs and deep dives: `ADR-SECURITY-02-unified-crypto-boundary.md`, `MATRIX_SYNC_OBSERVABILITY.md`, `USER_SERVICE_REPLICA_SAFETY.md`, `USER_SERVICE_STABILITY.md`, replica-safety notes per workflow, `local-development.md`, plus historical flowcharts (some still labelled Rocket.Chat — historical only).
+- `INVITE_LINKS_API.md`, `CHANGELOG.md`.
 
 ## Major Flows
 
-- Entry and boot flow: `Dockerfile`, `src/main/java/de/caritas/cob/userservice/api/AccountManager.java`, `src/main/java/de/caritas/cob/userservice/api/actions/ActionCommand.java`, `src/main/java/de/caritas/cob/userservice/api/actions/chat/ChatReCreator.java`, `src/main/java/de/caritas/cob/userservice/api/actions/chat/StopChatActionCommand.java`, `src/main/java/de/caritas/cob/userservice/api/actions/registry/ActionContainer.java`, `src/main/java/de/caritas/cob/userservice/api/actions/registry/ActionsRegistry.java`, `src/main/java/de/caritas/cob/userservice/api/actions/session/DeactivateSessionActionCommand.java`, `src/main/java/de/caritas/cob/userservice/api/actions/session/PostConversationFinishedAliasMessageActionCommand.java`, `src/main/java/de/caritas/cob/userservice/api/actions/session/SendFinishedAnonymousConversationEventActionCommand.java`, `src/main/java/de/caritas/cob/userservice/api/actions/session/SetRocketChatRoomReadOnlyActionCommand.java`, `src/main/java/de/caritas/cob/userservice/api/actions/user/DeactivateKeycloakUserActionCommand.java`
-- API/service flow: `api/appointmentservice.yaml`, `api/conversationservice.yaml`, `api/useradminservice.yaml`, `api/userservice.yaml`, `api/userstatisticsservice.yaml`, `INVITE_LINKS_API.md`, `services/agencyadminservice.yaml`, `services/agencyservice.yaml`, `services/applicationsettingsservice.yaml`, `services/appointmentService.yaml`, `services/consultingtypeservice.yaml`, `services/keycloakextension.yaml`
-- Configuration flow: `.github/actions/docker-build-push/action.yml`, `.github/actions/maven-build/action.yml`, `.mvn/wrapper/maven-wrapper.properties`, `api/appointmentservice.yaml`, `api/conversationservice.yaml`, `api/useradminservice.yaml`, `api/userservice.yaml`, `api/userstatisticsservice.yaml`
+- Boot: `UserServiceApplication` → Spring Security resource-server config (`config/auth/`) → Liquibase master changelog → scheduled workflows registered via `workflow/scheduling`.
+- Registration/enquiry: `UserRegistrationControllerDelegate` → `CreateUserFacade` / `CreateSessionFacade` → `CreateEnquiryMessageFacade` → `Messenger` → `MatrixSessionRoomGateway` (encrypted Matrix room per session).
+- Session assignment: `facade/assignsession` → `MatrixSessionAssignmentGateway` joins/removes consultants in the session's Matrix room (see PR #1074: late-joining team counsellors are joined into existing enquiry rooms).
+- Session lists: `UserSessionControllerDelegate` / `ConversationController` → `facade/sessionlist` → repositories.
+- Account lifecycle: `workflow/deactivate`, `workflow/delete`, `actions/user/DeactivateKeycloakUserActionCommand` → Keycloak adapter.
 
 ## API And Service Dependencies
 
-- `api/appointmentservice.yaml` contributes API, service, route, client, or service-boundary behavior.
-- `api/conversationservice.yaml` contributes API, service, route, client, or service-boundary behavior.
-- `api/useradminservice.yaml` contributes API, service, route, client, or service-boundary behavior.
-- `api/userservice.yaml` contributes API, service, route, client, or service-boundary behavior.
-- `api/userstatisticsservice.yaml` contributes API, service, route, client, or service-boundary behavior.
-- `INVITE_LINKS_API.md` contributes API, service, route, client, or service-boundary behavior.
-- `services/agencyadminservice.yaml` contributes API, service, route, client, or service-boundary behavior.
-- `services/agencyservice.yaml` contributes API, service, route, client, or service-boundary behavior.
-- `services/applicationsettingsservice.yaml` contributes API, service, route, client, or service-boundary behavior.
-- `services/appointmentService.yaml` contributes API, service, route, client, or service-boundary behavior.
-- `services/consultingtypeservice.yaml` contributes API, service, route, client, or service-boundary behavior.
-- `services/keycloakextension.yaml` contributes API, service, route, client, or service-boundary behavior.
+Implements the five `api/*.yaml` specs; calls AgencyService, ConsultingTypeService, TenantService/TenantAdminService, TopicService, MailService, StatisticsService, AppointmentService, ApplicationSettingsService and the Keycloak extension via generated clients from `services/*.yaml`. Talks directly to Matrix Synapse (`adapters/matrix`), Keycloak (`adapters/keycloak`), MariaDB, Redis, RabbitMQ, and Firebase.
 
 ## Authentication Relationship
 
-- `documentation/ADR-SECURITY-02-unified-crypto-boundary.md` is auth/security-related by filename or path.
-- `services/keycloakextension.yaml` is auth/security-related by filename or path.
-- `src/main/java/de/caritas/cob/userservice/api/actions/user/DeactivateKeycloakUserActionCommand.java` is auth/security-related by filename or path.
-- `src/main/java/de/caritas/cob/userservice/api/adapters/keycloak/config/KeycloakConfig.java` is auth/security-related by filename or path.
-- `src/main/java/de/caritas/cob/userservice/api/adapters/keycloak/config/KeycloakCustomConfig.java` is auth/security-related by filename or path.
-- `src/main/java/de/caritas/cob/userservice/api/adapters/keycloak/dto/KeycloakCreateUserResponseDTO.java` is auth/security-related by filename or path.
-- `src/main/java/de/caritas/cob/userservice/api/adapters/keycloak/dto/KeycloakLoginResponseDTO.java` is auth/security-related by filename or path.
-- `src/main/java/de/caritas/cob/userservice/api/adapters/keycloak/KeycloakClient.java` is auth/security-related by filename or path.
-- `src/main/java/de/caritas/cob/userservice/api/adapters/keycloak/KeycloakMapper.java` is auth/security-related by filename or path.
-- `src/main/java/de/caritas/cob/userservice/api/adapters/keycloak/KeycloakService.java` is auth/security-related by filename or path.
-- `src/main/java/de/caritas/cob/userservice/api/config/auth/Authority.java` is auth/security-related by filename or path.
-- `src/main/java/de/caritas/cob/userservice/api/config/auth/IdentityConfig.java` is auth/security-related by filename or path.
-
-## Database Relationship
-
-- `src/main/java/de/caritas/cob/userservice/api/adapters/web/controller/interceptor/ApiDefaultResponseEntityExceptionHandler.java` is database, schema, repository, entity, model, or migration-related by filename or path.
-- `src/main/java/de/caritas/cob/userservice/api/adapters/web/controller/interceptor/ApiResponseEntityExceptionHandler.java` is database, schema, repository, entity, model, or migration-related by filename or path.
-- `src/main/java/de/caritas/cob/userservice/api/admin/report/model/AgencyDependedViolationReportRule.java` is database, schema, repository, entity, model, or migration-related by filename or path.
-- `src/main/java/de/caritas/cob/userservice/api/admin/report/model/ViolationReportRule.java` is database, schema, repository, entity, model, or migration-related by filename or path.
-- `src/main/java/de/caritas/cob/userservice/api/config/auth/IdentityConfig.java` is database, schema, repository, entity, model, or migration-related by filename or path.
-- `src/main/java/de/caritas/cob/userservice/api/config/migration/TemporaryPublicPrivateKeysTask.java` is database, schema, repository, entity, model, or migration-related by filename or path.
-- `src/main/java/de/caritas/cob/userservice/api/conversation/model/AnonymousUserCredentials.java` is database, schema, repository, entity, model, or migration-related by filename or path.
-- `src/main/java/de/caritas/cob/userservice/api/conversation/model/ConversationListType.java` is database, schema, repository, entity, model, or migration-related by filename or path.
-- `src/main/java/de/caritas/cob/userservice/api/conversation/model/PageableListRequest.java` is database, schema, repository, entity, model, or migration-related by filename or path.
-- `src/main/java/de/caritas/cob/userservice/api/IdentityManager.java` is database, schema, repository, entity, model, or migration-related by filename or path.
-- `src/main/java/de/caritas/cob/userservice/api/model/Admin.java` is database, schema, repository, entity, model, or migration-related by filename or path.
-- `src/main/java/de/caritas/cob/userservice/api/model/AdminAgency.java` is database, schema, repository, entity, model, or migration-related by filename or path.
-
-## Deployment Relationship
-
-- `.github/workflows/ci-feature-branch.yml` participates in deployment, infrastructure, or CI/CD.
-- `.github/workflows/ci-main.yml` participates in deployment, infrastructure, or CI/CD.
-- `.github/workflows/ci-pull-request.yml` participates in deployment, infrastructure, or CI/CD.
-- `Dockerfile` participates in deployment, infrastructure, or CI/CD.
+JWT bearer tokens validated as an OAuth2 resource server against Keycloak (`keycloak.auth-server-url`, `keycloak.realm`, bearer-only). Authorities and role config in `config/auth/` (`Authority.java`, `IdentityConfig.java`); admin-side user management through `keycloak-admin-client` 26. 2FA/OTP flows go through the Keycloak extension (`services/keycloakextension.yaml`) and `UserTwoFactorAuthControllerDelegate`.
 
 ## ORISO Ecosystem Fit
 
-`ORISO-UserService` is one repository in the ORISO system. The graph focuses only on this repo's files and records cross-cutting evidence such as API, auth, database, and deployment files when those relationships are visible locally.
+`ORISO-UserService` is the core backend microservice of the ORISO online-counselling platform. The graph focuses only on this repo's files and records cross-cutting evidence such as API, auth, database, and deployment files when those relationships are visible locally.

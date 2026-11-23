@@ -3,6 +3,7 @@ package de.caritas.cob.userservice.api.facade;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.same;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.util.ReflectionTestUtils.setField;
@@ -23,6 +24,7 @@ import de.caritas.cob.userservice.api.service.ConsultantAgencyService;
 import de.caritas.cob.userservice.api.service.agency.AgencyMatrixCredentialClient;
 import de.caritas.cob.userservice.api.service.agency.dto.AgencyMatrixCredentialsDTO;
 import de.caritas.cob.userservice.api.service.consultingtype.TopicConsultantRoutingService;
+import de.caritas.cob.userservice.api.service.session.AgencyEnquiryRoomAttempts;
 import de.caritas.cob.userservice.api.service.session.AgencyPreAssignmentRoomService;
 import de.caritas.cob.userservice.api.service.session.SessionService;
 import jakarta.servlet.http.HttpServletRequest;
@@ -33,7 +35,6 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.Mockito;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -69,16 +70,14 @@ class CreateEnquiryMessageFacadeMatrixRoomProvisioningTest {
   private static final Long AGENCY_ID = 55L;
   private static final String MESSAGE = "Hello, I need help.";
   private static final String USER_ID = "user-abc";
-  private static final String USER_MATRIX_ID = "@asker:oriso.org";
-  private static final String AGENCY_MATRIX_ID = "@agency-svc:oriso.org";
-  private static final String AGENCY_MATRIX_LOCALPART = "agency-svc";
-  private static final String AGENCY_MATRIX_PASSWORD = "s3cret";
+  private static final String USER_MATRIX_ID = "@asker:example.org";
+  private static final String AGENCY_MATRIX_ID = "@agency-svc:example.org";
   private static final String AGENCY_TOKEN = "agency-token";
   private static final String USER_TOKEN = "user-token";
-  private static final String NEW_ROOM_ID = "!provisioned:oriso.org";
+  private static final String NEW_ROOM_ID = "!provisioned:example.org";
   private static final String MATRIX_EVENT_ID = "$event-1";
 
-  @InjectMocks private CreateEnquiryMessageFacade createEnquiryMessageFacade;
+  private CreateEnquiryMessageFacade createEnquiryMessageFacade;
 
   @Mock private SessionService sessionService;
   @Mock private MatrixSynapseService matrixSynapseService;
@@ -96,7 +95,7 @@ class CreateEnquiryMessageFacadeMatrixRoomProvisioningTest {
   private de.caritas.cob.userservice.api.service.notification.EventNotificationService
       eventNotificationService;
 
-  // Satisfies @InjectMocks construction (facade uses @NonNull constructor injection); the real
+  // Supplies the facade constructor; the real
   // service is swapped in via setField in @BeforeEach so the orchestration actually runs.
   @Mock private AgencyPreAssignmentRoomService injectedRoomServicePlaceholder;
 
@@ -119,48 +118,103 @@ class CreateEnquiryMessageFacadeMatrixRoomProvisioningTest {
   @Mock private de.caritas.cob.userservice.api.helper.UsernameTranscoder usernameTranscoder;
 
   private Session session;
+  private Session persistedSession;
   private User user;
 
   @BeforeEach
   void setUp() {
+    createEnquiryMessageFacade =
+        new CreateEnquiryMessageFacade(
+            sessionService,
+            de.caritas.cob.userservice.api.testHelper.PermittingDpaOwnerFixture.policy(),
+            matrixSynapseService,
+            emailNotificationFacade,
+            consultantAgencyService,
+            topicConsultantRoutingService,
+            eventNotificationService,
+            injectedRoomServicePlaceholder,
+            erstantwortPayloadBuilder,
+            matrixSessionSystemMessageService,
+            new de.caritas.cob.userservice.api.service.erstantwort.ErstantwortTenantTextResolver(
+                org.mockito.Mockito.mock(
+                    de.caritas.cob.userservice.api.service.erstantwort
+                        .TenantErstantwortContentClient.class)));
     // Wire a REAL room-provisioning service around the mocked Matrix collaborators so the
     // create/invite/join/persist orchestration actually executes when the facade calls it.
     var gateway = new MatrixSessionRoomGateway(matrixSynapseService, matrixConfig);
+    var silentMembership =
+        new de.caritas.cob.userservice.api.service.session.AgencySilentMembershipService(
+            consultantRepository,
+            gateway,
+            userHelper,
+            usernameTranscoder,
+            new de.caritas.cob.userservice.api.helper.ConsultantDisplayNameResolver());
+    var pause = new de.caritas.cob.userservice.api.service.session.MatrixRateLimitPause();
+    var publicationSessions =
+        org.mockito.Mockito.mock(de.caritas.cob.userservice.api.port.out.SessionRepository.class);
+    var roomAttempts = Mockito.mock(AgencyEnquiryRoomAttempts.class);
     var realRoomService =
         new AgencyPreAssignmentRoomService(
             matrixCredentialClient,
             gateway,
             sessionService,
-            new de.caritas.cob.userservice.api.service.session.AgencySilentMembershipService(
+            new de.caritas.cob.userservice.api.service.session.AgencyEnquiryRoomPublication(
                 consultantRepository,
+                publicationSessions,
+                sessionService,
+                org.mockito.Mockito.mock(
+                    de.caritas.cob.userservice.api.service.session.AgencyEnquiryRevocations.class),
+                roomAttempts),
+            silentMembership,
+            // Runs deferred counsellors inline, so the test sees the same membership end state.
+            new de.caritas.cob.userservice.api.service.session.AgencyDepartmentMembershipBackfill(
+                new de.caritas.cob.userservice.api.service.session.AgencyOpenEnquiryMembership(
+                    consultantRepository,
+                    org.mockito.Mockito.mock(
+                        de.caritas.cob.userservice.api.port.out.ConsultantAgencyRepository.class),
+                    org.mockito.Mockito.mock(
+                        de.caritas.cob.userservice.api.port.out.SessionRepository.class),
+                    silentMembership),
                 gateway,
-                userHelper,
-                usernameTranscoder,
-                new de.caritas.cob.userservice.api.helper.ConsultantDisplayNameResolver()));
+                pause,
+                Runnable::run),
+            pause,
+            roomAttempts);
     setField(createEnquiryMessageFacade, "agencyPreAssignmentRoomService", realRoomService);
 
     user = new User();
     user.setUserId(USER_ID);
     user.setMatrixUserId(USER_MATRIX_ID);
 
-    session = new Session();
-    session.setId(SESSION_ID);
-    session.setAgencyId(AGENCY_ID);
-    session.setRegistrationType(RegistrationType.REGISTERED);
-    session.setUser(user);
-    session.setConsultingTypeId(0);
-    session.setConsultant(null);
-    session.setIsConsultantDirectlySet(false);
-    session.setMatrixRoomId(null); // no room yet -> provisioning must run
+    session = unboundSession();
+    persistedSession = unboundSession();
+    when(publicationSessions.lockFresh(SESSION_ID)).thenReturn(Optional.of(persistedSession));
+    when(sessionService.finalizeEnquiry(session, null, NEW_ROOM_ID))
+        .thenAnswer(
+            invocation -> {
+              session.setStatus(SessionStatus.NEW);
+              session.setEnquiryMessageDate(java.time.LocalDateTime.now(java.time.ZoneOffset.UTC));
+              return session;
+            });
 
     RequestContextHolder.setRequestAttributes(
         new ServletRequestAttributes(Mockito.mock(HttpServletRequest.class)));
   }
 
+  private Session unboundSession() {
+    var unbound = new Session();
+    unbound.setId(SESSION_ID);
+    unbound.setAgencyId(AGENCY_ID);
+    unbound.setRegistrationType(RegistrationType.REGISTERED);
+    unbound.setUser(user);
+    unbound.setConsultingTypeId(0);
+    unbound.setIsConsultantDirectlySet(false);
+    return unbound;
+  }
+
   private AgencyMatrixCredentialsDTO validCredentials() {
     var creds = new AgencyMatrixCredentialsDTO();
     creds.setMatrixUserId(AGENCY_MATRIX_ID);
-    creds.setMatrixPassword(AGENCY_MATRIX_PASSWORD);
     return creds;
   }
 
@@ -179,8 +233,7 @@ class CreateEnquiryMessageFacadeMatrixRoomProvisioningTest {
     // Room-provisioning collaborators (real AgencyPreAssignmentRoomService drives these).
     when(matrixCredentialClient.fetchMatrixCredentials(AGENCY_ID))
         .thenReturn(Optional.of(validCredentials()));
-    when(matrixSynapseService.loginUser(AGENCY_MATRIX_LOCALPART, AGENCY_MATRIX_PASSWORD))
-        .thenReturn(AGENCY_TOKEN);
+    when(matrixSynapseService.loginAsUserAccessToken(AGENCY_MATRIX_ID)).thenReturn(AGENCY_TOKEN);
     var createBody = new MatrixCreateRoomResponseDTO();
     createBody.setRoomId(NEW_ROOM_ID);
     when(matrixSynapseService.createRoom(anyString(), anyString(), eq(AGENCY_TOKEN)))
@@ -211,9 +264,9 @@ class CreateEnquiryMessageFacadeMatrixRoomProvisioningTest {
     // The already browser-encrypted event is validated in the provisioned room.
     verify(matrixSynapseService).getRoomEvent(NEW_ROOM_ID, MATRIX_EVENT_ID, USER_TOKEN);
 
-    // Session persisted with the provisioned room id (once by the room service, once by the
-    // facade).
-    verify(sessionService, Mockito.atLeastOnce()).saveSession(session);
+    // The room service persists the provisioned room; the facade then uses locked finalization.
+    verify(sessionService).saveSession(same(persistedSession));
+    assertEquals(NEW_ROOM_ID, persistedSession.getMatrixRoomId());
     assertEquals(NEW_ROOM_ID, session.getMatrixRoomId());
     assertEquals(SessionStatus.NEW, session.getStatus());
 
@@ -228,7 +281,7 @@ class CreateEnquiryMessageFacadeMatrixRoomProvisioningTest {
   @Test
   @DisplayName("FE#811: the agency's counsellors are room members before the enquiry is finalized")
   void createEnquiryMessage_joinsAgencyConsultantsBeforeSendingTheEnquiry() throws Exception {
-    var consultantMatrixId = "@counsellor:oriso.org";
+    var consultantMatrixId = "@counsellor:example.org";
     var consultantToken = "counsellor-token";
 
     var consultant = new Consultant();
@@ -248,8 +301,7 @@ class CreateEnquiryMessageFacadeMatrixRoomProvisioningTest {
 
     when(matrixCredentialClient.fetchMatrixCredentials(AGENCY_ID))
         .thenReturn(Optional.of(validCredentials()));
-    when(matrixSynapseService.loginUser(AGENCY_MATRIX_LOCALPART, AGENCY_MATRIX_PASSWORD))
-        .thenReturn(AGENCY_TOKEN);
+    when(matrixSynapseService.loginAsUserAccessToken(AGENCY_MATRIX_ID)).thenReturn(AGENCY_TOKEN);
     var createBody = new MatrixCreateRoomResponseDTO();
     createBody.setRoomId(NEW_ROOM_ID);
     when(matrixSynapseService.createRoom(anyString(), anyString(), eq(AGENCY_TOKEN)))
@@ -273,7 +325,8 @@ class CreateEnquiryMessageFacadeMatrixRoomProvisioningTest {
     createEnquiryMessageFacade.createEnquiryMessage(enquiryData);
 
     // The counsellor is a real member of the room...
-    verify(matrixSynapseService).inviteUserToRoom(NEW_ROOM_ID, consultantMatrixId, AGENCY_TOKEN);
+    verify(matrixSynapseService)
+        .inviteUserToRoomOnce(NEW_ROOM_ID, consultantMatrixId, AGENCY_TOKEN);
     verify(matrixSynapseService).joinRoom(NEW_ROOM_ID, consultantToken);
 
     // ...and joined before the backend finalizes the referenced encrypted enquiry event.

@@ -1,0 +1,53 @@
+package de.caritas.cob.userservice.api.service.notification;
+
+import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
+import de.caritas.cob.userservice.api.model.ConversationType;
+import de.caritas.cob.userservice.api.model.Session;
+import de.caritas.cob.userservice.api.model.Session.RegistrationType;
+import de.caritas.cob.userservice.api.model.User;
+import de.caritas.cob.userservice.tenantservice.generated.web.model.Settings;
+
+/** Uses the persisted session modality, including the server's legacy registration fallback. */
+public final class AskerNotificationChannelPolicy {
+  private AskerNotificationChannelPolicy() {}
+
+  public static ConversationType conversationType(Session session) {
+    if (session == null) return ConversationType.AGENCY_COUNSELLING;
+    if (session.getConversationType() != null) return session.getConversationType();
+    return session.getRegistrationType() == RegistrationType.ANONYMOUS
+        ? ConversationType.LIVE_CHAT
+        : ConversationType.AGENCY_COUNSELLING;
+  }
+
+  public static boolean isLiveChat(Session session) {
+    return conversationType(session) == ConversationType.LIVE_CHAT;
+  }
+
+  /**
+   * #1662: a temporary account cannot opt into e-mail notifications or register a device or browser
+   * for push notifications. Opting out stays possible; permanent accounts keep today's rules.
+   */
+  public static void requireNotificationOptInAllowed(User asker) {
+    if (asker != null && asker.isTemporaryAccount()) {
+      throw new ForbiddenException("A temporary account cannot turn on notifications");
+    }
+  }
+
+  public static boolean emailAllowed(Session session, Settings settings) {
+    return emailAllowed(conversationType(session), settings);
+  }
+
+  /** For mails without a session, e.g. self-help appointments addressed per group. */
+  public static boolean emailAllowed(ConversationType conversationType, Settings settings) {
+    if (settings != null && Boolean.FALSE.equals(settings.getFeatureAskerEmailEnabled()))
+      return false;
+    return switch (conversationType) {
+      case AGENCY_COUNSELLING ->
+          settings == null
+              || !Boolean.FALSE.equals(settings.getFeatureAskerEmailAgencyCounsellingEnabled());
+      case SELF_HELP ->
+          settings == null || !Boolean.FALSE.equals(settings.getFeatureAskerEmailSelfHelpEnabled());
+      case LIVE_CHAT, INTERNAL_GROUP -> false;
+    };
+  }
+}

@@ -32,7 +32,9 @@ class ReplicaSafetyMetricsTest {
                 .tag("risk", "duplicate-side-effect")
                 .gauge()
                 .value())
-        .isEqualTo(1);
+        // +1 (US#1737): the per-replica holding-room repair guard of
+        // AgencyPreAssignmentRoomService.
+        .isEqualTo(3);
     assertThat(
             registry
                 .get("userservice.replica.local_state")
@@ -60,6 +62,36 @@ class ReplicaSafetyMetricsTest {
                     "duplicate-side-effect",
                     "status",
                     "blocker")
+                .gauge()
+                .value())
+        .isEqualTo(1);
+    assertThat(
+            registry
+                .get("userservice.scheduler.registered")
+                .tags(
+                    "task",
+                    "GroupChatMatrixCleanupScheduler.retryRepairs()",
+                    "owner",
+                    "sessions-group-chat",
+                    "risk",
+                    "duplicate-side-effect",
+                    "status",
+                    "bounded")
+                .gauge()
+                .value())
+        .isEqualTo(1);
+    assertThat(
+            registry
+                .get("userservice.scheduler.registered")
+                .tags(
+                    "task",
+                    "DpaInviteReconciliation.reconcile()",
+                    "owner",
+                    "agency-tenant",
+                    "risk",
+                    "correctness",
+                    "status",
+                    "safe")
                 .gauge()
                 .value())
         .isEqualTo(1);

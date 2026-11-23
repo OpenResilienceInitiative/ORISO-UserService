@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+  xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+  xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.5.xsd">
+  <changeSet id="0101-team-discussion-access-repair" author="oriso">
+    <sqlFile
+      path="db/changelog/changeset/0101_team_discussion_access_repair/migrate.sql"
+      relativeToChangelogFile="false" splitStatements="true" stripComments="true" endDelimiter=";"/>
+    <rollback><sql>ALTER TABLE team_discussion_participant DROP COLUMN access_repair_required;</sql></rollback>
+  </changeSet>
+</databaseChangeLog>

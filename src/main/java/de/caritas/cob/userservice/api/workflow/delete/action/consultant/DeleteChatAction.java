@@ -33,6 +33,10 @@ public class DeleteChatAction implements ActionCommand<ConsultantDeletionWorkflo
 
   private final @NonNull ChatRepository chatRepository;
   private final @NonNull MatrixSynapseService matrixSynapseService;
+  private final @NonNull de.caritas.cob.userservice.api.service.ChatService chatService;
+  private final @NonNull de.caritas.cob.userservice.api.service.matrixgroup
+          .GroupMatrixLifecycleCleanup
+      participationHistory;
 
   /**
    * Deletes all chats in the database and purges their Matrix rooms.
@@ -43,6 +47,21 @@ public class DeleteChatAction implements ActionCommand<ConsultantDeletionWorkflo
   public void execute(ConsultantDeletionWorkflowDTO actionTarget) {
     var chatsByChatOwner = this.chatRepository.findByChatOwner(actionTarget.getConsultant());
 
+    try {
+      for (var chat : chatsByChatOwner) participationHistory.deleteSeries(chat);
+    } catch (RuntimeException failure) {
+      actionTarget
+          .getDeletionWorkflowErrors()
+          .add(
+              DeletionWorkflowError.builder()
+                  .deletionSourceType(CONSULTANT)
+                  .deletionTargetType(DeletionTargetType.MATRIX)
+                  .identifier(actionTarget.getConsultant().getId())
+                  .reason("Unable to clear group participation receipts")
+                  .timestamp(nowInUtc())
+                  .build());
+      return;
+    }
     var workflowErrors =
         chatsByChatOwner.stream()
             .map(chat -> purgeMatrixRoom(chat.getMatrixRoomId()))
@@ -72,7 +91,11 @@ public class DeleteChatAction implements ActionCommand<ConsultantDeletionWorkflo
       List<Chat> chatsByChatOwner, List<DeletionWorkflowError> workflowErrors) {
     if (isNotEmpty(chatsByChatOwner)) {
       try {
-        this.chatRepository.deleteAll(chatsByChatOwner);
+        // The delete of a stopped group chat (ORISO-Admin#1523): a plain row delete was blocked by
+        // its participants and moved dates, and the chat then blocked the counsellor's row.
+        for (var chat : chatsByChatOwner) {
+          chatService.deleteChatRecords(chat);
+        }
       } catch (Exception e) {
         log.error("UserService delete workflow error: ", e);
         workflowErrors.add(

@@ -9,20 +9,23 @@ import de.caritas.cob.userservice.api.adapters.web.dto.CreateAdminAgencyRelation
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateAdminDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.PatchAdminDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.Sort;
+import de.caritas.cob.userservice.api.adapters.web.dto.TenantAdminLoginEmailsDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.UpdateAgencyAdminDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.UpdateTenantAdminDTO;
 import de.caritas.cob.userservice.api.admin.service.admin.AdminAgencyRelationService;
+import de.caritas.cob.userservice.api.admin.service.admin.AdminScope;
+import de.caritas.cob.userservice.api.admin.service.admin.AdminScope.Target;
 import de.caritas.cob.userservice.api.admin.service.admin.AgencyAdminUserService;
 import de.caritas.cob.userservice.api.admin.service.admin.TenantAdminUserService;
 import de.caritas.cob.userservice.api.admin.service.admin.search.AdminFilterService;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
+import de.caritas.cob.userservice.api.port.out.SearchFilter;
+import de.caritas.cob.userservice.api.port.out.SearchSort;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
-import org.springframework.data.domain.PageRequest;
-import org.springframework.data.domain.Sort.Direction;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.stereotype.Service;
 
@@ -37,6 +40,10 @@ public class AdminUserFacade {
   private final @NonNull AdminFilterService adminFilterService;
 
   private final @NonNull AuthenticatedUser authenticatedUser;
+  private final @NonNull AdminScope adminScope;
+  private final @NonNull de.caritas.cob.userservice.api.admin.service.admin
+          .AccountLoginStatusService
+      accountStatus;
 
   public AdminResponseDTO createNewTenantAdmin(final CreateAdminDTO createTenantAdminDTO) {
     return this.tenantAdminUserService.createNewTenantAdmin(createTenantAdminDTO);
@@ -47,21 +54,21 @@ public class AdminUserFacade {
   }
 
   public AdminResponseDTO findAgencyAdmin(final String adminId) {
-    return this.agencyAdminUserService.findAgencyAdmin(adminId);
+    return withStatus(this.agencyAdminUserService.findAgencyAdmin(adminId));
   }
 
   public AdminResponseDTO findTenantAdmin(final String adminId) {
-    return this.tenantAdminUserService.findTenantAdmin(adminId);
+    return withStatus(this.tenantAdminUserService.findTenantAdmin(adminId));
   }
 
   public AdminResponseDTO updateTenantAdmin(
       final String adminId, final UpdateTenantAdminDTO updateTenantAdminDTO) {
-    return this.tenantAdminUserService.updateTenantAdmin(adminId, updateTenantAdminDTO);
+    return withStatus(this.tenantAdminUserService.updateTenantAdmin(adminId, updateTenantAdminDTO));
   }
 
   public AdminResponseDTO updateAgencyAdmin(
       final String adminId, final UpdateAgencyAdminDTO updateAgencyAdminDTO) {
-    return this.agencyAdminUserService.updateAgencyAdmin(adminId, updateAgencyAdminDTO);
+    return withStatus(this.agencyAdminUserService.updateAgencyAdmin(adminId, updateAgencyAdminDTO));
   }
 
   public void deleteAgencyAdmin(final String adminId) {
@@ -74,6 +81,11 @@ public class AdminUserFacade {
 
   public List<Long> findAdminUserAgencyIds(String userId) {
     return this.agencyAdminUserService.findAgenciesOfAdmin(userId);
+  }
+
+  public List<Long> findAgencyIdsOfAdminInCallerScope(String adminId) {
+    adminScope.assertMay(Target.admin(adminId));
+    return this.agencyAdminUserService.findAgenciesOfAdmin(adminId);
   }
 
   public void createNewAdminAgencyRelation(
@@ -96,6 +108,7 @@ public class AdminUserFacade {
       final Integer page, final Integer perPage, final AdminFilter adminFilter, Sort sort) {
     var filteredAdmins = adminFilterService.findFilteredAdmins(page, perPage, adminFilter, sort);
     enrichAdminsWithAgencies(filteredAdmins);
+    if (filteredAdmins != null) accountStatus.appendAdminStatuses(filteredAdmins.getEmbedded());
 
     return filteredAdmins;
   }
@@ -112,28 +125,34 @@ public class AdminUserFacade {
 
   public Map<String, Object> findAgencyAdminsByInfix(
       final String infix,
+      final SearchFilter filter,
       final int pageNumber,
       final int pageSize,
       final String fieldName,
       final boolean isAscending) {
-    var direction = isAscending ? Direction.ASC : Direction.DESC;
-    var pageRequest = PageRequest.of(pageNumber, pageSize, direction, fieldName);
-    return this.agencyAdminUserService.findAgencyAdminsByInfix(infix, pageRequest);
+    var pageRequest = SearchSort.pageRequestOf(pageNumber, pageSize, fieldName, isAscending);
+    return this.agencyAdminUserService.findAgencyAdminsByInfix(infix, filter, pageRequest);
   }
 
   public Map<String, Object> findTenantAdminsByInfix(
       final String infix,
+      final SearchFilter filter,
       final int pageNumber,
       final int pageSize,
       final String fieldName,
       final boolean isAscending) {
-    var direction = isAscending ? Direction.ASC : Direction.DESC;
-    var pageRequest = PageRequest.of(pageNumber, pageSize, direction, fieldName);
-    return this.tenantAdminUserService.findTenantAdminsByInfix(infix, pageRequest);
+    var pageRequest = SearchSort.pageRequestOf(pageNumber, pageSize, fieldName, isAscending);
+    return this.tenantAdminUserService.findTenantAdminsByInfix(infix, filter, pageRequest);
   }
 
   public List<AdminResponseDTO> findTenantAdmins(Integer tenantId) {
-    return tenantAdminUserService.findTenantAdmins(Long.valueOf(tenantId));
+    var result = tenantAdminUserService.findTenantAdmins(Long.valueOf(tenantId));
+    accountStatus.appendAdminStatuses(result);
+    return result;
+  }
+
+  public List<TenantAdminLoginEmailsDTO> findTenantAdminLoginEmails(List<Long> tenantIds) {
+    return tenantAdminUserService.findTenantAdminLoginEmails(tenantIds);
   }
 
   public AdminResponseDTO patchAdminUserData(PatchAdminDTO patchAdminDTO) {
@@ -147,5 +166,10 @@ public class AdminUserFacade {
     } else {
       throw new AccessDeniedException("User does not have permissions change admin data");
     }
+  }
+
+  private AdminResponseDTO withStatus(AdminResponseDTO response) {
+    if (response != null) accountStatus.appendAdminStatuses(List.of(response));
+    return response;
   }
 }

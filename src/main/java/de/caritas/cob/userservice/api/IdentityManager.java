@@ -10,8 +10,10 @@ import de.caritas.cob.userservice.api.port.out.IdentityAuthentication;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import de.caritas.cob.userservice.api.port.out.IdentityEmailAddressUpdater;
 import de.caritas.cob.userservice.api.port.out.IdentityEmailOwnerLookup;
+import de.caritas.cob.userservice.api.port.out.IdentityRoleLookup;
 import de.caritas.cob.userservice.api.port.out.IdentitySecondFactor;
 import de.caritas.cob.userservice.api.port.out.IdentityUsernameAvailability;
+import de.caritas.cob.userservice.api.service.AskerEmailCollectionGuard;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -25,12 +27,15 @@ public class IdentityManager implements IdentityManaging {
   private final IdentityEmailAddressUpdater identityEmailAddressUpdater;
   private final IdentityAuthentication identityAuthentication;
   private final IdentityEmailOwnerLookup identityEmailOwnerLookup;
+  private final IdentityRoleLookup identityRoleLookup;
   private final IdentitySecondFactor identitySecondFactor;
   private final IdentityUsernameAvailability identityUsernameAvailability;
   private final UsernameTranscoder usernameTranscoder;
+  private final AskerEmailCollectionGuard askerEmailCollectionGuard;
 
   @Override
   public IdentityEmailVerificationStart setUpOneTimePassword(String username, String email) {
+    askerEmailCollectionGuard.beforeStart(email);
     return identitySecondFactor.initiateEmailVerification(username, email);
   }
 
@@ -41,9 +46,11 @@ public class IdentityManager implements IdentityManaging {
 
   @Override
   public IdentityEmailVerification validateOneTimePassword(String username, String code) {
+    askerEmailCollectionGuard.beforeFinish();
     var validationResult = identitySecondFactor.finishEmailVerification(username, code);
     if (validationResult.created()) {
       var email = validationResult.email();
+      askerEmailCollectionGuard.beforeStart(email);
       identityEmailAddressUpdater.updateEmailByUsername(
           usernameTranscoder.decodeUsername(username), email);
     }
@@ -98,6 +105,6 @@ public class IdentityManager implements IdentityManaging {
 
   @Override
   public boolean hasRole(String userId, UserRole role) {
-    return identityClient.userHasRole(userId, role.getValue());
+    return identityRoleLookup.findAllByUserId(userId).stream().anyMatch(role.getValue()::equals);
   }
 }

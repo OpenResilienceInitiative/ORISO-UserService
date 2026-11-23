@@ -1,0 +1,23 @@
+Eine Anfrage zu Ihrer Beratung
+==============================
+
+Eine Beratungsperson bittet um Ihre Zustimmung zu einer Änderung Ihrer Beratung.
+
+Melden Sie sich an, um die Anfrage im geschützten Bereich zu prüfen.
+
+Anfrage prüfen:
+{{requestUrl}}
+
+----------------------------------------------------------------
+Ihre Nachrichten sind Ende-zu-Ende verschlüsselt. Niemand außer Ihnen und Ihrer Beratung kann sie lesen – auch wir nicht.
+
+{{orgName}}
+{{orgAddress}}
+{{contactLine}}
+
+{{platformName}} ist ein Angebot von {{orgName}}.
+
+Datenschutz: {{privacyUrl}}
+Impressum: {{imprintUrl}}
+
+Diese E-Mail wurde automatisch versendet. Bitte antworten Sie nicht darauf.

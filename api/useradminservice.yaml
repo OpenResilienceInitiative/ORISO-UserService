@@ -3,7 +3,59 @@ info:
   title: will be replaced
   description: This information will be replaced by the SpringFox config information
   version: 0.0.1
+externalDocs:
+  description: Internal consultant picture API (bounded raw-byte intake, maintained separately from generated JSON controllers).
+  url: ./useradmin-consultant-picture.yaml
 paths:
+  /useradmin/identity-observations:
+    post:
+      tags: [identity-observation-controller]
+      summary: Observe exact identity occupancy across all collision layers
+      description: Read only. Requires a nontechnical platform administrator with USER_ADMIN. Does not certify ownership or physical absence.
+      operationId: observeIdentityOccupancy
+      security:
+        - Bearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/IdentityObservationRequestDTO'
+      responses:
+        '200':
+          description: All four layers completely observed
+          headers:
+            Cache-Control:
+              schema: {type: string, enum: [no-store]}
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IdentityObservationResponseDTO'
+        '400':
+          description: Invalid exact selectors; safe fixed validation message without selector values
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [message]
+                properties:
+                  message:
+                    type: string
+                    description: Safe explanation of the selector requirements
+        '403':
+          description: Forbidden without existence details
+        '409':
+          description: Conflicting identities or observation limit
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IdentityObservationResponseDTO'
+        '502':
+          description: Incomplete dependency observation
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IdentityObservationResponseDTO'
   /useradmin:
     get:
       tags:
@@ -229,6 +281,491 @@ paths:
           description: INTERNAL SERVER ERROR - server encountered unexpected condition
       security:
         - Bearer: [ ]
+  /useradmin/consultants/{consultantId}/chat-identity:
+    post:
+      tags:
+        - admin-user-controller
+      summary: >-
+        Completes the chat (Matrix) provisioning of an existing consultant
+        [Authorization: Role: consultant-admin]
+      description: >-
+        Idempotent repair for a consultant whose chatIdentityStatus is MISSING, i.e. one that was
+        created while the chat server was unreachable. Provisions the missing chat identity and
+        stores it on the consultant. Calling it for a consultant that already has a chat identity
+        changes nothing and answers 200 with chatIdentityStatus = PROVISIONED, so the call is safe
+        to repeat.
+      operationId: repairConsultantChatIdentity
+      parameters:
+        - name: consultantId
+          in: path
+          description: consultant id
+          required: true
+          schema:
+            type: string
+      responses:
+        200:
+          description: >-
+            OK - the consultant owns a chat identity, either because this call provisioned one or
+            because it already had one
+          content:
+            'application/hal+json':
+              schema:
+                $ref: '#/components/schemas/ConsultantAdminResponseDTO'
+        400:
+          description: BAD REQUEST - invalid/incomplete request
+        401:
+          description: UNAUTHORIZED - no/invalid role/authorization
+        404:
+          description: NOT FOUND - consultant not found
+        409:
+          description: >-
+            CONFLICT - the chat account behind this consultant's username is already held by
+            another consultant; it cannot be adopted and the collision has to be resolved first
+        424:
+          description: >-
+            FAILED DEPENDENCY - the chat server could not provision the account; the consultant is
+            unchanged and the call can be repeated
+        500:
+          description: INTERNAL SERVER ERROR - server encountered unexpected condition
+      security:
+        - Bearer: [ ]
+  /useradmin/consultants/{consultantId}/tenant:
+    put:
+      tags:
+        - admin-user-controller
+      summary: >-
+        Moves a consultant to another Träger (tenant) and assigns the counselling centres there
+        [Authorization: platform admin only]
+      description: >-
+        The consultant's cases stay with the old Träger (ORISO-Admin#952): sessions, their chat
+        rooms and the advice seekers' conversations are neither moved nor deleted. The consultant
+        loses access to them (the old centre assignments end, the identity provider tenant changes
+        and the consultant is taken out of the old Träger's chat rooms), and they become takeover
+        candidates for the colleagues of the old Träger through the case handover with the reason
+        ASSIGNMENT_ENDED. New enquiries reach the consultant only through the new centres.
+
+        The move does not wait for open cases. It is refused when a centre does not exist or does
+        not belong to the new Träger, when the requested topics are not offered by the new centres,
+        when the consultant is the last one of a still active centre of the old Träger, and when
+        the account also holds an admin identity. Every refusal (400 and 409) carries an X-Reason
+        header with a stable code. A successful move writes an audit entry (who, when, old and new
+        Träger) without any case data.
+
+        Leaving the chat rooms is a promise, not a result. The rooms are found through the chat
+        accounts' actual memberships in the old Träger (owned, team, supervised, co-access cases,
+        the staff-only supervision side rooms, and the accepted cases of colleagues the consultant
+        sits in as a silent department member) and queued; matrixAccessRevocationsQueued is how
+        many were queued, not how many were left. A durable queue works them off at most 100 per
+        minute, so until it has run the consultant can still read and write in those rooms. A room
+        that cannot be left after the retry budget is logged as a warning and counted in the metric
+        userservice.matrix.leave.exhausted. The consultant's active supervisions end with the move,
+        and standing supervisors of the old Träger (the consultant's own, and colleagues who have
+        the consultant as supervisor) are cleared. Group chats are not handled.
+
+        The identity provider is changed last and in one move: if it refuses, the database move is
+        rolled back and the old tenant is put back best-effort (503). A restore that fails is
+        logged as an error and counted in the metric
+        userservice.tenant_change.identity_restore.failed; the identity provider then keeps the new
+        tenant until the move is repeated. The roles of the new centres' consulting types are added
+        after the tenant switch; roles that were already granted when a later step fails are not
+        taken back, and roles of the old centres are not removed.
+      operationId: changeConsultantTenant
+      parameters:
+        - name: consultantId
+          in: path
+          description: consultant id
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          'application/json':
+            schema:
+              $ref: '#/components/schemas/ChangeConsultantTenantDTO'
+        required: true
+      responses:
+        200:
+          description: OK - the consultant belongs to the new Träger
+          content:
+            'application/json':
+              schema:
+                $ref: '#/components/schemas/ConsultantTenantChangeResultDTO'
+        400:
+          $ref: '#/components/responses/ConsultantTenantChangeBadRequest'
+        401:
+          description: UNAUTHORIZED - no/invalid role/authorization
+        403:
+          description: FORBIDDEN - the caller is not a platform admin
+        404:
+          description: NOT FOUND - consultant not found
+        409:
+          $ref: '#/components/responses/ConsultantTenantChangeConflict'
+        500:
+          description: INTERNAL SERVER ERROR - server encountered unexpected condition
+        503:
+          description: >-
+            SERVICE UNAVAILABLE - the identity provider could not switch the Träger or grant the
+            roles. The database is rolled back and the old tenant is put back in the identity
+            provider best-effort (a failed restore is logged and counted); roles that were already
+            granted are not taken back. The request can be repeated. 503 rather than 424/502 because this is a
+            temporary refusal of a dependency that the caller can simply retry, as everywhere else
+            in this service where a lock or a downstream step is unavailable.
+      security:
+        - Bearer: [ ]
+  /useradmin/tenants/{tenantId}/deletion-blockers:
+    get:
+      tags:
+        - admin-user-controller
+      summary: >-
+        Lists what still belongs to a Träger and therefore blocks its deletion.
+        [Authorization: Role: tenant-admin, single-tenant-admin or user-admin, within the caller's
+        reach]
+      description: >-
+        TenantService asks this before it deletes a Träger (ORISO-UserService#1466). Deleting a
+        Träger that still has agencies, accounts or open invitations leaves them pointing at a
+        Träger that no longer exists, and the admin interface can no longer clean them up. Each
+        count is what has to be deleted (or revoked) first. Accounts already marked for deletion
+        and soft-deleted agencies do not count; the nightly job removes them. The technical
+        group-chat-system users do not count either, they go with their Träger.
+      operationId: getTenantDeletionBlockers
+      parameters:
+        - name: tenantId
+          in: path
+          description: Träger (tenant) id
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        200:
+          description: OK - successful operation
+          content:
+            'application/json':
+              schema:
+                $ref: '#/components/schemas/TenantDeletionBlockersDTO'
+        401:
+          description: UNAUTHORIZED - no/invalid role/authorization
+        403:
+          description: FORBIDDEN - the Träger is outside the caller's reach
+        500:
+          description: INTERNAL SERVER ERROR - server encountered unexpected condition
+      security:
+        - Bearer: [ ]
+  /useradmin/agencies/{agencyId}/contactperson:
+    get:
+      tags:
+        - admin-user-controller
+      summary: 'The contact person of a counselling centre and the Träger default (ORISO-Admin#1534) [Authorization: user-admin, tenant-admin, single-tenant-admin or restricted-agency-admin, within the caller''s reach]'
+      description: >-
+        A stored id that no longer names an admin of the centre or its Träger counts as not set. effectiveSource
+        says which pair counsellors see: the centre's own (OWN), the Träger default (TRAEGER_DEFAULT) or none (NONE).
+      operationId: getAgencyContactPerson
+      parameters:
+        - name: agencyId
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+        - name: tenantId
+          in: query
+          required: false
+          description: >-
+            Träger of the centre, optional. For platform admins it is checked against AgencyService and a different
+            value answers 400; everybody else always uses their own Träger.
+          schema:
+            type: integer
+            format: int64
+      responses:
+        200:
+          description: OK
+          content:
+            'application/json':
+              schema:
+                $ref: '#/components/schemas/AgencyContactPersonAdminDTO'
+        400:
+          description: BAD REQUEST - an id is no candidate, the deputy has no contact person or equals it
+        401:
+          description: UNAUTHORIZED - no/invalid role/authorization
+        403:
+          description: FORBIDDEN - outside the caller's reach (the same answer as for a non-existing target)
+        500:
+          description: INTERNAL SERVER ERROR - server encountered unexpected condition
+      security:
+        - Bearer: [ ]
+    put:
+      tags:
+        - admin-user-controller
+      summary: 'Sets or clears the contact person and deputy of a counselling centre (ORISO-Admin#1534) [Authorization: user-admin, tenant-admin, single-tenant-admin or restricted-agency-admin, within the caller''s reach]'
+      description: >-
+        A null or absent id clears it. Both must be candidates of the centre (GET .../candidates); the deputy needs a
+        contact person and must differ from it.
+      operationId: updateAgencyContactPerson
+      parameters:
+        - name: agencyId
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+        - name: tenantId
+          in: query
+          required: false
+          description: >-
+            Träger of the centre, optional. For platform admins it is checked against AgencyService and a different
+            value answers 400; everybody else always uses their own Träger.
+          schema:
+            type: integer
+            format: int64
+      requestBody:
+        required: true
+        content:
+          'application/json':
+            schema:
+              $ref: '#/components/schemas/UpdateContactPersonDTO'
+      responses:
+        200:
+          description: OK - the stored state
+          content:
+            'application/json':
+              schema:
+                $ref: '#/components/schemas/AgencyContactPersonAdminDTO'
+        400:
+          description: BAD REQUEST - an id is no candidate, the deputy has no contact person or equals it
+        401:
+          description: UNAUTHORIZED - no/invalid role/authorization
+        403:
+          description: FORBIDDEN - outside the caller's reach (the same answer as for a non-existing target)
+        500:
+          description: INTERNAL SERVER ERROR - server encountered unexpected condition
+      security:
+        - Bearer: [ ]
+  /useradmin/agencies/{agencyId}/contactperson/candidates:
+    get:
+      tags:
+        - admin-user-controller
+      summary: 'Admins who may be the contact person of a counselling centre (ORISO-Admin#1534) [Authorization: user-admin, tenant-admin, single-tenant-admin or restricted-agency-admin, within the caller''s reach]'
+      description: The agency admins of the centre and the Träger admins of its Träger.
+      operationId: getAgencyContactPersonCandidates
+      parameters:
+        - name: agencyId
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+        - name: tenantId
+          in: query
+          required: false
+          description: >-
+            Träger of the centre, optional. For platform admins it is checked against AgencyService and a different
+            value answers 400; everybody else always uses their own Träger.
+          schema:
+            type: integer
+            format: int64
+      responses:
+        200:
+          description: OK - possibly empty
+          content:
+            'application/json':
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/ContactAdminDTO'
+        400:
+          description: BAD REQUEST - an id is no candidate, the deputy has no contact person or equals it
+        401:
+          description: UNAUTHORIZED - no/invalid role/authorization
+        403:
+          description: FORBIDDEN - outside the caller's reach (the same answer as for a non-existing target)
+        500:
+          description: INTERNAL SERVER ERROR - server encountered unexpected condition
+      security:
+        - Bearer: [ ]
+  /useradmin/tenants/{tenantId}/contactperson:
+    get:
+      tags:
+        - admin-user-controller
+      summary: 'The Träger default contact person and general contact e-mail (ORISO-Admin#1534) [Authorization: user-admin, tenant-admin or single-tenant-admin, within the caller''s reach]'
+      operationId: getTenantContactPerson
+      parameters:
+        - name: tenantId
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        200:
+          description: OK
+          content:
+            'application/json':
+              schema:
+                $ref: '#/components/schemas/TenantContactPersonDTO'
+        400:
+          description: BAD REQUEST - an id is no candidate, the deputy has no contact person or equals it
+        401:
+          description: UNAUTHORIZED - no/invalid role/authorization
+        403:
+          description: FORBIDDEN - outside the caller's reach (the same answer as for a non-existing target)
+        500:
+          description: INTERNAL SERVER ERROR - server encountered unexpected condition
+      security:
+        - Bearer: [ ]
+    put:
+      tags:
+        - admin-user-controller
+      summary: 'Sets or clears the Träger default contact person, deputy and general contact e-mail (ORISO-Admin#1534) [Authorization: user-admin, tenant-admin or single-tenant-admin, within the caller''s reach]'
+      description: >-
+        A null or absent id clears it; an absent generalContactEmail keeps it and a blank one clears it. Both ids must
+        be admins of the Träger (GET .../candidates); the deputy needs a
+        contact person and must differ from it.
+      operationId: updateTenantContactPerson
+      parameters:
+        - name: tenantId
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+      requestBody:
+        required: true
+        content:
+          'application/json':
+            schema:
+              $ref: '#/components/schemas/UpdateTenantContactPersonDTO'
+      responses:
+        200:
+          description: OK - the stored state
+          content:
+            'application/json':
+              schema:
+                $ref: '#/components/schemas/TenantContactPersonDTO'
+        400:
+          description: BAD REQUEST - an id is no candidate, the deputy has no contact person or equals it
+        401:
+          description: UNAUTHORIZED - no/invalid role/authorization
+        403:
+          description: FORBIDDEN - outside the caller's reach (the same answer as for a non-existing target)
+        500:
+          description: INTERNAL SERVER ERROR - server encountered unexpected condition
+      security:
+        - Bearer: [ ]
+  /useradmin/tenants/{tenantId}/contactperson/candidates:
+    get:
+      tags:
+        - admin-user-controller
+      summary: 'Admins who may be the Träger default contact person (ORISO-Admin#1534) [Authorization: user-admin, tenant-admin or single-tenant-admin, within the caller''s reach]'
+      description: The Träger admins and agency admins of the Träger.
+      operationId: getTenantContactPersonCandidates
+      parameters:
+        - name: tenantId
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        200:
+          description: OK - possibly empty
+          content:
+            'application/json':
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/ContactAdminDTO'
+        400:
+          description: BAD REQUEST - an id is no candidate, the deputy has no contact person or equals it
+        401:
+          description: UNAUTHORIZED - no/invalid role/authorization
+        403:
+          description: FORBIDDEN - outside the caller's reach (the same answer as for a non-existing target)
+        500:
+          description: INTERNAL SERVER ERROR - server encountered unexpected condition
+      security:
+        - Bearer: [ ]
+  /useradmin/agencycontacts/coverage:
+    post:
+      tags:
+        - admin-user-controller
+      summary: 'Which counselling centres have a contact person (ORISO-Admin#1534) [Authorization: user-admin, tenant-admin, single-tenant-admin or restricted-agency-admin, within the caller''s reach]'
+      description: >-
+        A centre is covered by a valid own contact person or a valid Träger default; the admin fallback does not count.
+        The Träger of each centre comes from AgencyService; for platform admins a tenantIdsByAgency entry that disagrees
+        answers 400, one for a centre AgencyService does not know is ignored.
+      operationId: getAgencyContactCoverage
+      requestBody:
+        required: true
+        content:
+          'application/json':
+            schema:
+              $ref: '#/components/schemas/AgencyContactCoverageRequestDTO'
+      responses:
+        200:
+          description: OK - one entry per requested centre
+          content:
+            'application/json':
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/AgencyContactCoverageDTO'
+        400:
+          description: BAD REQUEST - an id is no candidate, the deputy has no contact person or equals it
+        401:
+          description: UNAUTHORIZED - no/invalid role/authorization
+        403:
+          description: FORBIDDEN - outside the caller's reach (the same answer as for a non-existing target)
+        500:
+          description: INTERNAL SERVER ERROR - server encountered unexpected condition
+      security:
+        - Bearer: [ ]
+  /useradmin/askers:
+    get:
+      tags:
+        - admin-user-controller
+      summary: >-
+        Returns advice seekers matching the filter, newest first, limited to the caller's reach
+        (platform, own Träger or own agencies). [Authorization: Role: user-admin]
+      description: >-
+        Advice seekers marked for deletion are included, with their deletion state, so the admin
+        interface can show them as "in deletion". The technical group-chat-system users are not. Usernames are stored encoded, so the username
+        filter matches the whole username, not a part of it.
+      operationId: getAskers
+      parameters:
+        - name: filter
+          in: query
+          description: The filter parameters to search for. Without a filter all reachable advice seekers are returned.
+          schema:
+            $ref: '#/components/schemas/AskerFilter'
+        - name: page
+          in: query
+          description: Number of page where to start in the query (1 = first page)
+          required: true
+          schema:
+            type: integer
+        - name: perPage
+          in: query
+          description: Number of items which are being returned per page (at most 100)
+          required: true
+          schema:
+            type: integer
+      responses:
+        200:
+          description: OK - successful operation
+          content:
+            'application/json':
+              schema:
+                $ref: '#/components/schemas/AskerSearchResultDTO'
+        400:
+          description: BAD REQUEST - invalid/incomplete request
+        401:
+          description: UNAUTHORIZED - no/invalid role/authorization
+        403:
+          description: FORBIDDEN - the caller has no Träger of their own to search in
+        500:
+          description: INTERNAL SERVER ERROR - server encountered unexpected condition
+      security:
+        - Bearer: [ ]
   /useradmin/askers/{askerId}:
     get:
       tags:
@@ -281,7 +818,11 @@ paths:
         404:
           description: NOT FOUND - asker not found
         409:
-          description: CONFLICT - asker is already marked for deletion
+          description: >-
+            CONFLICT - X-Reason ASKER_ALREADY_MARKED_FOR_DELETION: already marked;
+            TECHNICAL_GROUP_CHAT_ACCOUNT: a technical group-chat-system account, which only goes
+            with its Träger. Without X-Reason: another operation on the account (e.g. a live-chat
+            transition) is in progress.
         500:
           description: INTERNAL SERVER ERROR - server encountered unexpected condition
       security:
@@ -616,6 +1157,24 @@ paths:
             enum: [ ASC, DESC ]
             default: ASC
             pattern: '^(ASC|DESC)$'
+        - name: tenantId
+          in: query
+          description: Only rows of this Träger (tenant). Never widens the caller's own scope;
+            a tenant outside it yields an empty result.
+          required: false
+          schema:
+            type: integer
+            format: int64
+        - name: agencyId
+          in: query
+          description: Only agency admins who administer this Beratungsstelle (agency). Repeat the parameter or pass a
+            comma-separated list to match any of several agencies. Never widens the caller's own scope.
+          required: false
+          schema:
+            type: array
+            items:
+              type: integer
+              format: int64
       responses:
         200:
           description: OK - successful operation
@@ -907,6 +1466,46 @@ paths:
         security:
           - Bearer: [ ]
 
+  /useradmin/tenantadmins/login-emails:
+    get:
+      tags:
+        - admin-user-controller
+      summary: Return tenant administrator login emails for the requested tenants
+      description: Only available to platform administrators using the configured human app client.
+      operationId: getTenantAdminLoginEmails
+      parameters:
+        - name: tenantIds
+          in: query
+          required: true
+          description: Between 1 and 100 distinct positive tenant IDs.
+          style: form
+          explode: true
+          schema:
+            type: array
+            minItems: 1
+            maxItems: 100
+            items:
+              type: integer
+              format: int64
+              minimum: 1
+      responses:
+        200:
+          description: One entry per requested tenant, in request order. Tenants without administrators have an empty email list.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/TenantAdminLoginEmailsDTO'
+        400:
+          description: Invalid tenant IDs
+        401:
+          description: Authentication required
+        403:
+          description: Platform administrator access required
+      security:
+        - Bearer: [ ]
+
   /useradmin/tenantadmins/search:
       get:
         tags:
@@ -952,6 +1551,15 @@ paths:
               enum: [ ASC, DESC ]
               default: ASC
               pattern: '^(ASC|DESC)$'
+          - name: tenantId
+            in: query
+            description: Only rows of this Träger (tenant). Never widens the caller's own scope;
+              a tenant outside it yields an empty result. There is no agencyId filter here, as
+              tenant admins are not bound to agencies, so an agencyId parameter is ignored.
+            required: false
+            schema:
+              type: integer
+              format: int64
         responses:
           200:
             description: OK - successful operation
@@ -1091,8 +1699,848 @@ paths:
           security:
             - Bearer: [ ]
 
+  # Account invites and self-assignment are served by hand-written controllers
+  # (AccountInviteController, AdminSelfAssignmentController). x-internal keeps the generator from
+  # adding them to UseradminApi, whose implementation would then map the same routes twice.
+  /useradmin/erstantwort/defaults:
+    get:
+      x-internal: true
+      tags:
+        - erstantwort-defaults-controller
+      summary: 'Platform default Erstantwort texts as plain text, for the Träger editor [Authorization: tenant-admin, single-tenant-admin, restricted-agency-admin, user-admin]'
+      description: >-
+        Read-only. Returns the texts that are sent when a Träger leaves a field empty:
+        greeting, closing, the fixed emergencyNumbers sentence and the derived responseDeadline
+        sentence with the platform default number. There is no platform default for
+        emergencyAddition, freeNotice or whoReadsAlong: the platform cannot know who reads along at
+        a centre, so the Baustein is left out of the first reply until a centre states it, and the
+        whoReadsAlong property of this response is never filled. Served by the hand-written
+        ErstantwortDefaultsController, hence x-internal.
+      operationId: getErstantwortDefaults
+      parameters:
+        - name: locale
+          in: query
+          required: false
+          description: One of de, de@informal, en, fr, ru, ti, tr. Defaults to de.
+          schema:
+            type: string
+        - name: informal
+          in: query
+          required: false
+          description: With locale de, selects the informal (Du) German variant.
+          schema:
+            type: boolean
+            default: false
+      responses:
+        200:
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  locale:
+                    type: string
+                  greeting:
+                    type: string
+                  whoReadsAlong:
+                    type: string
+                  closing:
+                    type: string
+                  emergencyNumbers:
+                    type: string
+                  responseDeadline:
+                    type: string
+                  responseDeadlineDays:
+                    type: integer
+        400:
+          description: BAD REQUEST - locale outside the supported list
+        401:
+          description: UNAUTHORIZED - no/invalid Keycloak token
+        403:
+          description: FORBIDDEN - no/invalid role/authorization
+      security:
+        - Bearer: [ ]
+
+  /useradmin/account-invites:
+    post:
+      x-internal: true
+      tags:
+        - account-invite-controller
+      summary: 'Creates an account invite, and sends it when templateId is set [Authorization: tenant-admin, user-admin, restricted-agency-admin]'
+      description: >-
+        An invite into a Träger or Beratungsstelle that does not exist yet (COUNSELLOR with a
+        new agency, AGENCY_ADMIN with a new Träger) is stored as WAITING_FOR_UNIT and not sent;
+        it needs a pending admin invite for the same new unit and goes out once that admin has
+        onboarded.
+      operationId: createAccountInvite
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateAccountInviteRequest'
+      responses:
+        201:
+          description: CREATED
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AccountInvite'
+        400:
+          description: BAD REQUEST - invalid field combination, unknown enum value, or a topic permission that leaves the counsellor without any topic
+        403:
+          description: FORBIDDEN - role, Träger or agency outside the caller's scope
+        404:
+          description: NOT FOUND - an EXISTING Träger or agency that does not exist (or is deleted)
+        409:
+          $ref: '#/components/responses/AccountInviteConflict'
+        502:
+          description: BAD GATEWAY - SMTP failed; the invite is kept only when delivery is uncertain
+      security:
+        - Bearer: [ ]
+    get:
+      x-internal: true
+      tags:
+        - account-invite-controller
+      summary: 'Lists the account invites in the caller''s scope [Authorization: tenant-admin, user-admin, restricted-agency-admin]'
+      operationId: listAccountInvites
+      parameters:
+        - name: tab
+          in: query
+          description: >-
+            The Admin's tab. TENANT = all Träger admins, including existing Träger; UNIT = counsellors
+            and agency admins. The list and phaseCounts both cover only this tab.
+          schema:
+            type: string
+            enum: [TENANT, UNIT]
+        - name: target_role
+          in: query
+          schema:
+            $ref: '#/components/schemas/AccountInviteTargetRole'
+        - name: status
+          in: query
+          schema:
+            $ref: '#/components/schemas/AccountInviteStatus'
+        - name: progress_phase
+          in: query
+          description: A single progress phase. Legacy CSV values are still accepted; new multiselect callers use progress_phases. Supplying both phase parameters returns 400. phaseCounts ignore these and status.
+          schema:
+            $ref: '#/components/schemas/AccountInviteProgressPhase'
+        - name: progress_phases
+          in: query
+          description: Optional comma-separated progress phases for multiselect. Cannot be combined with progress_phase. phaseCounts ignore these and status.
+          style: form
+          explode: false
+          schema:
+            type: array
+            items:
+              $ref: '#/components/schemas/AccountInviteProgressPhase'
+          example: [NEEDS_ACTION, CLOSED]
+        - name: sort
+          in: query
+          description: Sort all matching invitations before pagination; absent keeps newest first.
+          schema:
+            type: string
+            enum: [recipient, invitedAt]
+        - name: sort_direction
+          in: query
+          schema:
+            type: string
+            enum: [asc, desc]
+        - name: tenant_id
+          in: query
+          schema:
+            type: integer
+            format: int64
+        - name: query
+          in: query
+          description: All whitespace-separated words must match email, first name, last name or exact tenant ID; case and accents are ignored, wildcards are literal.
+          schema:
+            type: string
+        - name: page
+          in: query
+          schema:
+            type: integer
+            default: 0
+        - name: size
+          in: query
+          schema:
+            type: integer
+            default: 20
+      responses:
+        200:
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PagedAccountInvites'
+        400:
+          description: BAD REQUEST - unknown filter value
+        403:
+          description: FORBIDDEN - another tenant was requested
+      security:
+        - Bearer: [ ]
+  /useradmin/account-invites/{inviteId}/send:
+    post:
+      x-internal: true
+      tags:
+        - account-invite-controller
+      summary: 'Sends a stored invite; for a WAITING_FOR_UNIT invite this is its release [Authorization: tenant-admin, user-admin, restricted-agency-admin]'
+      operationId: sendAccountInvite
+      parameters:
+        - $ref: '#/components/parameters/InviteId'
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SendAccountInviteRequest'
+      responses:
+        200:
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AccountInvite'
+        400:
+          description: BAD REQUEST - accepted, revoked or superseded invite
+        403:
+          description: FORBIDDEN - invite outside the caller's scope
+        404:
+          description: NOT FOUND - invite or template unknown
+        409:
+          $ref: '#/components/responses/AccountInviteConflict'
+        502:
+          description: BAD GATEWAY - SMTP failed
+      security:
+        - Bearer: [ ]
+  /useradmin/account-invites/{inviteId}/resend:
+    post:
+      x-internal: true
+      tags:
+        - account-invite-controller
+      summary: 'Replaces the invite link and sends it again [Authorization: tenant-admin, user-admin, restricted-agency-admin]'
+      operationId: resendAccountInvite
+      parameters:
+        - $ref: '#/components/parameters/InviteId'
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SendAccountInviteRequest'
+      responses:
+        200:
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AccountInvite'
+        400:
+          description: BAD REQUEST - accepted or revoked invite
+        403:
+          description: FORBIDDEN - invite outside the caller's scope
+        409:
+          $ref: '#/components/responses/AccountInviteConflict'
+        502:
+          description: BAD GATEWAY - SMTP failed
+      security:
+        - Bearer: [ ]
+  /useradmin/account-invites/{inviteId}:
+    delete:
+      x-internal: true
+      tags:
+        - account-invite-controller
+      summary: 'Deletes an invite: revokes it at once if still open (its link stops working, its address and any reserved number are given back), hides it from every list and leaves the row to the nightly invite purge; repeating the call changes nothing. 409 INVITE_ALREADY_ACCEPTED once its account exists, 409 INVITE_BUSY while an existing account is set up through it [Authorization: tenant-admin, user-admin, restricted-agency-admin]'
+      operationId: deleteAccountInvite
+      parameters:
+        - $ref: '#/components/parameters/InviteId'
+      responses:
+        204:
+          description: NO CONTENT - deleted, or already deleted
+        403:
+          description: FORBIDDEN - invite outside the caller's scope
+        404:
+          description: NOT FOUND - no such invite
+        409:
+          $ref: '#/components/responses/AccountInviteConflict'
+      security:
+        - Bearer: [ ]
+  /useradmin/account-invites/{inviteId}/revoke:
+    post:
+      x-internal: true
+      tags:
+        - account-invite-controller
+      summary: 'Revokes an invite and gives back a Träger or agency number no other invite needs; 409 INVITE_ALREADY_ACCEPTED once its account exists [Authorization: tenant-admin, user-admin, restricted-agency-admin]'
+      operationId: revokeAccountInvite
+      parameters:
+        - $ref: '#/components/parameters/InviteId'
+      responses:
+        200:
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AccountInvite'
+        403:
+          description: FORBIDDEN - invite outside the caller's scope
+        409:
+          $ref: '#/components/responses/AccountInviteConflict'
+      security:
+        - Bearer: [ ]
+  /useradmin/account-invites/{inviteId}/topic-permission:
+    put:
+      x-internal: true
+      tags:
+        - account-invite-controller
+      summary: 'Sets an invited counsellor''s topic permission; after onboarding it changes the counsellor''s own value [Authorization: tenant-admin, user-admin, restricted-agency-admin]'
+      operationId: updateAccountInviteTopicPermission
+      parameters:
+        - $ref: '#/components/parameters/InviteId'
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              x-internal: true
+              properties:
+                topicPermission:
+                  $ref: '#/components/schemas/TopicPermissionInput'
+      responses:
+        200:
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AccountInvite'
+        400:
+          description: BAD REQUEST - missing or unknown value, a non-counsellor invite, or no topic left to pick
+        403:
+          description: FORBIDDEN - invite outside the caller's scope
+        404:
+          description: NOT FOUND - invite unknown
+      security:
+        - Bearer: [ ]
+  /useradmin/account-invites/{inviteId}/role:
+    put:
+      x-internal: true
+      tags:
+        - account-invite-controller
+      summary: 'Changes the role of an invite nobody has accepted yet [Authorization: tenant-admin, user-admin, restricted-agency-admin]'
+      description: >-
+        WAITING_FOR_UNIT, DRAFT and EMAIL_SENT invites only. COUNSELLOR and AGENCY_ADMIN swap
+        (both use the same onboarding link, so a sent link stays valid); the caller may only set
+        a role they could invite ("higher invites lower"). A promoted counsellor gets
+        alsoCounsellor true unless the request says false; a demoted admin loses it. An invite
+        that now has to wait for its new agency moves to WAITING_FOR_UNIT (its sent link stops
+        working and the last template goes out on release); a waiting counsellor who becomes an
+        admin of the new agency leaves the queue as a DRAFT sharing that agency's reservation.
+        An accepted invite is not changed here: use POST /useradmin/consultants/{consultantId}/roles.
+      operationId: changeAccountInviteRole
+      parameters:
+        - $ref: '#/components/parameters/InviteId'
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              x-internal: true
+              required: [targetRole]
+              properties:
+                targetRole:
+                  $ref: '#/components/schemas/AccountInviteTargetRole'
+                alsoCounsellor:
+                  type: boolean
+                  description: AGENCY_ADMIN only (400 otherwise); omitted keeps it, or true on promotion.
+      responses:
+        200:
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AccountInvite'
+        400:
+          description: BAD REQUEST - missing or unknown role, alsoCounsellor for a non-admin role, or no topic left to pick
+        403:
+          description: FORBIDDEN - invite outside the caller's scope (other Träger or agency), or a role the caller could not invite
+        404:
+          description: NOT FOUND - invite unknown
+        409:
+          $ref: '#/components/responses/AccountInviteConflict'
+      security:
+        - Bearer: [ ]
+  /useradmin/consultants/{consultantId}/roles:
+    post:
+      x-internal: true
+      tags:
+        - consultant-role-controller
+      summary: 'Adds a role to an existing counsellor account; only AGENCY_ADMIN [Authorization: tenant-admin, user-admin]'
+      description: >-
+        Makes the counsellor Beratungsstellen-Admin of one agency they counsel in: the admin row,
+        its admin_agency relation and the Keycloak roles restricted-agency-admin and user-admin,
+        in that order inside one transaction (a refused Keycloak role leaves no rows). Removing a
+        role stays in the Users area.
+      operationId: addConsultantRole
+      parameters:
+        - name: consultantId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              x-internal: true
+              required: [role]
+              properties:
+                role:
+                  type: string
+                  enum: [AGENCY_ADMIN]
+                agencyId:
+                  type: integer
+                  format: int64
+                  description: Omitted = the counsellor's only agency.
+      responses:
+        200:
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                x-internal: true
+                properties:
+                  consultantId:
+                    type: string
+                  role:
+                    type: string
+                    enum: [AGENCY_ADMIN]
+                  agencyIds:
+                    type: array
+                    description: Every agency the account administers now.
+                    items:
+                      type: integer
+                      format: int64
+        400:
+          description: BAD REQUEST - missing or other role, or an agency the counsellor does not counsel in
+        403:
+          description: FORBIDDEN - counsellor outside the caller's scope (other Träger), or a caller who may not invite agency admins (Beratungsstellen-Admins)
+        404:
+          description: NOT FOUND - counsellor unknown or marked for deletion
+        409:
+          $ref: '#/components/responses/AccountInviteConflict'
+      security:
+        - Bearer: [ ]
+  /useradmin/account-invites/{inviteId}/waive-two-factor:
+    post:
+      x-internal: true
+      tags:
+        - account-invite-controller
+      summary: 'Deprecated, always refused with 400: 2FA is mandatory for new accounts and cannot be waived [Authorization: tenant-admin, user-admin, restricted-agency-admin]'
+      operationId: waiveAccountInviteTwoFactor
+      parameters:
+        - $ref: '#/components/parameters/InviteId'
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              x-internal: true
+              properties:
+                reason:
+                  type: string
+      responses:
+        200:
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AccountInvite'
+        400:
+          description: BAD REQUEST - always returned, 2FA cannot be waived
+        403:
+          description: FORBIDDEN - invite outside the caller's scope
+      security:
+        - Bearer: [ ]
+  # The existing account-invite controller owns these routes directly. They stay x-internal so
+  # OpenAPI generation cannot add a second Spring controller for the same paths. Admin calls
+  # the documented HTTP routes directly; x-internal does not create a generated client method.
+  /users/account-invites/{token}/setup:
+    post:
+      x-internal: true
+      tags:
+        - account-invite-controller
+      summary: Choose a permanent password for the existing account bound to this setup token
+      description: >-
+        Public bootstrap operation, also served with the /service prefix. The opaque mailed token
+        is the only identity input; the request cannot choose an account, tenant, email, or role.
+        Completion returns to ordinary login and its existing two-factor and legal gates.
+      operationId: confirmExistingAccountSetup
+      parameters:
+        - name: token
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              x-internal: true
+              required: [password]
+              additionalProperties: false
+              properties:
+                password:
+                  type: string
+                  format: password
+      responses:
+        200:
+          description: Permanent password saved; continue through ordinary login
+          content:
+            application/json:
+              schema:
+                type: object
+                x-internal: true
+                required: [phase]
+                properties:
+                  phase:
+                    type: string
+                    enum: [COMPLETED]
+        400:
+          description: Invalid request or chosen password rejected before mutation
+        404:
+          description: Setup token not found
+        410:
+          description: Expired, revoked, in-progress, or operator-review setup token
+  /useradmin/accounts/{identityId}/setup-link:
+    post:
+      x-internal: true
+      tags:
+        - account-invite-controller
+      summary: Reissue a definitive existing-account setup link within the caller's admin scope
+      description: >-
+        The server rereads the persisted account and rejects in-progress or indeterminate password
+        claims. No raw token or initial password is returned. The mailed setup link replaces the
+        prior link only when its existing-account binding remains unchanged.
+      operationId: reissueExistingAccountSetup
+      parameters:
+        - name: identityId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              x-internal: true
+              required: [targetRole]
+              additionalProperties: false
+              properties:
+                targetRole:
+                  type: string
+                  enum: [TENANT_ADMIN, AGENCY_ADMIN, COUNSELLOR]
+      responses:
+        200:
+          description: Link queued for the saved account email
+          content:
+            application/json:
+              schema:
+                type: object
+                x-internal: true
+                required: [delivery]
+                properties:
+                  delivery:
+                    type: string
+                    enum: [SENT]
+        400:
+          description: Invalid role or request
+        403:
+          description: Account outside the caller's role or tenant scope
+        404:
+          description: Account not found
+        409:
+          description: Link in progress, binding changed, or operator review required
+        502:
+          description: Mail provider unavailable; saved account and setup state remain available
+      security:
+        - Bearer: [ ]
+  /useradmin/self-assignments:
+    post:
+      x-internal: true
+      tags:
+        - admin-self-assignment-controller
+      summary: 'Adds the calling admin''s own account as counsellor of an agency; no e-mail [Authorization: tenant-admin, user-admin, restricted-agency-admin]'
+      operationId: assignSelf
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SelfAssignmentRequest'
+      responses:
+        201:
+          description: CREATED
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SelfAssignment'
+        400:
+          description: BAD REQUEST - unknown role (AGENCY_ADMIN is not offered), missing agency, or no topic to counsel in
+        403:
+          description: FORBIDDEN - agency outside the caller's scope
+        404:
+          description: NOT FOUND - agency unknown or deleted
+        409:
+          $ref: '#/components/responses/AccountInviteConflict'
+      security:
+        - Bearer: [ ]
+    get:
+      x-internal: true
+      tags:
+        - admin-self-assignment-controller
+      summary: 'The agencies the caller administers and counsels in [Authorization: tenant-admin, user-admin, restricted-agency-admin]'
+      operationId: getSelfAssignments
+      responses:
+        200:
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                x-internal: true
+                properties:
+                  agencyAdminAgencyIds:
+                    type: array
+                    items:
+                      type: integer
+                      format: int64
+                  counsellorAgencyIds:
+                    type: array
+                    items:
+                      type: integer
+                      format: int64
+      security:
+        - Bearer: [ ]
+  /useradmin/list-preferences:
+    get:
+      tags:
+        - admin-user-controller
+      summary: >-
+        Returns the caller's own saved user-list preferences, so the last chosen sort per list
+        tab follows the admin to every device. Only the caller's own data; tabs never saved are
+        absent. [Authorization: Role: user-admin, tenant-admin, single-tenant-admin,
+        restricted-agency-admin]
+      operationId: getOwnAdminListPreferences
+      responses:
+        200:
+          description: OK - successful operation
+          content:
+            'application/json':
+              schema:
+                $ref: '#/components/schemas/AdminListPreferencesDTO'
+        401:
+          description: UNAUTHORIZED - no/invalid Keycloak token
+        403:
+          description: FORBIDDEN - no/invalid role/authorization
+        500:
+          description: INTERNAL SERVER ERROR - server encountered unexpected condition
+      security:
+        - Bearer: [ ]
+  /useradmin/list-preferences/sorts/{tab}:
+    put:
+      tags:
+        - admin-user-controller
+      summary: >-
+        Saves the caller's last chosen sort for one user-list tab, replacing the previous one.
+        [Authorization: Role: user-admin, tenant-admin, single-tenant-admin,
+        restricted-agency-admin]
+      operationId: putOwnAdminListSort
+      parameters:
+        - name: tab
+          in: path
+          description: >-
+            The user-list tab: consultants, agency-admins, tenant-admins or platform-admins.
+            Any other value is answered with 400.
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          'application/json':
+            schema:
+              $ref: '#/components/schemas/AdminListSortDTO'
+        required: true
+      responses:
+        204:
+          description: NO CONTENT - sort saved
+        400:
+          description: >-
+            BAD REQUEST - unknown tab, a field the tab cannot be sorted by, or an order other
+            than ASC/DESC
+        401:
+          description: UNAUTHORIZED - no/invalid Keycloak token
+        403:
+          description: FORBIDDEN - no/invalid role/authorization or CSRF token
+        500:
+          description: INTERNAL SERVER ERROR - server encountered unexpected condition
+      security:
+        - Bearer: [ ]
+
+  # Served by the hand-written DeletionAuditLogsController; x-internal keeps it out of UseradminApi.
+  /users/deletion-audit-logs:
+    post:
+      x-internal: true
+      tags:
+        - deletion-audit-logs-controller
+      summary: 'Reports a deleted Beratungsstelle or Traeger to the deletion log (best effort). [Authorization: technical, tenant-admin, single-tenant-admin, restricted-agency-admin]'
+      operationId: recordDeletion
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DeletionAuditEntryRequestDTO'
+      responses:
+        '204':
+          description: NO CONTENT - accepted
+        '400':
+          description: BAD REQUEST - unsupported target type or malformed ids
+        '401':
+          description: UNAUTHORIZED - no/invalid role/authorization
+        '403':
+          description: FORBIDDEN - caller may not report for this tenant
+        '500':
+          description: INTERNAL SERVER ERROR - server encountered unexpected condition
+      security:
+        - Bearer: []
 components:
   schemas:
+    DeletionAuditEntryRequestDTO:
+      type: object
+      required:
+        - targetType
+        - targetId
+        - outcome
+      properties:
+        targetType:
+          type: string
+          enum:
+            - AGENCY
+            - TENANT
+        targetId:
+          type: string
+          pattern: '[0-9]{1,18}'
+          description: Opaque numeric id of the deleted agency or tenant
+        tenantId:
+          type: integer
+          format: int64
+        outcome:
+          type: string
+          description: >-
+            PARTIAL_FAILURE means the record is gone but an earlier step failed, so a login or chat
+            account may remain. Only the technical account may report it. Clients must accept
+            outcome values they do not know yet.
+          enum:
+            - SCHEDULED
+            - EXECUTED
+            - PARTIAL_FAILURE
+            - CANCELLED
+        actorId:
+          type: string
+          pattern: '[A-Za-z0-9-]{1,64}'
+          description: Honoured for the technical account only
+        actorRole:
+          type: string
+          pattern: '[A-Z_]{1,32}'
+    IdentityObservationRequestDTO:
+      type: object
+      additionalProperties: false
+      description: At least one exact selector. Selectors form a union. Underscores are literal characters. Blank values, control characters and the wildcard characters %, * and ? are rejected.
+      properties:
+        identityId: {type: string, minLength: 1, maxLength: 255}
+        username: {type: string, minLength: 1, maxLength: 255}
+        email: {type: string, minLength: 1, maxLength: 254}
+    IdentityObservationResponseDTO:
+      type: object
+      required: [scope, observedAt, normalizedSelectors, identityScanComplete, occupancy, layers, facts]
+      properties:
+        scope: {type: string, enum: [identity-occupancy-v1]}
+        observedAt: {type: string, format: date-time}
+        normalizedSelectors:
+          $ref: '#/components/schemas/IdentityObservationSelectorsDTO'
+        identityScanComplete: {type: boolean}
+        occupancy: {type: string, enum: [FREE, OCCUPIED, CONFLICT, UNKNOWN]}
+        layers:
+          type: array
+          maxItems: 4
+          items:
+            $ref: '#/components/schemas/IdentityObservationLayerDTO'
+        facts:
+          type: array
+          maxItems: 80
+          items:
+            $ref: '#/components/schemas/IdentityObservationFactDTO'
+    IdentityObservationSelectorsDTO:
+      type: object
+      properties:
+        identityId: {type: string}
+        usernames:
+          type: array
+          maxItems: 2
+          items: {type: string}
+        email: {type: string}
+    IdentityObservationLayerDTO:
+      type: object
+      required: [source, status]
+      properties:
+        source: {type: string, enum: [KEYCLOAK, ADMIN, CONSULTANT, ASKER]}
+        status: {type: string, enum: [COMPLETE, LIMIT, DEPENDENCY_FAILURE]}
+    IdentityObservationFactDTO:
+      type: object
+      required: [source, identityId]
+      properties:
+        source: {type: string, enum: [KEYCLOAK, ADMIN, CONSULTANT, ASKER]}
+        identityId: {type: string}
+        rowId: {type: string}
+        username: {type: string}
+        email: {type: string}
+        tenantId: {type: integer, format: int64}
+        adminType: {type: string}
+        deleted: {type: boolean}
+        deletedAt: {type: string}
+        enabled: {type: boolean}
+    AdminListSortDTO:
+      type: object
+      description: >-
+        One saved list sort. field is FIRSTNAME, LASTNAME, EMAIL or UPDATE_DATE; the
+        tenant-admins and platform-admins tabs also accept TENANT_ID. order is ASC or DESC.
+      required:
+        - field
+        - order
+      properties:
+        field:
+          type: string
+          maxLength: 32
+          example: LASTNAME
+        order:
+          type: string
+          maxLength: 4
+          example: ASC
+
+    AdminListPreferencesDTO:
+      type: object
+      required:
+        - sorts
+      properties:
+        sorts:
+          type: object
+          description: Saved sort per list tab, keyed by tab name.
+          additionalProperties:
+            $ref: '#/components/schemas/AdminListSortDTO'
+
     RootDTO:
       type: object
       required:
@@ -1197,7 +2645,6 @@ components:
       type: object
       required:
         - username
-        - password
         - firstname
         - lastname
         - email
@@ -1213,7 +2660,7 @@ components:
           type: string
           format: password
           example: "SecurePass123!"
-          description: "Password for the consultant"
+          description: "Optional. Left out, the consultant chooses their own password through the setup e-mail."
           minLength: 8
           maxLength: 255
         firstname:
@@ -1265,7 +2712,53 @@ components:
         publicSlug:
           type: string
           example: nikunj-rohit
-          description: Optional public slug. Admin-created values go live immediately.
+          description: Optional public slug (lowercase letters and digits joined by single hyphens, at most 50 characters). Admin-created values go live immediately.
+        displayName:
+          type: string
+          maxLength: 255
+          description: Optional PUBLIC display name shown to advice seekers.
+        internalDisplayName:
+          type: string
+          maxLength: 255
+          description: >-
+            Optional internal display name for internal surfaces; internal contexts fall back to
+            the public displayName when empty.
+        salutation:
+          type: string
+          maxLength: 64
+          example: counsellor_female
+          description: Stable salutation key chosen from the admin form option list.
+        position:
+          type: string
+          maxLength: 255
+          example: "Head of counselling centre north"
+        title:
+          type: string
+          maxLength: 255
+          example: "Dipl.-Soz.Päd."
+        adminRemarks:
+          type: string
+          maxLength: 10000
+          description: >-
+            Internal remarks about the consultant. Only readable and writable for tenant-level
+            admins (tenant admin / platform admin); ignored for other callers.
+        avatarKind:
+          type: string
+          enum: [ICON, INITIALS, PICTURE]
+          description: >-
+            Counsellor avatar choice (#1046): ICON = one of the platform's monochrome counsellor
+            motifs (then avatarId carries the motif id), INITIALS = the generated initials tile,
+            PICTURE = an own uploaded picture. The upload itself is a separate ticket
+            (#1048/#1049) and is not served by this service yet. Omitted means no choice; the
+            initials fallback is rendered.
+        avatarId:
+          type: string
+          maxLength: 64
+          example: "motif-24"
+          description: >-
+            Id of the chosen counsellor motif. Only meaningful together with avatarKind = ICON;
+            it is dropped for every other kind, and an ICON without a motif id is stored as
+            INITIALS — a half choice is never persisted.
 
     IsGroupchatConsultant:
       type: boolean
@@ -1324,6 +2817,10 @@ components:
           maxLength: 10000
         languages:
           type: array
+          description: >-
+            Replaces the counsellor's spoken languages when non-empty. Omitted, null or an empty
+            list leave the stored languages untouched (an omitted field arrives as an empty list,
+            so the two cannot be told apart).
           items:
             type: string
             description: each an ISO 639-1 code
@@ -1344,23 +2841,109 @@ components:
           $ref: '#/components/schemas/AssignedSupervisorId'
         topicIds:
           type: array
-          description: replaces the full set of topics assigned to the consultant
+          nullable: true
+          description: >-
+            Replaces the full set of topics assigned to the consultant; each topic is stored for
+            every assigned counselling centre that offers it. Ignored when topicsByAgency is non-empty.
+            Omitted or null keeps the stored topics; an empty list is rejected while the consultant
+            still has topics.
           items:
             type: integer
             format: int64
           example: [3, 7, 12]
+        topicsByAgency:
+          type: array
+          description: >-
+            Optional. Replaces the full set of topics per counselling centre (#1264). Each agency
+            must be assigned to the consultant and must offer every topic listed for it. Wins over
+            topicIds when non-empty; an empty list counts as not sent (clear with topicIds: []).
+          items:
+            $ref: '#/components/schemas/ConsultantAgencyTopicsDTO'
         publicSlug:
           type: string
           example: nikunj-rohit
-          description: Optional public slug. Admin edits go live immediately; empty clears it.
+          description: Optional public slug (lowercase letters and digits joined by single hyphens, at most 50 characters). Admin edits go live immediately; empty clears it.
         rejectPendingPublicSlug:
           type: boolean
           example: false
           description: If true, rejects the currently pending public slug without changing the active slug.
+        displayName:
+          type: string
+          maxLength: 255
+          description: >-
+            The PUBLIC display name shown to advice seekers. Null leaves the stored value
+            untouched; an empty string clears it.
+        internalDisplayName:
+          type: string
+          maxLength: 255
+          description: >-
+            Optional internal display name for internal surfaces; internal contexts fall back to
+            the public displayName when empty. Null leaves the stored value untouched; an empty
+            string clears it.
+        salutation:
+          type: string
+          maxLength: 64
+          example: counsellor_female
+          description: >-
+            Stable salutation key chosen from the admin form option list. Null leaves the stored
+            value untouched; an empty string clears it.
+        position:
+          type: string
+          maxLength: 255
+          example: "Head of counselling centre north"
+          description: Null leaves the stored value untouched; an empty string clears it.
+        title:
+          type: string
+          maxLength: 255
+          example: "Dipl.-Soz.Päd."
+          description: Null leaves the stored value untouched; an empty string clears it.
+        adminRemarks:
+          type: string
+          maxLength: 10000
+          description: >-
+            Internal remarks about the consultant. Only readable and writable for tenant-level
+            admins (tenant admin / platform admin); ignored for other callers. Null leaves the
+            stored value untouched; an empty string clears it.
+        avatarKind:
+          type: string
+          enum: [ICON, INITIALS, PICTURE]
+          description: >-
+            Counsellor avatar choice (#1046). Null leaves the stored choice untouched. Unlike the
+            free-text personal-info fields this is a typed enum, so it carries no empty-string
+            clear: send INITIALS to drop an icon choice.
+        avatarId:
+          type: string
+          maxLength: 64
+          example: "motif-24"
+          description: >-
+            Id of the chosen counsellor motif, only meaningful with avatarKind = ICON. Null
+            leaves the stored value untouched; an empty string clears it — which also demotes a
+            stored ICON choice to INITIALS, because a half choice is never persisted.
+        topicPermission:
+          $ref: '#/components/schemas/TopicPermissionDTO'
+
+    TopicPermissionDTO:
+      type: string
+      enum: [NONE, SELECT_EXISTING, CREATE]
+      description: >-
+        How far a counsellor may extend their own topics (ORISO-Admin#1026). NONE = only the
+        assigned department, SELECT_EXISTING = pick among the agency's departments, CREATE =
+        add further topics of the Traeger (today's behaviour). On an update, null leaves the
+        stored value untouched.
 
     ConsultantDTO:
       type: object
       properties:
+        active:
+          type: boolean
+          nullable: true
+          description: >-
+            Login enabled in the identity provider. Null means unknown, not disabled.
+            Read-only best-effort metadata; missing identity data, provider outages or
+            exhausted page lookup budgets leave the status unknown without removing rows.
+          readOnly: true
+        topicPermission:
+          $ref: '#/components/schemas/TopicPermissionDTO'
         id:
           type: string
           example: "0f2cca9c-9303-4791-a0a5-a1ce16f1524f"
@@ -1412,8 +2995,29 @@ components:
           type: string
         displayName:
           type: string
+          description: The PUBLIC display name — the name advice seekers see.
         publicName:
           type: string
+          description: Alias of displayName (the public name), kept for existing clients.
+        internalDisplayName:
+          type: string
+          description: >-
+            Optional internal display name for internal surfaces (team lists, internal group
+            chats, supervision). Internal contexts fall back to displayName when empty.
+        salutation:
+          type: string
+          example: counsellor_female
+        position:
+          type: string
+          example: "Head of counselling centre north"
+        title:
+          type: string
+          example: "Dipl.-Soz.Päd."
+        adminRemarks:
+          type: string
+          description: >-
+            Internal remarks about the consultant. Only present for tenant-level admin callers
+            (tenant admin / platform admin).
         publicSlug:
           type: string
           example: nikunj-rohit
@@ -1423,6 +3027,16 @@ components:
         publicSlugStatus:
           type: string
           enum: [PENDING, APPROVED, REJECTED]
+        avatarKind:
+          type: string
+          enum: [ICON, INITIALS, PICTURE]
+          description: >-
+            Counsellor avatar choice (#1046); absent when the counsellor made no choice.
+        avatarId:
+          type: string
+          maxLength: 64
+          example: "motif-24"
+          description: Id of the chosen counsellor motif; only set together with avatarKind = ICON.
         roleInOrg:
           type: string
         vacated:
@@ -1434,6 +3048,13 @@ components:
           description: topics directly assigned to the consultant, enriched with names
           items:
             $ref: '#/components/schemas/ConsultantTopicDTO'
+        topicsByAgency:
+          type: array
+          description: >-
+            Topics of the consultant per counselling centre (#1264). An entry without agencyId
+            holds legacy assignments that apply to every centre of the consultant.
+          items:
+            $ref: '#/components/schemas/ConsultantAgencyTopicsDTO'
         hasOtherIdentity:
           type: boolean
           description: true if this consultant also holds an admin identity on the same account
@@ -1443,6 +3064,30 @@ components:
           items:
             type: string
             enum: [TENANT_ADMIN, AGENCY_ADMIN]
+        chatIdentityStatus:
+          type: string
+          enum: [PROVISIONED, MISSING]
+          description: >-
+            Whether this consultant owns a chat (Matrix) identity. MISSING means the account
+            exists in the identity provider and the database but chat provisioning did not
+            complete, so the counsellor cannot start or join any counselling room. Repair it
+            with POST /useradmin/consultants/{consultantId}/chat-identity. Absent on responses
+            from older deployments; treat absent as unknown, not as PROVISIONED.
+
+    ConsultantAgencyTopicsDTO:
+      type: object
+      description: Topics a consultant offers at one counselling centre (Fachbereich = centre x topic).
+      properties:
+        agencyId:
+          type: integer
+          format: int64
+          example: 5
+        topicIds:
+          type: array
+          items:
+            type: integer
+            format: int64
+          example: [3, 7]
 
     ConsultantTopicDTO:
       type: object
@@ -1491,6 +3136,11 @@ components:
         tenantId:
           type: integer
           example: "1"
+        contactEmail:
+          type: string
+          format: email
+          maxLength: 255
+          description: Optional contact e-mail counsellors see instead of the login e-mail (ORISO-Admin#1534). Blank clears it.
 
     PatchAdminDTO:
       type: object
@@ -1513,6 +3163,11 @@ components:
           type: string
           format: email
           example: "maxmuster@mann.com"
+        contactEmail:
+          type: string
+          format: email
+          maxLength: 255
+          description: Optional contact e-mail counsellors see instead of the login e-mail (ORISO-Admin#1534). Absent keeps it, blank clears it.
 
     UpdateAgencyAdminDTO:
       allOf:
@@ -1530,6 +3185,14 @@ components:
     AdminDTO:
       type: object
       properties:
+        active:
+          type: boolean
+          nullable: true
+          description: >-
+            Login enabled in the identity provider. Null means unknown, not disabled.
+            Read-only best-effort metadata; missing identity data, provider outages or
+            exhausted page lookup budgets leave the status unknown without removing rows.
+          readOnly: true
         id:
           type: string
           example: "0f2cca9c-9303-4791-a0a5-a1ce16f1524f"
@@ -1545,6 +3208,9 @@ components:
         email:
           type: string
           example: "max@mustermann.de"
+        contactEmail:
+          type: string
+          description: Optional contact e-mail counsellors see instead of the login e-mail (ORISO-Admin#1534).
         createDate:
           type: string
         updateDate:
@@ -1572,6 +3238,268 @@ components:
         hasOtherIdentity:
           type: boolean
           description: true if this admin also holds a consultant identity on the same account
+
+    AskerFilter:
+      type: object
+      properties:
+        username:
+          type: string
+          description: The complete username, plain or encoded.
+        agencyId:
+          type: array
+          description: >-
+            Only advice seekers with a session or membership in one of these agencies, sent comma
+            separated (agencyId=101,102) like the other user searches.
+          items:
+            type: integer
+            format: int64
+        tenantId:
+          type: integer
+          format: int64
+          description: Only advice seekers of this Träger. Ignored unless the caller is a platform admin.
+
+    ContactAdminDTO:
+      type: object
+      required:
+        - adminId
+        - firstName
+        - lastName
+        - loginEmail
+        - displayEmail
+        - type
+        - isConsultant
+      properties:
+        adminId:
+          type: string
+        firstName:
+          type: string
+        lastName:
+          type: string
+        loginEmail:
+          type: string
+        contactEmail:
+          type: string
+        displayEmail:
+          type: string
+          description: The contact e-mail if set, else the login e-mail.
+        type:
+          type: string
+          enum: [ AGENCY, TENANT, SUPER ]
+        isConsultant:
+          type: boolean
+          description: The admin also has an active counsellor identity (of this centre, for a centre's candidates).
+    TraegerDefaultContactDTO:
+      type: object
+      properties:
+        contact:
+          $ref: '#/components/schemas/ContactAdminDTO'
+        deputy:
+          $ref: '#/components/schemas/ContactAdminDTO'
+    AgencyContactPersonAdminDTO:
+      type: object
+      required:
+        - agencyId
+        - traegerDefault
+        - effectiveSource
+      properties:
+        agencyId:
+          type: integer
+          format: int64
+        tenantId:
+          type: integer
+          format: int64
+        contact:
+          $ref: '#/components/schemas/ContactAdminDTO'
+        deputy:
+          $ref: '#/components/schemas/ContactAdminDTO'
+        traegerDefault:
+          $ref: '#/components/schemas/TraegerDefaultContactDTO'
+        effectiveSource:
+          type: string
+          enum: [ OWN, TRAEGER_DEFAULT, NONE ]
+    UpdateContactPersonDTO:
+      type: object
+      properties:
+        contactAdminId:
+          type: string
+          nullable: true
+          maxLength: 36
+        deputyAdminId:
+          type: string
+          nullable: true
+          maxLength: 36
+    TenantContactPersonDTO:
+      type: object
+      required:
+        - tenantId
+      properties:
+        tenantId:
+          type: integer
+          format: int64
+        contact:
+          $ref: '#/components/schemas/ContactAdminDTO'
+        deputy:
+          $ref: '#/components/schemas/ContactAdminDTO'
+        generalContactEmail:
+          type: string
+    UpdateTenantContactPersonDTO:
+      type: object
+      properties:
+        contactAdminId:
+          type: string
+          nullable: true
+          maxLength: 36
+        deputyAdminId:
+          type: string
+          nullable: true
+          maxLength: 36
+        generalContactEmail:
+          type: string
+          nullable: true
+          format: email
+          maxLength: 255
+          description: Absent keeps the stored address, blank clears it.
+    AgencyContactCoverageRequestDTO:
+      type: object
+      required:
+        - agencyIds
+      properties:
+        agencyIds:
+          type: array
+          maxItems: 1000
+          items:
+            type: integer
+            format: int64
+        tenantIdsByAgency:
+          type: object
+          description: Träger per centre id, only checked for platform admins (see the operation description).
+          additionalProperties:
+            type: integer
+            format: int64
+    AgencyContactCoverageDTO:
+      type: object
+      required:
+        - agencyId
+        - covered
+        - source
+      properties:
+        agencyId:
+          type: integer
+          format: int64
+        covered:
+          type: boolean
+        source:
+          type: string
+          enum: [ OWN, TRAEGER_DEFAULT, NONE ]
+    TenantAdminLoginEmailsDTO:
+      type: object
+      required:
+        - tenantId
+        - emails
+      properties:
+        tenantId:
+          type: integer
+          format: int64
+        emails:
+          type: array
+          items:
+            type: string
+
+    TenantDeletionBlockersDTO:
+      type: object
+      required:
+        - deletable
+        - agencies
+        - consultants
+        - adviceSeekers
+        - agencyAdmins
+        - tenantAdmins
+        - openInvites
+      properties:
+        deletable:
+          type: boolean
+          description: true when every count below is 0
+        agencies:
+          type: integer
+          format: int64
+          description: agencies of the Träger that are not deleted
+        consultants:
+          type: integer
+          format: int64
+          description: counsellors of the Träger that are not marked for deletion
+        adviceSeekers:
+          type: integer
+          format: int64
+          description: advice seekers of the Träger that are not marked for deletion
+        agencyAdmins:
+          type: integer
+          format: int64
+        tenantAdmins:
+          type: integer
+          format: int64
+          description: Träger admins of the Träger
+        openInvites:
+          type: integer
+          format: int64
+          description: account invitations of the Träger that can still be accepted
+
+    AskerSearchResultDTO:
+      type: object
+      required:
+        - _embedded
+        - total
+      properties:
+        _embedded:
+          type: array
+          items:
+            $ref: '#/components/schemas/AskerAdminResponseDTO'
+        total:
+          type: integer
+          format: int64
+
+    AskerAdminResponseDTO:
+      type: object
+      required:
+        - id
+        - username
+        - agencyIds
+        - deletionState
+      properties:
+        id:
+          type: string
+          example: "0f2cca9c-9303-4791-a0a5-a1ce16f1524f"
+        username:
+          type: string
+          example: max94
+        tenantId:
+          type: integer
+          format: int64
+        agencyIds:
+          type: array
+          description: Agencies of the advice seeker's sessions and memberships.
+          items:
+            type: integer
+            format: int64
+        createDate:
+          type: string
+          description: Registration time, ISO-8601 in UTC without offset.
+          example: "2026-11-13T09:15:00"
+        deleteDate:
+          type: string
+          description: When the advice seeker was marked for deletion, ISO-8601 in UTC; absent while active.
+        deletionState:
+          type: string
+          description: The deletion lifecycle state, e.g. ACTIVE, READ_ONLY_SAFEGUARD or HARD_DELETE_PARTIAL_FAILURE.
+          example: ACTIVE
+        deletionFailureReason:
+          type: string
+          description: >-
+            Why the last nightly run kept this entry: each failed store with its reason, e.g.
+            "DATABASE: Unable to delete user: still referenced by session (session_ibfk_1)". Absent
+            when no run failed.
+        deletionFailedAt:
+          type: string
+          description: When that run failed, ISO-8601 in UTC.
 
     AskerResponseDTO:
       type: object
@@ -1741,6 +3669,72 @@ components:
           type: string
           minLength: 1
           maxLength: 255
+
+    ChangeConsultantTenantDTO:
+      type: object
+      required:
+        - tenantId
+        - agencies
+      properties:
+        tenantId:
+          type: integer
+          format: int64
+          minimum: 1
+          description: The Träger (tenant) the consultant moves to
+          example: 12
+        agencies:
+          type: array
+          minItems: 1
+          description: >-
+            The counselling centres the consultant gets in the new Träger. Every centre must
+            belong to the new Träger; the centres of the old Träger are always removed.
+          items:
+            $ref: '#/components/schemas/CreateConsultantAgencyDTO'
+        topicIds:
+          type: array
+          description: >-
+            Topics the consultant offers at the new centres. Each topic is stored for every
+            selected centre that offers it. The old topics never carry over; omit to start
+            without topics.
+          items:
+            type: integer
+            format: int64
+          example: [3, 7]
+
+    ConsultantTenantChangeResultDTO:
+      type: object
+      required:
+        - consultantId
+        - previousTenantId
+        - tenantId
+        - agencyIds
+        - casesLeftWithPreviousTenant
+        - matrixAccessRevocationsQueued
+      properties:
+        consultantId:
+          type: string
+        previousTenantId:
+          type: integer
+          format: int64
+        tenantId:
+          type: integer
+          format: int64
+        agencyIds:
+          type: array
+          items:
+            type: integer
+            format: int64
+        casesLeftWithPreviousTenant:
+          type: integer
+          description: >-
+            How many cases the consultant owned in the old Träger. They stay there until a
+            colleague takes them over (reason ASSIGNMENT_ENDED). A number only, no case data.
+        matrixAccessRevocationsQueued:
+          type: integer
+          description: >-
+            How many chat rooms of the old Träger were queued to be left. A promise, not a result:
+            the rooms are left asynchronously (at most 100 per minute) and until then the
+            consultant can still read and write in them.
 
     ConsultantAgencyResponseDTO:
       type: object
@@ -1942,6 +3936,411 @@ components:
             - 'DEFAULT_AGENCY'
 
 
+
+    CreateAccountInviteRequest:
+      type: object
+      x-internal: true
+      required: [targetRole, recipientEmail]
+      properties:
+        targetRole:
+          $ref: '#/components/schemas/AccountInviteTargetRole'
+        tenantId:
+          type: integer
+          format: int64
+          description: Required for MANUAL and EXISTING; a Träger-bound caller gets their own when omitted.
+        recipientEmail:
+          type: string
+        firstName:
+          type: string
+        lastName:
+          type: string
+        agencyId:
+          type: integer
+          format: int64
+        departmentId:
+          type: integer
+          format: int64
+          description: The counsellor's topic; defaults to the agency's only topic.
+        expiresInDays:
+          type: integer
+          format: int64
+          minimum: 1
+          maximum: 365
+          default: 30
+          description: For a waiting invite the clock starts at the release, not at creation.
+        templateId:
+          type: integer
+          format: int64
+          description: Set = create and send in one step; a waiting invite keeps it for its release.
+        acceptBaseUrl:
+          type: string
+          deprecated: true
+          description: Ignored; the accept link is server configuration.
+        tenantIdAllocationMode:
+          $ref: '#/components/schemas/IdAllocationMode'
+        agencyIdAllocationMode:
+          $ref: '#/components/schemas/IdAllocationMode'
+        alsoCounsellor:
+          type: boolean
+          description: AGENCY_ADMIN only (400 otherwise); omitted = true.
+        topicPermission:
+          $ref: '#/components/schemas/TopicPermissionInput'
+        avatarKind:
+          type: string
+          enum: [ICON, INITIALS, PICTURE]
+          description: Optional suggestion for the invitee (ORISO-Admin#1274); 400 for any other value. The invitee may change it.
+        avatarId:
+          type: string
+          maxLength: 64
+          description: Motif id for avatarKind ICON; dropped for the other kinds.
+        displayName:
+          type: string
+          maxLength: 100
+          description: Suggested public display name.
+    SendAccountInviteRequest:
+      type: object
+      x-internal: true
+      properties:
+        templateId:
+          type: integer
+          format: int64
+        acceptBaseUrl:
+          type: string
+          deprecated: true
+          description: Ignored; the accept link is server configuration.
+    AccountInvite:
+      type: object
+      x-internal: true
+      properties:
+        id:
+          type: integer
+          format: int64
+        targetRole:
+          $ref: '#/components/schemas/AccountInviteTargetRole'
+        onboardingPurpose:
+          type: string
+          enum: [INVITE, EXISTING_ACCOUNT_SETUP]
+          description: Server-derived purpose; absent in older clients means an ordinary invite.
+        tenantId:
+          type: integer
+          format: int64
+        recipientEmail:
+          type: string
+        firstName:
+          type: string
+        lastName:
+          type: string
+        agencyId:
+          type: integer
+          format: int64
+        departmentId:
+          type: integer
+          format: int64
+        tenantIdAllocationMode:
+          $ref: '#/components/schemas/IdAllocationMode'
+        agencyIdAllocationMode:
+          $ref: '#/components/schemas/IdAllocationMode'
+        alsoCounsellor:
+          type: boolean
+          description: AGENCY_ADMIN invites only; null for every other role.
+        avatarKind:
+          type: string
+          enum: [ICON, INITIALS, PICTURE]
+          description: The inviter's suggestion; null when none was made.
+        avatarId:
+          type: string
+          maxLength: 64
+          description: Motif id for avatarKind ICON; dropped for the other kinds.
+        displayName:
+          type: string
+          maxLength: 100
+          description: Suggested public display name.
+        waitingForUnit:
+          type: string
+          enum: [AGENCY, TENANT]
+          description: Set while inviteStatus is WAITING_FOR_UNIT; the Admin shows "Beratungsstelle noch nicht angelegt".
+        queueProblem:
+          type: string
+          enum: [NO_UNIT_ADMIN]
+          description: A waiting invite whose unit has no pending admin invite any more; derived on read.
+        provisioningStatus:
+          type: string
+        setupRecoveryReason:
+          type: string
+          description: Fixed admin-only setup recovery code; absent from the public token response.
+        provisionedUserId:
+          type: string
+        inviteStatus:
+          $ref: '#/components/schemas/AccountInviteStatus'
+        emailVerificationStatus:
+          type: string
+        emailDeliveryStatus:
+          type: string
+        twoFactorStatus:
+          type: string
+        accessGateStatus:
+          type: string
+        expiresAt:
+          type: string
+          format: date-time
+        acceptedAt:
+          type: string
+          format: date-time
+        revokedAt:
+          type: string
+          format: date-time
+        supersededAt:
+          type: string
+          format: date-time
+        twoFactorWaivedBy:
+          type: string
+        twoFactorWaivedAt:
+          type: string
+          format: date-time
+        twoFactorWaiverReason:
+          type: string
+        createDate:
+          type: string
+          format: date-time
+        rawToken:
+          type: string
+          description: Only in the answer that sent the mail.
+        acceptUrl:
+          type: string
+          description: Only in the answer that sent the mail.
+        dpaForwardedAt:
+          type: string
+          format: date-time
+        dpaForwardCount:
+          type: integer
+        dpaSignedAt:
+          type: string
+          format: date-time
+        topicPermission:
+          $ref: '#/components/schemas/TopicPermissionDTO'
+        phase:
+          type: string
+          description: Public accept endpoint only.
+        progressPhase:
+          $ref: '#/components/schemas/AccountInviteProgressPhase'
+        unitCreatedAt:
+          type: string
+          format: date-time
+          description: >-
+            When the new unit this invite needed was created, set once: the release of a
+            WAITING_FOR_UNIT invite, or for a Träger admin founding a new Träger its creation.
+        sentAt:
+          type: string
+          format: date-time
+          description: When the latest invite mail was sent.
+        accountCreatedAt:
+          type: string
+          format: date-time
+          description: When the account was created (same moment as acceptedAt).
+        twoFactorDoneAt:
+          type: string
+          format: date-time
+          description: When 2FA was activated or waived (acceptedAt when not required); null until then.
+        accountRoles:
+          type: array
+          nullable: true
+          description: Accepted invites only; the roles the account holds now, also ones added later.
+          items:
+            $ref: '#/components/schemas/AccountInviteTargetRole'
+        completedAt:
+          type: string
+          format: date-time
+          description: >-
+            When the last gate passed (2FA activated or waived; for TENANT_ADMIN also the DPA
+            signature). Null while a gate is open, and for 2FA activations before this field.
+    PagedAccountInvites:
+      type: object
+      x-internal: true
+      properties:
+        content:
+          type: array
+          items:
+            $ref: '#/components/schemas/AccountInvite'
+        totalElements:
+          type: integer
+          format: int64
+        totalPages:
+          type: integer
+        page:
+          type: integer
+        size:
+          type: integer
+        phaseCounts:
+          type: object
+          description: >-
+            Invites per progress phase over all pages of the tab and the caller's scope; ignores the
+            status and progress_phase filters.
+          additionalProperties:
+            type: integer
+            format: int64
+        phaseDetailCounts:
+          type: object
+          description: >-
+            Per progress phase, what its count is made of: the invite status, or for NEEDS_ACTION
+            why it is stuck (DELIVERY_FAILED, LINK_EXPIRED, PROVISIONING_FAILED, NO_UNIT_ADMIN,
+            EXPIRED).
+          additionalProperties:
+            type: object
+            additionalProperties:
+              type: integer
+              format: int64
+    AccountInviteProgressPhase:
+      type: string
+      x-internal: true
+      enum: [PREPARED, INVITED, ACCOUNT_CREATED, DONE, NEEDS_ACTION, CLOSED]
+      description: >-
+        The Admin's status tiles, derived in one place (InviteProgress). PREPARED = draft or
+        waiting (Vorbereitet); INVITED = mail sent, link valid (Eingeladen); ACCOUNT_CREATED = a
+        gate is open (Konto angelegt); DONE = all gates passed (Fertig); NEEDS_ACTION = bounced,
+        expired, provisioning failed or no admin for its new unit (Braucht Aktion); CLOSED =
+        revoked or replaced, no tile.
+    AccountInviteTargetRole:
+      type: string
+      x-internal: true
+      enum: [TENANT_ADMIN, AGENCY_ADMIN, COUNSELLOR, ADVICE_SEEKER, PLATFORM_ADMIN]
+    AccountInviteStatus:
+      type: string
+      x-internal: true
+      enum: [WAITING_FOR_UNIT, DRAFT, EMAIL_SENT, ACCEPTED, EXPIRED, REVOKED, SUPERSEDED]
+    IdAllocationMode:
+      type: string
+      x-internal: true
+      enum: [AUTO, MANUAL, EXISTING]
+      description: AUTO/MANUAL reserve a new ID; EXISTING names a unit that exists (nothing is reserved).
+    TopicPermissionInput:
+      x-internal: true
+      description: >-
+        NONE, SELECT_EXISTING or CREATE (case-insensitive); the CSV import may send true (= CREATE)
+        or false (= NONE). Omitted on create (e.g. a CSV row without that column) = SELECT_EXISTING,
+        whatever the agency default says; an explicit value always wins; agency admins always get
+        CREATE.
+      oneOf:
+        - $ref: '#/components/schemas/TopicPermissionDTO'
+        - type: boolean
+    SelfAssignmentRequest:
+      type: object
+      x-internal: true
+      required: [role, agencyId]
+      properties:
+        role:
+          type: string
+          enum: [COUNSELLOR]
+        agencyId:
+          type: integer
+          format: int64
+        topicIds:
+          type: array
+          items:
+            type: integer
+            format: int64
+          description: Omitted = the agency's only topic; required when it offers several.
+    SelfAssignment:
+      type: object
+      x-internal: true
+      properties:
+        role:
+          type: string
+          enum: [COUNSELLOR]
+        agencyId:
+          type: integer
+          format: int64
+        userId:
+          type: string
+        consultantIdentityCreated:
+          type: boolean
+
+  parameters:
+    InviteId:
+      name: inviteId
+      in: path
+      required: true
+      schema:
+        type: integer
+        format: int64
+
+  responses:
+    ConsultantTenantChangeBadRequest:
+      description: >-
+        BAD REQUEST - the move is refused or the request is invalid. X-Reason names the case; a
+        400 without it is a malformed request body.
+      headers:
+        X-Reason:
+          schema:
+            type: string
+            enum:
+              - TENANT_CHANGE_MULTITENANCY_OFF
+              - TENANT_CHANGE_SAME_TENANT
+              - TENANT_CHANGE_AGENCIES_REQUIRED
+              - TENANT_CHANGE_AGENCY_UNKNOWN
+              - TENANT_CHANGE_AGENCY_OTHER_TENANT
+              - TENANT_CHANGE_TOPICS_NOT_COVERED
+          description: >-
+            TENANT_CHANGE_MULTITENANCY_OFF - multi-tenancy is off, there is no other Träger;
+            TENANT_CHANGE_SAME_TENANT - the consultant already belongs to the requested Träger;
+            TENANT_CHANGE_AGENCIES_REQUIRED - no centre, or a centre without id, was sent;
+            TENANT_CHANGE_AGENCY_UNKNOWN - a requested centre does not exist;
+            TENANT_CHANGE_AGENCY_OTHER_TENANT - a requested centre belongs to another Träger than
+            the new one;
+            TENANT_CHANGE_TOPICS_NOT_COVERED - the requested topics are not offered by the
+            requested centres.
+
+    ConsultantTenantChangeConflict:
+      description: >-
+        CONFLICT - the move is refused because of the current state. X-Reason names the case.
+      headers:
+        X-Reason:
+          schema:
+            type: string
+            enum:
+              - TENANT_CHANGE_LAST_COUNSELLOR
+              - TENANT_CHANGE_ADMIN_IDENTITY
+          description: >-
+            TENANT_CHANGE_LAST_COUNSELLOR - the consultant is the last one of a centre of the old
+            Träger that is still active or has open enquiries;
+            TENANT_CHANGE_ADMIN_IDENTITY - the account also holds an admin identity, which would
+            move with it.
+
+    AccountInviteConflict:
+      description: >-
+        CONFLICT. X-Reason names the case; a 409 without it is a Träger or agency number that is
+        already taken or already exists (use EXISTING).
+      headers:
+        X-Reason:
+          schema:
+            type: string
+            enum:
+              - EMAIL_NOT_AVAILABLE
+              - NO_PENDING_UNIT_ADMIN
+              - UNIT_NOT_CREATED
+              - SELF_ASSIGNMENT_ALREADY_EXISTS
+              - CONSULTANT_IDENTITY_ALREADY_GRANTED
+              - INVITE_ALREADY_ACCEPTED
+              - INVITE_NOT_PENDING
+              - ROLE_CHANGE_NEEDS_NEW_INVITE
+              - ONLY_UNIT_ADMIN
+              - ROLE_ALREADY_GRANTED
+              - INVITE_BUSY
+          description: >-
+            EMAIL_NOT_AVAILABLE - the address has an account or an open invite;
+            NO_PENDING_UNIT_ADMIN - a waiting invite needs a pending admin invite for its new unit;
+            UNIT_NOT_CREATED - a waiting invite cannot be sent before its unit exists;
+            SELF_ASSIGNMENT_ALREADY_EXISTS / CONSULTANT_IDENTITY_ALREADY_GRANTED - the admin
+            already counsels in that agency;
+            INVITE_ALREADY_ACCEPTED - the account exists, add a role to the account instead;
+            INVITE_NOT_PENDING - the invite was revoked, replaced or has expired;
+            ROLE_CHANGE_NEEDS_NEW_INVITE - a TENANT_ADMIN (or other non-agency) role cannot be
+            swapped in, it has another placement and link: revoke and invite anew;
+            ONLY_UNIT_ADMIN - the invite is the only pending admin of its new agency, so
+            counsellors would wait for nobody: invite another admin first;
+            ROLE_ALREADY_GRANTED - the account already administers that agency, or is a Träger
+            or platform admin;
+            INVITE_BUSY - another request (for example the invitee finishing onboarding) is
+            changing this invite right now; try again in a moment.
 
   securitySchemes:
     Bearer:

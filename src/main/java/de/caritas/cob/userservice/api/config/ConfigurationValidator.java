@@ -1,6 +1,8 @@
 package de.caritas.cob.userservice.api.config;
 
+import com.google.common.net.InternetDomainName;
 import jakarta.annotation.PostConstruct;
+import java.net.URI;
 import java.util.ArrayList;
 import java.util.List;
 import org.springframework.beans.factory.annotation.Value;
@@ -31,14 +33,17 @@ public class ConfigurationValidator {
   @Value("${identity.openid-connect-url:}")
   private String identityOpenIdConnectUrl;
 
-  @Value("${identity.technical-user.username:}")
-  private String identityTechnicalUsername;
+  @Value("${identity.technical-user.client-id:}")
+  private String identityTechnicalClientId;
 
-  @Value("${identity.technical-user.password:}")
-  private String identityTechnicalPassword;
+  @Value("${identity.technical-user.client-secret:}")
+  private String identityTechnicalClientSecret;
 
   @Value("${consulting.type.service.api.url:}")
   private String consultingTypeServiceApiUrl;
+
+  @Value("${consulting.type.service.scoped.api.url:}")
+  private String scopedTopicServiceApiUrl;
 
   @Value("${tenant.service.api.url:}")
   private String tenantServiceApiUrl;
@@ -84,11 +89,12 @@ public class ConfigurationValidator {
     if (isEmpty(identityOpenIdConnectUrl)) {
       missingConfigs.add("identity.openid-connect-url (IDENTITY_OPENID_CONNECT_URL)");
     }
-    if (isEmpty(identityTechnicalUsername)) {
-      missingConfigs.add("identity.technical-user.username (IDENTITY_TECHNICAL_USER_USERNAME)");
+    if (isEmpty(identityTechnicalClientId)) {
+      missingConfigs.add("identity.technical-user.client-id (IDENTITY_TECHNICAL_CLIENT_ID)");
     }
-    if (isEmpty(identityTechnicalPassword)) {
-      missingConfigs.add("identity.technical-user.password (IDENTITY_TECHNICAL_USER_PASSWORD)");
+    if (isEmpty(identityTechnicalClientSecret)) {
+      missingConfigs.add(
+          "identity.technical-user.client-secret (KEYCLOAK_BACKEND_TECHNICAL_CLIENT_SECRET)");
     }
     if (isEmpty(consultingTypeServiceApiUrl)) {
       missingConfigs.add("consulting.type.service.api.url (CONSULTING_TYPE_SERVICE_API_URL)");
@@ -122,6 +128,37 @@ public class ConfigurationValidator {
                       .toArray(String[]::new)));
       throw new IllegalStateException(errorMessage);
     }
+
+    if (scopedTopicServiceApiUrl != null
+        && !scopedTopicServiceApiUrl.isBlank()
+        && !isValidScopedTopicServiceUrl(scopedTopicServiceApiUrl)) {
+      throw new IllegalStateException(
+          "consulting.type.service.scoped.api.url (CONSULTING_TYPE_SERVICE_SCOPED_API_URL)"
+              + " must be an absolute HTTP(S) URL with a short hostname, a valid port if supplied,"
+              + " and no user info, query or fragment");
+    }
+  }
+
+  private static boolean isValidScopedTopicServiceUrl(String value) {
+    URI uri;
+    try {
+      uri = URI.create(value);
+    } catch (IllegalArgumentException malformed) {
+      return false;
+    }
+
+    String host = uri.getHost();
+    int port = uri.getPort();
+    // ConsultingTypeService treats a dotted host as the authoritative tenant subdomain.
+    return ("http".equalsIgnoreCase(uri.getScheme()) || "https".equalsIgnoreCase(uri.getScheme()))
+        && host != null
+        && !host.contains(".")
+        && InternetDomainName.isValid(host)
+        && !uri.getRawAuthority().endsWith(":")
+        && (port == -1 || (port > 0 && port <= 65535))
+        && uri.getRawUserInfo() == null
+        && uri.getRawQuery() == null
+        && uri.getRawFragment() == null;
   }
 
   private boolean isEmpty(String value) {

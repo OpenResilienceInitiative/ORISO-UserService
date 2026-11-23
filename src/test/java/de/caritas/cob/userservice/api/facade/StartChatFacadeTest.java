@@ -19,14 +19,13 @@ import de.caritas.cob.userservice.api.service.notification.GroupChatLifecycleNot
 import de.caritas.cob.userservice.api.service.notification.GroupChatNotificationRecipientService;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 @ExtendWith(MockitoExtension.class)
 public class StartChatFacadeTest {
 
-  @InjectMocks private StartChatFacade startChatFacade;
+  private StartChatFacade startChatFacade;
 
   @Mock private GroupChatPermissionService groupChatPermissionService;
 
@@ -37,6 +36,19 @@ public class StartChatFacadeTest {
   @Mock private GroupChatNotificationRecipientService notificationRecipientService;
 
   @Mock private Chat chat;
+
+  @org.junit.jupiter.api.BeforeEach
+  void wireRealGroupPolicy() {
+    var groupPolicy =
+        de.caritas.cob.userservice.api.testHelper.PermittingDpaOwnerFixture.groupPolicy();
+    startChatFacade =
+        new StartChatFacade(
+            chatService,
+            groupChatPermissionService,
+            groupPolicy,
+            notificationRecipientService,
+            groupChatLifecycleNotificationService);
+  }
 
   @Test
   public void
@@ -117,6 +129,31 @@ public class StartChatFacadeTest {
             null,
             false,
             java.util.List.of("consultant-1", "asker-1"));
+  }
+
+  @Test
+  void startChatShouldNotTellTheModeratorWhoOpenedItThatItOpened() {
+    // FE#1211: Marge opened the group and got "Online-Termin geöffnet" about her own action.
+    when(chat.isActive()).thenReturn(false);
+    when(chat.getId()).thenReturn(42L);
+    when(chat.getMatrixRoomId()).thenReturn("!room:matrix.local");
+    when(chat.getCurrentOccurrenceIndex()).thenReturn(0);
+    when(chat.getStartDate()).thenReturn(java.time.LocalDateTime.parse("2026-08-03T18:00:00"));
+    when(chat.getChatModality()).thenReturn(Chat.ChatModality.TEXT);
+    when(notificationRecipientService.resolveRecipientIds(chat))
+        .thenReturn(java.util.List.of(CONSULTANT.getId(), "co-moderator-1", "asker-1"));
+
+    startChatFacade.startChat(chat, CONSULTANT);
+
+    verify(groupChatLifecycleNotificationService)
+        .createOpenedNotifications(
+            42L,
+            0,
+            java.time.LocalDateTime.parse("2026-08-03T18:00:00"),
+            "!room:matrix.local",
+            null,
+            false,
+            java.util.List.of("co-moderator-1", "asker-1"));
   }
 
   @Test

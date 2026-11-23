@@ -1,5 +1,6 @@
 package de.caritas.cob.userservice.api.admin.service.admin.search;
 
+import de.caritas.cob.userservice.api.admin.service.search.AccountSearch;
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
 import de.caritas.cob.userservice.api.exception.httpresponses.NoContentException;
 import de.caritas.cob.userservice.api.model.Admin;
@@ -26,6 +27,7 @@ public class RetrieveAdminService {
 
   public static final String ADMIN_WITH_ID_S_NOT_FOUND = "Admin with id %s not found";
   private final @NonNull AdminRepository adminRepository;
+  private final @NonNull AccountSearch accountSearch;
   private final @NonNull AdminAgencyRepository adminAgencyRepository;
 
   public Admin findAdmin(final String adminId, Admin.AdminType adminType) {
@@ -48,7 +50,7 @@ public class RetrieveAdminService {
 
   public Page<AdminBase> findAllByInfix(
       String infix, Admin.AdminType adminType, PageRequest pageRequest) {
-    return adminRepository.findAllByInfix(infix, adminType, pageRequest);
+    return accountSearch.admins(infix, adminType, null, null, pageRequest);
   }
 
   /**
@@ -61,10 +63,36 @@ public class RetrieveAdminService {
       Admin.AdminType adminType,
       Collection<Long> agencyIds,
       PageRequest pageRequest) {
-    if (agencyIds == null || agencyIds.isEmpty()) {
+    return findAllByInfixFiltered(
+        infix, adminType, null, agencyIds == null ? List.of() : agencyIds, pageRequest);
+  }
+
+  /**
+   * Infix search scoped to a single tenant. Used to prevent a tenant-bound admin from enumerating
+   * admins of other tenants through the /useradmin/tenantadmins/search and
+   * /useradmin/agencyadmins/search endpoints (#968). A null caller tenant means no visible admins,
+   * mirroring the empty-scope semantics of {@link #findAllByInfixScopedToAgencies}.
+   */
+  public Page<AdminBase> findAllByInfixScopedToTenant(
+      String infix, Admin.AdminType adminType, Long tenantId, PageRequest pageRequest) {
+    if (tenantId == null) {
       return Page.empty(pageRequest);
     }
-    return adminRepository.findAllByInfixAndAgencyIds(infix, adminType, agencyIds, pageRequest);
+    return accountSearch.admins(infix, adminType, tenantId, null, pageRequest);
+  }
+
+  /**
+   * Infix search with the Träger/Beratungsstelle filter of the list (#1263). The caller has already
+   * resolved its scope into {@code tenantId} (null = every tenant) and {@code agencyIds} (null = no
+   * agency restriction); an empty agency set means nothing is visible.
+   */
+  public Page<AdminBase> findAllByInfixFiltered(
+      String infix,
+      Admin.AdminType adminType,
+      Long tenantId,
+      Collection<Long> agencyIds,
+      PageRequest pageRequest) {
+    return accountSearch.admins(infix, adminType, tenantId, agencyIds, pageRequest);
   }
 
   public List<Admin> findAllById(Set<String> adminIds) {
@@ -77,5 +105,9 @@ public class RetrieveAdminService {
 
   public List<Admin> findTenantAdminsByTenantId(Long tenantId) {
     return this.adminRepository.findByTenantIdAndType(tenantId, AdminType.TENANT);
+  }
+
+  public List<AdminRepository.LoginEmailByTenant> findTenantAdminLoginEmails(List<Long> tenantIds) {
+    return adminRepository.findLoginEmailsByTenantIdsAndType(tenantIds, AdminType.TENANT);
   }
 }

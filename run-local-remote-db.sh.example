@@ -19,8 +19,8 @@ export AGENCY_SERVICE_API_URL="https://api.oriso-dev.site/service"
 # Use "http://localhost:8081/service" when TenantService is running locally.
 export TENANT_SERVICE_API_URL="https://api.oriso-dev.site/service"
 export KEYCLOAK_AUTH_SERVER_URL="https://auth.oriso-dev.site"
-export IDENTITY_TECHNICAL_USER_USERNAME="technical"
-export IDENTITY_TECHNICAL_USER_PASSWORD='CHANGE_ME'
+export IDENTITY_TECHNICAL_CLIENT_ID="backend-technical"
+export KEYCLOAK_BACKEND_TECHNICAL_CLIENT_SECRET='CHANGE_ME'
 
 if [ -f config.env ]; then
   set -a

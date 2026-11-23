@@ -1,9 +1,15 @@
 package de.caritas.cob.userservice.api.service.identity;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.lenient;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
+import de.caritas.cob.userservice.api.admin.service.admin.AdminScope;
+import de.caritas.cob.userservice.api.admin.service.admin.AdminScope.Target;
+import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.port.out.AdminRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
@@ -28,6 +34,8 @@ class UserIdentitiesServiceTest {
   @Mock private IdentityRoleLookup identityRoleLookup;
 
   @InjectMocks private UserIdentitiesService userIdentitiesService;
+
+  @Mock private AdminScope adminScope;
 
   @Test
   void getUserIdentities_Should_ReturnHasAdminIdentityTrue_When_AdminExists() {
@@ -79,5 +87,17 @@ class UserIdentitiesServiceTest {
     var result = userIdentitiesService.getUserIdentities(USER_ID);
 
     assertThat(result.getKeycloakRoles()).isEqualTo(roles);
+  }
+
+  @Test
+  void getUserIdentities_Should_ThrowForbiddenAndSkipLookups_When_UserOutOfScope() {
+    doThrow(new ForbiddenException("out of scope"))
+        .when(adminScope)
+        .assertMay(Target.account(USER_ID));
+
+    assertThatThrownBy(() -> userIdentitiesService.getUserIdentities(USER_ID))
+        .isInstanceOf(ForbiddenException.class);
+
+    verifyNoInteractions(adminRepository, consultantRepository, identityRoleLookup);
   }
 }

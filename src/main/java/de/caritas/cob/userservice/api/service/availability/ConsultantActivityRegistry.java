@@ -93,6 +93,20 @@ public class ConsultantActivityRegistry {
    * Redis read failure fails closed, so no consultant is falsely routed.
    */
   public Set<String> filterActive(Collection<String> consultantIds, long windowMs) {
+    try {
+      return filterActiveOrThrow(consultantIds, windowMs);
+    } catch (AvailabilityStoreException ex) {
+      log.warn("Live-chat availability Redis read failed; routing fails closed", ex);
+      return Collections.emptySet();
+    }
+  }
+
+  /**
+   * Reads availability without hiding store failure, so callers can diagnose their fallback.
+   *
+   * @throws AvailabilityStoreException when Redis cannot complete the read
+   */
+  public Set<String> filterActiveOrThrow(Collection<String> consultantIds, long windowMs) {
     if (consultantIds == null || consultantIds.isEmpty()) {
       return Collections.emptySet();
     }
@@ -118,8 +132,7 @@ public class ConsultantActivityRegistry {
       return active;
     } catch (RuntimeException ex) {
       record("read", "failure");
-      log.warn("Live-chat availability Redis read failed; routing fails closed", ex);
-      return Collections.emptySet();
+      throw new AvailabilityStoreException("Live-chat availability store read failed", ex);
     }
   }
 
