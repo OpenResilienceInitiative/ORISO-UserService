@@ -1,0 +1,25 @@
+Ihr Einmalcode
+==============
+
+Geben Sie diesen Code in {{platformName}} ein.
+
+Code: {{otpCode}}
+
+{{platformName}} öffnen:
+{{loginUrl}}
+
+Wenn Sie diesen Code nicht angefordert haben, können Sie diese E-Mail ignorieren.
+
+----------------------------------------------------------------
+Wir fragen Sie nie per E-Mail nach Ihrem Passwort. Geben Sie diesen Code an niemanden weiter.
+
+{{orgName}}
+{{orgAddress}}
+{{contactLine}}
+
+{{platformName}} ist ein Angebot von {{orgName}}.
+
+Datenschutz: {{privacyUrl}}
+Impressum: {{imprintUrl}}
+
+Diese E-Mail enthält einen Sicherheitscode und lässt sich nicht abbestellen. Bitte antworten Sie nicht darauf.

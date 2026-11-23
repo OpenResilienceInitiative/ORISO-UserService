@@ -2,7 +2,6 @@ package de.caritas.cob.userservice.api.admin.service.consultant.create.agencyrel
 
 import static de.caritas.cob.userservice.api.helper.CustomLocalDateTime.nowInUtc;
 import static java.util.Objects.nonNull;
-import static org.apache.commons.lang3.BooleanUtils.isTrue;
 
 import de.caritas.cob.userservice.api.adapters.web.dto.AgencyDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateConsultantAgencyDTO;
@@ -12,7 +11,6 @@ import de.caritas.cob.userservice.api.manager.consultingtype.ConsultingTypeManag
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.ConsultantAgency;
 import de.caritas.cob.userservice.api.model.ConsultantAgencyStatus;
-import de.caritas.cob.userservice.api.model.ConsultantStatus;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import de.caritas.cob.userservice.api.port.out.IdentityRoleLookup;
@@ -21,6 +19,7 @@ import de.caritas.cob.userservice.api.service.ConsultantAgencyService;
 import de.caritas.cob.userservice.api.service.ConsultantImportService.ImportRecord;
 import de.caritas.cob.userservice.api.service.LogService;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
+import de.caritas.cob.userservice.api.service.session.ConsultantJoinedAgencyEvent;
 import java.util.Collections;
 import java.util.LinkedHashSet;
 import java.util.Optional;
@@ -28,6 +27,7 @@ import java.util.Set;
 import java.util.function.Consumer;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 
 /** Creator class to generate new {@link ConsultantAgency} instances. */
@@ -45,6 +45,7 @@ public class ConsultantAgencyRelationCreatorService {
   private final @NonNull ConsultantAgencyRelationFinalizer consultantAgencyRelationFinalizer;
   private final @NonNull ConsultantTopicAgencyCompatibilityValidator
       consultantTopicAgencyCompatibilityValidator;
+  private final @NonNull ApplicationEventPublisher eventPublisher;
 
   /**
    * Creates a new {@link ConsultantAgency} based on the {@link ImportRecord} and agency ids.
@@ -102,7 +103,9 @@ public class ConsultantAgencyRelationCreatorService {
         .validateCurrentTopicsAgainstAssignedAndAdditionalAgencies(
             consultant.getId(), input.getAdditionalAgencyIds(), consultant.getTenantId());
 
-    ensureConsultingTypeRoles(input, agency);
+    if (!input.defersIdentityRoles()) {
+      ensureConsultingTypeRoles(input, agency);
+    }
     return consultantAgencyService.saveConsultantAgency(
         buildConsultantAgency(consultant, agency.getId()));
   }
@@ -120,38 +123,54 @@ public class ConsultantAgencyRelationCreatorService {
     var consultant = this.retrieveConsultant(input.getConsultantId());
     var agency = retrieveAgency(input.getAgencyId());
 
-    if (!ConsultantStatus.IN_PROGRESS.equals(consultant.getStatus())) {
-      consultant.setStatus(ConsultantStatus.IN_PROGRESS);
-      consultantRepository.save(consultant);
+    // The direct path retains the exact row identity even if a newer relation exists.
+    var completed =
+        persistedRelation == null
+            ? consultantAgencyRelationFinalizer.finalizeConsultantAgencyRelation(consultant, agency)
+            : consultantAgencyRelationFinalizer.finalizeConsultantAgencyRelation(
+                consultant, agency, persistedRelation);
+    if (!completed) {
+      return;
     }
 
-    if (persistedRelation == null) {
-      // Legacy two-step callers do not carry the prepared relation across requests.
-      consultantAgencyRelationFinalizer.finalizeConsultantAgencyRelation(consultant, agency);
-    } else {
-      // The atomic create path already owns the persisted row. Carry it forward instead of
-      // relying on an immediate read-after-write query that may not see the row yet.
-      consultantAgencyRelationFinalizer.finalizeConsultantAgencyRelation(
-          consultant, persistedRelation);
-    }
+    // US#1060: an agency assignment that stops at the database row leaves the counsellor locked
+    // out of every enquiry that arrived before them — Matrix membership is what makes an enquiry
+    // visible at all (FE#811). Announced rather than performed here: the membership fan-out has to
+    // wait for the commit, or a later rejected agency would roll the row back around a Matrix join
+    // that already happened. See AgencyMembershipSyncListener.
+    eventPublisher.publishEvent(
+        new ConsultantJoinedAgencyEvent(consultant.getId(), agency.getId()));
+  }
 
-    if (isTeamAgencyButNotTeamConsultant(agency, consultant)) {
-      consultant.setTeamConsultant(true);
-      consultantRepository.save(consultant);
-    }
+  /**
+   * The identity roles the consulting type of the centre gives for the requested role sets.
+   *
+   * @param input the centre assignment
+   * @return the role names; empty when the consulting type configures none
+   */
+  public Set<String> identityRolesOf(ConsultantAgencyCreationInput input) {
+    return requestedIdentityRoles(input, retrieveAgency(input.getAgencyId()));
   }
 
   private void ensureConsultingTypeRoles(ConsultantAgencyCreationInput input, AgencyDTO agency) {
+    var requestedRoles = requestedIdentityRoles(input, agency);
+    if (!requestedRoles.isEmpty()) {
+      identityRoleUpdater.ensureRoles(input.getConsultantId(), requestedRoles);
+    }
+  }
+
+  private Set<String> requestedIdentityRoles(
+      ConsultantAgencyCreationInput input, AgencyDTO agency) {
     var roles =
         consultingTypeManager.getConsultingTypeSettings(agency.getConsultingType()).getRoles();
+    var requestedRoles = new LinkedHashSet<String>();
     if (nonNull(roles) && nonNull(roles.getConsultant())) {
       var roleSets = roles.getConsultant().getRoleSets();
-      var requestedRoles = new LinkedHashSet<String>();
       for (var roleSetName : input.getRoleSetNames()) {
         requestedRoles.addAll(roleSets.getOrDefault(roleSetName, Collections.emptyList()));
       }
-      identityRoleUpdater.ensureRoles(input.getConsultantId(), requestedRoles);
     }
+    return requestedRoles;
   }
 
   private Consultant retrieveConsultant(String consultantId) {
@@ -199,10 +218,6 @@ public class ConsultantAgencyRelationCreatorService {
                         consultingTypeId, consultant.getId()));
               });
     }
-  }
-
-  private boolean isTeamAgencyButNotTeamConsultant(AgencyDTO agency, Consultant consultant) {
-    return isTrue(agency.getTeamAgency()) && !consultant.isTeamConsultant();
   }
 
   private ConsultantAgency buildConsultantAgency(Consultant consultant, Long agencyId) {

@@ -67,6 +67,61 @@ class AskerDataProviderTest {
 
   @Mock UserAgencyService userAgencyService;
 
+  @Mock
+  de.caritas.cob.userservice.api.service.temporaryaccount.TemporaryAccountKeepService keepService;
+
+  @Test
+  void retrieveDataPreservesStoredRecoveryPolicy() {
+    givenAnEmailDummySuffixConfig();
+    when(authenticatedUser.getRoles()).thenReturn(asSet(UserRole.USER.getValue()));
+    when(consultingTypeManager.getAllConsultingTypeIds())
+        .thenReturn(IntStream.range(0, 22).boxed().collect(Collectors.toList()));
+    var user = new User();
+    user.setEmail("recovery@example.test");
+    user.setLanguageCode(LanguageCode.de);
+    user.setChatRecoveryMode("LOGIN_PASSWORD");
+    user.setChatRecoveryPolicyRevision(7L);
+    var result = askerDataProvider.retrieveData(user);
+    assertEquals("LOGIN_PASSWORD", result.getChatRecoveryMode());
+    assertEquals(7L, result.getChatRecoveryPolicyRevision());
+  }
+
+  @Test
+  void retrieveDataTellsTheAppWhetherTheAccountIsTemporary() {
+    givenAnEmailDummySuffixConfig();
+    when(authenticatedUser.getRoles()).thenReturn(asSet(UserRole.USER.getValue()));
+    when(consultingTypeManager.getAllConsultingTypeIds()).thenReturn(List.of());
+    var temporary = new User();
+    temporary.setEmail("guest@example.test");
+    temporary.setLanguageCode(LanguageCode.de);
+    temporary.setTemporaryAccount(true);
+    var permanent = new User();
+    permanent.setEmail("asker@example.test");
+    permanent.setLanguageCode(LanguageCode.de);
+
+    assertEquals(Boolean.TRUE, askerDataProvider.retrieveData(temporary).getTemporaryAccount());
+    assertEquals(Boolean.FALSE, askerDataProvider.retrieveData(permanent).getTemporaryAccount());
+  }
+
+  @Test
+  void retrieveDataTellsTheAppWhetherTheGuestMayKeepTheAccount() {
+    // #1662: the app offers "Konto behalten" only when keeping will succeed.
+    givenAnEmailDummySuffixConfig();
+    when(authenticatedUser.getRoles()).thenReturn(asSet(UserRole.USER.getValue()));
+    when(consultingTypeManager.getAllConsultingTypeIds()).thenReturn(List.of());
+    var guest = new User();
+    guest.setEmail("guest@example.test");
+    guest.setLanguageCode(LanguageCode.de);
+    guest.setTemporaryAccount(true);
+
+    when(keepService.keepAllowed(guest)).thenReturn(true);
+    assertEquals(
+        Boolean.TRUE, askerDataProvider.retrieveData(guest).getTemporaryAccountKeepAllowed());
+    when(keepService.keepAllowed(guest)).thenReturn(false);
+    assertEquals(
+        Boolean.FALSE, askerDataProvider.retrieveData(guest).getTemporaryAccountKeepAllowed());
+  }
+
   @Test
   void retrieveData_Should_ReturnUserDataWithAgency_When_ProvidedWithUserWithAgencyInSession() {
     givenAnEmailDummySuffixConfig();
@@ -154,6 +209,8 @@ class AskerDataProviderTest {
 
     UserDataResponseDTO resultUser = askerDataProvider.retrieveData(USER);
 
+    assertEquals("RECOVERY_KEY", resultUser.getChatRecoveryMode());
+    assertEquals(0L, resultUser.getChatRecoveryPolicyRevision());
     assertNotNull(resultUser.getEmail());
     assertEquals(resultUser.getEmail(), USER.getEmail());
   }

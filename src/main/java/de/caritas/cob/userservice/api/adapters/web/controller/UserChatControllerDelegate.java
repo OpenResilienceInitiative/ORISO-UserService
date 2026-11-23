@@ -4,6 +4,10 @@ import de.caritas.cob.userservice.api.adapters.web.dto.ChatDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.ChatInfoResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.ChatMembersResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateChatResponseDTO;
+import de.caritas.cob.userservice.api.adapters.web.dto.InternalChatInvitationDTO;
+import de.caritas.cob.userservice.api.adapters.web.dto.InternalChatRecipientDTO;
+import de.caritas.cob.userservice.api.adapters.web.dto.InternalSubsetChatDTO;
+import de.caritas.cob.userservice.api.adapters.web.dto.InternalSubsetChatResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.UpdateChatResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.mapping.UserDtoMapper;
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
@@ -12,6 +16,8 @@ import de.caritas.cob.userservice.api.facade.AssignChatFacade;
 import de.caritas.cob.userservice.api.facade.CreateChatFacade;
 import de.caritas.cob.userservice.api.facade.GetChatFacade;
 import de.caritas.cob.userservice.api.facade.GetChatMembersFacade;
+import de.caritas.cob.userservice.api.facade.InternalChatInvitationFacade;
+import de.caritas.cob.userservice.api.facade.InternalSubsetChatFacade;
 import de.caritas.cob.userservice.api.facade.JoinAndLeaveChatFacade;
 import de.caritas.cob.userservice.api.facade.StartChatFacade;
 import de.caritas.cob.userservice.api.facade.StopChatFacade;
@@ -21,7 +27,9 @@ import de.caritas.cob.userservice.api.port.in.AccountManaging;
 import de.caritas.cob.userservice.api.port.in.Messaging;
 import de.caritas.cob.userservice.api.service.ChatService;
 import de.caritas.cob.userservice.api.service.chat.GroupChatFeatureGate;
+import de.caritas.cob.userservice.api.service.chat.GroupChatPermissionService;
 import de.caritas.cob.userservice.api.service.user.UserAccountService;
+import java.util.List;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
@@ -39,6 +47,8 @@ class UserChatControllerDelegate {
   private final @NonNull JoinAndLeaveChatFacade joinAndLeaveChatFacade;
   private final @NonNull AssignChatFacade assignChatFacade;
   private final @NonNull CreateChatFacade createChatFacade;
+  private final @NonNull InternalSubsetChatFacade internalSubsetChatFacade;
+  private final @NonNull InternalChatInvitationFacade internalChatInvitationFacade;
   private final @NonNull StopChatFacade stopChatFacade;
   private final @NonNull GetChatMembersFacade getChatMembersFacade;
   private final @NonNull AccountManaging accountManager;
@@ -46,9 +56,11 @@ class UserChatControllerDelegate {
   private final @NonNull UserDtoMapper userDtoMapper;
   private final @NonNull AuthenticatedUser authenticatedUser;
   private final @NonNull GroupChatFeatureGate groupChatFeatureGate;
+  private final @NonNull GroupChatPermissionService groupChatPermissionService;
 
   ResponseEntity<CreateChatResponseDTO> createChatV1(ChatDTO chatDTO) {
     var callingConsultant = this.userAccountProvider.retrieveValidatedConsultant();
+    groupChatFeatureGate.requireEnabled(callingConsultant, chatDTO);
     var response = createChatFacade.createChatV1(chatDTO, callingConsultant);
 
     return new ResponseEntity<>(response, HttpStatus.CREATED);
@@ -56,9 +68,45 @@ class UserChatControllerDelegate {
 
   ResponseEntity<CreateChatResponseDTO> createChatV2(ChatDTO chatDTO) {
     var callingConsultant = this.userAccountProvider.retrieveValidatedConsultant();
-    groupChatFeatureGate.requireEnabled(callingConsultant);
+    groupChatFeatureGate.requireEnabled(callingConsultant, chatDTO);
     var response = createChatFacade.createChatV2(chatDTO, callingConsultant);
     return new ResponseEntity<>(response, HttpStatus.CREATED);
+  }
+
+  ResponseEntity<List<InternalChatRecipientDTO>> listInternalSubsetChatRecipients(Long agencyId) {
+    var creator = userAccountProvider.retrieveValidatedConsultant();
+    var recipients = internalSubsetChatFacade.recipients(creator, agencyId);
+    return recipients.isEmpty()
+        ? ResponseEntity.noContent().build()
+        : ResponseEntity.ok(recipients);
+  }
+
+  ResponseEntity<InternalSubsetChatResponseDTO> openInternalSubsetChat(
+      InternalSubsetChatDTO request) {
+    var callingConsultant = this.userAccountProvider.retrieveValidatedConsultant();
+    var opened = internalSubsetChatFacade.open(request, callingConsultant);
+    var response =
+        new InternalSubsetChatResponseDTO()
+            .matrixRoomId(opened.matrixRoomId())
+            .chatId(opened.chatId());
+    return new ResponseEntity<>(response, opened.created() ? HttpStatus.CREATED : HttpStatus.OK);
+  }
+
+  ResponseEntity<List<InternalChatRecipientDTO>> listInternalChatInvitationRecipients(Long chatId) {
+    var caller = userAccountProvider.retrieveValidatedConsultant();
+    var recipients = internalChatInvitationFacade.recipients(caller, chatId);
+    return recipients.isEmpty()
+        ? ResponseEntity.noContent().build()
+        : ResponseEntity.ok(recipients);
+  }
+
+  ResponseEntity<Void> inviteInternalChatParticipant(
+      Long chatId, InternalChatInvitationDTO request) {
+    var caller = userAccountProvider.retrieveValidatedConsultant();
+    var added =
+        internalChatInvitationFacade.invite(
+            caller, chatId, request == null ? null : request.getConsultantId());
+    return new ResponseEntity<>(added ? HttpStatus.CREATED : HttpStatus.OK);
   }
 
   ResponseEntity<Void> startChat(Long chatId) {
@@ -76,15 +124,15 @@ class UserChatControllerDelegate {
     return new ResponseEntity<>(HttpStatus.OK);
   }
 
-  ResponseEntity<ChatInfoResponseDTO> getChat(Long chatId) {
-    var response = getChatFacade.getChat(chatId);
+  ResponseEntity<ChatInfoResponseDTO> getChat(Long chatId, Boolean includeCallerBan) {
+    var response = getChatFacade.getChat(chatId, includeCallerBan);
     return new ResponseEntity<>(response, HttpStatus.OK);
   }
 
-  ResponseEntity<Void> assignChat(String chatReference) {
+  ResponseEntity<Void> assignChat(String chatReference, String inviteToken) {
     if (chatReference.matches("\\d+")) {
       try {
-        assignChatFacade.assignChat(Long.parseLong(chatReference), authenticatedUser);
+        assignChatFacade.assignChat(Long.parseLong(chatReference), inviteToken, authenticatedUser);
       } catch (NumberFormatException exception) {
         throw new BadRequestException("Numeric chat id is outside the supported range.");
       }
@@ -142,6 +190,14 @@ class UserChatControllerDelegate {
   }
 
   ResponseEntity<Void> banFromChat(String matrixUserId, Long chatId) {
+    var chat =
+        chatService
+            .getChat(chatId)
+            .orElseThrow(() -> new NotFoundException("Chat (%s) not found", chatId));
+    // The ban runs as the chat owner in Matrix, so only a moderator may ask for it (#1237).
+    // Checked before the identity lookup so a 404/403 difference cannot probe Matrix ids.
+    groupChatPermissionService.requireCanModerate(
+        chat, userAccountProvider.retrieveValidatedConsultant());
     var adviceSeeker =
         accountManager
             .findAdviceSeekerByMatrixUserId(matrixUserId)
@@ -149,9 +205,6 @@ class UserChatControllerDelegate {
                 () -> {
                   throw new NotFoundException("Matrix user (%s) not found", matrixUserId);
                 });
-    if (!messenger.existsChat(chatId)) {
-      throw new NotFoundException("Chat (%s) not found", chatId);
-    }
 
     var adviceSeekerId = adviceSeeker.getUserId();
     if (!messenger.banUserFromChat(adviceSeekerId, chatId)) {

@@ -2,6 +2,8 @@ package de.caritas.cob.userservice.api.port.out;
 
 import de.caritas.cob.userservice.api.model.AgencyInviteLink;
 import jakarta.persistence.LockModeType;
+import java.util.Collection;
+import java.util.List;
 import java.util.Optional;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
@@ -10,12 +12,100 @@ import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
-public interface AgencyInviteLinkRepository extends JpaRepository<AgencyInviteLink, Long> {
+public interface AgencyInviteLinkRepository
+    extends JpaRepository<AgencyInviteLink, Long>, AgencyInviteLinkRowLock {
 
   Optional<AgencyInviteLink> findByToken(String token);
 
+  /** Links of a Beratungsstelle in one status; for its deletion (ORISO-Admin#1522). */
+  List<AgencyInviteLink> findByAgencyIdAndStatus(Long agencyId, String status);
+
+  /** Links of a Träger in one status; for its deletion (ORISO-Admin#1522). */
+  List<AgencyInviteLink> findByTenantIdAndStatus(Long tenantId, String status);
+
+  /**
+   * The invitation one of whose tokens "Neuen Link senden" replaced, however many renewals ago
+   * (ORISO-Frontend#2252).
+   */
+  @Query("SELECT l FROM AgencyInviteLink l JOIN l.replacedTokens t WHERE t = :token")
+  Optional<AgencyInviteLink> findFirstByPreviousToken(@Param("token") String token);
+
+  /**
+   * The appointment of the caller's own direct link, read without loading (or locking) the link
+   * itself (#2252). Ownership is part of the query, so nobody locks another counsellor's rows.
+   */
+  @Query(
+      "SELECT l.appointmentId FROM AgencyInviteLink l WHERE l.id = :id"
+          + " AND l.consultantId = :consultantId AND l.linkKind = :linkKind"
+          + " AND l.chatType IN :chatTypes")
+  Optional<java.util.UUID> findAppointmentIdOfOwnLink(
+      @Param("id") Long id,
+      @Param("consultantId") String consultantId,
+      @Param("linkKind") String linkKind,
+      @Param("chatTypes") Collection<String> chatTypes);
+
+  /** Ownership check without loading or locking the row (#2252). */
+  boolean existsByIdAndConsultantIdAndLinkKindAndChatTypeIn(
+      Long id, String consultantId, String linkKind, Collection<String> chatTypes);
+
+  /**
+   * Every invitation that meets at one appointment, locked in id order: moving the appointment
+   * moves all their expiries (ORISO-Frontend#2252).
+   */
+  @Lock(LockModeType.PESSIMISTIC_WRITE)
+  @Query("SELECT l FROM AgencyInviteLink l WHERE l.appointmentId = :appointmentId ORDER BY l.id")
+  List<AgencyInviteLink> findByAppointmentIdForUpdate(
+      @Param("appointmentId") java.util.UUID appointmentId);
+
+  /** Direct invitations whose appointment validity ran out and that are still on (#2252). */
+  @Query(
+      "SELECT l.id FROM AgencyInviteLink l WHERE l.linkKind = 'COUNSELLOR'"
+          + " AND l.appointmentId IS NOT NULL AND l.status = 'ACTIVE'"
+          + " AND l.expiresAt < :now AND l.id > :afterId ORDER BY l.id")
+  List<Long> findExpiredInvitationIds(
+      @Param("now") java.time.LocalDateTime now, @Param("afterId") Long afterId, Pageable pageable);
+
+  /** A counsellor's own direct links, newest first (#1475). */
+  List<AgencyInviteLink> findAllByConsultantIdAndLinkKindAndChatTypeInOrderByCreateDateDesc(
+      String consultantId, String linkKind, Collection<String> chatTypes);
+
+  Optional<AgencyInviteLink> findByIdAndConsultantIdAndLinkKindAndChatTypeIn(
+      Long id, String consultantId, String linkKind, Collection<String> chatTypes);
+
   @Lock(LockModeType.PESSIMISTIC_WRITE)
   Optional<AgencyInviteLink> findByTokenAndStatus(String token, String status);
+
+  /** The share link of one running call (#1487); at most one per call. */
+  Optional<AgencyInviteLink> findByCallBindingId(Long callBindingId);
+
+  /**
+   * FE#2209 round 3: the call a link belongs to, without loading the link, so callers can lock that
+   * call's binding before the link (lock order: binding, session, observation, link, knocks).
+   */
+  @Query("SELECT l.callBindingId FROM AgencyInviteLink l WHERE l.id = :id")
+  Optional<Long> findCallBindingIdById(@Param("id") Long id);
+
+  /** The call of the share link a knock came through (same lock order). */
+  @Query(
+      "SELECT l.callBindingId FROM AgencyInviteLink l, GroupChatJoinRequest r"
+          + " WHERE r.id = :knockId AND r.inviteLinkId = l.id")
+  Optional<Long> findCallBindingIdOfKnock(@Param("knockId") Long knockId);
+
+  /** The calls of a counsellor's active share links, in id order (same lock order). */
+  @Query(
+      "SELECT l.callBindingId FROM AgencyInviteLink l WHERE l.consultantId = :consultantId"
+          + " AND l.linkKind = 'CALL' AND l.status = 'ACTIVE' AND l.callBindingId IS NOT NULL"
+          + " ORDER BY l.callBindingId")
+  List<Long> findActiveCallBindingIdsOfConsultant(@Param("consultantId") String consultantId);
+
+  /** Active links of one kind after {@code id}, oldest first, for the expiry sweep (#1487). */
+  List<AgencyInviteLink> findByLinkKindAndStatusAndIdGreaterThanOrderByIdAsc(
+      String linkKind, String status, Long id, Pageable pageable);
+
+  /*
+   * Admin list finders below never return call share links (#1487): their token opens a running
+   * call and belongs only to the counsellors in that call.
+   */
 
   /**
    * Tenant-scoped, filtered, paged finder for the new invite-links list endpoint. The {@code
@@ -25,6 +115,7 @@ public interface AgencyInviteLinkRepository extends JpaRepository<AgencyInviteLi
   @Query(
       "SELECT l FROM AgencyInviteLink l"
           + " WHERE l.tenantId = :tenantId"
+          + " AND l.linkKind <> 'CALL'"
           + " AND (:linkKind IS NULL OR l.linkKind = :linkKind)"
           + " AND (:topicId  IS NULL OR l.topicId  = :topicId)"
           + " AND (:chatType IS NULL OR l.chatType = :chatType)"
@@ -38,6 +129,28 @@ public interface AgencyInviteLinkRepository extends JpaRepository<AgencyInviteLi
       @Param("status") String status,
       Pageable pageable);
 
+  @Query(
+      "SELECT l FROM AgencyInviteLink l"
+          + " WHERE l.tenantId = :tenantId"
+          // Live-chat links are created for the whole Träger, without an agency; an agency admin
+          // still sees them read-only (ORISO-Admin#1321). Other Träger-wide kinds stay hidden.
+          + " AND (l.agencyId IN :agencyIds"
+          + "      OR (l.agencyId IS NULL AND l.linkKind = 'EXTERNAL_INBOUND'))"
+          + " AND l.linkKind <> 'CALL'"
+          + " AND (:linkKind IS NULL OR l.linkKind = :linkKind)"
+          + " AND (:topicId  IS NULL OR l.topicId  = :topicId)"
+          + " AND (:chatType IS NULL OR l.chatType = :chatType)"
+          + " AND (:status   IS NULL OR l.status   = :status)"
+          + " ORDER BY l.createDate DESC")
+  Page<AgencyInviteLink> findAllByTenantIdAndAgencyIdsAndFilters(
+      @Param("tenantId") Long tenantId,
+      @Param("agencyIds") java.util.Collection<Long> agencyIds,
+      @Param("linkKind") String linkKind,
+      @Param("topicId") Long topicId,
+      @Param("chatType") String chatType,
+      @Param("status") String status,
+      Pageable pageable);
+
   /**
    * Cross-tenant variant used by super-admins (tenant-super). {@code tenantId} is optional — pass
    * {@code null} to span every tenant.
@@ -45,6 +158,7 @@ public interface AgencyInviteLinkRepository extends JpaRepository<AgencyInviteLi
   @Query(
       "SELECT l FROM AgencyInviteLink l"
           + " WHERE (:tenantId IS NULL OR l.tenantId = :tenantId)"
+          + " AND l.linkKind <> 'CALL'"
           + " AND (:linkKind IS NULL OR l.linkKind = :linkKind)"
           + " AND (:topicId  IS NULL OR l.topicId  = :topicId)"
           + " AND (:chatType IS NULL OR l.chatType = :chatType)"

@@ -6,6 +6,7 @@ import de.caritas.cob.userservice.agencyadminserivce.generated.web.model.AgencyI
 import de.caritas.cob.userservice.api.config.apiclient.AgencyAdminServiceApiControllerFactory;
 import de.caritas.cob.userservice.api.exception.httpresponses.ConflictException;
 import de.caritas.cob.userservice.api.service.httpheader.SecurityHeaderSupplier;
+import de.caritas.cob.userservice.api.service.httpheader.TechnicalAccessTokenContext;
 import de.caritas.cob.userservice.api.service.httpheader.TenantHeaderSupplier;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
@@ -57,21 +58,25 @@ public class AgencyIdAllocationClient {
   }
 
   /**
-   * Best-effort compensation: releases an unconsumed reservation so the ID becomes assignable
-   * again. Never throws — a failed release must not mask the original creation failure; the
-   * upstream reservation ledger stays the single source of truth for manual cleanup.
+   * Releases an unconsumed reservation so the ID becomes assignable again.
+   *
+   * @return whether the reservation is now confirmed released; transient failures return false so
+   *     callers can retain a durable retry task without masking the original creation failure
    */
-  public void release(long agencyId) {
+  public boolean release(long agencyId) {
     try {
       createControllerApi().releaseAgencyIdReservation(agencyId);
+      return true;
     } catch (HttpClientErrorException.NotFound exception) {
       log.info("Agency ID reservation {} was already released", agencyId);
+      return true;
     } catch (RestClientException exception) {
       log.error(
           "Failed to release agency ID reservation {} — possible orphaned reservation in"
               + " AgencyService",
           agencyId,
           exception);
+      return false;
     }
   }
 
@@ -82,7 +87,11 @@ public class AgencyIdAllocationClient {
   }
 
   private void addDefaultHeaders(ApiClient apiClient) {
-    HttpHeaders headers = this.securityHeaderSupplier.getKeycloakAndCsrfHttpHeaders();
+    // A background job's service token is used for this request only, never ambiently.
+    HttpHeaders headers =
+        TechnicalAccessTokenContext.offered()
+            .map(this.securityHeaderSupplier::getKeycloakAndCsrfHttpHeaders)
+            .orElseGet(this.securityHeaderSupplier::getKeycloakAndCsrfHttpHeaders);
     tenantHeaderSupplier.addTenantHeader(headers);
     headers.forEach((key, value) -> apiClient.addDefaultHeader(key, value.iterator().next()));
   }

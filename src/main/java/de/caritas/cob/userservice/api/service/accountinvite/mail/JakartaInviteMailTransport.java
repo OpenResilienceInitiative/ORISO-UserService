@@ -3,23 +3,27 @@ package de.caritas.cob.userservice.api.service.accountinvite.mail;
 import static org.apache.commons.lang3.StringUtils.isBlank;
 
 import de.caritas.cob.userservice.api.exception.SmtpSendException;
-import jakarta.mail.Authenticator;
+import de.caritas.cob.userservice.api.service.email.OrisoSmtpTransport;
+import jakarta.mail.Address;
+import jakarta.mail.AuthenticationFailedException;
 import jakarta.mail.Message;
 import jakarta.mail.MessagingException;
-import jakarta.mail.PasswordAuthentication;
+import jakarta.mail.SendFailedException;
 import jakarta.mail.Session;
-import jakarta.mail.Transport;
 import jakarta.mail.internet.InternetAddress;
 import jakarta.mail.internet.MimeBodyPart;
 import jakarta.mail.internet.MimeMessage;
 import jakarta.mail.internet.MimeMultipart;
 import java.time.Instant;
+import java.util.HashSet;
+import java.util.Locale;
 import java.util.Properties;
+import java.util.Set;
 import org.springframework.stereotype.Component;
 
 /**
  * Delivers invite mails synchronously via jakarta.mail. The receipt is created only after {@link
- * Transport#send(Message)} returned, i.e. after the SMTP server accepted the message.
+ * OrisoSmtpTransport#send(Message)} returned, i.e. after the SMTP server accepted the message.
  */
 @Component
 public class JakartaInviteMailTransport implements InviteMailTransport {
@@ -37,30 +41,97 @@ public class JakartaInviteMailTransport implements InviteMailTransport {
       String subject,
       String htmlBody,
       String plainTextBody) {
+    MimeMessage message;
+    Address[] recipients;
     try {
       Session session =
-          Session.getInstance(
-              buildSessionProperties(settings),
-              new Authenticator() {
-                @Override
-                protected PasswordAuthentication getPasswordAuthentication() {
-                  return new PasswordAuthentication(settings.username(), settings.password());
-                }
-              });
-      Message message = new MimeMessage(session);
+          OrisoSmtpTransport.session(
+              settings.host(),
+              settings.port(),
+              settings.secure(),
+              settings.username(),
+              settings.password());
+      message = new MimeMessage(session);
       message.setFrom(new InternetAddress(settings.from()));
-      message.setRecipients(Message.RecipientType.TO, InternetAddress.parse(recipient, true));
-      message.setSubject(subject);
+      recipients = InternetAddress.parse(recipient, true);
+      message.setRecipients(Message.RecipientType.TO, recipients);
+      message.setSubject(subject, "UTF-8");
       if (isBlank(plainTextBody)) {
         message.setContent(htmlBody, "text/html; charset=UTF-8");
       } else {
         message.setContent(buildAlternativeContent(htmlBody, plainTextBody));
       }
-      Transport.send(message);
-      return new InviteMailSendReceipt(recipient, Instant.now());
     } catch (Exception exception) {
-      throw new SmtpSendException("Account invite email could not be sent", exception);
+      throw new SmtpSendException(
+          SmtpSendException.Category.SMTP_TRANSPORT_FAILED,
+          SmtpSendException.DeliveryDisposition.CONFIRMED_NOT_SENT,
+          "Account invite email could not be prepared for SMTP dispatch",
+          exception);
     }
+
+    try {
+      OrisoSmtpTransport.send(message);
+      return new InviteMailSendReceipt(recipient, Instant.now());
+    } catch (MessagingException exception) {
+      throw new SmtpSendException(
+          SmtpSendException.Category.SMTP_TRANSPORT_FAILED,
+          deliveryDisposition(recipients, exception),
+          "Account invite email could not be sent",
+          exception);
+    } catch (Exception exception) {
+      // Jakarta Mail can report a connection failure after the SMTP DATA command was accepted.
+      // Without per-recipient evidence that nothing was sent, retrying risks a duplicate mail.
+      throw new SmtpSendException(
+          SmtpSendException.Category.SMTP_TRANSPORT_FAILED,
+          SmtpSendException.DeliveryDisposition.DELIVERY_UNCERTAIN,
+          "Account invite email delivery outcome is uncertain",
+          exception);
+    }
+  }
+
+  static SmtpSendException.DeliveryDisposition deliveryDisposition(
+      Address[] intendedRecipients, MessagingException exception) {
+    if (exception instanceof AuthenticationFailedException) {
+      return SmtpSendException.DeliveryDisposition.CONFIRMED_NOT_SENT;
+    }
+    if (exception instanceof SendFailedException sendFailure
+        && allRecipientsConfirmedUnsent(intendedRecipients, sendFailure)) {
+      return SmtpSendException.DeliveryDisposition.CONFIRMED_NOT_SENT;
+    }
+    return SmtpSendException.DeliveryDisposition.DELIVERY_UNCERTAIN;
+  }
+
+  static boolean allRecipientsConfirmedUnsent(
+      Address[] intendedRecipients, SendFailedException exception) {
+    if (intendedRecipients == null
+        || intendedRecipients.length == 0
+        || hasAddresses(exception.getValidSentAddresses())) {
+      return false;
+    }
+
+    Set<String> confirmedUnsent = addressKeys(exception.getValidUnsentAddresses());
+    confirmedUnsent.addAll(addressKeys(exception.getInvalidAddresses()));
+    Set<String> intended = addressKeys(intendedRecipients);
+    return !intended.isEmpty() && confirmedUnsent.containsAll(intended);
+  }
+
+  private static boolean hasAddresses(Address[] addresses) {
+    return addresses != null && addresses.length > 0;
+  }
+
+  private static Set<String> addressKeys(Address[] addresses) {
+    Set<String> keys = new HashSet<>();
+    if (addresses == null) {
+      return keys;
+    }
+    for (Address address : addresses) {
+      if (address instanceof InternetAddress internetAddress) {
+        keys.add(internetAddress.getAddress().toLowerCase(Locale.ROOT));
+      } else if (address != null) {
+        keys.add(address.toString().toLowerCase(Locale.ROOT));
+      }
+    }
+    return keys;
   }
 
   /**
@@ -94,20 +165,6 @@ public class JakartaInviteMailTransport implements InviteMailTransport {
    * server certificate must match the configured host ({@code mail.smtp.ssl.checkserveridentity}).
    */
   static Properties buildSessionProperties(InviteSmtpSettings settings) {
-    Properties properties = new Properties();
-    properties.put("mail.smtp.auth", "true");
-    properties.put("mail.smtp.host", settings.host());
-    properties.put("mail.smtp.port", String.valueOf(settings.port()));
-    properties.put("mail.smtp.connectiontimeout", "10000");
-    properties.put("mail.smtp.timeout", "10000");
-    properties.put("mail.smtp.writetimeout", "10000");
-    properties.put("mail.smtp.ssl.checkserveridentity", "true");
-    if (settings.secure()) {
-      properties.put("mail.smtp.ssl.enable", "true");
-    } else {
-      properties.put("mail.smtp.starttls.enable", "true");
-      properties.put("mail.smtp.starttls.required", "true");
-    }
-    return properties;
+    return OrisoSmtpTransport.properties(settings.host(), settings.port(), settings.secure());
   }
 }

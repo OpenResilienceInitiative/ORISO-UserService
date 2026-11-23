@@ -16,11 +16,54 @@ public interface ConsultantAgencyRepository extends CrudRepository<ConsultantAge
 
   List<ConsultantAgency> findByConsultantIdAndDeleteDateIsNull(String consultantId);
 
+  /** The relations removed together with the consultant, i.e. stamped with its delete date. */
+  List<ConsultantAgency> findByConsultantIdAndDeleteDate(
+      String consultantId, java.time.LocalDateTime deleteDate);
+
   List<ConsultantAgency> findByAgencyIdAndDeleteDateIsNullOrderByConsultantFirstNameAsc(
       Long agencyId);
 
   List<ConsultantAgency> findByConsultantIdAndAgencyIdAndDeleteDateIsNull(
       String consultantId, Long agencyId);
+
+  @Query(
+      """
+      select removed.consultant.id as consultantId, removed.id as relationId
+      from ConsultantAgency removed
+      where removed.agencyId = :agencyId
+        and removed.consultant.id in :consultantIds
+        and removed.deleteDate is not null
+        and not exists (
+          select 1 from ConsultantAgency active
+          where active.agencyId = removed.agencyId
+            and active.consultant.id = removed.consultant.id
+            and active.deleteDate is null
+        )
+        and not exists (
+          select 1 from ConsultantAgency newer
+          where newer.agencyId = removed.agencyId
+            and newer.consultant.id = removed.consultant.id
+            and (newer.deleteDate > removed.deleteDate
+              or (newer.deleteDate = removed.deleteDate and newer.id > removed.id))
+        )
+        and not exists (
+          select 1 from AgencyEnquiryRevocationTask pending
+          where pending.consultantAgencyId = removed.id
+            and pending.sessionId = :sessionId
+            and pending.roomId = :roomId
+        )
+      """)
+  List<PublicationRevocationCandidate> findPublicationRevocationCandidates(
+      @Param("agencyId") Long agencyId,
+      @Param("consultantIds") Collection<String> consultantIds,
+      @Param("sessionId") Long sessionId,
+      @Param("roomId") String roomId);
+
+  interface PublicationRevocationCandidate {
+    String getConsultantId();
+
+    Long getRelationId();
+  }
 
   boolean existsByConsultantIdAndAgencyIdAndDeleteDateIsNull(String consultantId, Long agencyId);
 

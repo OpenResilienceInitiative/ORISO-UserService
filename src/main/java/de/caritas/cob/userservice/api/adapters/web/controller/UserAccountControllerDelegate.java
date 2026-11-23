@@ -1,10 +1,7 @@
 package de.caritas.cob.userservice.api.adapters.web.controller;
 
-import static java.util.Objects.nonNull;
-
 import de.caritas.cob.userservice.api.adapters.web.dto.AbsenceDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.DeleteUserAccountDTO;
-import de.caritas.cob.userservice.api.adapters.web.dto.EmailNotificationsDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.MasterKeyDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.MobileTokenDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.PasswordDTO;
@@ -16,20 +13,23 @@ import de.caritas.cob.userservice.api.adapters.web.mapping.UserDtoMapper;
 import de.caritas.cob.userservice.api.admin.service.consultant.update.ConsultantUpdateService;
 import de.caritas.cob.userservice.api.config.VideoChatConfig;
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
+import de.caritas.cob.userservice.api.exception.httpresponses.ConflictException;
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
+import de.caritas.cob.userservice.api.exception.httpresponses.ServiceUnavailableException;
+import de.caritas.cob.userservice.api.facade.userdata.AgencyAdminDataProvider;
 import de.caritas.cob.userservice.api.facade.userdata.AskerDataProvider;
 import de.caritas.cob.userservice.api.facade.userdata.ConsultantDataFacade;
 import de.caritas.cob.userservice.api.facade.userdata.ConsultantDataProvider;
 import de.caritas.cob.userservice.api.facade.userdata.KeycloakUserDataProvider;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
+import de.caritas.cob.userservice.api.helper.PasswordPolicy;
 import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
 import de.caritas.cob.userservice.api.identity.IdentityOtpCredential;
-import de.caritas.cob.userservice.api.model.Consultant;
-import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.in.AccountManaging;
 import de.caritas.cob.userservice.api.port.in.IdentityManaging;
+import de.caritas.cob.userservice.api.port.in.IdentityPolicy;
 import de.caritas.cob.userservice.api.port.in.Messaging;
-import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
+import de.caritas.cob.userservice.api.service.AskerEmailCollectionPolicy;
 import de.caritas.cob.userservice.api.service.ConsultantService;
 import de.caritas.cob.userservice.api.service.DecryptionService;
 import de.caritas.cob.userservice.api.service.LogService;
@@ -54,7 +54,7 @@ class UserAccountControllerDelegate {
   private final @NonNull AuthenticatedUser authenticatedUser;
   private final @NonNull DecryptionService decryptionService;
   private final @NonNull ConsultantDataFacade consultantDataFacade;
-  private final @NonNull IdentityClientConfig identityClientConfig;
+  private final @NonNull IdentityPolicy identityPolicy;
   private final @NonNull IdentityManaging identityManager;
   private final @NonNull AccountManaging accountManager;
   private final @NonNull Messaging messenger;
@@ -66,37 +66,15 @@ class UserAccountControllerDelegate {
   private final @NonNull AskerDataProvider askerDataProvider;
   private final @NonNull VideoChatConfig videoChatConfig;
   private final @NonNull KeycloakUserDataProvider keycloakUserDataProvider;
+  private final @NonNull AgencyAdminDataProvider agencyAdminDataProvider;
   private final @NonNull UsernameTranscoder usernameTranscoder;
+  private final @NonNull AskerEmailCollectionPolicy emailCollectionPolicy;
 
   ResponseEntity<Void> updateAbsence(AbsenceDTO absence) {
     var consultant = userAccountProvider.retrieveValidatedConsultant();
     this.consultantDataFacade.updateConsultantAbsent(consultant, absence);
 
     return new ResponseEntity<>(HttpStatus.OK);
-  }
-
-  ResponseEntity<EmailNotificationsDTO> getUserEmailNotifications(String email) {
-    Optional<Consultant> consultantByEmail = userAccountProvider.findConsultantByEmail(email);
-    if (consultantByEmail.isPresent()) {
-      return new ResponseEntity<>(getEmailNotifications(consultantByEmail.get()), HttpStatus.OK);
-    } else {
-      Optional<User> userByEmail = userAccountProvider.findUserByEmail(email);
-      if (userByEmail.isPresent()) {
-        return new ResponseEntity<>(getEmailNotifications(userByEmail.get()), HttpStatus.OK);
-      } else {
-        throw new NotFoundException("No adviceseeker nor consultant with given email found.");
-      }
-    }
-  }
-
-  private EmailNotificationsDTO getEmailNotifications(Consultant consultant) {
-    var consultantDTO = consultantDataProvider.retrieveData(consultant);
-    return consultantDTO.getEmailNotifications();
-  }
-
-  private EmailNotificationsDTO getEmailNotifications(User user) {
-    var userDTO = askerDataProvider.retrieveData(user);
-    return userDTO.getEmailNotifications();
   }
 
   ResponseEntity<UserDataResponseDTO> getUserData() {
@@ -106,8 +84,17 @@ class UserAccountControllerDelegate {
       partialUserData = consultantDataProvider.retrieveData(consultant);
       enrichConsultantDisplayName(partialUserData);
       enrichConsultantAvailability(partialUserData);
-    } else if (isTenantAdmin() || isAgencyAdmin()) {
+    } else if (authenticatedUser.isStatisticsReader()) {
+      // Read-only statistics account (#1666): Keycloak profile only; 2FA is mandatory.
       partialUserData = keycloakUserDataProvider.retrieveAuthenticatedUserData();
+      partialUserData.setEncourage2fa(true);
+    } else if (isTenantAdmin() || isAgencyAdmin()) {
+      // A Beratungsstellen-Admin needs their assigned agencies so the Admin UI can land them on
+      // their own agency. The tenant-admin branch stays Keycloak-only.
+      partialUserData =
+          isTenantAdmin()
+              ? keycloakUserDataProvider.retrieveAuthenticatedUserData()
+              : agencyAdminDataProvider.retrieveData();
       // Only ask a platform admin to set 2FA up when the OTP role policy would actually
       // let them finish. Encouraging it unconditionally deadlocks the admin UI: the
       // client gates on isToEncourage && !isActive, but isActive can never become true
@@ -120,6 +107,8 @@ class UserAccountControllerDelegate {
     } else {
       var user = userAccountProvider.retrieveValidatedUser();
       partialUserData = askerDataProvider.retrieveData(user);
+      partialUserData.setIsAskerEmailCollectionAllowed(
+          !authenticatedUser.isAnonymous() && emailCollectionPolicy.capabilityForAccount(user));
     }
     var otpInfoDTO = retrieveOtpCredentialIfAllowed();
 
@@ -128,7 +117,7 @@ class UserAccountControllerDelegate {
             partialUserData,
             otpInfoDTO,
             videoChatConfig.getE2eEncryptionEnabled(),
-            identityClientConfig.getDisplayNameAllowedForConsultants());
+            identityPolicy.isConsultantDisplayNameAllowed());
 
     return new ResponseEntity<>(fullUserData, HttpStatus.OK);
   }
@@ -159,7 +148,7 @@ class UserAccountControllerDelegate {
   }
 
   private boolean isOtpAllowed() {
-    return identityClientConfig.isOtpAllowed(authenticatedUser.getRoles());
+    return identityPolicy.isTwoFactorAuthenticationAllowed(authenticatedUser.getRoles());
   }
 
   private IdentityOtpCredential retrieveOtpCredentialIfAllowed() {
@@ -169,15 +158,14 @@ class UserAccountControllerDelegate {
     try {
       return identityManager.getOtpCredential(
           usernameTranscoder.encodeUsername(authenticatedUser.getUsername()));
-    } catch (Exception ex) {
+    } catch (RuntimeException ex) {
       log.warn(
-          "Could not retrieve OTP credential for authenticated user {}; preserving OTP availability without credential state",
+          "Could not retrieve OTP credential for authenticated user {}",
           authenticatedUser.getUserId(),
           ex);
-      // A failed Keycloak lookup must not look like role-policy denial. An empty
-      // DTO keeps 2FA enabled in the response while safely reporting no active
-      // credential, so users can still open setup/reset controls.
-      return IdentityOtpCredential.empty();
+      // A failed identity lookup says nothing about whether the user already has a credential.
+      // Returning an empty credential would incorrectly start a new 2FA setup.
+      throw new ServiceUnavailableException("OTP credential lookup unavailable");
     }
   }
 
@@ -229,10 +217,7 @@ class UserAccountControllerDelegate {
       email = userAccountProvider.retrieveValidatedUser().getEmail();
     }
 
-    boolean hasRealEmail =
-        nonNull(email)
-            && !email.isBlank()
-            && !email.endsWith(identityClientConfig.getEmailDummySuffix());
+    boolean hasRealEmail = identityPolicy.isProfileEmailUsableForMagicLink(email);
     if (!hasRealEmail) {
       throw new BadRequestException(
           "Magic link login can only be enabled when a profile email is set.");
@@ -249,12 +234,24 @@ class UserAccountControllerDelegate {
 
     var updateAdminConsultantDTO =
         consultantDtoMapper.updateAdminConsultantOf(updateConsultantDTO, consultant);
-    consultantUpdateService.updateConsultant(consultantId, updateAdminConsultantDTO);
+    // Self-service: a requested public slug waits for admin approval instead of going live.
+    consultantUpdateService.updateConsultant(consultantId, updateAdminConsultantDTO, false);
 
     return new ResponseEntity<>(HttpStatus.OK);
   }
 
   ResponseEntity<Void> updatePassword(PasswordDTO passwordDTO) {
+    if (!PasswordPolicy.isLongEnough(passwordDTO.getNewPassword())) {
+      throw new BadRequestException(
+          "The new password must be at least " + PasswordPolicy.MIN_LENGTH + " characters long");
+    }
+    // Re-submitting the current password changes nothing, yet it would clear the account-setup
+    // requirement and leave the account on the password its administrator still knows.
+    if (passwordDTO.getNewPassword() != null
+        && passwordDTO.getNewPassword().equals(passwordDTO.getOldPassword())) {
+      throw new ConflictException("The new password must differ from the current one");
+    }
+
     var username = authenticatedUser.getUsername();
     var encodedUsername = usernameTranscoder.encodeUsername(username);
     if (!identityManager.validatePasswordIgnoring2fa(
@@ -268,8 +265,25 @@ class UserAccountControllerDelegate {
       var message = String.format("Could not update password of user %s", userId);
       throw new InternalServerErrorException(message);
     }
+    clearPasswordChangeRequirement(userId);
 
     return new ResponseEntity<>(HttpStatus.OK);
+  }
+
+  /**
+   * Opens the account-setup gate once the counsellor's password is their own. Only reached after a
+   * successful change, so a failed attempt leaves the requirement standing. Accounts without a
+   * consultant row have nothing to clear, which is not an error.
+   */
+  private void clearPasswordChangeRequirement(String userId) {
+    consultantService
+        .getConsultant(userId)
+        .filter(consultant -> Boolean.TRUE.equals(consultant.getPasswordChangeRequired()))
+        .ifPresent(
+            consultant -> {
+              consultant.setPasswordChangeRequired(false);
+              consultantService.saveConsultant(consultant);
+            });
   }
 
   ResponseEntity<Void> updateKey(MasterKeyDTO masterKey) {

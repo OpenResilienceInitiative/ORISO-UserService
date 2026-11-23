@@ -303,7 +303,7 @@ public class ConsultantImportService {
               "Consultant %s could not be imported: Invalid email address",
               importRecord.getUsername()));
     }
-    importRecord.setEmail(email.toLowerCase());
+    importRecord.setEmail(email.toLowerCase(java.util.Locale.ROOT));
     importRecord.setAbsent(record.get(6).equals(YES));
     String absenceMessage =
         (record.get(7).trim().equals(StringUtils.EMPTY)) ? null : record.get(7).trim();

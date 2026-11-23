@@ -1,0 +1,10 @@
+# Provider contracts that were removed on purpose.
+#
+# verify-provider-source-compatibility.sh fails when a contract that exists on
+# the base branch is missing from the pull request. A contract named here is
+# skipped instead. Reviewers confirm every entry in the pull request that adds it.
+#
+# Format: <file name in api/> <reason>
+# An entry can be deleted once the removal has reached every long-lived branch.
+
+appointmentservice.yaml ADR-032 replaces cal.com with the ORISO calendar; the cal.com /appointments API is removed (ORISO-UserService#1650)

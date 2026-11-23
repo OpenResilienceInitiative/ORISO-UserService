@@ -1,14 +1,9 @@
 package de.caritas.cob.userservice.api.service;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
-import de.caritas.cob.userservice.api.tenant.TenantContext;
-import java.nio.charset.StandardCharsets;
+import de.caritas.cob.userservice.api.admin.service.admin.AdminScope;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.time.LocalDateTime;
-import java.util.Base64;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
@@ -26,16 +21,19 @@ import org.springframework.stereotype.Service;
 public class CaseHandoverLogsService {
 
   private final @NonNull NamedParameterJdbcTemplate namedParameterJdbcTemplate;
-  private final @NonNull AuthenticatedUser authenticatedUser;
-  private final @NonNull AdminAuditAgencyScope adminAuditAgencyScope;
-  private final ObjectMapper objectMapper = new ObjectMapper();
+  private final @NonNull AdminScope adminScope;
 
   public CaseHandoverLogsResult listCaseHandoverLogs(int page, int perPage) {
     int safePerPage = Math.min(Math.max(perPage, 1), 200);
     int safePage = Math.max(page, 1);
     int offset = (safePage - 1) * safePerPage;
-    Long tenantId = resolveEffectiveTenantId();
-    Optional<Set<Long>> agencyIds = adminAuditAgencyScope.resolveAgencyIds();
+    // One reach for both filters: the platform reads every Träger, everyone else their own.
+    AdminScope.Reach reach = adminScope.current();
+    Long tenantId = reach.tenantId();
+    Optional<Set<Long>> agencyIds =
+        reach instanceof AdminScope.Agencies agencies
+            ? Optional.of(agencies.ids())
+            : Optional.empty();
 
     // Fail closed: a Beratungsstellen-Admin without a single agency assignment reads nothing —
     // never the whole tenant, and never an `IN ()` that the database would reject.
@@ -83,6 +81,7 @@ public class CaseHandoverLogsService {
                 + "  chr.policy_authority AS policyAuthority,\n"
                 + "  chr.created_at AS createdAt,\n"
                 + "  chr.resolved_at AS resolvedAt,\n"
+                + "  chr.extended_at AS extendedAt,\n"
                 + "  chr.requester_consultant_id AS requesterConsultantId,\n"
                 + "  req.username AS requesterUsername,\n"
                 + "  COALESCE(NULLIF(req.display_name, ''), CONCAT(req.first_name, ' ', req.last_name)) AS requesterName,\n"
@@ -117,12 +116,15 @@ public class CaseHandoverLogsService {
           .status(rs.getString("status"))
           .auditOutcome(rs.getString("auditOutcome"))
           .reasonCode(rs.getString("reasonCode"))
-          .reasonLabel(rs.getString("reasonLabel"))
+          .reasonLabel(
+              CaseHandoverReasonCodes.displayLabel(
+                  rs.getString("reasonCode"), rs.getString("reasonLabel")))
           .explanation(rs.getString("explanation"))
           .clientConsentRequired(rs.getBoolean("clientConsentRequired"))
           .policyAuthority(rs.getString("policyAuthority"))
           .createdAt(rs.getObject("createdAt", LocalDateTime.class))
           .resolvedAt(rs.getObject("resolvedAt", LocalDateTime.class))
+          .extendedAt(rs.getObject("extendedAt", LocalDateTime.class))
           .requesterConsultantId(rs.getString("requesterConsultantId"))
           .requesterUsername(rs.getString("requesterUsername"))
           .requesterName(rs.getString("requesterName"))
@@ -130,42 +132,6 @@ public class CaseHandoverLogsService {
           .previousUsername(rs.getString("previousUsername"))
           .previousName(rs.getString("previousName"))
           .build();
-    }
-  }
-
-  private Long resolveEffectiveTenantId() {
-    Long tokenTenantId = getTenantIdFromAccessToken();
-    if (tokenTenantId != null) {
-      return tokenTenantId == 0L ? null : tokenTenantId;
-    }
-    return TenantContext.isTechnicalOrSuperAdminContext() ? null : TenantContext.getCurrentTenant();
-  }
-
-  private Long getTenantIdFromAccessToken() {
-    try {
-      String accessToken = authenticatedUser.getAccessToken();
-      if (accessToken == null || accessToken.isBlank()) {
-        return null;
-      }
-      String[] tokenParts = accessToken.split("\\.");
-      if (tokenParts.length < 2) {
-        return null;
-      }
-      String payload =
-          new String(Base64.getUrlDecoder().decode(tokenParts[1]), StandardCharsets.UTF_8);
-      JsonNode tenantIdNode = objectMapper.readTree(payload).get("tenantId");
-      if (tenantIdNode == null || tenantIdNode.isNull()) {
-        return null;
-      }
-      if (tenantIdNode.isNumber()) {
-        return tenantIdNode.asLong();
-      }
-      if (tenantIdNode.isTextual() && !tenantIdNode.asText().isBlank()) {
-        return Long.parseLong(tenantIdNode.asText());
-      }
-      return null;
-    } catch (Exception exception) {
-      return null;
     }
   }
 
@@ -183,6 +149,7 @@ public class CaseHandoverLogsService {
     private String policyAuthority;
     private LocalDateTime createdAt;
     private LocalDateTime resolvedAt;
+    private LocalDateTime extendedAt;
     private String requesterConsultantId;
     private String requesterUsername;
     private String requesterName;

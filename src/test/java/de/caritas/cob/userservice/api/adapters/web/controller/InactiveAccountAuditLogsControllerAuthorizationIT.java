@@ -29,11 +29,12 @@ import org.springframework.test.web.servlet.MockMvc;
 @TestPropertySource(
     properties = {
       "spring.profiles.active=testing",
-      "spring.datasource.url=jdbc:h2:mem:inactive-audit-auth;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE",
+      "spring.datasource.url=jdbc:h2:mem:inactive-audit-auth;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE;MODE=MariaDB;NON_KEYWORDS=USER,VALUE,DAY",
       "spring.datasource.username=sa",
       "spring.datasource.password=sa",
       "spring.datasource.driver-class-name=org.h2.Driver",
-      "spring.sql.init.mode=never",
+      "spring.sql.init.mode=always",
+      "spring.sql.init.data-locations=classpath:database/AccountInactivityDatabase.sql",
       "spring.jpa.hibernate.ddl-auto=create-drop",
       "spring.jpa.properties.hibernate.dialect=org.hibernate.dialect.H2Dialect",
       "keycloak.auth-server-url=https://auth.testing",

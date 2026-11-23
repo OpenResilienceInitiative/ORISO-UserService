@@ -47,6 +47,9 @@ public class AskerDataProvider {
   private final @NonNull UserAgencyService userAgencyService;
 
   private final @NonNull EmailNotificationMapper emailNotificationMapper;
+  private final @NonNull de.caritas.cob.userservice.api.service.temporaryaccount
+          .TemporaryAccountKeepService
+      keepService;
 
   /**
    * Retrieve the user data of an asker, e.g. username, email, name, ...
@@ -58,8 +61,12 @@ public class AskerDataProvider {
     var sessionsByUser = sessionsByUser(user);
     var userDataResponseDTOBuilder =
         UserDataResponseDTO.builder()
+            .chatRecoveryMode(user.getEffectiveChatRecoveryMode())
+            .chatRecoveryPolicyRevision(user.getEffectiveChatRecoveryPolicyRevision())
             .userId(user.getUserId())
             .userName(user.getUsername())
+            .temporaryAccount(user.isTemporaryAccount())
+            .temporaryAccountKeepAllowed(keepService.keepAllowed(user))
             .email(observeUserEmailAddress(user))
             .isAbsent(false)
             .encourage2fa(user.getEncourage2fa())
@@ -74,6 +81,7 @@ public class AskerDataProvider {
             .hasArchive(false)
             .dataPrivacyConfirmation(user.getDataPrivacyConfirmation())
             .termsAndConditionsConfirmation(user.getTermsAndConditionsConfirmation())
+            .avatarId(user.getAvatarId())
             .emailNotifications(emailNotificationMapper.toEmailNotificationsDTO(user));
 
     enrichWithUserSessions(sessionsByUser, userDataResponseDTOBuilder);

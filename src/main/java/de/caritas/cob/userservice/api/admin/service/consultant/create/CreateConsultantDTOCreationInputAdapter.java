@@ -5,6 +5,8 @@ import static org.apache.commons.lang3.BooleanUtils.isTrue;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateConsultantDTO;
 import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 
@@ -16,6 +18,18 @@ import lombok.RequiredArgsConstructor;
 public class CreateConsultantDTOCreationInputAdapter implements ConsultantCreationInput {
 
   private final @NonNull CreateConsultantDTO createConsultantDTO;
+  private Map<Long, Set<Long>> topicIdsByAgencyId;
+
+  CreateConsultantDTOCreationInputAdapter withTopicIdsByAgencyId(
+      Map<Long, Set<Long>> topicIdsByAgencyId) {
+    this.topicIdsByAgencyId = topicIdsByAgencyId;
+    return this;
+  }
+
+  @Override
+  public Map<Long, Set<Long>> getTopicIdsByAgencyId() {
+    return topicIdsByAgencyId;
+  }
 
   /**
    * Provides the old id.
@@ -45,6 +59,25 @@ public class CreateConsultantDTOCreationInputAdapter implements ConsultantCreati
   @Override
   public String getEncodedUsername() {
     return new UsernameTranscoder().encodeUsername(createConsultantDTO.getUsername());
+  }
+
+  /**
+   * Whether the created counsellor must set up a second factor. Always true here: the initial
+   * password is not a secret only the counsellor holds (it is either typed by an administrator or
+   * generated and unknown).
+   */
+  @Override
+  public boolean isTwoFactorRequired() {
+    return true;
+  }
+
+  /**
+   * Whether the created counsellor must replace their password. Always true here, for the same
+   * reason as the second factor: the counsellor did not choose the initial password.
+   */
+  @Override
+  public boolean isPasswordChangeRequired() {
+    return true;
   }
 
   /**
@@ -80,6 +113,47 @@ public class CreateConsultantDTOCreationInputAdapter implements ConsultantCreati
   @Override
   public String getPublicSlug() {
     return this.createConsultantDTO.getPublicSlug();
+  }
+
+  @Override
+  public String getDisplayName() {
+    return this.createConsultantDTO.getDisplayName();
+  }
+
+  @Override
+  public String getInternalDisplayName() {
+    return this.createConsultantDTO.getInternalDisplayName();
+  }
+
+  @Override
+  public String getSalutation() {
+    return this.createConsultantDTO.getSalutation();
+  }
+
+  @Override
+  public String getPosition() {
+    return this.createConsultantDTO.getPosition();
+  }
+
+  @Override
+  public String getTitle() {
+    return this.createConsultantDTO.getTitle();
+  }
+
+  @Override
+  public String getAdminRemarks() {
+    return this.createConsultantDTO.getAdminRemarks();
+  }
+
+  @Override
+  public String getAvatarKind() {
+    var avatarKind = this.createConsultantDTO.getAvatarKind();
+    return avatarKind == null ? null : avatarKind.getValue();
+  }
+
+  @Override
+  public String getAvatarId() {
+    return this.createConsultantDTO.getAvatarId();
   }
 
   /**

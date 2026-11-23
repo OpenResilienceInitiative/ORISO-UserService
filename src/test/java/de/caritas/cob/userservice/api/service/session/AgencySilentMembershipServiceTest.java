@@ -12,6 +12,7 @@ import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import de.caritas.cob.userservice.api.exception.matrix.MatrixCreateUserException;
+import de.caritas.cob.userservice.api.exception.matrix.MatrixInviteRateLimitedException;
 import de.caritas.cob.userservice.api.exception.matrix.MatrixInviteUserException;
 import de.caritas.cob.userservice.api.helper.ConsultantDisplayNameResolver;
 import de.caritas.cob.userservice.api.helper.UserHelper;
@@ -19,11 +20,15 @@ import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRoomGateway;
+import java.time.Duration;
 import java.util.List;
+import java.util.stream.IntStream;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -39,7 +44,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 class AgencySilentMembershipServiceTest {
 
   private static final Long AGENCY_ID = 4711L;
-  private static final String ROOM_ID = "!holding:oriso.org";
+  private static final String ROOM_ID = "!holding:example.org";
   private static final String AGENCY_TOKEN = "agency-access-token";
 
   @Mock private ConsultantRepository consultantRepository;
@@ -70,20 +75,20 @@ class AgencySilentMembershipServiceTest {
   @Test
   @DisplayName("every active consultant of the agency is invited and joined into the room")
   void joinAgencyConsultants_joinsEveryConsultantOfTheAgency() throws Exception {
-    var first = consultantWithAccount("c-1", "@c1:oriso.org");
-    var second = consultantWithAccount("c-2", "@c2:oriso.org");
+    var first = consultantWithAccount("c-1", "@c1:example.org");
+    var second = consultantWithAccount("c-2", "@c2:example.org");
     when(consultantRepository.findByConsultantAgenciesAgencyIdAndDeleteDateIsNull(AGENCY_ID))
         .thenReturn(List.of(first, second));
-    when(sessionRoomGateway.loginAsUser("@c1:oriso.org")).thenReturn("token-1");
-    when(sessionRoomGateway.loginAsUser("@c2:oriso.org")).thenReturn("token-2");
+    when(sessionRoomGateway.loginAsUser("@c1:example.org")).thenReturn("token-1");
+    when(sessionRoomGateway.loginAsUser("@c2:example.org")).thenReturn("token-2");
     when(sessionRoomGateway.joinRoom(ROOM_ID, "token-1")).thenReturn(true);
     when(sessionRoomGateway.joinRoom(ROOM_ID, "token-2")).thenReturn(true);
 
     var joined = underTest.joinAgencyConsultants(AGENCY_ID, ROOM_ID, AGENCY_TOKEN);
 
     assertEquals(2, joined);
-    verify(sessionRoomGateway).inviteUser(ROOM_ID, "@c1:oriso.org", AGENCY_TOKEN);
-    verify(sessionRoomGateway).inviteUser(ROOM_ID, "@c2:oriso.org", AGENCY_TOKEN);
+    verify(sessionRoomGateway).inviteUser(ROOM_ID, "@c1:example.org", AGENCY_TOKEN);
+    verify(sessionRoomGateway).inviteUser(ROOM_ID, "@c2:example.org", AGENCY_TOKEN);
     verify(sessionRoomGateway).joinRoom(ROOM_ID, "token-1");
     verify(sessionRoomGateway).joinRoom(ROOM_ID, "token-2");
   }
@@ -98,14 +103,14 @@ class AgencySilentMembershipServiceTest {
     when(consultantDisplayNameResolver.resolveMatrixDisplayName(any(Consultant.class)))
         .thenReturn("pseudonym");
     when(sessionRoomGateway.createUser("c-new", "generated-password", "pseudonym"))
-        .thenReturn("@c-new:oriso.org");
-    when(sessionRoomGateway.loginAsUser("@c-new:oriso.org")).thenReturn("token-new");
+        .thenReturn("@c-new:example.org");
+    when(sessionRoomGateway.loginAsUser("@c-new:example.org")).thenReturn("token-new");
     when(sessionRoomGateway.joinRoom(ROOM_ID, "token-new")).thenReturn(true);
 
     var joined = underTest.joinAgencyConsultants(AGENCY_ID, ROOM_ID, AGENCY_TOKEN);
 
     assertEquals(1, joined);
-    assertEquals("@c-new:oriso.org", fresh.getMatrixUserId());
+    assertEquals("@c-new:example.org", fresh.getMatrixUserId());
     verify(consultantRepository).save(fresh);
     verify(sessionRoomGateway).joinRoom(ROOM_ID, "token-new");
   }
@@ -119,26 +124,26 @@ class AgencySilentMembershipServiceTest {
     when(usernameTranscoder.decodeUsername("c-known")).thenReturn("c-known");
     when(sessionRoomGateway.createUser(eq("c-known"), anyString(), anyString()))
         .thenThrow(new MatrixCreateUserException("already exists"));
-    when(sessionRoomGateway.userIdFor("c-known")).thenReturn("@c-known:oriso.org");
-    when(sessionRoomGateway.loginAsUser("@c-known:oriso.org")).thenReturn("token-known");
+    when(sessionRoomGateway.userIdFor("c-known")).thenReturn("@c-known:example.org");
+    when(sessionRoomGateway.loginAsUser("@c-known:example.org")).thenReturn("token-known");
     when(sessionRoomGateway.joinRoom(ROOM_ID, "token-known")).thenReturn(true);
 
     var joined = underTest.joinAgencyConsultants(AGENCY_ID, ROOM_ID, AGENCY_TOKEN);
 
     assertEquals(1, joined);
-    assertEquals("@c-known:oriso.org", fresh.getMatrixUserId());
+    assertEquals("@c-known:example.org", fresh.getMatrixUserId());
   }
 
   @Test
   @DisplayName("an invite rejection (already invited) does not stop the join")
   void joinAgencyConsultants_ignoresInviteRejection() throws Exception {
-    var consultant = consultantWithAccount("c-1", "@c1:oriso.org");
+    var consultant = consultantWithAccount("c-1", "@c1:example.org");
     when(consultantRepository.findByConsultantAgenciesAgencyIdAndDeleteDateIsNull(AGENCY_ID))
         .thenReturn(List.of(consultant));
     doThrow(new MatrixInviteUserException("already in room"))
         .when(sessionRoomGateway)
-        .inviteUser(ROOM_ID, "@c1:oriso.org", AGENCY_TOKEN);
-    when(sessionRoomGateway.loginAsUser("@c1:oriso.org")).thenReturn("token-1");
+        .inviteUser(ROOM_ID, "@c1:example.org", AGENCY_TOKEN);
+    when(sessionRoomGateway.loginAsUser("@c1:example.org")).thenReturn("token-1");
     when(sessionRoomGateway.joinRoom(ROOM_ID, "token-1")).thenReturn(true);
 
     assertEquals(1, underTest.joinAgencyConsultants(AGENCY_ID, ROOM_ID, AGENCY_TOKEN));
@@ -147,13 +152,13 @@ class AgencySilentMembershipServiceTest {
   @Test
   @DisplayName("one unusable consultant does not cost the remaining consultants their membership")
   void joinAgencyConsultants_isBestEffortPerConsultant() throws Exception {
-    var broken = consultantWithAccount("c-broken", "@broken:oriso.org");
-    var healthy = consultantWithAccount("c-ok", "@ok:oriso.org");
+    var broken = consultantWithAccount("c-broken", "@broken:example.org");
+    var healthy = consultantWithAccount("c-ok", "@ok:example.org");
     when(consultantRepository.findByConsultantAgenciesAgencyIdAndDeleteDateIsNull(AGENCY_ID))
         .thenReturn(List.of(broken, healthy));
-    when(sessionRoomGateway.loginAsUser("@broken:oriso.org"))
+    when(sessionRoomGateway.loginAsUser("@broken:example.org"))
         .thenThrow(new RuntimeException("synapse down for this user"));
-    when(sessionRoomGateway.loginAsUser("@ok:oriso.org")).thenReturn("token-ok");
+    when(sessionRoomGateway.loginAsUser("@ok:example.org")).thenReturn("token-ok");
     when(sessionRoomGateway.joinRoom(ROOM_ID, "token-ok")).thenReturn(true);
 
     assertEquals(1, underTest.joinAgencyConsultants(AGENCY_ID, ROOM_ID, AGENCY_TOKEN));
@@ -183,5 +188,101 @@ class AgencySilentMembershipServiceTest {
 
     verifyNoInteractions(sessionRoomGateway);
     verifyNoInteractions(consultantRepository);
+  }
+
+  @Test
+  @DisplayName(
+      "the in-request pass stops at the first rate-limited invite and defers everyone left, unwaited")
+  void joinAgencyConsultantsWithoutWaiting_defersTheRestOnFirstRateLimit() throws Exception {
+    var consultants =
+        IntStream.range(0, 64)
+            .mapToObj(i -> consultantWithAccount("c" + i, "@c" + i + ":example.org"))
+            .toList();
+    when(consultantRepository.findByConsultantAgenciesAgencyIdAndDeleteDateIsNull(AGENCY_ID))
+        .thenReturn(consultants);
+    // Synapse's per-room burst: ten invites pass, the eleventh is refused with a retry delay.
+    doThrow(new MatrixInviteRateLimitedException("limited", 3_300L))
+        .when(sessionRoomGateway)
+        .inviteUserOnce(ROOM_ID, "@c10:example.org", AGENCY_TOKEN);
+    lenient().when(sessionRoomGateway.loginAsUser(anyString())).thenReturn("consultant-token");
+    lenient().when(sessionRoomGateway.joinRoom(ROOM_ID, "consultant-token")).thenReturn(true);
+
+    var fanOut =
+        underTest.joinAgencyConsultantsWithoutWaiting(
+            AGENCY_ID, ROOM_ID, AGENCY_TOKEN, Duration.ofSeconds(10));
+
+    assertEquals(10, fanOut.joined());
+    assertEquals(54, fanOut.deferred().size());
+    assertEquals("c10", fanOut.deferred().get(0).getId());
+    assertEquals(3_300L, fanOut.retryAfterMs());
+    assertEquals(10, fanOut.contacts().size());
+    assertEquals("c9", fanOut.contacts().getLast().consultantId());
+    // Eleven invite attempts, not 64 — and never the retrying invite that sleeps on the request.
+    verify(sessionRoomGateway, org.mockito.Mockito.times(11))
+        .inviteUserOnce(eq(ROOM_ID), anyString(), eq(AGENCY_TOKEN));
+    verify(sessionRoomGateway, never()).inviteUser(anyString(), anyString(), anyString());
+  }
+
+  @Test
+  @DisplayName("an exhausted in-request budget defers the remaining consultants")
+  void joinAgencyConsultantsWithoutWaiting_defersEveryoneWhenBudgetIsSpent() {
+    var consultants =
+        List.of(
+            consultantWithAccount("a", "@a:example.org"),
+            consultantWithAccount("b", "@b:example.org"));
+    when(consultantRepository.findByConsultantAgenciesAgencyIdAndDeleteDateIsNull(AGENCY_ID))
+        .thenReturn(consultants);
+
+    var fanOut =
+        underTest.joinAgencyConsultantsWithoutWaiting(
+            AGENCY_ID, ROOM_ID, AGENCY_TOKEN, Duration.ZERO);
+
+    assertEquals(0, fanOut.joined());
+    assertEquals(consultants, fanOut.deferred());
+    assertEquals(0L, fanOut.retryAfterMs());
+    assertEquals(List.of(), fanOut.contacts());
+    verifyNoInteractions(sessionRoomGateway);
+  }
+
+  @ParameterizedTest
+  @ValueSource(booleans = {false, true})
+  void ambiguousMembershipStillCarriesTheContactForReconciliation(boolean inviteFailed)
+      throws Exception {
+    var consultant = consultantWithAccount("a", "@a:example.org");
+    when(consultantRepository.findByConsultantAgenciesAgencyIdAndDeleteDateIsNull(AGENCY_ID))
+        .thenReturn(List.of(consultant));
+    if (inviteFailed) {
+      doThrow(new MatrixInviteUserException("indeterminate invite"))
+          .when(sessionRoomGateway)
+          .inviteUserOnce(ROOM_ID, "@a:example.org", AGENCY_TOKEN);
+    }
+    when(sessionRoomGateway.loginAsUser("@a:example.org")).thenReturn("consultant-token");
+    when(sessionRoomGateway.joinRoom(ROOM_ID, "consultant-token")).thenReturn(false);
+
+    var fanOut =
+        underTest.joinAgencyConsultantsWithoutWaiting(
+            AGENCY_ID, ROOM_ID, AGENCY_TOKEN, Duration.ofSeconds(10));
+
+    assertEquals(0, fanOut.joined());
+    assertEquals(List.of(consultant), fanOut.deferred());
+    assertEquals(
+        List.of(new AgencySilentMembershipService.InitialRoomContact("a", "@a:example.org")),
+        fanOut.contacts());
+  }
+
+  @Test
+  @DisplayName("a rate-limited invite is reported with the server's delay instead of a 403 join")
+  void tryJoinConsultantIntoRoom_reportsRateLimit() throws Exception {
+    var consultant = consultantWithAccount("a", "@a:example.org");
+    doThrow(new MatrixInviteRateLimitedException("limited", 1_234L))
+        .when(sessionRoomGateway)
+        .inviteUserOnce(ROOM_ID, "@a:example.org", AGENCY_TOKEN);
+
+    var attempt = underTest.tryJoinConsultantIntoRoom(consultant, ROOM_ID, AGENCY_TOKEN);
+
+    assertEquals(false, attempt.joined());
+    assertEquals(true, attempt.rateLimited());
+    assertEquals(1_234L, attempt.retryAfterMs());
+    verify(sessionRoomGateway, never()).joinRoom(anyString(), anyString());
   }
 }

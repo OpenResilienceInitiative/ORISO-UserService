@@ -1,8 +1,12 @@
 package de.caritas.cob.userservice.api;
 
+import static de.caritas.cob.userservice.api.helper.CustomLocalDateTime.nowInUtc;
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.within;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -18,12 +22,14 @@ import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
 import de.caritas.cob.userservice.api.service.availability.ConsultantActivityRegistry;
 import java.time.LocalDateTime;
+import java.time.temporal.ChronoUnit;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -34,6 +40,9 @@ import org.springframework.test.util.ReflectionTestUtils;
 @ExtendWith(MockitoExtension.class)
 @MockitoSettings(strictness = Strictness.LENIENT)
 class MessengerTest {
+
+  @Mock
+  private de.caritas.cob.userservice.api.service.chat.MembersOnlyChatAccess membersOnlyChatAccess;
 
   @Mock private UserRepository userRepository;
   @Mock private ConsultantRepository consultantRepository;
@@ -50,11 +59,19 @@ class MessengerTest {
   @Mock
   private de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService matrixSynapseService;
 
+  @Mock
+  private de.caritas.cob.userservice.api.service.matrixrtc.CallParticipantEviction
+      callParticipantEviction;
+
+  @Mock
+  private de.caritas.cob.userservice.api.service.livechat.LiveChatQueuePolicy liveChatQueuePolicy;
+
   @InjectMocks private Messenger messenger;
 
   @BeforeEach
   void setUp() {
-    ReflectionTestUtils.setField(messenger, "liveChatQueueActivePeriodMinutes", 30L);
+    ReflectionTestUtils.setField(messenger, "liveChatQueueActivePeriodMinutes", 5L);
+    ReflectionTestUtils.setField(messenger, "liveChatQueueHeartbeatThrottleSeconds", 30L);
     ReflectionTestUtils.setField(messenger, "consultantAvailabilityActiveWindowMs", 120000L);
   }
 
@@ -80,17 +97,17 @@ class MessengerTest {
 
   @Test
   void countPendingEnquiriesAheadOf_Should_ReturnZero_When_BeforeDateIsNull() {
-    long result = messenger.countPendingEnquiriesAheadOf(1L, 1, 1L, null);
+    long result = messenger.countPendingEnquiriesAheadOf(1L, 1, 1L, null, 4L);
 
     assertThat(result).isZero();
     verify(diagnosticMetrics).recordInvalidQueueRequest();
     verify(sessionRepository, never())
-        .countPendingEnquiriesAheadOf(any(), any(), any(), any(), any(), any(), any());
+        .countPendingEnquiriesAheadOf(any(), any(), any(), any(), any(), any(), any(), any());
   }
 
   @Test
   void countPendingEnquiriesAheadOf_Should_ReturnZero_When_ConsultingTypeIsNull() {
-    long result = messenger.countPendingEnquiriesAheadOf(1L, null, 1L, LocalDateTime.now());
+    long result = messenger.countPendingEnquiriesAheadOf(1L, null, 1L, LocalDateTime.now(), 4L);
 
     assertThat(result).isZero();
     verify(diagnosticMetrics).recordInvalidQueueRequest();
@@ -100,13 +117,75 @@ class MessengerTest {
   void countPendingEnquiriesAheadOf_Should_DelegateToRepository_When_ParamsValid() {
     LocalDateTime before = LocalDateTime.now();
     when(sessionRepository.countPendingEnquiriesAheadOf(
-            any(), any(), any(), any(), any(), any(), any()))
+            any(), any(), any(), any(), any(), any(), any(), any()))
         .thenReturn(5L);
 
-    long result = messenger.countPendingEnquiriesAheadOf(10L, 2, 3L, before);
+    long result = messenger.countPendingEnquiriesAheadOf(10L, 2, 3L, before, 4L);
 
     assertThat(result).isEqualTo(5L);
     verify(diagnosticMetrics).recordQueueDepth(5L);
+  }
+
+  @Test
+  void countPendingEnquiriesAheadOf_Should_CutOffInUtc_When_ParamsValid() {
+    LocalDateTime before = LocalDateTime.now();
+    ArgumentCaptor<LocalDateTime> minUpdateDate = ArgumentCaptor.forClass(LocalDateTime.class);
+
+    messenger.countPendingEnquiriesAheadOf(10L, 2, 3L, before, 4L);
+
+    verify(sessionRepository)
+        .countPendingEnquiriesAheadOf(
+            any(), any(), any(), any(), any(), any(), minUpdateDate.capture(), any());
+    /* Sessions store UTC, so the cutoff must sit five minutes below UTC now — not below the
+    server's local clock, which on a non-UTC host would be hours away and empty the queue.
+    Note this assertion only bites where the two differ: on a host already running UTC it holds
+    either way. SessionRepositoryQueueCountIT proves the behaviour against a real database and is
+    the guard that does not depend on the host's zone. */
+    assertThat(minUpdateDate.getValue())
+        .isCloseTo(nowInUtc().minusMinutes(5), within(2, ChronoUnit.SECONDS));
+  }
+
+  @Test
+  void countPendingEnquiriesAheadOf_Should_DropAgencyFilter_When_TopicQueue() {
+    messenger.countPendingEnquiriesAheadOf(10L, 2, 3L, LocalDateTime.now(), 4L);
+
+    verify(sessionRepository)
+        .countPendingEnquiriesAheadOf(any(), any(), any(), any(), eq(3L), isNull(), any(), any());
+  }
+
+  @Test
+  void countPendingEnquiriesAheadOf_Should_KeepAgencyFilter_When_NoTopic() {
+    messenger.countPendingEnquiriesAheadOf(10L, 2, null, LocalDateTime.now(), 4L);
+
+    verify(sessionRepository)
+        .countPendingEnquiriesAheadOf(any(), any(), any(), any(), isNull(), eq(10L), any(), any());
+  }
+
+  // ── touchLiveChatQueueHeartbeat ───────────────────────────────────────────
+
+  @Test
+  void touchLiveChatQueueHeartbeat_Should_DoNothing_When_SessionIdIsNull() {
+    messenger.touchLiveChatQueueHeartbeat(null);
+
+    org.mockito.Mockito.verifyNoInteractions(sessionRepository);
+  }
+
+  @Test
+  void touchLiveChatQueueHeartbeat_Should_UseOneUtcInstantAndConfiguredThrottle() {
+    ReflectionTestUtils.setField(messenger, "liveChatQueueHeartbeatThrottleSeconds", 45L);
+    var now = ArgumentCaptor.forClass(LocalDateTime.class);
+    var cutoff = ArgumentCaptor.forClass(LocalDateTime.class);
+
+    messenger.touchLiveChatQueueHeartbeat(1L);
+
+    verify(sessionRepository)
+        .touchLiveChatQueueHeartbeat(
+            org.mockito.ArgumentMatchers.eq(1L),
+                org.mockito.ArgumentMatchers.eq(Session.SessionStatus.NEW),
+            now.capture(), cutoff.capture());
+    assertThat(now.getValue()).isCloseTo(nowInUtc(), within(1, ChronoUnit.SECONDS));
+    assertThat(cutoff.getValue()).isEqualTo(now.getValue().minusSeconds(45));
+    org.mockito.Mockito.verifyNoMoreInteractions(sessionRepository);
   }
 
   // ── markAsDirectConsultant ────────────────────────────────────────────────
@@ -203,16 +282,17 @@ class MessengerTest {
   @Test
   void isInChat_Should_ReturnTrue_When_ConsultantIsMatrixRoomMember() {
     var session = new Session();
-    session.setMatrixRoomId("!room:matrix.oriso.org");
+    session.setMatrixRoomId("!room:matrix.example.org");
     var consultant = new Consultant();
-    consultant.setMatrixUserId("@c:matrix.oriso.org");
+    consultant.setMatrixUserId("@c:matrix.example.org");
     when(groupChatMembershipService.resolveMatrixRoomId(session))
-        .thenReturn("!room:matrix.oriso.org");
-    when(groupChatMembershipService.resolveHumanMembers("!room:matrix.oriso.org"))
+        .thenReturn("!room:matrix.example.org");
+    when(groupChatMembershipService.resolveHumanMembers("!room:matrix.example.org"))
         .thenReturn(
             List.of(
                 new de.caritas.cob.userservice.api.service.matrix.GroupChatMembershipService
-                    .ResolvedRoomMember("@c:matrix.oriso.org", "c-id", "c", "c", true)));
+                    .ResolvedRoomMember(
+                    "@c:matrix.example.org", "c-id", "c", "c", true, null, null)));
 
     assertThat(messenger.isInChat(session, consultant)).isTrue();
   }
@@ -220,16 +300,17 @@ class MessengerTest {
   @Test
   void isInChat_Should_ReturnFalse_When_ConsultantNotAMatrixRoomMember() {
     var session = new Session();
-    session.setMatrixRoomId("!room:matrix.oriso.org");
+    session.setMatrixRoomId("!room:matrix.example.org");
     var consultant = new Consultant();
-    consultant.setMatrixUserId("@c:matrix.oriso.org");
+    consultant.setMatrixUserId("@c:matrix.example.org");
     when(groupChatMembershipService.resolveMatrixRoomId(session))
-        .thenReturn("!room:matrix.oriso.org");
-    when(groupChatMembershipService.resolveHumanMembers("!room:matrix.oriso.org"))
+        .thenReturn("!room:matrix.example.org");
+    when(groupChatMembershipService.resolveHumanMembers("!room:matrix.example.org"))
         .thenReturn(
             List.of(
                 new de.caritas.cob.userservice.api.service.matrix.GroupChatMembershipService
-                    .ResolvedRoomMember("@other:matrix.oriso.org", "o-id", "o", "o", true)));
+                    .ResolvedRoomMember(
+                    "@other:matrix.example.org", "o-id", "o", "o", true, null, null)));
 
     assertThat(messenger.isInChat(session, consultant)).isFalse();
   }
@@ -237,12 +318,12 @@ class MessengerTest {
   @Test
   void isInChat_Should_FailSafeToFalse_When_MatrixRoomStateUnknown() {
     var session = new Session();
-    session.setMatrixRoomId("!room:matrix.oriso.org");
+    session.setMatrixRoomId("!room:matrix.example.org");
     var consultant = new Consultant();
-    consultant.setMatrixUserId("@c:matrix.oriso.org");
+    consultant.setMatrixUserId("@c:matrix.example.org");
     when(groupChatMembershipService.resolveMatrixRoomId(session))
-        .thenReturn("!room:matrix.oriso.org");
-    when(groupChatMembershipService.resolveHumanMembers("!room:matrix.oriso.org"))
+        .thenReturn("!room:matrix.example.org");
+    when(groupChatMembershipService.resolveHumanMembers("!room:matrix.example.org"))
         .thenReturn(List.of());
 
     assertThat(messenger.isInChat(session, consultant)).isFalse();
@@ -263,42 +344,49 @@ class MessengerTest {
   @Test
   void banUserFromChat_Should_BanFromMatrixRoom_AsChatOwner() {
     var user = new User("u-1", null, "seeker-username", "email@test.com", false);
-    user.setMatrixUserId("@seeker:matrix.oriso.org");
+    user.setMatrixUserId("@seeker:matrix.example.org");
     var owner = new Consultant();
-    owner.setMatrixUserId("@owner:matrix.oriso.org");
+    owner.setMatrixUserId("@owner:matrix.example.org");
     var chat = new Chat();
     chat.setId(10L);
-    chat.setMatrixRoomId("!room:matrix.oriso.org");
+    chat.setMatrixRoomId("!room:matrix.example.org");
     chat.setChatOwner(owner);
     when(userRepository.findByUserIdAndDeleteDateIsNull("u-1")).thenReturn(Optional.of(user));
     when(chatRepository.findById(10L)).thenReturn(Optional.of(chat));
-    when(groupChatMembershipService.resolveMatrixRoomId(chat)).thenReturn("!room:matrix.oriso.org");
+    when(groupChatMembershipService.resolveMatrixRoomId(chat))
+        .thenReturn("!room:matrix.example.org");
     when(matrixSynapseService.banUserFromRoomAsModerator(
-            "!room:matrix.oriso.org", "@seeker:matrix.oriso.org", "@owner:matrix.oriso.org"))
+            "!room:matrix.example.org", "@seeker:matrix.example.org", "@owner:matrix.example.org"))
         .thenReturn(true);
 
     assertThat(messenger.banUserFromChat("u-1", 10L)).isTrue();
     verify(matrixSynapseService)
         .banUserFromRoomAsModerator(
-            "!room:matrix.oriso.org", "@seeker:matrix.oriso.org", "@owner:matrix.oriso.org");
+            "!room:matrix.example.org", "@seeker:matrix.example.org", "@owner:matrix.example.org");
+    // ORISO-Admin#1518 follow-up: a running call of the conversation drops them too.
+    verify(callParticipantEviction)
+        .evictFromRunningCalls("!room:matrix.example.org", "@seeker:matrix.example.org");
   }
 
   @Test
   void banUserFromChat_Should_ReturnFalse_When_MatrixBanFails() {
     var user = new User("u-1", null, "seeker-username", "email@test.com", false);
-    user.setMatrixUserId("@seeker:matrix.oriso.org");
+    user.setMatrixUserId("@seeker:matrix.example.org");
     var owner = new Consultant();
-    owner.setMatrixUserId("@owner:matrix.oriso.org");
+    owner.setMatrixUserId("@owner:matrix.example.org");
     var chat = new Chat();
     chat.setId(10L);
-    chat.setMatrixRoomId("!room:matrix.oriso.org");
+    chat.setMatrixRoomId("!room:matrix.example.org");
     chat.setChatOwner(owner);
     when(userRepository.findByUserIdAndDeleteDateIsNull("u-1")).thenReturn(Optional.of(user));
     when(chatRepository.findById(10L)).thenReturn(Optional.of(chat));
-    when(groupChatMembershipService.resolveMatrixRoomId(chat)).thenReturn("!room:matrix.oriso.org");
+    when(groupChatMembershipService.resolveMatrixRoomId(chat))
+        .thenReturn("!room:matrix.example.org");
     when(matrixSynapseService.banUserFromRoomAsModerator(any(), any(), any())).thenReturn(false);
 
     assertThat(messenger.banUserFromChat("u-1", 10L)).isFalse();
+    verify(callParticipantEviction, org.mockito.Mockito.never())
+        .evictFromRunningCalls(any(), any());
   }
 
   @Test
@@ -351,23 +439,108 @@ class MessengerTest {
     sessionConsultant.setId("c-other");
     var requestConsultant = new Consultant();
     requestConsultant.setId("c-1");
-    requestConsultant.setMatrixUserId("@c1:matrix.oriso.org");
+    requestConsultant.setMatrixUserId("@c1:matrix.example.org");
     var session = new Session();
     session.setConsultant(sessionConsultant);
     session.setTeamSession(false);
-    session.setMatrixRoomId("!room:matrix.oriso.org");
+    session.setMatrixRoomId("!room:matrix.example.org");
     when(sessionRepository.findById(1L)).thenReturn(Optional.of(session));
     when(consultantRepository.findByIdAndDeleteDateIsNull("c-1"))
         .thenReturn(Optional.of(requestConsultant));
     when(groupChatMembershipService.resolveMatrixRoomId(session))
-        .thenReturn("!room:matrix.oriso.org");
-    when(groupChatMembershipService.resolveHumanMembers("!room:matrix.oriso.org"))
+        .thenReturn("!room:matrix.example.org");
+    when(groupChatMembershipService.resolveHumanMembers("!room:matrix.example.org"))
         .thenReturn(
             List.of(
                 new de.caritas.cob.userservice.api.service.matrix.GroupChatMembershipService
-                    .ResolvedRoomMember("@c1:matrix.oriso.org", "c-1", "c1", "c1", true)));
+                    .ResolvedRoomMember(
+                    "@c1:matrix.example.org", "c-1", "c1", "c1", true, null, null)));
     assertThat(messenger.removeConsultantFromSession(1L, "c-1")).isTrue();
     verify(groupChatMembershipService)
-        .removeMemberFromRoom("!room:matrix.oriso.org", "@c1:matrix.oriso.org");
+        .removeMemberFromRoom("!room:matrix.example.org", "@c1:matrix.example.org");
+  }
+
+  @Test
+  void requireFirstLiveChatEnquiry_Should_Refuse_When_EarlierGuestWaitsAndQueueIsStrict() {
+    when(liveChatQueuePolicy.freeChoiceEnabled()).thenReturn(false);
+    when(sessionRepository.countPendingEnquiriesAheadOf(
+            any(), any(), any(), any(), any(), any(), any(), any()))
+        .thenReturn(1L);
+
+    var refusal =
+        org.assertj.core.api.Assertions.catchThrowableOfType(
+            de.caritas.cob.userservice.api.exception.httpresponses
+                .CustomValidationHttpStatusException.class,
+            () -> messenger.requireFirstLiveChatEnquiry(waitingLiveChatGuest()));
+
+    assertThat(refusal).isNotNull();
+    assertThat(refusal.getCustomHttpHeaders().getFirst("X-Reason"))
+        .isEqualTo("LIVE_CHAT_QUEUE_NOT_FIRST");
+  }
+
+  @Test
+  void requireFirstLiveChatEnquiry_Should_AcceptAnyGuest_When_PlatformAllowsFreeChoice() {
+    when(liveChatQueuePolicy.freeChoiceEnabled()).thenReturn(true);
+    when(sessionRepository.countPendingEnquiriesAheadOf(
+            any(), any(), any(), any(), any(), any(), any(), any()))
+        .thenReturn(3L);
+
+    messenger.requireFirstLiveChatEnquiry(waitingLiveChatGuest());
+
+    verify(sessionRepository, never())
+        .countPendingEnquiriesAheadOf(any(), any(), any(), any(), any(), any(), any(), any());
+  }
+
+  /** ORISO-UserService#1697: an animal guest from before the stored modality is still queued. */
+  @Test
+  void requireFirstLiveChatEnquiry_Should_Refuse_When_LegacyAnimalGuestHasAnEarlierGuest() {
+    when(liveChatQueuePolicy.freeChoiceEnabled()).thenReturn(false);
+    when(sessionRepository.countPendingEnquiriesAheadOf(
+            any(), any(), any(), any(), any(), any(), any(), any()))
+        .thenReturn(1L);
+    var guest = waitingLiveChatGuest();
+    guest.setConversationType(null);
+    guest.setRegistrationType(Session.RegistrationType.REGISTERED);
+    guest.setPostcode("00000");
+    var user = new de.caritas.cob.userservice.api.model.User();
+    user.setUsername("katze_sam_4821");
+    guest.setUser(user);
+
+    var refusal =
+        org.assertj.core.api.Assertions.catchThrowableOfType(
+            de.caritas.cob.userservice.api.exception.httpresponses
+                .CustomValidationHttpStatusException.class,
+            () -> messenger.requireFirstLiveChatEnquiry(guest));
+
+    assertThat(refusal).isNotNull();
+  }
+
+  /** ORISO-UserService#1697: a guest-looking User-ID alone does not put a session in the queue. */
+  @Test
+  void requireFirstLiveChatEnquiry_Should_NotQueue_When_OnlyTheUsernameLooksAnonymous() {
+    var asker = waitingLiveChatGuest();
+    asker.setConversationType(null);
+    asker.setRegistrationType(Session.RegistrationType.REGISTERED);
+    asker.setPostcode("12345");
+    var user = new de.caritas.cob.userservice.api.model.User();
+    user.setUsername("Anonymous-1700000000000");
+    asker.setUser(user);
+
+    messenger.requireFirstLiveChatEnquiry(asker);
+
+    verify(sessionRepository, never())
+        .countPendingEnquiriesAheadOf(any(), any(), any(), any(), any(), any(), any(), any());
+  }
+
+  private static Session waitingLiveChatGuest() {
+    var session = new Session();
+    session.setId(7L);
+    session.setStatus(de.caritas.cob.userservice.api.model.Session.SessionStatus.NEW);
+    session.setMainTopicId(3L);
+    session.setConsultingTypeId(1);
+    session.setAgencyId(10L);
+    session.setCreateDate(LocalDateTime.now());
+    session.setConversationType(de.caritas.cob.userservice.api.model.ConversationType.LIVE_CHAT);
+    return session;
   }
 }

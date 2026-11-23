@@ -24,6 +24,7 @@ import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.identity.CreatedIdentity;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
 import de.caritas.cob.userservice.api.tenant.TenantData;
+import de.caritas.cob.userservice.api.testHelper.AccountInactivityPolicyHttpFixture;
 import de.caritas.cob.userservice.tenantadminservice.generated.web.model.Licensing;
 import de.caritas.cob.userservice.tenantadminservice.generated.web.model.TenantDTO;
 import org.jeasy.random.EasyRandom;
@@ -44,7 +45,16 @@ import org.springframework.transaction.annotation.Transactional;
 @AutoConfigureTestDatabase(replace = Replace.NONE)
 @TestPropertySource(properties = "multitenancy.enabled=true")
 @Transactional
-public class CreateConsultantSagaTenantAwareIT {
+public class CreateConsultantSagaTenantAwareIT extends AccountInactivityPolicyHttpFixture {
+  @org.junit.jupiter.api.BeforeEach
+  void recoveryPolicyFixture() {
+    org.mockito.Mockito.when(
+            tenantService.getRestrictedTenantDataFresh(org.mockito.ArgumentMatchers.anyLong()))
+        .thenReturn(de.caritas.cob.userservice.api.testHelper.ChatRecoveryPolicyFixtures.tenant());
+  }
+
+  @MockitoBean
+  private de.caritas.cob.userservice.api.admin.service.tenant.TenantService tenantService;
 
   private static final String VALID_USERNAME = "validUsername";
   private static final String VALID_EMAILADDRESS = "valid@emailaddress.de";
@@ -117,6 +127,65 @@ public class CreateConsultantSagaTenantAwareIT {
     // then
     assertThat(consultant.getEmbedded(), notNullValue());
     assertThat(consultant.getEmbedded().getId(), notNullValue());
+    assertDefaultInactivityPolicy(consultant.getEmbedded().getId());
+    rollbackDBState();
+  }
+
+  @Test
+  public void createNewConsultant_Should_succeed_When_tenantHasNoConfiguredUserLimit() {
+    // Every tenant created through the invite flow has licensing_allowed_users = NULL — measured on
+    // Pre-Dev: only the seed tenant carries a limit. `allowedNumberOfUsers` was unboxed straight
+    // into a comparison, so creating the first consultant for such a tenant died with a
+    // NullPointerException and the admin saw a bare 500. No limit configured means no limit.
+    TenantContext.setCurrentTenant(1L);
+    when(keycloakService.createUser(any(), anyString(), any()))
+        .thenReturn(easyRandom.nextObject(CreatedIdentity.class));
+    var tenant =
+        new TenantDTO()
+            .licensing(new Licensing().allowedNumberOfUsers(null))
+            .settings(
+                new de.caritas.cob.userservice.tenantadminservice.generated.web.model.Settings()
+                    .featureGroupChatV2Enabled(false));
+    when(tenantAdminService.getTenantById(Mockito.anyLong())).thenReturn(tenant);
+
+    CreateConsultantDTO createConsultantDTO = this.easyRandom.nextObject(CreateConsultantDTO.class);
+    createConsultantDTO.setUsername(VALID_USERNAME);
+    createConsultantDTO.setEmail(VALID_EMAILADDRESS);
+    createConsultantDTO.setIsGroupchatConsultant(false);
+    createConsultantDTO.setTenantId(1L);
+
+    ConsultantAdminResponseDTO consultant =
+        createConsultantSaga.createNewConsultant(createConsultantDTO);
+
+    assertThat(consultant.getEmbedded(), notNullValue());
+    assertThat(consultant.getEmbedded().getId(), notNullValue());
+    rollbackDBState();
+  }
+
+  @Test
+  public void createNewConsultant_Should_succeed_When_tenantHasNoLicensingBlockAtAll() {
+    // The previous guard was `assert nonNull(...)`, which Java disables at runtime unless -ea is
+    // passed — so it never protected anything in production.
+    TenantContext.setCurrentTenant(1L);
+    when(keycloakService.createUser(any(), anyString(), any()))
+        .thenReturn(easyRandom.nextObject(CreatedIdentity.class));
+    var tenant =
+        new TenantDTO()
+            .settings(
+                new de.caritas.cob.userservice.tenantadminservice.generated.web.model.Settings()
+                    .featureGroupChatV2Enabled(false));
+    when(tenantAdminService.getTenantById(Mockito.anyLong())).thenReturn(tenant);
+
+    CreateConsultantDTO createConsultantDTO = this.easyRandom.nextObject(CreateConsultantDTO.class);
+    createConsultantDTO.setUsername(VALID_USERNAME);
+    createConsultantDTO.setEmail(VALID_EMAILADDRESS);
+    createConsultantDTO.setIsGroupchatConsultant(false);
+    createConsultantDTO.setTenantId(1L);
+
+    ConsultantAdminResponseDTO consultant =
+        createConsultantSaga.createNewConsultant(createConsultantDTO);
+
+    assertThat(consultant.getEmbedded(), notNullValue());
     rollbackDBState();
   }
 
@@ -161,7 +230,6 @@ public class CreateConsultantSagaTenantAwareIT {
 
   private void createConsultantForTenant(String username, Long tenantId) {
     Consultant consultant = new Consultant();
-    consultant.setAppointments(null);
     consultant.setTenantId(tenantId);
     consultant.setId(username);
     consultant.setMatrixUserId(username);

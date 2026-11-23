@@ -1,90 +1,63 @@
 package de.caritas.cob.userservice.api.service.accountinvite.mail;
 
-import static java.util.Objects.nonNull;
-import static org.apache.commons.lang3.StringUtils.isBlank;
-import static org.apache.commons.lang3.StringUtils.isNotBlank;
-
 import de.caritas.cob.userservice.api.exception.SmtpSendException;
-import de.caritas.cob.userservice.api.service.consultingtype.ApplicationSettingsService;
+import de.caritas.cob.userservice.api.service.email.OrisoEmailRenderer.RenderedEmail;
+import de.caritas.cob.userservice.api.service.email.PlatformSmtpSettingsProvider;
 import de.caritas.cob.userservice.api.service.email.layout.BrandedEmail;
-import de.caritas.cob.userservice.api.service.email.layout.BrandedEmailLayoutRenderer;
-import de.caritas.cob.userservice.api.service.email.layout.BrandedEmailRequest;
-import de.caritas.cob.userservice.api.service.email.layout.EmailBranding;
-import de.caritas.cob.userservice.api.service.email.layout.EmailBrandingResolver;
-import java.util.Map;
-import java.util.Optional;
+import de.caritas.cob.userservice.api.service.notification.TenantSystemEmailClient;
+import de.caritas.cob.userservice.api.service.notification.TenantSystemEmailRouteService;
+import de.caritas.cob.userservice.api.service.notification.TenantSystemEmailRouteService.Mode;
+import java.time.Instant;
+import java.util.UUID;
 import lombok.NonNull;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
-import org.springframework.web.client.RestTemplate;
 
 /**
- * Sends account-invite mails via the platform's global SMTP settings with a strict
- * receipt-after-send contract (TEN-INV-U6, #890): either the SMTP server accepted the message and
- * an {@link InviteMailSendReceipt} is returned, or an {@link SmtpSendException} propagates. There
- * is no silent-failure path — a caller that does not receive a receipt must never persist SENT.
+ * Sends account-invite and DPA mails with a strict receipt-after-send contract (TEN-INV-U6, #890):
+ * either the SMTP server accepted the message and an {@link InviteMailSendReceipt} is returned, or
+ * an {@link SmtpSendException} propagates. There is no silent-failure path. Failures additionally
+ * say whether non-delivery is confirmed or the SMTP outcome is uncertain, allowing callers with an
+ * existing deduplication claim to retry safely.
  *
- * <p>Settings resolution mirrors {@link
- * de.caritas.cob.userservice.api.service.auth.PasswordResetService}: connection settings come from
- * the public ConsultingTypeService {@code /settings} payload (which deliberately omits credentials
- * since CTS-C01), the credentials from the operator-provided {@code smtp.user}/{@code
- * smtp.password} properties, falling back to the super-admin-guarded credentials endpoint when the
- * request context allows it.
+ * <p>The platform transport comes only from Admin Settings through the technical identity. A Träger
+ * whose settings select its own mail server (smtpMode OWN) sends through TenantService's relay
+ * instead, so the SMTP password never leaves TenantService (#1251).
  *
- * <p>Since ORISO-UserService#914 this service is also the single choke point where the branded
- * layout is applied: callers hand over the <em>authored content</em> and the primary action, never
- * finished markup. Wrapping here (instead of in each caller) is what guarantees that every mail on
- * this path — tenant-admin invite, counsellor invite, resend — is branded, and that the Admin
- * preview endpoint and the dispatcher cannot drift apart. The send contract itself is untouched:
- * receipt after acceptance, {@link SmtpSendException} otherwise.
+ * <p>Since ORISO-UserService#914 this service is also the single choke point where the frame is
+ * applied: callers hand over the <em>authored content</em> and the primary action, never finished
+ * markup. Wrapping here (instead of in each caller) is what guarantees that every mail on this path
+ * — tenant-admin invite, counsellor invite, resend — carries the frame, and that the Admin preview
+ * endpoint and the dispatcher cannot drift apart. The frame itself is the ORISO e-mail design
+ * system (see {@link InviteFrameMailRenderer}); the send contract is untouched: receipt after
+ * acceptance, {@link SmtpSendException} otherwise.
  */
-@Slf4j
 @Service
+@Slf4j
 public class InviteMailDispatchService {
 
-  private final @NonNull RestTemplate restTemplate;
-  private final @NonNull ApplicationSettingsService applicationSettingsService;
+  private final @NonNull PlatformSmtpSettingsProvider platformSmtpSettings;
   private final @NonNull InviteMailTransport inviteMailTransport;
-  private final @NonNull EmailBrandingResolver emailBrandingResolver;
-  private final @NonNull BrandedEmailLayoutRenderer brandedEmailLayoutRenderer;
-  private final String consultingTypeServiceApiUrl;
-  private final String configuredSmtpUsername;
-  private final String configuredSmtpPassword;
+  private final @NonNull InviteFrameMailRenderer inviteFrameMailRenderer;
+  private final @NonNull TenantSystemEmailRouteService tenantRoutes;
+  private final @NonNull TenantSystemEmailClient tenantRelay;
 
   public InviteMailDispatchService(
-      @NonNull RestTemplate restTemplate,
-      @NonNull ApplicationSettingsService applicationSettingsService,
+      @NonNull PlatformSmtpSettingsProvider platformSmtpSettings,
       @NonNull InviteMailTransport inviteMailTransport,
-      @NonNull EmailBrandingResolver emailBrandingResolver,
-      @NonNull BrandedEmailLayoutRenderer brandedEmailLayoutRenderer,
-      @Value("${consulting.type.service.api.url:}") String consultingTypeServiceApiUrl,
-      @Value("${smtp.user:}") String configuredSmtpUsername,
-      @Value("${smtp.password:}") String configuredSmtpPassword) {
-    this.restTemplate = restTemplate;
-    this.applicationSettingsService = applicationSettingsService;
+      @NonNull InviteFrameMailRenderer inviteFrameMailRenderer,
+      @NonNull TenantSystemEmailRouteService tenantRoutes,
+      @NonNull TenantSystemEmailClient tenantRelay) {
+    this.platformSmtpSettings = platformSmtpSettings;
     this.inviteMailTransport = inviteMailTransport;
-    this.emailBrandingResolver = emailBrandingResolver;
-    this.brandedEmailLayoutRenderer = brandedEmailLayoutRenderer;
-    this.consultingTypeServiceApiUrl = consultingTypeServiceApiUrl;
-    this.configuredSmtpUsername = configuredSmtpUsername;
-    this.configuredSmtpPassword = configuredSmtpPassword;
+    this.inviteFrameMailRenderer = inviteFrameMailRenderer;
+    this.tenantRoutes = tenantRoutes;
+    this.tenantRelay = tenantRelay;
   }
 
   /**
-   * Sends the given mail content without a call-to-action button and without tenant branding.
-   *
-   * @return a receipt confirming the SMTP server accepted the message
-   * @throws SmtpSendException if the global SMTP settings are unavailable/incomplete or the message
-   *     could not be handed over to the SMTP server
-   */
-  public InviteMailSendReceipt send(String recipient, String subject, String bodyContent) {
-    return send(recipient, subject, bodyContent, null, null, null);
-  }
-
-  /**
-   * Renders the authored content into the canonical branded layout and sends it as a genuine
-   * multipart mail.
+   * Renders the authored content into the canonical ORISO frame and sends it as a genuine multipart
+   * mail through the transport of {@code origin}.
    *
    * @param bodyContent the authored template body — plain text or simple markup, sanitised by the
    *     layout renderer; callers must not pass finished HTML
@@ -93,9 +66,10 @@ public class InviteMailDispatchService {
    * @param tenantId tenant whose theming should brand the mail, or {@code null} for platform
    *     branding (the normal case for a tenant-admin invite: the tenant does not exist yet)
    * @param language BCP-47 tag selecting the frame wording; {@code null} means German
+   * @param origin whose mail server sends the mail (#1251)
    * @return a receipt confirming the SMTP server accepted the message
-   * @throws SmtpSendException if the global SMTP settings are unavailable/incomplete or the message
-   *     could not be handed over to the SMTP server
+   * @throws SmtpSendException if the transport is unavailable/incomplete or the message could not
+   *     be handed over to the SMTP server
    */
   public InviteMailSendReceipt send(
       String recipient,
@@ -103,17 +77,106 @@ public class InviteMailDispatchService {
       String bodyContent,
       String primaryActionUrl,
       Long tenantId,
-      String language) {
-    InviteSmtpSettings smtp =
-        resolveGlobalSmtpSettings()
-            .orElseThrow(
-                () ->
-                    new SmtpSendException(
-                        "Global SMTP settings are unavailable or incomplete — invite mail not"
-                            + " sent"));
-    BrandedEmail mail =
-        renderBrandedMail(subject, bodyContent, primaryActionUrl, tenantId, language);
-    return inviteMailTransport.send(smtp, recipient, subject, mail.html(), mail.plainText());
+      String language,
+      @NonNull InviteMailOrigin origin) {
+    Mode mode = resolveMode(origin);
+    InviteSmtpSettings smtp;
+    BrandedEmail mail;
+    try {
+      smtp = mode == Mode.OWN ? null : resolveGlobalSmtpSettings();
+      mail = renderBrandedMail(subject, bodyContent, primaryActionUrl, tenantId, language);
+    } catch (SmtpSendException exception) {
+      throw exception;
+    } catch (RuntimeException exception) {
+      throw new SmtpSendException(
+          SmtpSendException.Category.SMTP_TRANSPORT_FAILED,
+          SmtpSendException.DeliveryDisposition.CONFIRMED_NOT_SENT,
+          "Invite mail could not be prepared before SMTP dispatch",
+          exception);
+    }
+    if (mode == Mode.OWN) {
+      return relay(origin, recipient, new RenderedEmail(subject, mail.html(), mail.plainText()));
+    }
+    return transmit(smtp, recipient, subject, mail.html(), mail.plainText());
+  }
+
+  /**
+   * Sends a mail the caller already rendered from the design system — both MIME parts plus the
+   * subject — through the transport of {@code origin} and the same strict contract as {@link
+   * #send(String, String, String, String, Long, String, InviteMailOrigin)}. For mails whose
+   * template is not the invite frame, e.g. the DPA signing mail ({@code avv-unterschrift}).
+   *
+   * @return a receipt confirming the SMTP server accepted the message
+   * @throws SmtpSendException if the transport is unavailable/incomplete or the message could not
+   *     be handed over to the SMTP server
+   */
+  public InviteMailSendReceipt sendRendered(
+      String recipient, RenderedEmail mail, @NonNull InviteMailOrigin origin) {
+    if (resolveMode(origin) == Mode.OWN) {
+      return relay(origin, recipient, mail);
+    }
+    InviteSmtpSettings smtp;
+    try {
+      smtp = resolveGlobalSmtpSettings();
+    } catch (SmtpSendException exception) {
+      throw exception;
+    } catch (RuntimeException exception) {
+      throw new SmtpSendException(
+          SmtpSendException.Category.SMTP_TRANSPORT_FAILED,
+          SmtpSendException.DeliveryDisposition.CONFIRMED_NOT_SENT,
+          "Mail could not be prepared before SMTP dispatch",
+          exception);
+    }
+    return transmit(smtp, recipient, mail.subject(), mail.html(), mail.text());
+  }
+
+  // Never fall back to the platform server: a Träger's From domain would fail SPF/DMARC there.
+  private Mode resolveMode(InviteMailOrigin origin) {
+    try {
+      return tenantRoutes.resolveTransport(origin.tenantId()).mode();
+    } catch (TenantSystemEmailRouteService.ConfigurationException incomplete) {
+      throw new SmtpSendException(
+          SmtpSendException.Category.SMTP_DISABLED_OR_INCOMPLETE,
+          SmtpSendException.DeliveryDisposition.CONFIRMED_NOT_SENT,
+          "Tenant mail not sent: " + incomplete.getMessage(),
+          incomplete);
+    } catch (RuntimeException unreadable) {
+      throw new SmtpSendException(
+          SmtpSendException.Category.SMTP_SETTINGS_UNAVAILABLE,
+          SmtpSendException.DeliveryDisposition.CONFIRMED_NOT_SENT,
+          "Tenant mail transport could not be resolved",
+          unreadable);
+    }
+  }
+
+  private InviteMailSendReceipt relay(
+      InviteMailOrigin origin, String recipient, RenderedEmail mail) {
+    UUID correlationId = UUID.randomUUID();
+    tenantRelay.deliverStrict(
+        origin.tenantId(), origin.purpose().name(), recipient, mail, correlationId);
+    log.info(
+        "{} mail for tenant {} accepted by its own SMTP server (correlation {})",
+        origin.purpose(),
+        origin.tenantId(),
+        correlationId);
+    return new InviteMailSendReceipt(recipient, Instant.now());
+  }
+
+  private InviteMailSendReceipt transmit(
+      InviteSmtpSettings smtp, String recipient, String subject, String html, String text) {
+    try {
+      return inviteMailTransport.send(smtp, recipient, subject, html, text);
+    } catch (SmtpSendException exception) {
+      throw exception;
+    } catch (RuntimeException exception) {
+      // A transport implementation that violates the checked contract can still fail after the
+      // SMTP server accepted the message. Treat that as ambiguous so callers keep their claim.
+      throw new SmtpSendException(
+          SmtpSendException.Category.SMTP_TRANSPORT_FAILED,
+          SmtpSendException.DeliveryDisposition.DELIVERY_UNCERTAIN,
+          "Invite mail transport failed without a confirmed delivery outcome",
+          exception);
+    }
   }
 
   /**
@@ -127,104 +190,24 @@ public class InviteMailDispatchService {
    */
   public BrandedEmail renderBrandedMail(
       String subject, String bodyContent, String primaryActionUrl, Long tenantId, String language) {
-    EmailBranding branding = emailBrandingResolver.resolve(tenantId);
-    return brandedEmailLayoutRenderer.render(
-        branding, new BrandedEmailRequest(subject, bodyContent, primaryActionUrl, null, language));
+    return inviteFrameMailRenderer.render(
+        subject, bodyContent, primaryActionUrl, tenantId, language);
   }
 
-  @SuppressWarnings("unchecked")
-  private Optional<InviteSmtpSettings> resolveGlobalSmtpSettings() {
-    if (isBlank(consultingTypeServiceApiUrl)) {
-      log.warn("Invite mail dispatch: 'consulting.type.service.api.url' is not configured");
-      return Optional.empty();
-    }
+  private InviteSmtpSettings resolveGlobalSmtpSettings() {
     try {
-      String settingsUrl = normalizeBaseUrl(consultingTypeServiceApiUrl) + "/settings";
-      Map<String, Object> settingsResponse = restTemplate.getForObject(settingsUrl, Map.class);
-      if (settingsResponse == null || settingsResponse.isEmpty()) {
-        return Optional.empty();
-      }
-
-      boolean systemEmailsEnabled =
-          asBooleanSettingValue(
-              settingsResponse.get("globalFeatureSystemNotificationEmailsEnabled"));
-      boolean smtpEnabled = asBooleanSettingValue(settingsResponse.get("globalSmtpEnabled"));
-      String host = asStringSettingValue(settingsResponse.get("globalSmtpHost"));
-      Integer port = asIntSettingValue(settingsResponse.get("globalSmtpPort"));
-      boolean secure = asBooleanSettingValue(settingsResponse.get("globalSmtpSecure"));
-      String from = asStringSettingValue(settingsResponse.get("globalSmtpFrom"));
-
-      if (!systemEmailsEnabled || !smtpEnabled || isBlank(host) || port == null || isBlank(from)) {
-        log.warn("Invite mail dispatch: global SMTP settings are incomplete or disabled");
-        return Optional.empty();
-      }
-
-      // The public /settings payload deliberately omits the SMTP username and password since the
-      // CTS-C01 credential-leak fix, so they can never be read from there.
-      String username = configuredSmtpUsername;
-      String password = configuredSmtpPassword;
-      if (isBlank(username) || isBlank(password)) {
-        var credentials = applicationSettingsService.getGlobalSmtpCredentials();
-        if (credentials.isEmpty()) {
-          log.warn(
-              "Invite mail not sent: no SMTP credentials available. Set SMTP_USER and"
-                  + " SMTP_PASSWORD on UserService or send with a super-admin token.");
-          return Optional.empty();
-        }
-        username = credentials.get().getGlobalSmtpUsername();
-        password = credentials.get().getGlobalSmtpPassword();
-      }
-
-      return Optional.of(new InviteSmtpSettings(host, port, secure, username, password, from));
-    } catch (Exception exception) {
-      log.warn(
-          "Invite mail dispatch: could not resolve global SMTP settings ({})",
-          exception.getClass().getSimpleName());
-      return Optional.empty();
+      var settings = platformSmtpSettings.requireConfigured();
+      return new InviteSmtpSettings(
+          settings.host(),
+          settings.port(),
+          settings.secure(),
+          settings.username(),
+          settings.password(),
+          settings.from());
+    } catch (IllegalStateException exception) {
+      throw new SmtpSendException(
+          SmtpSendException.Category.SMTP_DISABLED_OR_INCOMPLETE,
+          "Invite mail not sent: " + exception.getMessage());
     }
-  }
-
-  private boolean asBooleanSettingValue(Object raw) {
-    Object value = unwrapSettingValue(raw);
-    if (value instanceof Boolean bool) {
-      return bool;
-    }
-    if (value instanceof String string) {
-      return "true".equalsIgnoreCase(string);
-    }
-    return false;
-  }
-
-  private String asStringSettingValue(Object raw) {
-    Object value = unwrapSettingValue(raw);
-    return nonNull(value) ? String.valueOf(value).trim() : null;
-  }
-
-  private Integer asIntSettingValue(Object raw) {
-    Object value = unwrapSettingValue(raw);
-    if (value instanceof Number number) {
-      return number.intValue();
-    }
-    if (value instanceof String string && isNotBlank(string)) {
-      try {
-        return Integer.parseInt(string.trim());
-      } catch (NumberFormatException exception) {
-        return null;
-      }
-    }
-    return null;
-  }
-
-  @SuppressWarnings("unchecked")
-  private Object unwrapSettingValue(Object raw) {
-    if (raw instanceof Map<?, ?> map) {
-      return ((Map<String, Object>) map).get("value");
-    }
-    return raw;
-  }
-
-  private static String normalizeBaseUrl(String value) {
-    String trimmed = value.trim();
-    return trimmed.endsWith("/") ? trimmed.substring(0, trimmed.length() - 1) : trimmed;
   }
 }

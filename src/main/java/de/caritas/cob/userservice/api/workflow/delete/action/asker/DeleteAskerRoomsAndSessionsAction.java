@@ -7,26 +7,44 @@ import de.caritas.cob.userservice.api.port.out.SessionDataRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.port.out.SessionSupervisorRepository;
 import de.caritas.cob.userservice.api.port.out.SessionTopicRepository;
+import de.caritas.cob.userservice.api.port.out.TeamDiscussionRepository;
+import de.caritas.cob.userservice.api.service.lifecycle.LifecycleEventPublisher;
+import de.caritas.cob.userservice.api.service.lifecycle.LifecycleEventPublisher.DeletedSession;
+import de.caritas.cob.userservice.api.service.session.DeletedAskerSessionService;
 import de.caritas.cob.userservice.api.workflow.delete.model.AskerDeletionWorkflowDTO;
+import de.caritas.cob.userservice.api.workflow.delete.service.TeamDiscussionPurgeService;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
 /** Delete action for sessions of a {@link User}. */
+@Slf4j
 @Component
 public class DeleteAskerRoomsAndSessionsAction extends DeleteRoomsAndSessionAction
     implements ActionCommand<AskerDeletionWorkflowDTO> {
+
+  private final DeletedAskerSessionService deletedAskerSessionService;
+  private final LifecycleEventPublisher lifecycleEventPublisher;
 
   public DeleteAskerRoomsAndSessionsAction(
       SessionRepository sessionRepository,
       SessionDataRepository sessionDataRepository,
       CaseHandoverRequestRepository caseHandoverRequestRepository,
       SessionSupervisorRepository sessionSupervisorRepository,
-      SessionTopicRepository sessionTopicRepository) {
+      SessionTopicRepository sessionTopicRepository,
+      TeamDiscussionRepository teamDiscussionRepository,
+      TeamDiscussionPurgeService teamDiscussionPurgeService,
+      DeletedAskerSessionService deletedAskerSessionService,
+      LifecycleEventPublisher lifecycleEventPublisher) {
     super(
         sessionRepository,
         sessionDataRepository,
         caseHandoverRequestRepository,
         sessionSupervisorRepository,
-        sessionTopicRepository);
+        sessionTopicRepository,
+        teamDiscussionRepository,
+        teamDiscussionPurgeService);
+    this.deletedAskerSessionService = deletedAskerSessionService;
+    this.lifecycleEventPublisher = lifecycleEventPublisher;
   }
 
   /**
@@ -40,6 +58,27 @@ public class DeleteAskerRoomsAndSessionsAction extends DeleteRoomsAndSessionActi
     this.sessionRepository
         .findByUser(actionTarget.getUser())
         .forEach(
-            session -> performSessionDeletion(session, actionTarget.getDeletionWorkflowErrors()));
+            session -> {
+              // ORISO-Frontend#1159: capture what the counsellor's placeholder needs while the
+              // session still exists, and record it only if the session really was deleted.
+              var placeholder = DeletedAskerSessionService.Placeholder.of(session);
+              // ADR-034: likewise the ids add-ons need, announced as session.deleted once gone.
+              var deletedSession = DeletedSession.of(session);
+              if (performSessionDeletion(session, actionTarget.getDeletionWorkflowErrors())) {
+                placeholder.ifPresent(this::recordPlaceholder);
+                lifecycleEventPublisher.sessionDeleted(deletedSession);
+              }
+            });
+  }
+
+  private void recordPlaceholder(DeletedAskerSessionService.Placeholder placeholder) {
+    try {
+      deletedAskerSessionService.recordDeletionAfterCommit(placeholder);
+    } catch (RuntimeException ex) {
+      log.warn(
+          "Could not record deleted-asker placeholder for session {}",
+          placeholder.formerSessionId(),
+          ex);
+    }
   }
 }

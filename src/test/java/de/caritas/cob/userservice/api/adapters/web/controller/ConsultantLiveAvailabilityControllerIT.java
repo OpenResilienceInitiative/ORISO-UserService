@@ -13,8 +13,12 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
+import de.caritas.cob.userservice.api.model.Consultant;
+import de.caritas.cob.userservice.api.service.ConsultantService;
 import de.caritas.cob.userservice.api.service.availability.ConsultantActivityRegistry;
+import de.caritas.cob.userservice.api.service.dpa.NewCounsellingDpaPolicy;
 import java.util.Collections;
+import java.util.Optional;
 import java.util.Set;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -42,10 +46,18 @@ class ConsultantLiveAvailabilityControllerIT {
 
   @Mock private ConsultantActivityRegistry consultantActivityRegistry;
 
+  @Mock private ConsultantService consultantService;
+
+  @Mock private NewCounsellingDpaPolicy newCounsellingDpaPolicy;
+
   @BeforeEach
   void setUp() {
     var controller =
-        new ConsultantLiveAvailabilityController(authenticatedUser, consultantActivityRegistry);
+        new ConsultantLiveAvailabilityController(
+            authenticatedUser,
+            consultantActivityRegistry,
+            consultantService,
+            newCounsellingDpaPolicy);
     ReflectionTestUtils.setField(controller, "activeWindowMs", 120_000L);
     mockMvc = MockMvcBuilders.standaloneSetup(controller).build();
   }
@@ -123,5 +135,36 @@ class ConsultantLiveAvailabilityControllerIT {
         .perform(post(AVAILABILITY_PATH + "/heartbeat"))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.available").value(false));
+  }
+
+  @Test
+  void getLiveChatAvailability_Should_reportNewCounsellingBlocked_When_providerAgreementRefusesIt()
+      throws Exception {
+    when(authenticatedUser.isConsultant()).thenReturn(true);
+    when(authenticatedUser.getUserId()).thenReturn(CONSULTANT_ID);
+    when(consultantActivityRegistry.filterActive(anyCollection(), anyLong()))
+        .thenReturn(Set.of(CONSULTANT_ID));
+    var consultant = new Consultant();
+    consultant.setTenantId(7L);
+    when(consultantService.getConsultant(CONSULTANT_ID)).thenReturn(Optional.of(consultant));
+    when(newCounsellingDpaPolicy.allowsNewCounselling(7L)).thenReturn(false);
+
+    this.mockMvc
+        .perform(get(AVAILABILITY_PATH))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.available").value(true))
+        .andExpect(jsonPath("$.newCounsellingAllowed").value(false));
+  }
+
+  @Test
+  void heartbeat_Should_notCarryTheAgreementField() throws Exception {
+    when(authenticatedUser.isConsultant()).thenReturn(true);
+    when(authenticatedUser.getUserId()).thenReturn(CONSULTANT_ID);
+    when(consultantActivityRegistry.refreshIfAvailable(CONSULTANT_ID)).thenReturn(true);
+
+    this.mockMvc
+        .perform(post(AVAILABILITY_PATH + "/heartbeat"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.newCounsellingAllowed").doesNotExist());
   }
 }

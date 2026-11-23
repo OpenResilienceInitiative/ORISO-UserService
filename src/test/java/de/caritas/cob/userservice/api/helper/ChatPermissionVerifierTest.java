@@ -18,22 +18,26 @@ import de.caritas.cob.userservice.api.model.ConsultantAgency;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.model.UserAgency;
 import de.caritas.cob.userservice.api.model.UserChat;
+import de.caritas.cob.userservice.api.port.out.GroupChatParticipantRepository;
 import de.caritas.cob.userservice.api.service.ConsultantService;
+import de.caritas.cob.userservice.api.service.chat.GroupChatConsultantAccess;
 import de.caritas.cob.userservice.api.service.user.UserService;
 import java.util.Arrays;
 import java.util.HashSet;
 import java.util.Optional;
 import java.util.Set;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 @ExtendWith(MockitoExtension.class)
 class ChatPermissionVerifierTest {
 
-  @InjectMocks private ChatPermissionVerifier chatPermissionVerifier;
+  private ChatPermissionVerifier chatPermissionVerifier;
+
+  @Mock private GroupChatParticipantRepository participantRepository;
 
   @Mock private ConsultantService consultantService;
 
@@ -46,6 +50,26 @@ class ChatPermissionVerifierTest {
   @Mock private Consultant consultant;
 
   @Mock private User user;
+
+  @BeforeEach
+  void setUp() {
+    var membersOnly =
+        new de.caritas.cob.userservice.api.service.chat.MembersOnlyChatAccess(
+            org.mockito.Mockito.mock(de.caritas.cob.userservice.api.port.out.ChatRepository.class),
+            participantRepository);
+    chatPermissionVerifier =
+        new ChatPermissionVerifier(
+            consultantService,
+            userService,
+            authenticatedUser,
+            new GroupChatConsultantAccess(
+                participantRepository,
+                org.mockito.Mockito.mock(
+                    de.caritas.cob.userservice.api.service.chat
+                        .InternalGroupChatRecipientScopeResolver.class),
+                membersOnly),
+            membersOnly);
+  }
 
   @Test
   void hasSameAgencyAssigned_Should_ReturnTrue_When_ChatAgenciesContainConsultantAgency() {
@@ -160,6 +184,7 @@ class ChatPermissionVerifierTest {
     chatAgency.setAgencyId(1L);
     Chat chat = new Chat();
     chat.setChatAgencies(asSet(chatAgency));
+    chat.setChatOwner(consultant);
     when(authenticatedUser.getRoles()).thenReturn(asSet(UserRole.CONSULTANT.getValue()));
     when(consultantService.getConsultantViaAuthenticatedUser(authenticatedUser))
         .thenReturn(Optional.of(consultant));
@@ -188,6 +213,7 @@ class ChatPermissionVerifierTest {
         ForbiddenException.class,
         () -> {
           Consultant consultant = new Consultant();
+          consultant.setTenantId(1L);
           ConsultantAgency consultantAgency = new ConsultantAgency();
           consultantAgency.setAgencyId(1L);
           consultant.setConsultantAgencies(asSet(consultantAgency));
@@ -195,6 +221,9 @@ class ChatPermissionVerifierTest {
           chatAgency.setAgencyId(2L);
           Chat chat = new Chat();
           chat.setChatAgencies(asSet(chatAgency));
+          Consultant owner = new Consultant();
+          owner.setTenantId(1L);
+          chat.setChatOwner(owner);
           when(authenticatedUser.getRoles()).thenReturn(asSet(UserRole.CONSULTANT.getValue()));
           when(consultantService.getConsultantViaAuthenticatedUser(authenticatedUser))
               .thenReturn(Optional.of(consultant));
@@ -239,6 +268,7 @@ class ChatPermissionVerifierTest {
     chatAgency.setAgencyId(1L);
     Chat chat = new Chat();
     chat.setChatAgencies(asSet(chatAgency));
+    chat.setChatOwner(consultant);
     when(authenticatedUser.getRoles()).thenReturn(asSet(UserRole.CONSULTANT.getValue()));
     when(consultantService.getConsultantViaAuthenticatedUser(authenticatedUser))
         .thenReturn(Optional.of(consultant));
@@ -252,6 +282,7 @@ class ChatPermissionVerifierTest {
         ForbiddenException.class,
         () -> {
           Consultant consultant = new Consultant();
+          consultant.setTenantId(1L);
           ConsultantAgency consultantAgency = new ConsultantAgency();
           consultantAgency.setAgencyId(2L);
           consultant.setConsultantAgencies(asSet(consultantAgency));
@@ -259,6 +290,9 @@ class ChatPermissionVerifierTest {
           chatAgency.setAgencyId(1L);
           Chat chat = new Chat();
           chat.setChatAgencies(asSet(chatAgency));
+          Consultant owner = new Consultant();
+          owner.setTenantId(1L);
+          chat.setChatOwner(owner);
           when(authenticatedUser.getRoles()).thenReturn(asSet(UserRole.CONSULTANT.getValue()));
           when(consultantService.getConsultantViaAuthenticatedUser(authenticatedUser))
               .thenReturn(Optional.of(consultant));

@@ -66,6 +66,25 @@ class UserSessionListServiceTest {
     assertThat(chat.getLatestMessage()).isEqualTo(Timestamp.valueOf(chatStart));
   }
 
+  // #1747: a later person of an appointment invitation sees the shared conversation they joined.
+  @Test
+  void listsSharedInvitationConversationsNextToOwnSessionsWithoutDuplicates() {
+    var own = sessionResponse("!own:matrix.example", 1_700_000_000L);
+    own.getSession().setId(1L);
+    var shared = sessionResponse("!shared:matrix.example", 1_700_000_100L);
+    shared.getSession().setId(2L);
+    var duplicateOfOwn = sessionResponse("!own:matrix.example", 1_700_000_000L);
+    duplicateOfOwn.getSession().setId(1L);
+    when(sessionService.getSessionsForUserId(USER_ID)).thenReturn(List.of(own));
+    when(sessionService.getInvitationMemberSessionsForUserId(USER_ID))
+        .thenReturn(List.of(shared, duplicateOfOwn));
+
+    var result = userSessionListService.retrieveSessionsForAuthenticatedUser(USER_ID);
+
+    assertThat(result).containsExactly(own, shared);
+    assertThat(shared.getSession().getMessagesRead()).isTrue();
+  }
+
   @Test
   void marksChatAsNotSubscribedWhenUserDidNotJoinTheMatrixRoom() {
     var chat =
@@ -136,7 +155,8 @@ class UserSessionListServiceTest {
   }
 
   @Test
-  void publicSelfHelpChatCanBeResolvedByDeepLinkWithoutAssignment() {
+  void selfHelpChatIsNotResolvedForAClientWhoHasNotJoinedIt() {
+    // #1237: joining goes through the invite link (with its token) first; reading by id does not.
     var chat =
         chatResponse(
             1088L, "!self-help:matrix.example", ConversationType.SELF_HELP, LocalDateTime.now());
@@ -144,7 +164,7 @@ class UserSessionListServiceTest {
     when(chatService.getChatsForUserId(USER_ID)).thenReturn(List.of());
 
     assertThat(userSessionListService.retrieveChatsForUserAndChatIds(USER_ID, List.of(1088L)))
-        .containsExactly(chat);
+        .isEmpty();
   }
 
   private UserSessionResponseDTO sessionResponse(String roomId, long messageDate) {

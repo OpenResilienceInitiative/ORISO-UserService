@@ -47,6 +47,11 @@ class ScheduledTaskClaimWriterTest {
     assertThat(captor.getValue().getTaskName()).isEqualTo(TASK_NAME);
     assertThat(captor.getValue().getClaimedAt()).isEqualTo(NOW);
     assertThat(captor.getValue().getClaimedUntil()).isEqualTo(NOW.plusMinutes(30));
+    // A fresh claim must report itself as new so Spring Data INSERTs it. A merge here would
+    // silently UPDATE a row a competing replica committed in the race window, letting two
+    // replicas run the same scheduled task (flaky DeleteUsersRegisteredOnlySchedulerReplicaIT).
+    assertThat(captor.getValue().isNew()).isTrue();
+    assertThat(captor.getValue().getId()).isEqualTo(TASK_NAME);
   }
 
   @Test
@@ -97,5 +102,13 @@ class ScheduledTaskClaimWriterTest {
 
     activeClaim.setClaimedUntil(NOW);
     assertThat(claimWriter.hasActiveClaim(TASK_NAME)).isFalse();
+  }
+
+  @Test
+  void releaseShouldDeleteOnlyTheAcquiredLeaseVersion() {
+    LocalDateTime claimedUntil = NOW.plusMinutes(30);
+    when(claimRepository.deleteByTaskNameAndClaimedUntil(TASK_NAME, claimedUntil)).thenReturn(1);
+
+    assertThat(claimWriter.release(TASK_NAME, claimedUntil)).isTrue();
   }
 }

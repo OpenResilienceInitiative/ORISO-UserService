@@ -29,6 +29,8 @@ public class DeleteUsersRegisteredOnlyServiceTest {
 
   @Mock private UserRepository userRepository;
 
+  @Mock private org.springframework.jdbc.core.JdbcTemplate jdbc;
+
   @Mock private DeleteUserAccountService deleteUserAccountService;
 
   @Mock private WorkflowErrorMailService workflowErrorMailService;

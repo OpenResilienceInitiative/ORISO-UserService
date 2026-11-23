@@ -63,6 +63,74 @@ class TutorialProgressServiceTest {
   }
 
   @Test
+  void upsertOwnProgress_acceptsTheMailCounsellingTour() {
+    // #1526: every tour the frontend ships must be able to save progress.
+    when(tutorialProgressStore.upsert(any(), anyInt())).thenAnswer(inv -> inv.getArgument(0));
+    var req = request("completed");
+    req.setTourId("consultant-mail-counselling");
+
+    var item = service.upsertOwnProgress("user-1", 1L, req);
+
+    assertThat(item.getTourId()).isEqualTo("consultant-mail-counselling");
+  }
+
+  @Test
+  void upsertOwnProgress_acceptsTheTwoPracticeTours() {
+    // #1622: finishing a practice flow counts as a tutorial completion.
+    when(tutorialProgressStore.upsert(any(), anyInt())).thenAnswer(inv -> inv.getArgument(0));
+    for (var tourId :
+        new String[] {"consultant-practice-accept", "consultant-practice-supervision"}) {
+      var req = request("completed");
+      req.setTourId(tourId);
+
+      var item = service.upsertOwnProgress("user-1", 1L, req);
+
+      assertThat(item.getTourId()).isEqualTo(tourId);
+    }
+  }
+
+  @Test
+  void upsertOwnProgress_acceptsTheUseCaseToursOfTheFrontend() {
+    // Use-case tours (case handover, calendar, circles, settings, ...): every tour the
+    // frontend offers in the launcher must be able to save progress.
+    when(tutorialProgressStore.upsert(any(), anyInt())).thenAnswer(inv -> inv.getArgument(0));
+    for (var tourId :
+        new String[] {
+          "consultant-case-handover",
+          "consultant-calendar",
+          "consultant-group-circle",
+          "consultant-profile",
+          "consultant-live-chat",
+          "consultant-timeline",
+          "consultant-video-call",
+          "asker-first-steps",
+          "asker-settings"
+        }) {
+      var req = request("completed");
+      req.setTourId(tourId);
+
+      var item = service.upsertOwnProgress("user-1", 1L, req);
+
+      assertThat(item.getTourId()).isEqualTo(tourId);
+    }
+  }
+
+  @Test
+  void upsertOwnProgress_acceptsTheAdminIntroductionOnlyOnTheAdminSurface() {
+    when(tutorialProgressStore.upsert(any(), anyInt())).thenAnswer(inv -> inv.getArgument(0));
+    var req = request("completed");
+    req.setSurface("admin");
+    req.setTourId("admin-introduction");
+
+    assertThat(service.upsertOwnProgress("user-1", 1L, req).getTourId())
+        .isEqualTo("admin-introduction");
+
+    req.setSurface("frontend");
+    assertThatThrownBy(() -> service.upsertOwnProgress("user-1", 1L, req))
+        .isInstanceOf(BadRequestException.class);
+  }
+
+  @Test
   void upsertOwnProgress_createsScopedRecordForTheAuthenticatedUser() {
     // Business reason: progress is keyed by user, surface, tour and version so
     // multiple tutorials and audiences can track state independently.

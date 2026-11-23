@@ -76,8 +76,6 @@ class RocketChatAdapterRemovedContractTest {
             "name: RCToken",
             "name: RCUserId",
             "name: rcToken");
-    assertThat(Files.readString(Path.of("api/appointmentservice.yaml")))
-        .doesNotContain("name: RCToken", "name: RCUserId");
 
     assertThat(
             Path.of(
@@ -163,9 +161,6 @@ class RocketChatAdapterRemovedContractTest {
     assertThat(Files.readString(USER_SERVICE_API))
         .doesNotContain("rcGroupId", "askerRcId", "consultantRcId", "rcUserId", "initiatorRcUserId")
         .contains("matrixRoomId", "askerMatrixUserId", "consultantMatrixUserId");
-    assertThat(Files.readString(Path.of("api/appointmentservice.yaml")))
-        .doesNotContain("rcGroupId")
-        .contains("matrixRoomId");
     assertThat(Files.readString(Path.of("api/userstatisticsservice.yaml")))
         .doesNotContain("rcGroupId")
         .contains("matrixRoomId");
@@ -207,15 +202,23 @@ class RocketChatAdapterRemovedContractTest {
         .doesNotExist();
     assertThat(
             Path.of(
+                "src/main/java/de/caritas/cob/userservice/api/adapters/web/controller/"
+                    + "DeprecatedLiveProxyController.java"))
+        .doesNotExist();
+    assertThat(
+            Path.of(
                 "src/main/java/de/caritas/cob/userservice/api/service/liveevents/"
                     + "LiveEventNotificationService.java"))
         .doesNotExist();
 
     assertThat(Files.readString(Path.of("pom.xml")))
         .doesNotContain("liveservice-client-model", "services/liveservice.yaml");
-    assertThat(Files.readString(USER_SERVICE_API))
-        .contains("/liveproxy/send:", "deprecated: true", "410:")
-        .doesNotContain("Send a live notification event");
+    assertThat(Files.readString(USER_SERVICE_API)).doesNotContain("/liveproxy/send:");
+    assertThat(
+            Files.readString(
+                Path.of(
+                    "src/main/java/de/caritas/cob/userservice/api/config/auth/SecurityConfig.java")))
+        .doesNotContain("/liveproxy/send");
     assertThat(Files.readString(Path.of("src/main/resources/application.properties")))
         .doesNotContain("LIVE_SERVICE_API_URL", "live.service.api.url");
   }

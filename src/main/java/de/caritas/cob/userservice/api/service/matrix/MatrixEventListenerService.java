@@ -9,11 +9,18 @@ import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
+import de.caritas.cob.userservice.api.service.lifecycle.SessionInteractionService;
 import de.caritas.cob.userservice.api.service.mobilepushmessage.MobilePushNotificationService;
+import de.caritas.cob.userservice.api.service.notification.AdviceSeekerReplyEmailService;
 import de.caritas.cob.userservice.api.service.notification.EventNotificationService;
+import de.caritas.cob.userservice.api.service.notification.InternalChatEmailService;
 import de.caritas.cob.userservice.api.service.notification.PrivacyEnvelope;
 import de.caritas.cob.userservice.api.service.session.SessionService;
+import de.caritas.cob.userservice.api.service.statistics.CommunicationStatService;
 import de.caritas.cob.userservice.api.service.statistics.ConsultantMessageStatService;
+import de.caritas.cob.userservice.api.tenant.TenantContext;
+import de.caritas.cob.userservice.api.tenant.TenantContextProvider;
+import de.caritas.cob.userservice.api.tenant.TenantData;
 import io.micrometer.observation.Observation;
 import io.micrometer.observation.ObservationRegistry;
 import jakarta.annotation.PostConstruct;
@@ -45,10 +52,17 @@ public class MatrixEventListenerService {
   private final @NonNull ConsultantRepository consultantRepository;
   private final @NonNull SessionRepository sessionRepository;
   private final @NonNull ConsultantMessageStatService consultantMessageStatService;
+  private final @NonNull CommunicationStatService communicationStatService;
+  private final @NonNull MatrixCallInviteNotificationService callInviteNotifications;
+  private final @NonNull AdviceSeekerReplyEmailService replyEmailService;
+  private final @NonNull MatrixEmailSyncCursorStore emailSyncCursorStore;
+  private final @NonNull InternalChatEmailService internalChatEmailService;
 
   private OutboundHttpMetrics outboundHttpMetrics;
   private LiveChatDiagnosticMetrics diagnosticMetrics;
   private ObservationRegistry observationRegistry = ObservationRegistry.NOOP;
+  private TenantContextProvider tenantContextProvider;
+  private SessionInteractionService sessionInteractions;
 
   // Maps Matrix room ID to session ID for quick lookup
   private final Map<String, Long> roomToSessionMap = new ConcurrentHashMap<>();
@@ -64,6 +78,7 @@ public class MatrixEventListenerService {
 
   // Matrix sync token (updated after each sync)
   private String syncToken = null;
+  private Long firstEmailSyncStartedAtMillis;
 
   // Flag to control sync loop
   private volatile boolean running = false;
@@ -79,6 +94,16 @@ public class MatrixEventListenerService {
   @Autowired(required = false)
   void setObservationRegistry(ObservationRegistry observationRegistry) {
     this.observationRegistry = observationRegistry;
+  }
+
+  @Autowired(required = false)
+  void setTenantContextProvider(TenantContextProvider tenantContextProvider) {
+    this.tenantContextProvider = tenantContextProvider;
+  }
+
+  @Autowired(required = false)
+  void setSessionInteractions(SessionInteractionService sessionInteractions) {
+    this.sessionInteractions = sessionInteractions;
   }
 
   @Autowired(required = false)
@@ -177,9 +202,17 @@ public class MatrixEventListenerService {
     long errorBackoffMs = INITIAL_BACKOFF_MS;
     long iteration = 0;
     int consecutiveSyncFailures = 0;
+    boolean cursorLoaded = false;
 
     while (running) {
       try {
+        if (!cursorLoaded) {
+          // A transient database outage retries through the normal sync-loop backoff.
+          var start = emailSyncCursorStore.readOrCreateActivation();
+          syncToken = start.batchToken();
+          firstEmailSyncStartedAtMillis = syncToken == null ? start.activationEpochMillis() : null;
+          cursorLoaded = true;
+        }
         MatrixSyncCycleResult cycleResult = executeObservedMatrixSyncCycle();
 
         if (cycleResult == MatrixSyncCycleResult.SUCCESS) {
@@ -241,9 +274,31 @@ public class MatrixEventListenerService {
    * values must never become observation attributes.
    */
   private MatrixSyncCycleResult executeObservedMatrixSyncCycle() {
+    var outcome = new java.util.concurrent.atomic.AtomicReference<MatrixSyncCycleResult>();
+    inTechnicalTenant(() -> outcome.set(observedMatrixSyncCycle()));
+    return outcome.get();
+  }
+
+  /**
+   * Sync cycles and notifications serve every Träger. The technical tenant is set per unit of work,
+   * so a tenant another call leaves on the pooled thread never reaches the next one.
+   */
+  private void inTechnicalTenant(Runnable work) {
+    if (tenantContextProvider == null) {
+      work.run();
+    } else {
+      tenantContextProvider.inTechnicalContext(work).run();
+    }
+  }
+
+  private MatrixSyncCycleResult observedMatrixSyncCycle() {
     Observation observation =
         Observation.createNotStarted("userservice.matrix.sync", observationRegistry).start();
     String result = "exception";
+    var previousTenant = TenantContext.getCurrentTenantData();
+    // The dedicated sync worker observes multiple tenants, without an HTTP tenant context.
+    // Producers must still validate source-room membership and each recipient's domain tenant.
+    TenantContext.setCurrentTenantData(new TenantData(TenantContext.TECHNICAL_TENANT_ID, null));
 
     try (Observation.Scope ignored = observation.openScope()) {
       Map<String, Object> syncResult = performMatrixSync();
@@ -253,12 +308,22 @@ public class MatrixEventListenerService {
       }
 
       processMatrixSyncEvents(syncResult);
+      callInviteNotifications.reconcileMediaRooms();
+      // Acknowledge only after every producer has completed successfully.
+      Object nextBatch = syncResult.get("next_batch");
+      if (nextBatch instanceof String token && !token.isBlank()) {
+        emailSyncCursorStore.write(token);
+        syncToken = token;
+        firstEmailSyncStartedAtMillis = null;
+      }
       result = "success";
       return MatrixSyncCycleResult.SUCCESS;
     } catch (RuntimeException | Error exception) {
       observation.error(exception);
       throw exception;
     } finally {
+      if (previousTenant == null) TenantContext.clear();
+      else TenantContext.setCurrentTenantData(previousTenant);
       observation.lowCardinalityKeyValue("result", result);
       observation.stop();
     }
@@ -351,12 +416,6 @@ public class MatrixEventListenerService {
       Map<String, Object> syncResult =
           matrixSynapseService.makeMatrixRequest(syncUrl, "GET", adminAccessToken, null);
 
-      // Update sync token for next request
-      if (syncResult != null && syncResult.containsKey("next_batch")) {
-        syncToken = (String) syncResult.get("next_batch");
-        log.debug("🔷 Matrix sync cursor updated");
-      }
-
       return syncResult;
 
     } catch (Exception e) {
@@ -377,7 +436,13 @@ public class MatrixEventListenerService {
     }
 
     Map<String, Object> rooms = (Map<String, Object>) syncResult.get("rooms");
-    if (rooms == null || !rooms.containsKey("join")) {
+    if (rooms == null) return;
+    if (rooms.get("leave") instanceof Map<?, ?> leftRooms) {
+      for (Object room : leftRooms.keySet()) {
+        if (room instanceof String roomId) callInviteNotifications.handleMediaRoomLeft(roomId);
+      }
+    }
+    if (!rooms.containsKey("join")) {
       return;
     }
 
@@ -391,18 +456,18 @@ public class MatrixEventListenerService {
       log.debug("🔷 Registered rooms: {}", roomToSessionMap.keySet());
     }
 
-    // Process each room
+    // Resolve source-room invitations before consuming media state. JSON room order is arbitrary;
+    // the media room may precede the event that establishes its trusted binding in this batch.
     for (Map.Entry<String, Object> roomEntry : joinedRooms.entrySet()) {
       String roomId = roomEntry.getKey();
       Map<String, Object> roomData = (Map<String, Object>) roomEntry.getValue();
 
       // Resolve session context even if room wasn't explicitly registered by UI.
       Optional<Long> sessionIdOpt = resolveSessionIdForRoom(roomId);
-      if (sessionIdOpt.isEmpty()) {
-        continue;
-      }
 
-      log.info("🔷 Processing events for registered room: {}", roomId);
+      if (sessionIdOpt.isPresent()) {
+        log.info("🔷 Processing events for registered room: {}", roomId);
+      }
 
       // Process timeline events
       if (roomData.containsKey("timeline")) {
@@ -411,11 +476,14 @@ public class MatrixEventListenerService {
           List<Map<String, Object>> events = (List<Map<String, Object>>) timeline.get("events");
 
           for (Map<String, Object> event : events) {
-            processMatrixEvent(roomId, event);
+            if (sessionIdOpt.isPresent() || "org.oriso.call.invite".equals(event.get("type"))) {
+              processMatrixEvent(roomId, event);
+            }
           }
         }
       }
     }
+    callInviteNotifications.handleMediaRooms(joinedRooms);
   }
 
   /**
@@ -448,8 +516,23 @@ public class MatrixEventListenerService {
           outcome = handleRoomMessage(roomId, event) ? Outcome.SUCCESS : Outcome.SKIPPED;
           break;
 
+        case "org.oriso.call.invite":
+          // Only a validated invite counts; a forged or unbound one is never a call.
+          boolean handled = callInviteNotifications.handle(roomId, event);
+          if (handled) {
+            recordCallStatistic(roomId, event);
+          }
+          outcome = handled ? Outcome.SUCCESS : Outcome.SKIPPED;
+          break;
+
         case "m.call.invite":
-          outcome = handleCallInvite(roomId, event) ? Outcome.SUCCESS : Outcome.SKIPPED;
+          boolean legacyHandled = handleCallInvite(roomId, event);
+          // The legacy invite carries no server-side binding, so it only counts when its sender
+          // is a known participant of the session room; anything else is never a call.
+          if (legacyHandled && isSessionRoomParticipant(roomId, (String) event.get("sender"))) {
+            recordCallStatistic(roomId, event);
+          }
+          outcome = legacyHandled ? Outcome.SUCCESS : Outcome.SKIPPED;
           break;
 
         case "m.call.answer":
@@ -486,6 +569,16 @@ public class MatrixEventListenerService {
       return false;
     }
 
+    // Matrix keeps relation metadata outside the encrypted payload so homeservers can
+    // aggregate edits and reactions. They are not new replies and must not send mail.
+    Object relation = content.get("m.relates_to");
+    if (relation instanceof Map<?, ?> relationFields) {
+      Object relationType = relationFields.get("rel_type");
+      if ("m.replace".equals(relationType) || "m.annotation".equals(relationType)) {
+        return false;
+      }
+    }
+
     String msgtype = (String) content.get("msgtype");
     String senderDomainUserId = resolveDomainUserIdFromMatrixUserId(senderId);
     String threadRootId = extractThreadRootId(content);
@@ -507,6 +600,33 @@ public class MatrixEventListenerService {
                 senderDomainUserId != null && senderDomainUserId.startsWith("consultant"),
                 messageBody,
                 event.get("event_id") != null ? String.valueOf(event.get("event_id")) : null));
+
+    // Persist the mail claim before the in-app recipient cache can short-circuit this event.
+    // A missing push/feed recipient must not cause the Matrix cursor to consume an unclaimed mail.
+    if (!"m.notice".equals(msgtype)
+        && (messageBody == null || !messageBody.startsWith("[SYSTEM_NOTIFICATION]"))
+        && isEligibleForReplyEmail(event)) {
+      String eventId = privacyEnvelope == null ? null : privacyEnvelope.getMessageId();
+      if (isConsultantMatrixUser(senderId)) {
+        replyEmailService.onConsultantReply(roomId, eventId, senderId);
+        internalChatEmailService.onMatrixMessage(roomId, eventId, senderId);
+      } else if (senderDomainUserId != null) {
+        // The durable mail service admits only the primary session room. Protected supervision
+        // and team discussions use separate Matrix rooms; ordinary m.thread replies are allowed.
+        replyEmailService.onAdviceSeekerMessage(roomId, eventId, senderId);
+      }
+    }
+
+    // Statistics do not depend on who is notified: a message in a session the advice seeker is
+    // still alone in (an unassigned enquiry) counts, and so does one whose feed entry failed.
+    if (sessionId != null && senderDomainUserId != null) {
+      scheduleMessageStatistics(
+          senderId,
+          senderDomainUserId,
+          sessionId,
+          privacyEnvelope == null ? null : privacyEnvelope.getMessageId(),
+          interactionTime(event, msgtype, messageBody));
+    }
 
     // Get users who should receive notification (exclude sender)
     Set<String> userIds = getRecipientCandidatesForRoom(roomId);
@@ -536,43 +656,166 @@ public class MatrixEventListenerService {
 
     // Notify asynchronously so the Matrix sync loop is not blocked.
     executorService.submit(
-        () -> {
-          try {
-            mobilePushNotificationService.triggerMobilePushNotification(recipientIds);
-            recordSideEffect(SideEffect.MOBILE_PUSH, Outcome.SUCCESS);
-          } catch (Exception e) {
-            recordSideEffect(SideEffect.MOBILE_PUSH, Outcome.FAILURE);
-            log.error("❌ Failed to send mobile push notification", e);
-          }
-          // The persisted feed entry is the source of truth for the notification timeline.
-          // Isolate the failure domains so a push failure cannot swallow the notification row.
-          try {
-            if (threadRootId != null && !threadRootId.isBlank()) {
-              eventNotificationService.createThreadReplyNotificationFromRoom(
-                  roomId, senderDomainUserId, threadRootId, privacyEnvelope);
-            } else {
-              eventNotificationService.createMessageNotificationFromRoom(
-                  roomId, senderDomainUserId, privacyEnvelope);
-            }
-            recordSideEffect(SideEffect.NOTIFICATION, Outcome.SUCCESS);
-          } catch (Exception e) {
-            recordSideEffect(SideEffect.NOTIFICATION, Outcome.FAILURE);
-            log.error("❌ Failed to create event notification from room", e);
-            return;
-          }
-
-          if (mappedSessionId != null
-              && senderDomainUserId != null
-              && isConsultantMatrixUser(senderId)) {
-            try {
-              consultantMessageStatService.recordMessageSent(senderDomainUserId, mappedSessionId);
-            } catch (Exception e) {
-              log.error("Failed to record consultant message statistic", e);
-            }
-          }
-        });
+        () ->
+            inTechnicalTenant(
+                () -> {
+                  try {
+                    mobilePushNotificationService.triggerMobilePushNotification(recipientIds);
+                    recordSideEffect(SideEffect.MOBILE_PUSH, Outcome.SUCCESS);
+                  } catch (Exception e) {
+                    recordSideEffect(SideEffect.MOBILE_PUSH, Outcome.FAILURE);
+                    log.error("❌ Failed to send mobile push notification", e);
+                  }
+                  // The persisted feed entry is the source of truth for the notification timeline.
+                  // Isolate the failure domains so a push failure cannot swallow the notification
+                  // row.
+                  try {
+                    if (threadRootId != null && !threadRootId.isBlank()) {
+                      eventNotificationService.createThreadReplyNotificationFromRoom(
+                          roomId, senderDomainUserId, threadRootId, privacyEnvelope);
+                    } else {
+                      eventNotificationService.createMessageNotificationFromRoom(
+                          roomId, senderDomainUserId, privacyEnvelope);
+                    }
+                    recordSideEffect(SideEffect.NOTIFICATION, Outcome.SUCCESS);
+                  } catch (Exception e) {
+                    recordSideEffect(SideEffect.NOTIFICATION, Outcome.FAILURE);
+                    log.error("❌ Failed to create event notification from room", e);
+                  }
+                }));
 
     return true;
+  }
+
+  /** Runs {@link #recordMessageStatistics} on the notification worker, off the sync loop. */
+  private void scheduleMessageStatistics(
+      String senderId,
+      String senderDomainUserId,
+      Long sessionId,
+      String eventId,
+      java.time.Instant interactionAt) {
+    try {
+      Runnable record =
+          () ->
+              inTechnicalTenant(
+                  () ->
+                      recordMessageStatistics(
+                          senderId, senderDomainUserId, sessionId, eventId, interactionAt));
+      if (executorService == null) {
+        record.run();
+      } else {
+        executorService.submit(record);
+      }
+    } catch (Exception e) {
+      log.error("Failed to schedule message statistics", e);
+    }
+  }
+
+  /**
+   * Admin dashboard counts (KDG: no content, no identity in the stored row). Best-effort: a failure
+   * is logged and never reaches the notification path. Voice messages are not counted: session
+   * rooms are end-to-end encrypted, so the msgtype is opaque to the server.
+   */
+  private void recordMessageStatistics(
+      String senderId,
+      String senderDomainUserId,
+      Long sessionId,
+      String eventId,
+      java.time.Instant interactionAt) {
+    boolean consultantSender;
+    try {
+      consultantSender = isConsultantMatrixUser(senderId);
+    } catch (Exception e) {
+      log.error("Failed to resolve the sender role for message statistics", e);
+      return;
+    }
+    try {
+      if (consultantSender) {
+        consultantMessageStatService.recordMessageSent(senderDomainUserId, sessionId);
+      } else {
+        communicationStatService.recordAdviceSeekerMessage(sessionId, eventId);
+      }
+    } catch (Exception e) {
+      log.error(
+          consultantSender
+              ? "Failed to record consultant message statistic"
+              : "Failed to record advice-seeker message statistic",
+          e);
+    }
+    if (consultantSender && interactionAt != null && sessionInteractions != null) {
+      sessionInteractions.messageWritten(sessionId, senderDomainUserId, interactionAt);
+    }
+  }
+
+  /** A counsellor's own message counts as an interaction; notices and system messages do not. */
+  private static java.time.Instant interactionTime(
+      Map<String, Object> event, String msgtype, String messageBody) {
+    if ("m.notice".equals(msgtype)
+        || (messageBody != null && messageBody.startsWith("[SYSTEM_NOTIFICATION]"))
+        || !(event.get("origin_server_ts") instanceof Number timestamp)) {
+      return null;
+    }
+    return java.time.Instant.ofEpochMilli(timestamp.longValue());
+  }
+
+  /**
+   * Counts one call per call id for the admin dashboard, only in a room mapped to a session. Runs
+   * on the notification worker; best-effort.
+   */
+  @SuppressWarnings("unchecked")
+  private void recordCallStatistic(String roomId, Map<String, Object> event) {
+    try {
+      Long sessionId = roomToSessionMap.get(roomId);
+      if (sessionId == null || !(event.get("content") instanceof Map<?, ?> rawContent)) {
+        return;
+      }
+      var content = (Map<String, Object>) rawContent;
+      if (!(content.get("call_id") instanceof String callId) || callId.isBlank()) {
+        return;
+      }
+      boolean video = isVideoCall(content);
+      Runnable record =
+          () ->
+              inTechnicalTenant(
+                  () -> {
+                    try {
+                      communicationStatService.recordCall(sessionId, callId, video);
+                    } catch (Exception e) {
+                      log.error("Failed to record call statistic", e);
+                    }
+                  });
+      if (executorService == null) {
+        record.run();
+      } else {
+        executorService.submit(record);
+      }
+    } catch (Exception e) {
+      log.error("Failed to schedule call statistic", e);
+    }
+  }
+
+  /**
+   * {@code org.oriso.call.invite} carries {@code is_video}; a legacy {@code m.call.invite} only
+   * says so through a video line in its SDP offer.
+   */
+  static boolean isVideoCall(Map<String, Object> content) {
+    if (Boolean.TRUE.equals(content.get("is_video"))) {
+      return true;
+    }
+    return content.get("offer") instanceof Map<?, ?> offer
+        && offer.get("sdp") instanceof String sdp
+        && sdp.contains("m=video");
+  }
+
+  private boolean isEligibleForReplyEmail(Map<String, Object> event) {
+    if (firstEmailSyncStartedAtMillis == null) {
+      return true;
+    }
+    // An initial /sync contains recent historical messages. The activation instant is persisted
+    // before polling, so restarts cannot turn those old messages into a burst of new mail.
+    Object timestamp = event.get("origin_server_ts");
+    return timestamp instanceof Number number
+        && number.longValue() >= firstEmailSyncStartedAtMillis;
   }
 
   private void recordMatrixEvent(String eventType, Outcome outcome) {
@@ -585,6 +828,12 @@ public class MatrixEventListenerService {
     if (diagnosticMetrics != null) {
       diagnosticMetrics.recordSideEffect(sideEffect, outcome);
     }
+  }
+
+  private boolean isSessionRoomParticipant(String roomId, String matrixUserId) {
+    String domainUserId = resolveDomainUserIdFromMatrixUserId(matrixUserId);
+    Set<String> participants = roomToUsersMap.get(roomId);
+    return domainUserId != null && participants != null && participants.contains(domainUserId);
   }
 
   private boolean isConsultantMatrixUser(String matrixUserId) {

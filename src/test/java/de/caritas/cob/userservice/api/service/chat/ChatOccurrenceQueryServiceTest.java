@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.mock;
 
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
+import de.caritas.cob.userservice.api.helper.ChatPermissionVerifier;
 import de.caritas.cob.userservice.api.port.out.ChatOccurrenceExceptionRepository;
 import de.caritas.cob.userservice.api.port.out.ChatRepository;
 import java.time.LocalDateTime;
@@ -13,7 +14,9 @@ class ChatOccurrenceQueryServiceTest {
 
   private final ChatOccurrenceQueryService service =
       new ChatOccurrenceQueryService(
-          mock(ChatRepository.class), mock(ChatOccurrenceExceptionRepository.class));
+          mock(ChatRepository.class),
+          mock(ChatOccurrenceExceptionRepository.class),
+          mock(ChatPermissionVerifier.class));
 
   @Test
   void rejectsUnboundedOrInvalidWindows() {

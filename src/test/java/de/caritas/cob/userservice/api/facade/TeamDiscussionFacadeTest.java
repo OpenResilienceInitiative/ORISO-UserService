@@ -5,17 +5,30 @@ import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
 import de.caritas.cob.userservice.api.adapters.matrix.dto.MatrixCreateRoomResponseDTO;
+import de.caritas.cob.userservice.api.adapters.web.controller.TeamDiscussionController;
+import de.caritas.cob.userservice.api.adapters.web.controller.interceptor.ApiDefaultResponseEntityExceptionHandler;
+import de.caritas.cob.userservice.api.adapters.web.controller.interceptor.ApiResponseEntityExceptionHandler;
+import de.caritas.cob.userservice.api.config.CsrfSecurityProperties;
+import de.caritas.cob.userservice.api.config.auth.Authority.AuthorityValue;
+import de.caritas.cob.userservice.api.config.auth.IdentityConfig;
+import de.caritas.cob.userservice.api.config.auth.RoleAuthorizationAuthorityMapper;
+import de.caritas.cob.userservice.api.config.auth.SecurityConfig;
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
 import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
+import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.Session.RegistrationType;
@@ -28,30 +41,50 @@ import de.caritas.cob.userservice.api.port.out.TeamDiscussionParticipantReposito
 import de.caritas.cob.userservice.api.port.out.TeamDiscussionRepository;
 import de.caritas.cob.userservice.api.service.agency.AgencyMatrixCredentialClient;
 import de.caritas.cob.userservice.api.service.agency.dto.AgencyMatrixCredentialsDTO;
+import de.caritas.cob.userservice.api.service.teamdiscussion.TeamDiscussionCreationWriter;
 import de.caritas.cob.userservice.api.service.teamdiscussion.TeamDiscussionFeatureGate;
+import de.caritas.cob.userservice.api.service.teamdiscussion.TeamDiscussionRoomCleanupService;
 import java.time.LocalDateTime;
+import java.util.List;
 import java.util.Optional;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.InjectMocks;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.EnumSource;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Import;
+import org.springframework.core.env.MapPropertySource;
+import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.mock.web.MockServletContext;
+import org.springframework.security.core.authority.SimpleGrantedAuthority;
+import org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors;
+import org.springframework.security.test.web.servlet.setup.SecurityMockMvcConfigurers;
+import org.springframework.test.web.servlet.request.MockMvcRequestBuilders;
+import org.springframework.test.web.servlet.setup.MockMvcBuilders;
+import org.springframework.web.context.support.AnnotationConfigWebApplicationContext;
+import org.springframework.web.server.ResponseStatusException;
+import org.springframework.web.servlet.config.annotation.EnableWebMvc;
 
 /** US#473 / ADR-016 — Team-Besprechung lifecycle. */
 @ExtendWith(MockitoExtension.class)
 @MockitoSettings(strictness = Strictness.LENIENT)
 class TeamDiscussionFacadeTest {
-
   private static final Long SESSION_ID = 42L;
   private static final Long AGENCY_ID = 7L;
   private static final String CONSULTANT_ID = "consultant-1";
   private static final String ROOM_ID = "!discussion:oriso";
 
-  @InjectMocks private TeamDiscussionFacade facade;
+  private TeamDiscussionFacade facade;
+  private final de.caritas.cob.userservice.api.service.chat.MembersOnlyChatAccess membersOnly =
+      org.mockito.Mockito.mock(
+          de.caritas.cob.userservice.api.service.chat.MembersOnlyChatAccess.class);
 
   @Mock private SessionRepository sessionRepository;
   @Mock private ConsultantRepository consultantRepository;
@@ -61,17 +94,47 @@ class TeamDiscussionFacadeTest {
   @Mock private MatrixSynapseService matrixSynapseService;
   @Mock private AgencyMatrixCredentialClient matrixCredentialClient;
   @Mock private TeamDiscussionFeatureGate featureGate;
+  @Mock private TeamDiscussionRoomCleanupService roomCleanupService;
+  @Mock private AuthenticatedUser authenticatedUser;
 
   private Session session;
   private Consultant consultant;
 
   @BeforeEach
   void setUp() throws Exception {
+    var created = new java.util.HashMap<Long, TeamDiscussion>();
+    org.mockito.Mockito.lenient()
+        .when(teamDiscussionRepository.findById(anyLong()))
+        .thenAnswer(
+            call ->
+                teamDiscussionRepository
+                    .findBySessionId(SESSION_ID)
+                    .or(() -> Optional.ofNullable(created.get(call.getArgument(0)))));
+    facade =
+        new TeamDiscussionFacade(
+            sessionRepository,
+            consultantRepository,
+            consultantAgencyRepository,
+            teamDiscussionRepository,
+            matrixSynapseService,
+            matrixCredentialClient,
+            featureGate,
+            new TeamDiscussionCreationWriter(teamDiscussionRepository, sessionRepository),
+            new de.caritas.cob.userservice.api.service.teamdiscussion
+                .TeamDiscussionAccessTransactions(
+                sessionRepository,
+                consultantRepository,
+                consultantAgencyRepository,
+                teamDiscussionRepository,
+                participantRepository),
+            roomCleanupService,
+            membersOnly);
     session = new Session();
     session.setId(SESSION_ID);
     session.setAgencyId(AGENCY_ID);
     session.setStatus(SessionStatus.NEW);
     session.setRegistrationType(RegistrationType.REGISTERED);
+    session.setEnquiryMessageDate(java.time.LocalDateTime.now());
     session.setTenantId(3L);
 
     consultant = new Consultant();
@@ -79,32 +142,346 @@ class TeamDiscussionFacadeTest {
     consultant.setMatrixUserId("@consultant1:oriso");
 
     when(sessionRepository.findById(SESSION_ID)).thenReturn(Optional.of(session));
+    org.mockito.Mockito.lenient()
+        .when(sessionRepository.findByIdForUpdate(SESSION_ID))
+        .thenAnswer(invocation -> sessionRepository.findById(SESSION_ID));
     when(consultantRepository.findById(CONSULTANT_ID)).thenReturn(Optional.of(consultant));
     when(consultantAgencyRepository.existsByConsultantIdAndAgencyIdAndDeleteDateIsNull(
             CONSULTANT_ID, AGENCY_ID))
         .thenReturn(true);
     when(teamDiscussionRepository.findBySessionId(SESSION_ID)).thenReturn(Optional.empty());
-    when(teamDiscussionRepository.save(any(TeamDiscussion.class)))
+    when(teamDiscussionRepository.saveAndFlush(any(TeamDiscussion.class)))
         .thenAnswer(
             invocation -> {
               TeamDiscussion d = invocation.getArgument(0);
               d.setId(99L);
+              created.put(99L, d);
               return d;
             });
 
     var credentials = new AgencyMatrixCredentialsDTO();
     credentials.setMatrixUserId("@agency7:oriso");
-    credentials.setMatrixPassword("secret");
     when(matrixCredentialClient.fetchMatrixCredentials(AGENCY_ID))
         .thenReturn(Optional.of(credentials));
-    when(matrixSynapseService.loginUser("agency7", "secret")).thenReturn("agency-token");
+    when(matrixSynapseService.loginAsUserAccessToken("@agency7:oriso")).thenReturn("agency-token");
     when(matrixSynapseService.loginAsUserAccessToken("@consultant1:oriso"))
         .thenReturn("consultant-token");
+    when(matrixSynapseService.joinRoom(ROOM_ID, "consultant-token")).thenReturn(true);
+    when(matrixSynapseService.purgeRoomOrConfirmGone(ROOM_ID))
+        .thenReturn(MatrixSynapseService.RoomPurgeOutcome.PURGED);
 
     var body = new MatrixCreateRoomResponseDTO();
     body.setRoomId(ROOM_ID);
     when(matrixSynapseService.createRoom(anyString(), anyString(), eq("agency-token")))
         .thenReturn(ResponseEntity.ok(body));
+  }
+
+  @Test
+  void aMembersOnlyChatsSessionHasNoTeamDiscussion() {
+    org.mockito.Mockito.doThrow(
+            new de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException("no"))
+        .when(membersOnly)
+        .requireOrdinary(session, "The session of a members-only chat has no team discussion.");
+
+    org.junit.jupiter.api.Assertions.assertThrows(
+        de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException.class,
+        () -> facade.getOrCreateDiscussion(SESSION_ID, CONSULTANT_ID));
+    org.junit.jupiter.api.Assertions.assertThrows(
+        de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException.class,
+        () -> facade.getDiscussion(SESSION_ID, CONSULTANT_ID));
+  }
+
+  @Test
+  void unsentRegisteredDraftCannotStartATeamDiscussion() throws Exception {
+    session.setEnquiryMessageDate(null);
+    when(authenticatedUser.getUserId()).thenReturn(CONSULTANT_ID);
+    var http =
+        MockMvcBuilders.standaloneSetup(new TeamDiscussionController(facade, authenticatedUser))
+            .setControllerAdvice(
+                new ApiResponseEntityExceptionHandler(),
+                new ApiDefaultResponseEntityExceptionHandler())
+            .build();
+    http.perform(post("/users/sessions/{id}/team-discussion", SESSION_ID))
+        .andExpect(status().isBadRequest());
+  }
+
+  @Test
+  void teamDiscussionHttp_shouldRejectAskersAndForeignColleagues() throws Exception {
+    try (var context = new AnnotationConfigWebApplicationContext()) {
+      context.setServletContext(new MockServletContext());
+      context
+          .getEnvironment()
+          .getPropertySources()
+          .addFirst(
+              new MapPropertySource("test", java.util.Map.of("multitenancy.enabled", "false")));
+      context.register(TeamHttpSecurityFixture.class);
+      context.addBeanFactoryPostProcessor(
+          factory -> {
+            factory.registerSingleton(
+                "teamDiscussionController",
+                new TeamDiscussionController(facade, authenticatedUser));
+          });
+      context.refresh();
+      var http =
+          MockMvcBuilders.webAppContextSetup(context)
+              .apply(SecurityMockMvcConfigurers.springSecurity())
+              .build();
+      when(authenticatedUser.getUserId()).thenReturn(CONSULTANT_ID);
+      var path = "/users/sessions/42/team-discussion";
+      http.perform(
+              MockMvcRequestBuilders.get(path)
+                  .with(
+                      SecurityMockMvcRequestPostProcessors.user("colleague")
+                          .authorities(
+                              new SimpleGrantedAuthority(AuthorityValue.CONSULTANT_DEFAULT))))
+          .andExpect(status().isNoContent());
+      http.perform(
+              MockMvcRequestBuilders.get(path)
+                  .with(
+                      SecurityMockMvcRequestPostProcessors.user("asker")
+                          .authorities(new SimpleGrantedAuthority(AuthorityValue.USER_DEFAULT))))
+          .andExpect(status().isForbidden());
+      http.perform(
+              post(path)
+                  .cookie(new jakarta.servlet.http.Cookie("test-csrf", "matching-token"))
+                  .header("X-Test-CSRF", "matching-token")
+                  .with(
+                      SecurityMockMvcRequestPostProcessors.user("asker")
+                          .authorities(new SimpleGrantedAuthority(AuthorityValue.USER_DEFAULT))))
+          .andExpect(status().isForbidden());
+      http.perform(
+              post(path)
+                  .cookie(new jakarta.servlet.http.Cookie("test-csrf", "matching-token"))
+                  .header("X-Test-CSRF", "matching-token")
+                  .with(
+                      SecurityMockMvcRequestPostProcessors.user("colleague")
+                          .authorities(
+                              new SimpleGrantedAuthority(AuthorityValue.CONSULTANT_DEFAULT))))
+          .andExpect(status().isOk())
+          .andExpect(jsonPath("$.matrixRoomId").value(ROOM_ID));
+      when(consultantAgencyRepository.existsByConsultantIdAndAgencyIdAndDeleteDateIsNull(
+              CONSULTANT_ID, AGENCY_ID))
+          .thenReturn(false);
+      http.perform(
+              MockMvcRequestBuilders.get(path)
+                  .with(
+                      SecurityMockMvcRequestPostProcessors.user("outsider")
+                          .authorities(
+                              new SimpleGrantedAuthority(AuthorityValue.CONSULTANT_DEFAULT))))
+          .andExpect(status().isForbidden());
+    }
+  }
+
+  @EnableWebMvc
+  @Import({SecurityConfig.class, ApiResponseEntityExceptionHandler.class})
+  static class TeamHttpSecurityFixture {
+    @org.springframework.context.annotation.Bean
+    de.caritas.cob.userservice.api.admin.service.admin.ManagedAccountStatusService
+        accountOperationalStatus() {
+      return org.mockito.Mockito.mock(
+          de.caritas.cob.userservice.api.admin.service.admin.ManagedAccountStatusService.class);
+    }
+
+    @Bean
+    de.caritas.cob.userservice.api.workflow.accountinactivity.AccountInactivityService
+        accountInactivityService() {
+      // Account-inactivity gate (UserService #1175): these callers are active.
+      var inactivity =
+          org.mockito.Mockito.mock(
+              de.caritas.cob.userservice.api.workflow.accountinactivity.AccountInactivityService
+                  .class);
+      when(inactivity.admit(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any()))
+          .thenReturn(true);
+      return inactivity;
+    }
+
+    @Bean
+    CsrfSecurityProperties csrfSecurityProperties() {
+      var properties = new CsrfSecurityProperties();
+      var whitelist = new CsrfSecurityProperties.Whitelist();
+      var header = new CsrfSecurityProperties.ConfigProperty();
+      header.setProperty("X-Test-CSRF");
+      whitelist.setHeader(header);
+      properties.setWhitelist(whitelist);
+      properties.setHeader(header);
+      var cookie = new CsrfSecurityProperties.ConfigProperty();
+      cookie.setProperty("test-csrf");
+      properties.setCookie(cookie);
+      return properties;
+    }
+
+    @Bean
+    IdentityConfig identityConfig() {
+      var identity = org.mockito.Mockito.mock(IdentityConfig.class);
+      when(identity.getOpenIdConnectUrl("certs")).thenReturn("https://identity.invalid/certs");
+      return identity;
+    }
+
+    @Bean
+    RoleAuthorizationAuthorityMapper authorityMapper() {
+      return org.mockito.Mockito.mock(RoleAuthorizationAuthorityMapper.class);
+    }
+  }
+
+  @Test
+  void openingDiscussion_shouldUseTheSameRoomWhenAColleagueCreatesItConcurrently() {
+    var controller = new TeamDiscussionController(facade, authenticatedUser);
+    when(authenticatedUser.getUserId()).thenReturn(CONSULTANT_ID);
+    var winningDiscussion =
+        TeamDiscussion.builder()
+            .id(100L)
+            .sessionId(SESSION_ID)
+            .matrixRoomId("!colleague-room:oriso")
+            .status(TeamDiscussion.Status.OPEN)
+            .tenantId(3L)
+            .build();
+    when(teamDiscussionRepository.findBySessionId(SESSION_ID))
+        .thenReturn(Optional.empty(), Optional.of(winningDiscussion));
+    when(teamDiscussionRepository.saveAndFlush(any(TeamDiscussion.class)))
+        .thenThrow(new DataIntegrityViolationException("Concurrent session room insert"));
+    when(matrixSynapseService.joinRoom("!colleague-room:oriso", "consultant-token"))
+        .thenReturn(true);
+
+    var opened = controller.getOrCreate(SESSION_ID).getBody();
+    var reopened = controller.get(SESSION_ID).getBody();
+
+    assertThat(opened.matrixRoomId()).isEqualTo("!colleague-room:oriso");
+    assertThat(reopened.matrixRoomId()).isEqualTo(opened.matrixRoomId());
+  }
+
+  @Test
+  void openingDiscussion_shouldReportFailedCleanupInsteadOfSuccess() {
+    var controller = new TeamDiscussionController(facade, authenticatedUser);
+    when(authenticatedUser.getUserId()).thenReturn(CONSULTANT_ID);
+    var winningDiscussion =
+        TeamDiscussion.builder()
+            .id(100L)
+            .sessionId(SESSION_ID)
+            .matrixRoomId("!colleague-room:oriso")
+            .status(TeamDiscussion.Status.OPEN)
+            .tenantId(3L)
+            .build();
+    when(teamDiscussionRepository.findBySessionId(SESSION_ID))
+        .thenReturn(Optional.empty(), Optional.of(winningDiscussion));
+    when(teamDiscussionRepository.saveAndFlush(any(TeamDiscussion.class)))
+        .thenThrow(new DataIntegrityViolationException("Concurrent session room insert"));
+    when(matrixSynapseService.joinRoom("!colleague-room:oriso", "consultant-token"))
+        .thenReturn(true);
+
+    when(matrixSynapseService.purgeRoomOrConfirmGone(ROOM_ID))
+        .thenReturn(MatrixSynapseService.RoomPurgeOutcome.FAILED);
+    assertThatThrownBy(() -> controller.getOrCreate(SESSION_ID))
+        .isInstanceOf(ResponseStatusException.class)
+        .satisfies(
+            ex ->
+                assertThat(((ResponseStatusException) ex).getStatusCode())
+                    .isEqualTo(HttpStatus.BAD_GATEWAY));
+    verify(roomCleanupService).recordFailedCleanup(SESSION_ID, ROOM_ID);
+    assertThat(controller.get(SESSION_ID).getBody().matrixRoomId())
+        .isEqualTo("!colleague-room:oriso");
+  }
+
+  @Test
+  void openingDiscussion_shouldTolerateAnotherTabRecordingTheSameParticipant() {
+    var controller = new TeamDiscussionController(facade, authenticatedUser);
+    when(authenticatedUser.getUserId()).thenReturn(CONSULTANT_ID);
+    when(teamDiscussionRepository.findBySessionId(SESSION_ID))
+        .thenReturn(
+            Optional.of(
+                TeamDiscussion.builder()
+                    .id(99L)
+                    .sessionId(SESSION_ID)
+                    .matrixRoomId(ROOM_ID)
+                    .status(TeamDiscussion.Status.OPEN)
+                    .build()));
+    // The session lock makes the other tab's committed participant visible before admission.
+    when(participantRepository.existsByTeamDiscussionIdAndConsultantId(99L, CONSULTANT_ID))
+        .thenReturn(true);
+
+    assertThat(controller.getOrCreate(SESSION_ID).getBody().matrixRoomId()).isEqualTo(ROOM_ID);
+    assertThat(controller.getOrCreate(SESSION_ID).getBody().matrixRoomId()).isEqualTo(ROOM_ID);
+  }
+
+  @Test
+  void openingDiscussion_shouldReportFailedJoinAndAllowRetry() throws Exception {
+    var controller = new TeamDiscussionController(facade, authenticatedUser);
+    when(authenticatedUser.getUserId()).thenReturn(CONSULTANT_ID);
+    when(teamDiscussionRepository.findBySessionId(SESSION_ID))
+        .thenReturn(
+            Optional.of(
+                TeamDiscussion.builder()
+                    .id(99L)
+                    .sessionId(SESSION_ID)
+                    .matrixRoomId(ROOM_ID)
+                    .status(TeamDiscussion.Status.OPEN)
+                    .build()));
+    when(matrixSynapseService.joinRoom(ROOM_ID, "consultant-token")).thenReturn(false, true);
+
+    var http =
+        MockMvcBuilders.standaloneSetup(controller)
+            .setControllerAdvice(
+                new ApiResponseEntityExceptionHandler(),
+                new ApiDefaultResponseEntityExceptionHandler())
+            .build();
+    http.perform(post("/users/sessions/{id}/team-discussion", SESSION_ID))
+        .andExpect(status().isBadGateway());
+    http.perform(post("/users/sessions/{id}/team-discussion", SESSION_ID))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.matrixRoomId").value(ROOM_ID));
+  }
+
+  @Test
+  void openingDiscussion_shouldReportMissingConsultantMatrixIdentityAsInternalError()
+      throws Exception {
+    var controller = new TeamDiscussionController(facade, authenticatedUser);
+    when(authenticatedUser.getUserId()).thenReturn(CONSULTANT_ID);
+    consultant.setMatrixUserId(null);
+    when(teamDiscussionRepository.findBySessionId(SESSION_ID))
+        .thenReturn(
+            Optional.of(
+                TeamDiscussion.builder()
+                    .id(99L)
+                    .sessionId(SESSION_ID)
+                    .matrixRoomId(ROOM_ID)
+                    .status(TeamDiscussion.Status.OPEN)
+                    .build()));
+
+    var http =
+        MockMvcBuilders.standaloneSetup(controller)
+            .setControllerAdvice(
+                new ApiResponseEntityExceptionHandler(),
+                new ApiDefaultResponseEntityExceptionHandler())
+            .build();
+
+    http.perform(post("/users/sessions/{id}/team-discussion", SESSION_ID))
+        .andExpect(status().isInternalServerError());
+  }
+
+  @Test
+  void openingDiscussion_shouldReportMissingAgencyMatrixCredentialsAsInternalError()
+      throws Exception {
+    var controller = new TeamDiscussionController(facade, authenticatedUser);
+    when(authenticatedUser.getUserId()).thenReturn(CONSULTANT_ID);
+    when(teamDiscussionRepository.findBySessionId(SESSION_ID))
+        .thenReturn(
+            Optional.of(
+                TeamDiscussion.builder()
+                    .id(99L)
+                    .sessionId(SESSION_ID)
+                    .matrixRoomId(ROOM_ID)
+                    .status(TeamDiscussion.Status.OPEN)
+                    .build()));
+    when(matrixCredentialClient.fetchMatrixCredentials(AGENCY_ID)).thenReturn(Optional.empty());
+
+    var http =
+        MockMvcBuilders.standaloneSetup(controller)
+            .setControllerAdvice(
+                new ApiResponseEntityExceptionHandler(),
+                new ApiDefaultResponseEntityExceptionHandler())
+            .build();
+
+    http.perform(post("/users/sessions/{id}/team-discussion", SESSION_ID))
+        .andExpect(status().isInternalServerError());
   }
 
   @Test
@@ -117,7 +494,7 @@ class TeamDiscussionFacadeTest {
     verify(matrixSynapseService).createRoom(anyString(), anyString(), eq("agency-token"));
     verify(matrixSynapseService).inviteUserToRoom(ROOM_ID, "@consultant1:oriso", "agency-token");
     verify(matrixSynapseService).joinRoom(ROOM_ID, "consultant-token");
-    verify(participantRepository).save(any());
+    verify(participantRepository).saveAndFlush(any());
   }
 
   @Test
@@ -136,6 +513,48 @@ class TeamDiscussionFacadeTest {
 
     assertThat(view.matrixRoomId()).isEqualTo(ROOM_ID);
     verify(matrixSynapseService, never()).createRoom(anyString(), anyString(), anyString());
+  }
+
+  @Test
+  void openingDiscussion_shouldNotInviteACounsellorWhoIsAlreadyInTheRoom() throws Exception {
+    when(teamDiscussionRepository.findBySessionId(SESSION_ID))
+        .thenReturn(
+            Optional.of(
+                TeamDiscussion.builder()
+                    .id(99L)
+                    .sessionId(SESSION_ID)
+                    .matrixRoomId(ROOM_ID)
+                    .status(TeamDiscussion.Status.OPEN)
+                    .build()));
+    when(matrixSynapseService.getRoomMembers(ROOM_ID))
+        .thenReturn(Optional.of(List.of("@agency7:oriso", "@consultant1:oriso")));
+
+    var view = facade.getOrCreateDiscussion(SESSION_ID, CONSULTANT_ID);
+
+    assertThat(view.matrixRoomId()).isEqualTo(ROOM_ID);
+    verify(matrixSynapseService, never()).inviteUserToRoom(anyString(), anyString(), anyString());
+    verify(matrixSynapseService, never()).loginAsUserAccessToken(anyString());
+    verify(matrixSynapseService, never()).joinRoom(anyString(), anyString());
+    verify(participantRepository).saveAndFlush(any());
+  }
+
+  @Test
+  void openingDiscussion_shouldStillInviteWhenMembershipCannotBeRead() throws Exception {
+    when(teamDiscussionRepository.findBySessionId(SESSION_ID))
+        .thenReturn(
+            Optional.of(
+                TeamDiscussion.builder()
+                    .id(99L)
+                    .sessionId(SESSION_ID)
+                    .matrixRoomId(ROOM_ID)
+                    .status(TeamDiscussion.Status.OPEN)
+                    .build()));
+    when(matrixSynapseService.getRoomMembers(ROOM_ID)).thenReturn(Optional.empty());
+
+    facade.getOrCreateDiscussion(SESSION_ID, CONSULTANT_ID);
+
+    verify(matrixSynapseService).inviteUserToRoom(ROOM_ID, "@consultant1:oriso", "agency-token");
+    verify(matrixSynapseService).joinRoom(ROOM_ID, "consultant-token");
   }
 
   @Test
@@ -213,6 +632,7 @@ class TeamDiscussionFacadeTest {
             .sessionId(SESSION_ID)
             .matrixRoomId(ROOM_ID)
             .status(TeamDiscussion.Status.ARCHIVED)
+            .readOnlyApplied(true)
             .archiveDate(LocalDateTime.now().minusDays(1))
             .build();
     when(teamDiscussionRepository.findBySessionId(SESSION_ID)).thenReturn(Optional.of(discussion));
@@ -285,6 +705,65 @@ class TeamDiscussionFacadeTest {
 
     assertThat(discussion.getStatus()).isEqualTo(TeamDiscussion.Status.ARCHIVED);
     assertThat(discussion.isReadOnlyApplied()).isFalse();
+  }
+
+  @Test
+  void archiveDiscussionIfPresent_shouldRetryFailedLockWithoutAConsultantReopening() {
+    var discussion =
+        TeamDiscussion.builder()
+            .id(99L)
+            .sessionId(SESSION_ID)
+            .matrixRoomId(ROOM_ID)
+            .status(TeamDiscussion.Status.OPEN)
+            .build();
+    when(teamDiscussionRepository.findBySessionId(SESSION_ID)).thenReturn(Optional.of(discussion));
+    when(matrixSynapseService.setRoomEventsDefaultPowerLevel(anyString(), anyInt(), anyString()))
+        .thenReturn(false, true);
+
+    facade.archiveDiscussionIfPresent(session);
+    facade.archiveDiscussionIfPresent(session);
+
+    assertThat(discussion.isReadOnlyApplied()).isTrue();
+  }
+
+  @ParameterizedTest
+  @EnumSource(
+      value = TeamDiscussion.Status.class,
+      names = {"OPEN", "ARCHIVED"})
+  void rejectedPendingDiscussionCannotBeCertifiedByTheLegacyDefaultOnlyWrite(
+      TeamDiscussion.Status initialStatus) {
+    session.setStatus(SessionStatus.REJECTED);
+    var previousArchiveDate =
+        initialStatus == TeamDiscussion.Status.ARCHIVED
+            ? LocalDateTime.of(2026, 10, 20, 9, 0)
+            : null;
+    var discussion =
+        TeamDiscussion.builder()
+            .id(99L)
+            .sessionId(SESSION_ID)
+            .matrixRoomId(ROOM_ID)
+            .status(initialStatus)
+            .archiveDate(previousArchiveDate)
+            .readOnlyApplied(false)
+            .build();
+    when(teamDiscussionRepository.findBySessionId(SESSION_ID)).thenReturn(Optional.of(discussion));
+    when(matrixSynapseService.setRoomEventsDefaultPowerLevel(anyString(), anyInt(), anyString()))
+        .thenReturn(true);
+    when(participantRepository.existsByTeamDiscussionIdAndConsultantId(99L, CONSULTANT_ID))
+        .thenReturn(true);
+    assertThat(facade.getDiscussion(SESSION_ID, CONSULTANT_ID)).isPresent();
+    assertThat(discussion.getStatus()).isEqualTo(TeamDiscussion.Status.ARCHIVED);
+    if (initialStatus == TeamDiscussion.Status.OPEN) {
+      assertThat(discussion.getArchiveDate()).isNotNull();
+      verify(teamDiscussionRepository).save(discussion);
+    } else {
+      assertThat(discussion.getArchiveDate()).isEqualTo(previousArchiveDate);
+      verify(teamDiscussionRepository, never()).save(any());
+    }
+    assertThat(discussion.isReadOnlyApplied()).isFalse();
+    verify(matrixSynapseService, org.mockito.Mockito.never())
+        .setRoomEventsDefaultPowerLevel(anyString(), anyInt(), anyString());
+    verify(matrixSynapseService, never()).joinRoom(anyString(), anyString());
   }
 
   @Test

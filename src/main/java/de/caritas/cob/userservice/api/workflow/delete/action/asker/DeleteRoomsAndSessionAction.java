@@ -9,8 +9,10 @@ import de.caritas.cob.userservice.api.port.out.SessionDataRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.port.out.SessionSupervisorRepository;
 import de.caritas.cob.userservice.api.port.out.SessionTopicRepository;
+import de.caritas.cob.userservice.api.port.out.TeamDiscussionRepository;
 import de.caritas.cob.userservice.api.workflow.delete.model.DeletionTargetType;
 import de.caritas.cob.userservice.api.workflow.delete.model.DeletionWorkflowError;
+import de.caritas.cob.userservice.api.workflow.delete.service.TeamDiscussionPurgeService;
 import java.util.List;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
@@ -25,6 +27,8 @@ abstract class DeleteRoomsAndSessionAction {
   protected final @NonNull CaseHandoverRequestRepository caseHandoverRequestRepository;
   protected final @NonNull SessionSupervisorRepository sessionSupervisorRepository;
   protected final @NonNull SessionTopicRepository sessionTopicRepository;
+  protected final @NonNull TeamDiscussionRepository teamDiscussionRepository;
+  protected final @NonNull TeamDiscussionPurgeService teamDiscussionPurgeService;
 
   void deleteSessionData(Session session, List<DeletionWorkflowError> workflowErrors) {
     try {
@@ -91,9 +95,34 @@ abstract class DeleteRoomsAndSessionAction {
     }
   }
 
-  protected void deleteSession(Session session, List<DeletionWorkflowError> workflowErrors) {
+  /**
+   * Removes the team discussion attached to the session, Matrix room included (#1118). The lookup
+   * failing is reported as a database error; purge failures are reported by {@link
+   * TeamDiscussionPurgeService} itself.
+   */
+  void deleteTeamDiscussion(Session session, List<DeletionWorkflowError> workflowErrors) {
+    try {
+      this.teamDiscussionRepository
+          .findBySessionId(session.getId())
+          .ifPresent(
+              discussion -> this.teamDiscussionPurgeService.purge(discussion, workflowErrors));
+    } catch (Exception e) {
+      log.error("UserService delete workflow error: ", e);
+      workflowErrors.add(
+          DeletionWorkflowError.builder()
+              .deletionSourceType(ASKER)
+              .deletionTargetType(DeletionTargetType.DATABASE)
+              .identifier(String.valueOf(session.getId()))
+              .reason("Unable to delete team discussion for session")
+              .timestamp(nowInUtc())
+              .build());
+    }
+  }
+
+  protected boolean deleteSession(Session session, List<DeletionWorkflowError> workflowErrors) {
     try {
       this.sessionRepository.delete(session);
+      return true;
     } catch (Exception e) {
       log.error("UserService delete workflow error: ", e);
       workflowErrors.add(
@@ -104,15 +133,17 @@ abstract class DeleteRoomsAndSessionAction {
               .reason("Unable to delete session")
               .timestamp(nowInUtc())
               .build());
+      return false;
     }
   }
 
-  void performSessionDeletion(Session session, List<DeletionWorkflowError> workflowErrors) {
+  boolean performSessionDeletion(Session session, List<DeletionWorkflowError> workflowErrors) {
 
     deleteSessionData(session, workflowErrors);
     deleteSessionSupervisors(session, workflowErrors);
     deleteSessionTopics(session, workflowErrors);
     deleteCaseHandoverRequests(session, workflowErrors);
-    deleteSession(session, workflowErrors);
+    deleteTeamDiscussion(session, workflowErrors);
+    return deleteSession(session, workflowErrors);
   }
 }

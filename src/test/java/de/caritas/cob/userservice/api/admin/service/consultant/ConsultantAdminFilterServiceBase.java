@@ -10,7 +10,6 @@ import static org.hamcrest.Matchers.nullValue;
 import static org.hamcrest.Matchers.startsWith;
 
 import de.caritas.cob.userservice.agencyadminserivce.generated.web.model.HalLink.MethodEnum;
-import de.caritas.cob.userservice.api.Organizer;
 import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantAdminResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantFilter;
@@ -23,17 +22,12 @@ import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import java.time.LocalDateTime;
 import java.util.stream.Collectors;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.test.context.bean.override.mockito.MockitoBean;
 
 public class ConsultantAdminFilterServiceBase {
 
   @Autowired private ConsultantAdminFilterService consultantAdminFilterService;
 
   @Autowired private ConsultantRepository consultantRepository;
-
-  @MockitoBean
-  @SuppressWarnings("unused")
-  private Organizer organizer;
 
   public void findFilteredConsultants_Should_returnAllConsultants_When_noFilterIsGiven() {
     ConsultantSearchResultDTO consultants =

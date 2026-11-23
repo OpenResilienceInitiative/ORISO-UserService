@@ -141,11 +141,176 @@
   <include
     file="db/changelog/changeset/0082_scheduled_task_claim/0082_changeSet.xml" />
   <include
+    file="db/changelog/changeset/0083_consultant_personal_info/0083_changeSet.xml" />
+  <include
     file="db/changelog/changeset/0084_event_notification_explanation_backfill/0084_changeSet.xml" />
+  <include
+    file="db/changelog/changeset/0085_consultant_internal_display_name/0085_changeSet.xml" />
+  <!-- 0083_empty_draft_rows shipped without this include (found via PR #1075 review),
+       so it never ran anywhere. Appended here so already-migrated environments pick it
+       up in their next run; it only deletes zero-content draft rows and has no ordering
+       dependency on 0084/0085. -->
+  <include
+    file="db/changelog/changeset/0083_empty_draft_rows/0083_changeSet.xml" />
+  <include
+    file="db/changelog/changeset/0086_dpa_forward_and_signed_notice/0086_changeSet.xml" />
+  <include
+    file="db/changelog/changeset/0087_account_invite_dpa_forward_count/0087_changeSet.xml" />
+  <!-- Support-room repair (originally shipped as orphaned 0081_support_room_repair via
+       #955 and lost from this changelog in a later merge; renumbered to 0088 because
+       0081 is taken by 0081_account_invite_provisioning and 0086/0087 by the
+       DPA-forward chain). Fully idempotent (CREATE ... IF NOT EXISTS), so environments
+       that already ran it under an earlier path converge without harm. -->
+  <include
+    file="db/changelog/changeset/0088_support_room_repair/0088_changeSet.xml" />
+  <include
+    file="db/changelog/changeset/0089_account_invite_dpa_signed_at/0089_changeSet.xml" />
+  <include
+    file="db/changelog/changeset/0090_session_consented_legal_version/0090_changeSet.xml" />
+  <include
+    file="db/changelog/changeset/0091_account_invite_active_recipient/0091_changeSet.xml" />
+  <include
+    file="db/changelog/changeset/0092_id_reservation_release_task/0092_changeSet.xml" />
+  <include
+    file="db/changelog/changeset/0093_team_agency_session_modality/0093_changeSet.xml" />
+  <include
+    file="db/changelog/changeset/0094_case_handover_co_access/0094_changeSet.xml" />
+  <include
+    file="db/changelog/changeset/0095_tenant_case_handover_policy_cache/0095_changeSet.xml" />
+  <include
+    file="db/changelog/changeset/0096_case_handover_consent_mode/0096_changeSet.xml" />
+  <include
+    file="db/changelog/changeset/0097_case_handover_matrix_membership/0097_changeSet.xml" />
+  <include
+    file="db/changelog/changeset/0098_case_handover_matrix_repair/0098_changeSet.xml" />
+  <include
+    file="db/changelog/changeset/0099_case_handover_matrix_repair_generation/0099_changeSet.xml" />
+  <include
+    file="db/changelog/changeset/0100_team_discussion_room_cleanup/0100_changeSet.xml" />
+
+  <include file="db/changelog/changeset/0101_team_discussion_access_repair/0101_changeSet.xml" />
+  <include file="db/changelog/changeset/0102_reply_email_delivery/0102_changeSet.xml" />
+  <include file="db/changelog/changeset/0103_message_email_recipient/0103_changeSet.xml" />
+  <include file="db/changelog/changeset/0104_feedback_email_intent/0104_changeSet.xml" />
+  <include file="db/changelog/changeset/0105_service_notice_draft/0105_changeSet.xml" />
+  <include file="db/changelog/changeset/0106_existing_account_setup/0106_changeSet.xml" />
+
+  <include file="db/changelog/changeset/0091_group_session_tenant/0091_changeSet.xml" />
+  <include file="db/changelog/changeset/0091_matrix_call_binding/0091_changeSet.xml"/>
+  <include file="db/changelog/changeset/0094_session_ownership_revision/0094_changeSet.xml" />
+  <include file="db/changelog/changeset/0095_case_handover_period_operations/0095_changeSet.xml" />
 
   <!-- Seed/demo data (context="seed"): append future seed changesets below this
        line and tag every changeset with context="seed". -->
   <include
     file="db/changelog/changeset/0059_case_handover_reason_policy_repair/0059_changeSet.xml" />
 
+  <include file="db/changelog/changeset/20260910_chat_recovery_policy/changeSet.xml"/>
+  <include file="db/changelog/changeset/20260915_consultant_picture_1048/changeSet.xml"/>
+  <include file="db/changelog/changeset/20260917_consultant_avatar_1046/changeSet.xml"/>
+  <include file="db/changelog/changeset/20260917_consultant_picture_visibility_1049/changeSet.xml"/>
+  <include file="db/changelog/changeset/20260916_account_inactivity_bootstrap/changeSet.xml"/>
+  <include file="db/changelog/changeset/20260916_account_inactivity/changeSet.xml"/>
+  <include file="db/changelog/changeset/20260916_account_inactivity_access/changeSet.xml"/>
+  <include file="db/changelog/changeset/20260919_consultant_two_factor_required/changeSet.xml"/>
+  <include file="db/changelog/changeset/20260919_consultant_password_change_required/changeSet.xml"/>
+  <include file="db/changelog/changeset/20260922_consultant_live_chat_via_sidebar/changeSet.xml"/>
+  <include file="db/changelog/changeset/20260925_admin_list_preference_1263/changeSet.xml"/>
+  <include file="db/changelog/changeset/20260921_account_invite_allocation_modes/changeSet.xml"/>
+  <include file="db/changelog/changeset/20260921_account_invite_also_counsellor/changeSet.xml"/>
+  <include file="db/changelog/changeset/20260921_account_invite_unit_queue/changeSet.xml"/>
+  <include file="db/changelog/changeset/20260921_topic_permission_1026/changeSet.xml"/>
+  <include file="db/changelog/changeset/20260923_case_handover_neutral_reasons/changeSet.xml"/>
+  <include file="db/changelog/changeset/20260924_account_invite_drop_import_batch/changeSet.xml"/>
+  <include file="db/changelog/changeset/20260924_invite_email_template_tenant/changeSet.xml"/>
+  <include file="db/changelog/changeset/20260925_account_invite_timeline/changeSet.xml"/>
+  <include file="db/changelog/changeset/20260925_id_reservation_lock/changeSet.xml"/>
+  <include file="db/changelog/changeset/20260927_case_handover_extended_at/changeSet.xml"/>
+  <include file="db/changelog/changeset/20260923_chat_invite_token_1237/changeSet.xml"/>
+  <include file="db/changelog/changeset/20260923_group_chat_join_request_1499/changeSet.xml"/>
+  <include file="db/changelog/changeset/20260926_group_chat_admission_1499/changeSet.xml"/>
+  <include file="db/changelog/changeset/20260928_group_chat_admission_matrix_repair/changeSet.xml"/>
+  <include file="db/changelog/changeset/20260926_group_appointment_mail_874/changeSet.xml"/>
+  <include file="db/changelog/changeset/20261002_service_notice_confirm_876/changeSet.xml"/>
+  <include file="db/changelog/changeset/20261001_invite_email_template_system_default/changeSet.xml"/>
+  <include file="db/changelog/changeset/20260923_consultant_walk_through_default_off/changeSet.xml"/>
+  <include file="db/changelog/changeset/20260925_consultant_topic_per_agency_1264/changeSet.xml"/>
+  <include file="db/changelog/changeset/20260925_consultant_topic_agency_key_1264/changeSet.xml"/>
+  <include file="db/changelog/changeset/20261006_dpa_notice_role/changeSet.xml"/>
+  <include file="db/changelog/changeset/20260923_user_temporary_account/changeSet.xml"/>
+  <include file="db/changelog/changeset/20261007_user_avatar_1240/changeSet.xml"/>
+  <include file="db/changelog/changeset/20261007_standing_access_preference_1657/changeSet.xml"/>
+  <include file="db/changelog/changeset/20261008_group_matrix_cleanup/changeSet.xml"/>
+  <include file="db/changelog/changeset/20261009_inquiry_acceptance_notice/changeSet.xml" />
+  <include file="db/changelog/changeset/20261013_invite_template_delete_guard/changeSet.xml"/>
+  <include file="db/changelog/changeset/20261013_managed_account_pause/changeSet.xml"/>
+  <include file="db/changelog/changeset/20261014_co_access_power_rollback/changeSet.xml"/>
+  <include file="db/changelog/changeset/20261017_chat_members_only_1418/changeSet.xml"/>
+  <!-- #1082 reactivation saga claim. The include added in 13dc4ae9b was dropped by an earlier
+       pre-dev merge, leaving the 0086_reactivation_saga_claim changeset orphaned; appended here
+       so it stays append-only. Idempotent (ADD COLUMN IF NOT EXISTS). -->
+  <include file="db/changelog/changeset/0086_reactivation_saga_claim/0086_changeSet.xml"/>
+  <include file="db/changelog/changeset/20261023_account_creation_attempt/changeSet.xml"/>
+  <include file="db/changelog/changeset/20261008_enquiry_rejection/changeSet.xml"/>
+  <include file="db/changelog/changeset/20261028_matrix_call_guest_1477/changeSet.xml"/>
+  <include file="db/changelog/changeset/20261028_direct_links_1475/changeSet.xml"/>
+  <include file="db/changelog/changeset/20261028_temporary_accounts_1476/changeSet.xml"/>
+  <include file="db/changelog/changeset/20261028_call_share_link_1487/changeSet.xml"/>
+  <include file="db/changelog/changeset/20261028_chat_matrix_room_lineage/changeSet.xml"/>
+  <include file="db/changelog/changeset/20261029_deletion_audit_log/changeSet.xml"/>
+  <include file="db/changelog/changeset/20261030_session_direct_link_medium_1952/changeSet.xml"/>
+  <include file="db/changelog/changeset/20261101_statistics_setting_change_1535/changeSet.xml"/>
+  <include file="db/changelog/changeset/20261101_statistics_time_windows_1544/changeSet.xml"/>
+  <include file="db/changelog/changeset/20261102_statistics_dashboard_snapshot_1547/changeSet.xml"/>
+  <include file="db/changelog/changeset/20261102_statistics_settings_lock_1562/changeSet.xml"/>
+  <include file="db/changelog/changeset/20261103_statistics_retention_1561/changeSet.xml"/>
+  <include file="db/changelog/changeset/20261102_session_appointment_1960/changeSet.xml"/>
+  <include file="db/changelog/changeset/20261016_consultant_tenant_change_audit/changeSet.xml"/>
+  <include file="db/changelog/changeset/20261031_invite_avatar_name_1274/changeSet.xml"/>
+  <include file="db/changelog/changeset/20261104_chat_carried_marker/changeSet.xml"/>
+  <include file="db/changelog/changeset/20261029_deleted_asker_session_1159/changeSet.xml"/>
+  <include file="db/changelog/changeset/20261105_live_chat_account_promotion/changeSet.xml"/>
+  <include file="db/changelog/changeset/20261108_protected_draft_scope/changeSet.xml"/>
+  <include file="db/changelog/changeset/20261110_call_observation_2166/changeSet.xml"/>
+  <include file="db/changelog/changeset/20261110_session_direct_link_name_2170/changeSet.xml"/>
+  <include file="db/changelog/changeset/20261102_consultant_enquiry_opened_1549/changeSet.xml"/>
+  <include file="db/changelog/changeset/20261112_direct_link_scheduled_at_2142/changeSet.xml"/>
+  <include file="db/changelog/changeset/20261112_call_observation_session_2237/changeSet.xml"/>
+  <include file="db/changelog/changeset/20261112_group_waiting_room_2237/changeSet.xml"/>
+  <include file="db/changelog/changeset/20261113_communication_stat/changeSet.xml"/>
+  <include file="db/changelog/changeset/20261113_call_observation_lease_1628/changeSet.xml"/>
+  <include file="db/changelog/changeset/20261113_call_observation_end_1628/changeSet.xml"/>
+  <include file="db/changelog/changeset/20261113_call_observation_chat_nullable_2237/changeSet.xml"/>
+  <include file="db/changelog/changeset/20261113_user_deletion_failure_1521/changeSet.xml"/>
+  <include file="db/changelog/changeset/20261113_call_binding_end_cause_2209/changeSet.xml"/>
+  <include file="db/changelog/changeset/20261115_call_binding_last_swept_2209/changeSet.xml"/>
+  <include file="db/changelog/changeset/20261114_session_appointment_kind_1000/changeSet.xml"/>
+  <include file="db/changelog/changeset/20261114_calendar_blocker_1000/changeSet.xml"/>
+  <include file="db/changelog/changeset/20261114_calendar_sync_1645/changeSet.xml"/>
+  <include file="db/changelog/changeset/20261114_calendar_working_hours_1000/changeSet.xml"/>
+  <include file="db/changelog/changeset/20261114_calendar_working_hours_exceptions_1000/changeSet.xml"/>
+  <include file="db/changelog/changeset/20261116_calendar_move_proposal_1000/changeSet.xml"/>
+  <include file="db/changelog/changeset/20261116_agency_contact_person_1534/changeSet.xml"/>
+  <include file="db/changelog/changeset/20261114_direct_invitation_appointment_2252/changeSet.xml"/>
+  <include file="db/changelog/changeset/20261117_calendar_move_proposal_reason_1663/changeSet.xml"/>
+  <include file="db/changelog/changeset/20261117_account_invite_deletion_1522/changeSet.xml"/>
+  <include file="db/changelog/changeset/20261117_admin_type_statistics_1666/changeSet.xml"/>
+  <include file="db/changelog/changeset/20261117_consultant_planned_absence_2303/changeSet.xml"/>
+  <include file="db/changelog/changeset/20261117_guest_account_mode_1662/changeSet.xml"/>
+  <include file="db/changelog/changeset/20261117_guest_account_mode_at_entry_1662/changeSet.xml"/>
+  <include file="db/changelog/changeset/20261117_calendar_colleague_appointment_2305/changeSet.xml"/>
+  <include file="db/changelog/changeset/20261117_calendar_consultation_hours_2287/changeSet.xml"/>
+  <include file="db/changelog/changeset/20261117_session_appointment_request_expiry_2287/changeSet.xml"/>
+  <include file="db/changelog/changeset/20261117_deleted_asker_session_archive/changeSet.xml"/>
+  <include file="db/changelog/changeset/20261118_agency_enquiry_revocation_1692/changeSet.xml"/>
+  <include file="db/changelog/changeset/20261118_agency_enquiry_room_retirement_1692/changeSet.xml"/>
+  <include file="db/changelog/changeset/20261119_support_room_lifecycle_904/changeSet.xml"/>
+  <include file="db/changelog/changeset/20261119_journey_storage_1689/changeSet.xml"/>
+  <include file="db/changelog/changeset/20261119_agency_enquiry_binding_index_1692/changeSet.xml"/>
+  <include file="db/changelog/changeset/20261120_agency_enquiry_room_attempt_1692/changeSet.xml"/>
+  <include file="db/changelog/changeset/20261121_agency_enquiry_revocation_room_scope_1692/changeSet.xml"/>
+  <include file="db/changelog/changeset/20261121_invitation_appointment_kind_1747/changeSet.xml"/>
+  <include file="db/changelog/changeset/20261119_agency_enquiry_room_decision_1692/changeSet.xml"/>
+  <include file="db/changelog/changeset/20261119_agency_enquiry_room_preparation_1692/changeSet.xml"/>
+  <include file="db/changelog/changeset/20261121_event_notification_read_day/changeSet.xml"/>
 </databaseChangeLog>

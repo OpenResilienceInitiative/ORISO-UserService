@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+  xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+  xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.5.xsd">
+  <!-- No precondition needed: the SQL guards the column with IF (NOT) EXISTS,
+       so the changeset is idempotent and safe to run against any schema state. -->
+  <changeSet id="0085-consultant-internal-display-name" author="frank">
+    <sqlFile
+      path="db/changelog/changeset/0085_consultant_internal_display_name/migrate.sql"
+      relativeToChangelogFile="false" splitStatements="true" stripComments="true" endDelimiter=";"/>
+    <rollback>
+      <sql>ALTER TABLE consultant DROP COLUMN IF EXISTS internal_display_name;</sql>
+    </rollback>
+  </changeSet>
+</databaseChangeLog>

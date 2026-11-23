@@ -1,0 +1,57 @@
+name: Guest identity catalog
+
+# ORISO-UserService#1696 / ORISO-Frontend#2346: one naming scheme for every guest.
+# The Frontend dice engine (src/utils/anonName/data.ts + registrationUsername.ts) owns the
+# vocabulary. src/main/resources/identity/pseudonym-vocabulary.json and
+# src/test/resources/identity/frontend-generated-handles.json are generated from it; the server
+# accepts a guest's rolled User-ID only when it is in that set. This job fails when the copies no
+# longer match the Frontend's dev branch. The nightly run catches a Frontend change that landed
+# without the matching UserService update.
+#
+# Fix a failure: node scripts/contracts/sync-pseudonym-vocabulary.mjs <Frontend checkout>
+# then commit both generated files. GuestIdentityCatalogParityTest keeps the server's own roll
+# table (guest-name-catalog.json) equal to the vocabulary.
+
+on:
+  pull_request:
+  merge_group:
+    types: [checks_requested]
+  push:
+    branches:
+    - dev
+  schedule:
+  - cron: '17 3 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  vocabulary-matches-frontend:
+    name: guest names identical to the ORISO-Frontend dice engine
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v6
+      with:
+        persist-credentials: false
+
+    - name: Checkout ORISO-Frontend dice engine
+      uses: actions/checkout@v6
+      with:
+        repository: OpenResilienceInitiative/ORISO-Frontend
+        ref: dev
+        path: .frontend
+        sparse-checkout: |
+          src/utils/anonName
+          src/components/registration
+        persist-credentials: false
+
+    - name: Set up Node
+      uses: actions/setup-node@v6
+      with:
+        node-version: '24'
+
+    - name: Vocabulary and handle set match the Frontend
+      run: node scripts/contracts/sync-pseudonym-vocabulary.mjs .frontend --check

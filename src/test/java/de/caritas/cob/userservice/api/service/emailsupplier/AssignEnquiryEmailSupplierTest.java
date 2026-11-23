@@ -5,12 +5,15 @@ import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.hasSize;
 import static org.hamcrest.Matchers.is;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.when;
 
 import ch.qos.logback.classic.Level;
 import com.neovisionaries.i18n.LanguageCode;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.service.ConsultantService;
+import de.caritas.cob.userservice.api.service.consultingtype.ReleaseToggle;
+import de.caritas.cob.userservice.api.service.consultingtype.ReleaseToggleService;
 import de.caritas.cob.userservice.mailservice.generated.web.model.MailDTO;
 import de.caritas.cob.userservice.mailservice.generated.web.model.TemplateDataDTO;
 import de.caritas.cob.userservice.testutils.LogbackCaptor;
@@ -32,6 +35,8 @@ public class AssignEnquiryEmailSupplierTest {
 
   @Mock private ConsultantService consultantService;
 
+  @Mock private ReleaseToggleService releaseToggleService;
+
   private LogbackCaptor logCaptor;
 
   @BeforeEach
@@ -47,7 +52,8 @@ public class AssignEnquiryEmailSupplierTest {
             applicationBaseUrl,
             consultantService,
             null,
-            false);
+            false,
+            releaseToggleService);
     logCaptor = LogbackCaptor.forClass(AssignEnquiryEmailSupplier.class);
   }
 
@@ -85,6 +91,7 @@ public class AssignEnquiryEmailSupplierTest {
     when(receiverConsultant.getEmail()).thenReturn("Valid email");
     when(receiverConsultant.getFullName()).thenReturn("Moritz Mustermann");
     when(receiverConsultant.getLanguageCode()).thenReturn(LanguageCode.de);
+    when(receiverConsultant.getTenantId()).thenReturn(7L);
     Consultant validConsultant = new Consultant();
     validConsultant.setFirstName("Max");
     validConsultant.setLastName("Mustermann");
@@ -100,14 +107,107 @@ public class AssignEnquiryEmailSupplierTest {
         generatedMail.getLanguage(),
         is(de.caritas.cob.userservice.mailservice.generated.web.model.LanguageCode.DE));
     List<TemplateDataDTO> templateData = generatedMail.getTemplateData();
-    assertThat(templateData, hasSize(4));
+    assertThat(templateData, hasSize(5));
     assertThat(templateData.get(0).getKey(), is("name_sender"));
     assertThat(templateData.get(0).getValue(), is("Max Mustermann"));
     assertThat(templateData.get(1).getKey(), is("name_recipient"));
     assertThat(templateData.get(1).getValue(), is("Moritz Mustermann"));
     assertThat(templateData.get(2).getKey(), is("name_user"));
     assertThat(templateData.get(2).getValue(), is("asker user name"));
-    assertThat(templateData.get(3).getKey(), is("url"));
-    assertThat(templateData.get(3).getValue(), is("application base url"));
+    assertThat(templateData.get(3).getKey(), is("recipientTenantId"));
+    assertThat(templateData.get(3).getValue(), is("7"));
+    assertThat(templateData.get(4).getKey(), is("url"));
+    assertThat(templateData.get(4).getValue(), is("application base url"));
+  }
+
+  @Test
+  void noAssignmentMailWhenTheCounsellorSwitchedAssignmentsOff() {
+    givenNewNotificationsAndSender();
+
+    var mails = supplierFor(counsellor(true, "{\"assignmentNotificationEnabled\":false}"));
+
+    assertThat(mails.generateEmails(), hasSize(0));
+  }
+
+  @Test
+  void noAssignmentMailWhenTheCounsellorSwitchedAllMailsOff() {
+    givenNewNotificationsAndSender();
+
+    var mails = supplierFor(counsellor(false, "{\"assignmentNotificationEnabled\":true}"));
+
+    assertThat(mails.generateEmails(), hasSize(0));
+  }
+
+  @Test
+  void assignmentMailWhenTheCounsellorSwitchedAssignmentsOn() {
+    givenNewNotificationsAndSender();
+
+    var mails = supplierFor(counsellor(true, "{\"assignmentNotificationEnabled\":true}"));
+
+    assertThat(mails.generateEmails(), hasSize(1));
+  }
+
+  @Test
+  void assignmentMailForExistingCounsellorWhoNeverSavedTheAssignmentSwitch() {
+    givenNewNotificationsAndSender();
+
+    var settingsWithoutAssignmentField =
+        supplierFor(counsellor(true, "{\"initialEnquiryNotificationEnabled\":true}"));
+    var settingsNull = supplierFor(counsellor(true, null));
+    // the column defaults to an empty string
+    var settingsBlank = supplierFor(counsellor(true, ""));
+
+    assertThat(settingsWithoutAssignmentField.generateEmails(), hasSize(1));
+    assertThat(settingsNull.generateEmails(), hasSize(1));
+    assertThat(settingsBlank.generateEmails(), hasSize(1));
+  }
+
+  @Test
+  void assignmentMailRegardlessOfSwitchesWhileNewNotificationsAreOff() {
+    when(releaseToggleService.isToggleEnabled(ReleaseToggle.NEW_EMAIL_NOTIFICATIONS))
+        .thenReturn(false);
+    when(consultantService.getConsultant(any())).thenReturn(Optional.of(sender()));
+
+    var mails = supplierFor(counsellor(false, "{\"assignmentNotificationEnabled\":false}"));
+
+    assertThat(mails.generateEmails(), hasSize(1));
+  }
+
+  private void givenNewNotificationsAndSender() {
+    when(releaseToggleService.isToggleEnabled(ReleaseToggle.NEW_EMAIL_NOTIFICATIONS))
+        .thenReturn(true);
+    // lenient: a switched-off counsellor never gets as far as looking up the sender
+    lenient().when(consultantService.getConsultant(any())).thenReturn(Optional.of(sender()));
+  }
+
+  private AssignEnquiryEmailSupplier supplierFor(Consultant receiver) {
+    return new AssignEnquiryEmailSupplier(
+        receiver,
+        "sender user id",
+        "asker user name",
+        "application base url",
+        consultantService,
+        null,
+        false,
+        releaseToggleService);
+  }
+
+  private static Consultant counsellor(boolean allMailsOn, String notificationsSettings) {
+    var counsellor = new Consultant();
+    counsellor.setId("receiver-id");
+    counsellor.setEmail("counsellor@example.test");
+    counsellor.setFirstName("Moritz");
+    counsellor.setLastName("Mustermann");
+    counsellor.setLanguageCode(LanguageCode.de);
+    counsellor.setNotificationsEnabled(allMailsOn);
+    counsellor.setNotificationsSettings(notificationsSettings);
+    return counsellor;
+  }
+
+  private static Consultant sender() {
+    var sender = new Consultant();
+    sender.setFirstName("Max");
+    sender.setLastName("Mustermann");
+    return sender;
   }
 }

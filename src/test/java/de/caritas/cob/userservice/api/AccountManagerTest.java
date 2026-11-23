@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import com.google.common.collect.Lists;
 import de.caritas.cob.userservice.api.admin.service.tenant.TenantService;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
+import de.caritas.cob.userservice.api.helper.ConsultantDisplayNameResolver;
 import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
 import de.caritas.cob.userservice.api.model.Admin;
 import de.caritas.cob.userservice.api.model.Consultant;
@@ -13,10 +14,11 @@ import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.out.ConsultantAgencyRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
+import de.caritas.cob.userservice.api.port.out.SearchFilter;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
-import de.caritas.cob.userservice.api.service.appointment.AppointmentService;
+import de.caritas.cob.userservice.api.service.matrix.ConsultantRenameSystemMessageService;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
 import de.caritas.cob.userservice.tenantservice.generated.web.model.RestrictedTenantDTO;
 import java.util.HashMap;
@@ -46,6 +48,8 @@ class AccountManagerTest {
 
   @Mock ConsultantRepository consultantRepository;
 
+  @Mock de.caritas.cob.userservice.api.admin.service.search.AccountSearch accountSearch;
+
   @Mock de.caritas.cob.userservice.api.port.out.AdminRepository adminRepository;
 
   @Mock ConsultantAgencyRepository consultantAgencyRepository;
@@ -73,17 +77,24 @@ class AccountManagerTest {
   void findConsultantsByInfix_Should_NotFilterByAgenciesIfAgencyListIsEmpty() {
     // given
     Mockito.when(
-            consultantRepository.findAllByInfix(
-                Mockito.eq("infix"), Mockito.isNull(), Mockito.any(PageRequest.class)))
+            accountSearch.consultants(
+                Mockito.eq("infix"),
+                Mockito.isNull(),
+                Mockito.isNull(),
+                Mockito.any(PageRequest.class)))
         .thenReturn(page);
 
     // when
     accountManager.findConsultantsByInfix(
-        "infix", false, Lists.newArrayList(), 1, 10, "email", true);
+        "infix", false, Lists.newArrayList(), SearchFilter.NONE, 1, 10, "email", true);
 
     // then
-    Mockito.verify(consultantRepository)
-        .findAllByInfix(Mockito.eq("infix"), Mockito.isNull(), Mockito.any(PageRequest.class));
+    Mockito.verify(accountSearch)
+        .consultants(
+            Mockito.eq("infix"),
+            Mockito.isNull(),
+            Mockito.isNull(),
+            Mockito.any(PageRequest.class));
   }
 
   @Test
@@ -91,8 +102,11 @@ class AccountManagerTest {
     // given: consultants whose agencies were all deleted make the AgencyService
     // bulk lookup respond with 404, raised by the generated client as a client error
     Mockito.when(
-            consultantRepository.findAllByInfix(
-                Mockito.eq("infix"), Mockito.isNull(), Mockito.any(PageRequest.class)))
+            accountSearch.consultants(
+                Mockito.eq("infix"),
+                Mockito.isNull(),
+                Mockito.isNull(),
+                Mockito.any(PageRequest.class)))
         .thenReturn(page);
     Mockito.when(agencyService.getAgenciesWithoutCaching(Mockito.anyList()))
         .thenThrow(
@@ -102,7 +116,7 @@ class AccountManagerTest {
     assertDoesNotThrow(
         () ->
             accountManager.findConsultantsByInfix(
-                "infix", false, Lists.newArrayList(), 1, 10, "email", true));
+                "infix", false, Lists.newArrayList(), SearchFilter.NONE, 1, 10, "email", true));
 
     // then: the listing is still mapped, just without agency data
     Mockito.verify(userServiceMapper)
@@ -119,13 +133,16 @@ class AccountManagerTest {
   void findConsultantsByInfix_Should_OnlyResolveAgenciesOfNotDeletedRelations() {
     // given
     Mockito.when(
-            consultantRepository.findAllByInfix(
-                Mockito.eq("infix"), Mockito.isNull(), Mockito.any(PageRequest.class)))
+            accountSearch.consultants(
+                Mockito.eq("infix"),
+                Mockito.isNull(),
+                Mockito.isNull(),
+                Mockito.any(PageRequest.class)))
         .thenReturn(page);
 
     // when
     accountManager.findConsultantsByInfix(
-        "infix", false, Lists.newArrayList(), 1, 10, "email", true);
+        "infix", false, Lists.newArrayList(), SearchFilter.NONE, 1, 10, "email", true);
 
     // then: soft-deleted consultant-agency relations must not be resolved at all
     Mockito.verify(consultantAgencyRepository)
@@ -136,23 +153,23 @@ class AccountManagerTest {
   void findConsultantsByInfix_Should_FilterByAgenciesIfAgencyListIsNotEmpty() {
     // given
     Mockito.when(
-            consultantRepository.findAllByInfixAndAgencyIds(
+            accountSearch.consultants(
                 Mockito.eq("infix"),
-                Mockito.anyCollection(),
                 Mockito.isNull(),
+                Mockito.anyCollection(),
                 Mockito.any(PageRequest.class)))
         .thenReturn(page);
 
     // when
     accountManager.findConsultantsByInfix(
-        "infix", true, Lists.newArrayList(1L), 1, 10, "email", true);
+        "infix", true, Lists.newArrayList(1L), SearchFilter.NONE, 1, 10, "email", true);
 
     // then
-    Mockito.verify(consultantRepository)
-        .findAllByInfixAndAgencyIds(
+    Mockito.verify(accountSearch)
+        .consultants(
             Mockito.eq("infix"),
-            Mockito.eq(Lists.newArrayList(1L)),
             Mockito.isNull(),
+            Mockito.eq(Lists.newArrayList(1L)),
             Mockito.any(PageRequest.class));
   }
 
@@ -161,11 +178,15 @@ class AccountManagerTest {
   // ---------------------------------------------------------------------------
 
   @Mock UserRepository userRepository;
+  @Mock org.springframework.transaction.PlatformTransactionManager transactionManager;
   @Mock SessionRepository sessionRepository;
   @Mock UsernameTranscoder usernameTranscoder;
   @Mock AuthenticatedUser authenticatedUser;
-  @Mock AppointmentService appointmentService;
   @Mock PatchConsultantSaga patchConsultantSaga;
+  @Mock ConsultantRenameSystemMessageService consultantRenameSystemMessageService;
+
+  @org.mockito.Spy
+  ConsultantDisplayNameResolver consultantDisplayNameResolver = new ConsultantDisplayNameResolver();
 
   // findConsultant
 
@@ -309,12 +330,49 @@ class AccountManagerTest {
 
   // patchUser
 
+  // #1662: the patch reads the advice seeker under the row lock "Konto behalten" takes, so a stale
+  // copy can never write temporary_account back over a concurrent keep.
+
+  @Test
+  void patchUser_Should_ReadTheAdviceSeekerUnderTheRowLockInsideATransaction() {
+    var kept = new User("u-1", null, "username", "email@test.com", false);
+    kept.setTemporaryAccount(false);
+    Map<String, Object> patch = new HashMap<>();
+    patch.put("id", "u-1");
+    Mockito.when(userRepository.findByUserIdForUpdate("u-1")).thenReturn(Optional.of(kept));
+    Mockito.when(userServiceMapper.adviceSeekerOf(kept, patch)).thenReturn(kept);
+    Mockito.when(userRepository.save(kept)).thenReturn(kept);
+    Mockito.when(userServiceMapper.mapOf(kept)).thenReturn(Map.of("userId", "u-1"));
+
+    assertThat(accountManager.patchUser(patch)).isPresent();
+
+    var order = Mockito.inOrder(transactionManager, userRepository);
+    order.verify(transactionManager).getTransaction(Mockito.any());
+    order.verify(userRepository).findByUserIdForUpdate("u-1");
+    order.verify(userRepository).save(kept);
+    order.verify(transactionManager).commit(Mockito.any());
+    Mockito.verify(userRepository, Mockito.never()).findByUserIdAndDeleteDateIsNull("u-1");
+  }
+
+  @Test
+  void patchUser_Should_NotPatchADeletedAdviceSeeker_When_ReadUnderTheLock() {
+    var deleted = new User("u-1", null, "username", "email@test.com", false);
+    deleted.setDeleteDate(java.time.LocalDateTime.now());
+    Map<String, Object> patch = new HashMap<>();
+    patch.put("id", "u-1");
+    Mockito.when(userRepository.findByUserIdForUpdate("u-1")).thenReturn(Optional.of(deleted));
+    Mockito.when(consultantRepository.findByIdAndDeleteDateIsNull("u-1"))
+        .thenReturn(Optional.empty());
+
+    assertThat(accountManager.patchUser(patch)).isEmpty();
+    Mockito.verify(userRepository, Mockito.never()).save(Mockito.any());
+  }
+
   @Test
   void patchUser_Should_ReturnEmpty_When_NeitherUserNorConsultantFound() {
     Map<String, Object> patch = new HashMap<>();
     patch.put("id", "u-1");
-    Mockito.when(userRepository.findByUserIdAndDeleteDateIsNull("u-1"))
-        .thenReturn(Optional.empty());
+    Mockito.when(userRepository.findByUserIdForUpdate("u-1")).thenReturn(Optional.empty());
     Mockito.when(consultantRepository.findByIdAndDeleteDateIsNull("u-1"))
         .thenReturn(Optional.empty());
 
@@ -327,8 +385,7 @@ class AccountManagerTest {
     var patched = new User("u-1", null, "username", "new@test.com", false);
     Map<String, Object> patch = new HashMap<>();
     patch.put("id", "u-1");
-    Mockito.when(userRepository.findByUserIdAndDeleteDateIsNull("u-1"))
-        .thenReturn(Optional.of(user));
+    Mockito.when(userRepository.findByUserIdForUpdate("u-1")).thenReturn(Optional.of(user));
     Mockito.when(userServiceMapper.adviceSeekerOf(user, patch)).thenReturn(patched);
     Mockito.when(userRepository.save(patched)).thenReturn(patched);
     Mockito.when(userServiceMapper.mapOf(patched)).thenReturn(Map.of("userId", "u-1"));
@@ -356,20 +413,97 @@ class AccountManagerTest {
     Mockito.verify(patchConsultantSaga).executeTransactional(patched, patch);
   }
 
+  // OBP 2.1 #119 / ORISO-UserService#1533: a self-service rename (PATCH /users/data) is
+  // announced in the chats with the published names before and after the change.
+
+  @Test
+  void patchUser_Should_postTheRenameNotice_When_TheConsultantChangesTheDisplayName() {
+    var consultant = consultantNamed("Frau Alt.");
+    var patch = displayNamePatch("Frau Neu.");
+    givenThePatchIsApplied(consultant, patch);
+
+    accountManager.patchUser(patch);
+
+    Mockito.verify(consultantRenameSystemMessageService)
+        .postRenameMessagesAfterCommit(consultant, "Frau Alt.", "Frau Neu.");
+  }
+
+  @Test
+  void patchUser_Should_notPostARenameNotice_When_TheDisplayNameIsNotPatched() {
+    var consultant = consultantNamed("Frau Alt.");
+    Map<String, Object> patch = new HashMap<>();
+    patch.put("id", "c-1");
+    patch.put("walkThroughEnabled", false);
+    givenThePatchIsApplied(consultant, patch);
+
+    accountManager.patchUser(patch);
+
+    Mockito.verifyNoInteractions(consultantRenameSystemMessageService);
+  }
+
+  @Test
+  void patchUser_Should_notPostARenameNotice_When_TheSagaFails() {
+    var consultant = consultantNamed("Frau Alt.");
+    var patch = displayNamePatch("Frau Neu.");
+    givenThePatchIsApplied(consultant, patch);
+    Mockito.when(patchConsultantSaga.executeTransactional(consultant, patch))
+        .thenThrow(new IllegalStateException("appointment service down"));
+
+    org.junit.jupiter.api.Assertions.assertThrows(
+        IllegalStateException.class, () -> accountManager.patchUser(patch));
+
+    Mockito.verifyNoInteractions(consultantRenameSystemMessageService);
+  }
+
+  private Consultant consultantNamed(String displayName) {
+    var consultant = new Consultant();
+    consultant.setId("c-1");
+    consultant.setUsername("beraterin1");
+    consultant.setDisplayName(displayName);
+    return consultant;
+  }
+
+  private Map<String, Object> displayNamePatch(String displayName) {
+    Map<String, Object> patch = new HashMap<>();
+    patch.put("id", "c-1");
+    patch.put("displayName", displayName);
+    return patch;
+  }
+
+  /** Mirrors the real mapper: it mutates and returns the very entity it was given. */
+  private void givenThePatchIsApplied(Consultant consultant, Map<String, Object> patch) {
+    Mockito.when(userRepository.findByUserIdAndDeleteDateIsNull("c-1"))
+        .thenReturn(Optional.empty());
+    Mockito.when(consultantRepository.findByIdAndDeleteDateIsNull("c-1"))
+        .thenReturn(Optional.of(consultant));
+    Mockito.when(userServiceMapper.consultantOf(consultant, patch))
+        .thenAnswer(
+            invocation -> {
+              if (patch.containsKey("displayName")) {
+                consultant.setDisplayName((String) patch.get("displayName"));
+              }
+              return consultant;
+            });
+    Mockito.when(patchConsultantSaga.executeTransactional(consultant, patch))
+        .thenReturn(Map.of("id", "c-1"));
+  }
+
   @Test
   void findConsultantsByInfix_Should_UseTenantIdFromAccessToken_When_ValidJwtProvided() {
     // payload = {"tenantId":5} → base64url = eyJ0ZW5hbnRJZCI6NX0
     Mockito.when(authenticatedUser.getAccessToken())
         .thenReturn("eyJhbGciOiJSUzI1NiJ9.eyJ0ZW5hbnRJZCI6NX0.signature");
     Mockito.when(
-            consultantRepository.findAllByInfix(
-                Mockito.any(), Mockito.any(), Mockito.any(PageRequest.class)))
+            accountSearch.consultants(
+                Mockito.any(), Mockito.any(), Mockito.isNull(), Mockito.any(PageRequest.class)))
         .thenReturn(page);
 
-    accountManager.findConsultantsByInfix("test", false, List.of(), 0, 10, "id", true);
+    accountManager.findConsultantsByInfix(
+        "test", false, List.of(), SearchFilter.NONE, 0, 10, "id", true);
 
-    Mockito.verify(consultantRepository)
-        .findAllByInfix(Mockito.eq("test"), Mockito.eq(5L), Mockito.any(PageRequest.class));
+    Mockito.verify(accountSearch)
+        .consultants(
+            Mockito.eq("test"), Mockito.eq(5L), Mockito.isNull(), Mockito.any(PageRequest.class));
   }
 
   @Test
@@ -384,8 +518,8 @@ class AccountManagerTest {
 
     Mockito.when(authenticatedUser.getAccessToken()).thenReturn(null);
     Mockito.when(
-            consultantRepository.findAllByInfix(
-                Mockito.any(), Mockito.any(), Mockito.any(PageRequest.class)))
+            accountSearch.consultants(
+                Mockito.any(), Mockito.any(), Mockito.isNull(), Mockito.any(PageRequest.class)))
         .thenReturn(page);
     Mockito.when(page.stream()).thenReturn(java.util.stream.Stream.of(consultantBase));
     Mockito.when(consultantRepository.findAllByIdIn(List.of("c-1")))
@@ -406,7 +540,9 @@ class AccountManagerTest {
                 Mockito.any()))
         .thenReturn(Map.of("total", 1));
 
-    var result = accountManager.findConsultantsByInfix("test", false, List.of(), 0, 10, "id", true);
+    var result =
+        accountManager.findConsultantsByInfix(
+            "test", false, List.of(), SearchFilter.NONE, 0, 10, "id", true);
 
     assertThat(result).containsKey("total");
     Mockito.verify(tenantService).getRestrictedTenantData(5L);
@@ -421,8 +557,8 @@ class AccountManagerTest {
 
     Mockito.when(authenticatedUser.getAccessToken()).thenReturn(null);
     Mockito.when(
-            consultantRepository.findAllByInfix(
-                Mockito.any(), Mockito.any(), Mockito.any(PageRequest.class)))
+            accountSearch.consultants(
+                Mockito.any(), Mockito.any(), Mockito.isNull(), Mockito.any(PageRequest.class)))
         .thenReturn(page);
     Mockito.when(page.stream()).thenReturn(java.util.stream.Stream.of(consultantBase));
     Mockito.when(consultantRepository.findAllByIdIn(List.of("c-1")))
@@ -442,7 +578,8 @@ class AccountManagerTest {
                 Mockito.any()))
         .thenReturn(Map.of("total", 1));
 
-    accountManager.findConsultantsByInfix("test", false, List.of(), 0, 10, "id", true);
+    accountManager.findConsultantsByInfix(
+        "test", false, List.of(), SearchFilter.NONE, 0, 10, "id", true);
 
     @SuppressWarnings("unchecked")
     var captor =
@@ -468,8 +605,8 @@ class AccountManagerTest {
 
     Mockito.when(authenticatedUser.getAccessToken()).thenReturn(null);
     Mockito.when(
-            consultantRepository.findAllByInfix(
-                Mockito.any(), Mockito.any(), Mockito.any(PageRequest.class)))
+            accountSearch.consultants(
+                Mockito.any(), Mockito.any(), Mockito.isNull(), Mockito.any(PageRequest.class)))
         .thenReturn(page);
     Mockito.when(page.stream()).thenReturn(java.util.stream.Stream.of(consultantBase));
     Mockito.when(consultantRepository.findAllByIdIn(List.of("c-1")))
@@ -489,7 +626,8 @@ class AccountManagerTest {
                 Mockito.any()))
         .thenReturn(Map.of("total", 1));
 
-    accountManager.findConsultantsByInfix("test", false, List.of(), 0, 10, "id", true);
+    accountManager.findConsultantsByInfix(
+        "test", false, List.of(), SearchFilter.NONE, 0, 10, "id", true);
 
     @SuppressWarnings("unchecked")
     var captor =
@@ -504,5 +642,74 @@ class AccountManagerTest {
             Mockito.any(),
             captor.capture());
     assertThat(captor.getValue()).doesNotContainKey("c-1");
+  }
+
+  // #1662: a temporary account cannot opt into e-mail notifications; opting out stays possible.
+
+  @Test
+  void aTemporaryAccountCannotTurnOnEmailNotifications() {
+    var guest = new User();
+    guest.setUserId("guest-id");
+    guest.setTemporaryAccount(true);
+    Mockito.when(userRepository.findByUserIdForUpdate("guest-id")).thenReturn(Optional.of(guest));
+    var patch =
+        Map.<String, Object>of(
+            "id",
+            "guest-id",
+            "emailNotifications",
+            new de.caritas.cob.userservice.api.adapters.web.dto.EmailNotificationsDTO()
+                .emailNotificationsEnabled(true));
+
+    org.assertj.core.api.Assertions.assertThatThrownBy(() -> accountManager.patchUser(patch))
+        .isInstanceOf(
+            de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException.class);
+    Mockito.verify(userRepository, Mockito.never()).save(Mockito.any());
+  }
+
+  @Test
+  void aTemporaryAccountMayTurnEmailNotificationsOff() {
+    var guest = new User();
+    guest.setUserId("guest-id");
+    guest.setTemporaryAccount(true);
+    // Notifications on (stored before #1662), so a no-op update cannot pass.
+    guest.setNotificationsEnabled(true);
+    Mockito.when(userRepository.findByUserIdForUpdate("guest-id")).thenReturn(Optional.of(guest));
+    // The real notification mapping, not a pass-through stub.
+    var realMapper = new UserServiceMapper(Mockito.mock(UsernameTranscoder.class));
+    Mockito.when(userServiceMapper.adviceSeekerOf(Mockito.eq(guest), Mockito.anyMap()))
+        .thenAnswer(call -> realMapper.adviceSeekerOf(call.getArgument(0), call.getArgument(1)));
+    Mockito.when(userRepository.save(guest)).thenReturn(guest);
+    Mockito.when(userServiceMapper.mapOf(guest)).thenReturn(Map.of("id", "guest-id"));
+    var patch =
+        Map.<String, Object>of(
+            "id",
+            "guest-id",
+            "emailNotifications",
+            new de.caritas.cob.userservice.api.adapters.web.dto.EmailNotificationsDTO()
+                .emailNotificationsEnabled(false)
+                .settings(
+                    new de.caritas.cob.userservice.api.adapters.web.dto
+                        .NotificationsSettingsDTO()));
+
+    assertThat(accountManager.patchUser(patch)).isPresent();
+    var saved = org.mockito.ArgumentCaptor.forClass(User.class);
+    Mockito.verify(userRepository).save(saved.capture());
+    assertThat(saved.getValue().isNotificationsEnabled()).isFalse();
+  }
+
+  // #1662: a temporary account never saves an e-mail address through a patch either.
+
+  @Test
+  void aTemporaryAccountCannotPatchInAnEmailAddress() {
+    var guest = new User();
+    guest.setUserId("guest-id");
+    guest.setTemporaryAccount(true);
+    Mockito.when(userRepository.findByUserIdForUpdate("guest-id")).thenReturn(Optional.of(guest));
+    var patch = Map.<String, Object>of("id", "guest-id", "email", "guest@example.org");
+
+    org.assertj.core.api.Assertions.assertThatThrownBy(() -> accountManager.patchUser(patch))
+        .isInstanceOf(
+            de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException.class);
+    Mockito.verify(userRepository, Mockito.never()).save(Mockito.any());
   }
 }

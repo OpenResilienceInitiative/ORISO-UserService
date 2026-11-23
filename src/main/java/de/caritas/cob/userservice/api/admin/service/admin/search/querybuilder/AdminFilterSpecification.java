@@ -43,6 +43,18 @@ public class AdminFilterSpecification {
     };
   }
 
+  /** Admins sharing at least one of {@code agencyIds}. */
+  public static Specification<Admin> withinAgencies(java.util.Set<Long> agencyIds) {
+    return (root, query, cb) -> {
+      var adminAgency = query.subquery(String.class);
+      var adminAgencyRoot = adminAgency.from(AdminAgency.class);
+      adminAgency
+          .select(adminAgencyRoot.get("admin").get("id"))
+          .where(adminAgencyRoot.get("agencyId").in(agencyIds));
+      return root.get("id").in(adminAgency);
+    };
+  }
+
   private static String contains(String value) {
     return "%" + value.toLowerCase() + "%";
   }

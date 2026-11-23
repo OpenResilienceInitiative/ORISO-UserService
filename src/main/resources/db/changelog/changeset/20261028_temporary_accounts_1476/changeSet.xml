@@ -1,0 +1,86 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+  xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-3.2.xsd">
+  <!-- Temporary accounts from counsellor direct links (ORISO-UserService#1476, ADR-029 §3-§5).
+       The platform settings live in one row; every new temporary account copies the lifetimes
+       and the retention mode onto its own user row, so later changes never touch it. -->
+  <changeSet id="20261028-temporary-account-settings-1476" author="oriso">
+    <createTable tableName="temporary_account_settings">
+      <column name="id" type="BIGINT">
+        <constraints primaryKey="true" nullable="false"/>
+      </column>
+      <column name="call_delete_after_minutes" type="INT">
+        <constraints nullable="false"/>
+      </column>
+      <column name="call_max_lifetime_hours" type="INT">
+        <constraints nullable="false"/>
+      </column>
+      <column name="chat_inactivity_days" type="INT">
+        <constraints nullable="false"/>
+      </column>
+      <column name="hide_password_field" type="BOOLEAN" defaultValueBoolean="false">
+        <constraints nullable="false"/>
+      </column>
+      <column name="message_retention" type="VARCHAR(32)">
+        <constraints nullable="false"/>
+      </column>
+      <column name="revision" type="BIGINT" defaultValueNumeric="0">
+        <constraints nullable="false"/>
+      </column>
+      <column name="update_date" type="DATETIME"/>
+      <column name="updated_by" type="VARCHAR(36)"/>
+    </createTable>
+    <insert tableName="temporary_account_settings">
+      <column name="id" valueNumeric="1"/>
+      <column name="call_delete_after_minutes" valueNumeric="15"/>
+      <column name="call_max_lifetime_hours" valueNumeric="24"/>
+      <column name="chat_inactivity_days" valueNumeric="30"/>
+      <column name="hide_password_field" valueBoolean="false"/>
+      <column name="message_retention" value="GUEST_DECIDES"/>
+      <column name="revision" valueNumeric="0"/>
+    </insert>
+    <rollback>
+      <dropTable tableName="temporary_account_settings"/>
+    </rollback>
+  </changeSet>
+  <changeSet id="20261028-temporary-account-snapshot-1476" author="oriso">
+    <addColumn tableName="user">
+      <column name="temporary_medium" type="VARCHAR(16)"/>
+      <column name="temporary_invite_link_id" type="BIGINT"/>
+      <column name="temporary_call_delete_after_minutes" type="INT"/>
+      <column name="temporary_call_max_lifetime_hours" type="INT"/>
+      <column name="temporary_chat_inactivity_days" type="INT"/>
+      <column name="temporary_message_retention" type="VARCHAR(32)"/>
+      <column name="temporary_keep_messages" type="BOOLEAN"/>
+      <column name="temporary_deleted_at" type="DATETIME"/>
+    </addColumn>
+    <createIndex tableName="user" indexName="idx_user_temporary_medium">
+      <column name="temporary_account"/>
+      <column name="temporary_medium"/>
+    </createIndex>
+    <rollback>
+      <dropIndex tableName="user" indexName="idx_user_temporary_medium"/>
+      <dropColumn tableName="user" columnName="temporary_deleted_at"/>
+      <dropColumn tableName="user" columnName="temporary_keep_messages"/>
+      <dropColumn tableName="user" columnName="temporary_message_retention"/>
+      <dropColumn tableName="user" columnName="temporary_chat_inactivity_days"/>
+      <dropColumn tableName="user" columnName="temporary_call_max_lifetime_hours"/>
+      <dropColumn tableName="user" columnName="temporary_call_delete_after_minutes"/>
+      <dropColumn tableName="user" columnName="temporary_invite_link_id"/>
+      <dropColumn tableName="user" columnName="temporary_medium"/>
+    </rollback>
+  </changeSet>
+  <!-- Deletion progress (#1476 review): once started, the cleanup finishes without judging the
+       half-deleted account again, and polls its pending Synapse redaction instead of resubmitting. -->
+  <changeSet id="20261029-temporary-account-deletion-progress-1476" author="oriso">
+    <addColumn tableName="user">
+      <column name="temporary_deletion_started_at" type="DATETIME"/>
+      <column name="temporary_redact_id" type="VARCHAR(255)"/>
+    </addColumn>
+    <rollback>
+      <dropColumn tableName="user" columnName="temporary_redact_id"/>
+      <dropColumn tableName="user" columnName="temporary_deletion_started_at"/>
+    </rollback>
+  </changeSet>
+</databaseChangeLog>

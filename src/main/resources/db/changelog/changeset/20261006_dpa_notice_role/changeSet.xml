@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+  xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.5.xsd">
+  <changeSet id="20261006-dpa-notice-role" author="oriso">
+    <!-- Existing notices remain ADMIN claims, including sent and pending rows. -->
+    <addColumn tableName="dpa_signed_notice">
+      <column name="notice_role" type="VARCHAR(16)" defaultValue="ADMIN">
+        <constraints nullable="false"/>
+      </column>
+    </addColumn>
+    <dropUniqueConstraint tableName="dpa_signed_notice"
+      constraintName="uq_dpa_signed_notice_tenant_version"/>
+    <addUniqueConstraint tableName="dpa_signed_notice"
+      columnNames="tenant_id,dpa_version,notice_role"
+      constraintName="uq_dpa_signed_notice_tenant_version_role"/>
+    <rollback>
+      <!-- The old application has only the ADMIN ledger; preserve every legacy claim. -->
+      <delete tableName="dpa_signed_notice"><where>notice_role = 'SIGNER'</where></delete>
+      <dropUniqueConstraint tableName="dpa_signed_notice"
+        constraintName="uq_dpa_signed_notice_tenant_version_role"/>
+      <addUniqueConstraint tableName="dpa_signed_notice"
+        columnNames="tenant_id,dpa_version"
+        constraintName="uq_dpa_signed_notice_tenant_version"/>
+      <dropColumn tableName="dpa_signed_notice" columnName="notice_role"/>
+    </rollback>
+  </changeSet>
+</databaseChangeLog>

@@ -127,4 +127,35 @@ public class ConsultantAgencyDeletionValidationServiceTest {
     assertNotNull(consultantAgency.getDeleteDate());
     org.mockito.Mockito.verify(this.consultantAgencyRepository).save(consultantAgency);
   }
+
+  @Test
+  void validateAndMarkForDeletion_Should_stampTheGivenDeleteDate() {
+    ConsultantAgency consultantAgency = new EasyRandom().nextObject(ConsultantAgency.class);
+    consultantAgency.setDeleteDate(null);
+    var deletedAt = java.time.LocalDateTime.of(2026, 9, 25, 10, 0);
+
+    this.agencyDeletionValidationService.validateAndMarkForDeletion(consultantAgency, deletedAt);
+
+    assertThat(consultantAgency.getDeleteDate(), is(deletedAt));
+    org.mockito.Mockito.verify(consultantAgencyRepository).save(consultantAgency);
+  }
+
+  @Test
+  void restoreRelationsMarkedWith_Should_clearOnlyTheDeleteDateStampedByTheConsultantDeletion() {
+    var deletedAt = java.time.LocalDateTime.of(2026, 10, 1, 12, 0);
+    var consultant = new de.caritas.cob.userservice.api.model.Consultant();
+    consultant.setId("c-1");
+    var removedWithConsultant = new ConsultantAgency();
+    removedWithConsultant.setDeleteDate(deletedAt);
+    when(consultantAgencyRepository.findByConsultantIdAndDeleteDate("c-1", deletedAt))
+        .thenReturn(java.util.List.of(removedWithConsultant));
+
+    agencyDeletionValidationService.restoreRelationsMarkedWith(consultant, deletedAt);
+
+    assertNull(removedWithConsultant.getDeleteDate());
+    org.mockito.Mockito.verify(consultantAgencyRepository).save(removedWithConsultant);
+    // Relations the counsellor had left earlier carry another date and are never looked up.
+    org.mockito.Mockito.verify(consultantAgencyRepository, org.mockito.Mockito.never())
+        .findByConsultantIdAndDeleteDateIsNull(any());
+  }
 }

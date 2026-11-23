@@ -120,6 +120,23 @@ class MultitenancyWithSingleDomainTenantResolverTest {
     assertThat(TenantContext.getCurrentTenant()).isNull();
   }
 
+  // ORISO-UserService#1534: public slugs may contain digits.
+  @Test
+  void resolve_Should_GetTenantIdFromConsultantPublicSlugWithDigits() {
+    ReflectionTestUtils.setField(
+        multitenancyWithSingleDomainTenantResolver, "multitenancyWithSingleDomain", true);
+    var slug = "qa-shazia-2810";
+    when(headersResolver.findHeaderValue("agencyId")).thenReturn(Optional.empty());
+    when(request.getRequestURI()).thenReturn("/service/users/consultants/" + slug);
+    Consultant consultant = new EasyRandom().nextObject(Consultant.class);
+    consultant.setTenantId(ANOTHER_TENANT);
+    when(consultantService.getConsultant(slug)).thenReturn(Optional.empty());
+    when(consultantService.getConsultantByPublicSlug(slug)).thenReturn(Optional.of(consultant));
+
+    assertThat(multitenancyWithSingleDomainTenantResolver.resolve(request))
+        .isEqualTo(Optional.of(ANOTHER_TENANT));
+  }
+
   @Test
   void
       resolve_Should_ResolveToEmptyTenant_When_FeatureMultitenancyWithSingleDomainIsEnabledAndNoAgencyIdIsProvidedAndUrlDoesNotMatchConsultantGetById() {

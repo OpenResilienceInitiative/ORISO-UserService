@@ -6,6 +6,7 @@ import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
+import jakarta.persistence.UniqueConstraint;
 import java.time.LocalDateTime;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
@@ -19,7 +20,12 @@ import lombok.ToString;
  * after the first post only participants (plus mentioned colleagues) are notified.
  */
 @Entity
-@Table(name = "team_discussion_participant")
+@Table(
+    name = "team_discussion_participant",
+    uniqueConstraints =
+        @UniqueConstraint(
+            name = "uk_td_participant",
+            columnNames = {"team_discussion_id", "consultant_id"}))
 @AllArgsConstructor
 @NoArgsConstructor
 @Getter
@@ -38,6 +44,10 @@ public class TeamDiscussionParticipant {
 
   @Column(name = "consultant_id", nullable = false, length = 36)
   private String consultantId;
+
+  /** Committed before a removal; retained until eligible access is restored. */
+  @Column(name = "access_repair_required", nullable = false)
+  private boolean accessRepairRequired;
 
   @Column(name = "join_date", nullable = false)
   private LocalDateTime joinDate;

@@ -1,5 +1,6 @@
 package de.caritas.cob.userservice.api.facade;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
@@ -10,9 +11,11 @@ import static org.mockito.Mockito.when;
 import de.caritas.cob.userservice.api.actions.chat.ChatReCreator;
 import de.caritas.cob.userservice.api.actions.chat.MatrixChatShutdownService;
 import de.caritas.cob.userservice.api.exception.httpresponses.ConflictException;
+import de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHttpStatusException;
 import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
 import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException;
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
+import de.caritas.cob.userservice.api.exception.httpresponses.customheader.HttpStatusExceptionReason;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.helper.ChatPermissionVerifier;
 import de.caritas.cob.userservice.api.model.Chat;
@@ -21,6 +24,7 @@ import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.service.ChatService;
 import de.caritas.cob.userservice.api.service.ConsultantService;
 import de.caritas.cob.userservice.api.service.chat.GroupChatRoleService;
+import de.caritas.cob.userservice.api.service.chat.RecurringGroupStopCoordinator;
 import de.caritas.cob.userservice.api.service.matrix.GroupChatMembershipService;
 import de.caritas.cob.userservice.api.service.user.UserService;
 import java.time.LocalDateTime;
@@ -30,13 +34,14 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.http.HttpStatus;
 
 @ExtendWith(MockitoExtension.class)
 class JoinAndLeaveChatFacadeTest {
 
   private static final long CHAT_ID = 42L;
-  private static final String MATRIX_ROOM_ID = "!group:matrix.oriso.org";
-  private static final String MATRIX_USER_ID = "@member:matrix.oriso.org";
+  private static final String MATRIX_ROOM_ID = "!group:matrix.example.org";
+  private static final String MATRIX_USER_ID = "@member:matrix.example.org";
 
   @InjectMocks private JoinAndLeaveChatFacade facade;
 
@@ -49,6 +54,31 @@ class JoinAndLeaveChatFacadeTest {
   @Mock private GroupChatMembershipService groupChatMembershipService;
   @Mock private MatrixChatShutdownService matrixChatShutdownService;
   @Mock private GroupChatRoleService groupChatRoleService;
+
+  @Mock private RecurringGroupStopCoordinator recurringStops;
+
+  @Mock
+  private de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService matrixSynapseService;
+
+  @Mock
+  private de.caritas.cob.userservice.api.service.chat.GroupWaitingRoomService groupWaitingRoom;
+
+  @org.junit.jupiter.api.BeforeEach
+  void wireRealDeployedGroupPolicy() {
+    org.mockito.Mockito.lenient()
+        .when(
+            recurringStops.withLockedOccurrence(
+                org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any()))
+        .thenAnswer(
+            invocation -> {
+              java.util.function.Function<Chat, ?> work = invocation.getArgument(1);
+              return work.apply(invocation.getArgument(0));
+            });
+    org.springframework.test.util.ReflectionTestUtils.setField(
+        facade,
+        "groupCounsellingDpaPolicy",
+        de.caritas.cob.userservice.api.testHelper.PermittingDpaOwnerFixture.groupPolicy());
+  }
 
   @Test
   void joinChatShouldRejectUnknownChat() {
@@ -120,6 +150,137 @@ class JoinAndLeaveChatFacadeTest {
   }
 
   @Test
+  void joinChatShouldAnswerForbiddenWithReasonWhenCallerIsBanned() {
+    Chat chat = activeMatrixChat();
+    User user = matrixUser();
+    when(userService.getUserViaAuthenticatedUser(authenticatedUser)).thenReturn(Optional.of(user));
+    when(groupChatMembershipService.isBannedFromRoom(chat, MATRIX_USER_ID))
+        .thenReturn(Optional.of(true));
+
+    var refusal =
+        assertThrows(
+            CustomValidationHttpStatusException.class,
+            () -> facade.joinChat(CHAT_ID, authenticatedUser));
+
+    assertEquals(HttpStatus.FORBIDDEN, refusal.getHttpStatus());
+    assertEquals(
+        HttpStatusExceptionReason.USER_BANNED_FROM_CHAT.name(),
+        refusal.getCustomHttpHeaders().getFirst("X-Reason"));
+  }
+
+  @Test
+  void joinChatShouldStayServerErrorWhenBanStateIsUnknown() {
+    Chat chat = activeMatrixChat();
+    User user = matrixUser();
+    when(userService.getUserViaAuthenticatedUser(authenticatedUser)).thenReturn(Optional.of(user));
+    when(groupChatMembershipService.isBannedFromRoom(chat, MATRIX_USER_ID))
+        .thenReturn(Optional.empty());
+
+    assertThrows(
+        InternalServerErrorException.class, () -> facade.joinChat(CHAT_ID, authenticatedUser));
+  }
+
+  // ORISO-UserService#1747: an audio or video circle is entered by knocking. Before this check,
+  // anyone with the invitation link could call /join directly and skip the waiting room.
+  @Test
+  void joinChatShouldRefuseAdviceSeekerOfVideoCircleWhoWasNotLetIn() {
+    Chat chat = selfHelpCircle(Chat.ChatModality.VIDEO);
+    asAdviceSeekerNotYetInRoom();
+    when(groupWaitingRoom.isAdmitted(CHAT_ID, "asker-id")).thenReturn(false);
+
+    var refusal =
+        assertThrows(
+            CustomValidationHttpStatusException.class,
+            () -> facade.joinChat(CHAT_ID, authenticatedUser));
+
+    assertEquals(HttpStatus.FORBIDDEN, refusal.getHttpStatus());
+    assertEquals(
+        HttpStatusExceptionReason.GROUP_ADMISSION_REQUIRED.name(),
+        refusal.getCustomHttpHeaders().getFirst("X-Reason"));
+    verify(groupChatMembershipService, never()).addMemberToRoom(chat, MATRIX_USER_ID);
+  }
+
+  @Test
+  void joinChatShouldLetAdviceSeekerOfAudioCircleInOnceAModeratorAdmittedThem() {
+    Chat chat = selfHelpCircle(Chat.ChatModality.AUDIO);
+    asAdviceSeekerNotYetInRoom();
+    when(groupWaitingRoom.isAdmitted(CHAT_ID, "asker-id")).thenReturn(true);
+    when(groupChatMembershipService.addMemberToRoom(chat, MATRIX_USER_ID)).thenReturn(true);
+
+    facade.joinChat(CHAT_ID, authenticatedUser);
+
+    verify(groupChatMembershipService).addMemberToRoom(chat, MATRIX_USER_ID);
+  }
+
+  @Test
+  void joinChatShouldLeaveAMemberAlreadyInTheVideoCircleAlone() {
+    selfHelpCircle(Chat.ChatModality.VIDEO);
+    User user = matrixUser();
+    when(userService.getUserViaAuthenticatedUser(authenticatedUser)).thenReturn(Optional.of(user));
+    when(matrixSynapseService.getRoomMembers(MATRIX_ROOM_ID))
+        .thenReturn(Optional.of(java.util.List.of(MATRIX_USER_ID)));
+
+    facade.joinChat(CHAT_ID, authenticatedUser);
+
+    verify(groupWaitingRoom, never())
+        .isAdmitted(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any());
+  }
+
+  @Test
+  void joinChatShouldKeepAgreeAndJoinForTextCircles() {
+    Chat chat = selfHelpCircle(Chat.ChatModality.TEXT);
+    asAdviceSeekerNotYetInRoom();
+    when(groupChatMembershipService.addMemberToRoom(chat, MATRIX_USER_ID)).thenReturn(true);
+
+    facade.joinChat(CHAT_ID, authenticatedUser);
+
+    verify(groupChatMembershipService).addMemberToRoom(chat, MATRIX_USER_ID);
+    verify(groupWaitingRoom, never())
+        .isAdmitted(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any());
+  }
+
+  @Test
+  void joinChatShouldNotMakeCounsellorsKnockOnAVideoCircle() {
+    Chat chat = selfHelpCircle(Chat.ChatModality.VIDEO);
+    Consultant consultant = mock(Consultant.class);
+    when(consultant.getMatrixUserId()).thenReturn(MATRIX_USER_ID);
+    when(consultantService.getConsultantViaAuthenticatedUser(authenticatedUser))
+        .thenReturn(Optional.of(consultant));
+    when(authenticatedUser.isConsultant()).thenReturn(true);
+    when(matrixSynapseService.getRoomMembers(MATRIX_ROOM_ID))
+        .thenReturn(Optional.of(java.util.List.of("@other:matrix.example.org")));
+    when(groupChatMembershipService.addMemberToRoom(chat, MATRIX_USER_ID)).thenReturn(true);
+
+    facade.joinChat(CHAT_ID, authenticatedUser);
+
+    verify(groupChatMembershipService).addMemberToRoom(chat, MATRIX_USER_ID);
+    verify(groupWaitingRoom, never())
+        .isAdmitted(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any());
+  }
+
+  private Chat selfHelpCircle(Chat.ChatModality modality) {
+    // The AVV enrolment rule has its own tests; here it only has to let the join through.
+    org.springframework.test.util.ReflectionTestUtils.setField(
+        facade,
+        "groupCounsellingDpaPolicy",
+        mock(de.caritas.cob.userservice.api.service.chat.GroupCounsellingDpaPolicy.class));
+    Chat chat = activeMatrixChat();
+    when(chat.getConversationType())
+        .thenReturn(de.caritas.cob.userservice.api.model.ConversationType.SELF_HELP);
+    org.mockito.Mockito.lenient().when(chat.getChatModality()).thenReturn(modality);
+    when(groupChatMembershipService.resolveMatrixRoomId(chat)).thenReturn(MATRIX_ROOM_ID);
+    return chat;
+  }
+
+  private void asAdviceSeekerNotYetInRoom() {
+    User user = matrixUser();
+    when(userService.getUserViaAuthenticatedUser(authenticatedUser)).thenReturn(Optional.of(user));
+    org.mockito.Mockito.lenient().when(authenticatedUser.getUserId()).thenReturn("asker-id");
+    when(matrixSynapseService.getRoomMembers(MATRIX_ROOM_ID))
+        .thenReturn(Optional.of(java.util.List.of("@other:matrix.example.org")));
+  }
+
+  @Test
   void leaveChatShouldRequireMatrixIdentity() {
     activeMatrixChat();
 
@@ -170,6 +331,19 @@ class JoinAndLeaveChatFacadeTest {
   }
 
   @Test
+  void lastMemberLeavingAMembersOnlyChatLeavesThePurgeToDeleteChat() {
+    Chat chat = activeMatrixChat();
+    when(chat.isMembersOnly()).thenReturn(true);
+    User user = matrixUser();
+    when(userService.getUserViaAuthenticatedUser(authenticatedUser)).thenReturn(Optional.of(user));
+
+    facade.leaveChat(CHAT_ID, authenticatedUser);
+
+    verify(chatService).deleteChat(chat);
+    verify(matrixChatShutdownService, never()).shutdownRoom(chat);
+  }
+
+  @Test
   void lastMemberLeavingRepetitiveChatShouldCreateNextOccurrence() {
     Chat chat = activeMatrixChat();
     User user = matrixUser();
@@ -177,11 +351,13 @@ class JoinAndLeaveChatFacadeTest {
     when(userService.getUserViaAuthenticatedUser(authenticatedUser)).thenReturn(Optional.of(user));
     when(chat.isRepetitive()).thenReturn(true);
     when(chat.nextStart()).thenReturn(nextStart);
-    when(chatReCreator.recreateMessengerChat(chat)).thenReturn("!next:matrix.oriso.org");
 
     facade.leaveChat(CHAT_ID, authenticatedUser);
 
-    verify(chatReCreator).updateAsNextChat(chat, "!next:matrix.oriso.org");
+    var order = org.mockito.Mockito.inOrder(chatReCreator, groupChatMembershipService);
+    order.verify(chatReCreator).removeFromPreparedRoom(chat, MATRIX_USER_ID);
+    order.verify(groupChatMembershipService).removeLeavingMemberFromRoom(chat, MATRIX_USER_ID);
+    verify(recurringStops).stopAfterLastLeave(chat, MATRIX_USER_ID);
     verify(chatService, never()).deleteChat(chat);
   }
 

@@ -11,6 +11,7 @@ import de.caritas.cob.userservice.api.adapters.web.dto.GroupSessionResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.LanguageCode;
 import de.caritas.cob.userservice.api.adapters.web.dto.SessionConsultantForConsultantDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.SessionDTO;
+import de.caritas.cob.userservice.api.adapters.web.dto.SessionSupervisionDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.SessionTopicDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.SessionUserDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.UserSessionResponseDTO;
@@ -18,10 +19,15 @@ import de.caritas.cob.userservice.api.helper.SessionDataKeyRegistration;
 import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.Session;
+import de.caritas.cob.userservice.api.model.SessionData;
+import de.caritas.cob.userservice.api.port.out.SessionSupervisorMarkerRow;
 import java.sql.Date;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
+import java.util.function.Function;
 import lombok.RequiredArgsConstructor;
 
 /** Mapper class to map a {@link Session} to possible dto objects. */
@@ -69,12 +75,161 @@ public class SessionMapper {
             nonNull(session.getUser()) && nonNull(session.getUser().getMatrixUserId())
                 ? session.getUser().getMatrixUserId()
                 : null)
+        /* ADR-002 silent membership: the room header shows only asker, assigned counsellor and
+        active supervisors, so the list/room DTO names the counsellor's Matrix id itself — never
+        the username. */
+        .consultantMatrixUserId(
+            nonNull(session.getConsultant()) ? session.getConsultant().getMatrixUserId() : null)
         .messageDate(toUnixTime(session.getEnquiryMessageDate()))
         .isTeamSession(session.isTeamSession())
         .language(LanguageCode.fromValue(session.getLanguageCode().name()))
         .registrationType(session.getRegistrationType().name())
         .createDate(toIsoTime(session.getCreateDate()))
-        .topic(new SessionTopicDTO().id(session.getMainTopicId()));
+        /* ADR-022 decision 2, read path. The pointer itself travels so a client that already
+        holds the currently published legal-text version can tell a stale consent from a
+        current one; consentRequired answers the part the server can decide on its own —
+        Gate 2 applies to this room and nothing has been recorded yet. This is the owner's
+        answer: only the owner (or their counsellor) reads this DTO. A joiner of a shared
+        appointment conversation (FE#2252) gets their own answer from
+        SessionConsentService#consentRequired on the join response. */
+        .consentedLegalVersionId(session.getConsentedLegalVersionId())
+        .consentRequired(
+            session.isConsentGateApplicable() && isNull(session.getConsentedLegalVersionId()))
+        .topic(new SessionTopicDTO().id(session.getMainTopicId()))
+        .directLinkMedium(directLinkMediumOf(session))
+        .directLinkName(session.getDirectLinkName());
+  }
+
+  /** FE#1952: an unknown stored value is left out rather than failing the whole list. */
+  private static SessionDTO.DirectLinkMediumEnum directLinkMediumOf(Session session) {
+    var medium = session.getDirectLinkMedium();
+    if (medium == null) {
+      return null;
+    }
+    try {
+      return SessionDTO.DirectLinkMediumEnum.fromValue(medium);
+    } catch (IllegalArgumentException unknown) {
+      return null;
+    }
+  }
+
+  /**
+   * Builds the ADR-008 supervision marker of one session as seen by the requesting consultant.
+   *
+   * <p>{@code supervisedByMe} is true exactly when the requester is one of the active supervisors —
+   * the reason a supervised case shows up in their list at all. Ids and display names are parallel
+   * lists in row order. Always returns an object (empty marker when nothing is supervised), so the
+   * frontend needs no null check on consultant-facing lists.
+   *
+   * @param activeSupervisors the active supervisor rows of this session (nullable = none)
+   * @param requestingConsultantId the requester's keycloak id (nullable = nobody)
+   * @param displayName resolves the display name shown to colleagues for one row
+   * @return the marker, never null
+   */
+  public SessionSupervisionDTO toSupervisionDTO(
+      List<SessionSupervisorMarkerRow> activeSupervisors,
+      String requestingConsultantId,
+      Function<SessionSupervisorMarkerRow, String> displayName) {
+    return toSupervisionDTO(activeSupervisors, requestingConsultantId, displayName, null);
+  }
+
+  /**
+   * {@link #toSupervisionDTO(List, String, Function)} plus the counsellor's internal display name,
+   * so a supervisor's panel can title the case by its responsible consultant without a second
+   * lookup (the public consultant endpoint hides the name of a non-public consultant).
+   *
+   * @param activeSupervisors the active supervisor rows of this session (nullable = none)
+   * @param requestingConsultantId the requester's keycloak id (nullable = nobody)
+   * @param displayName resolves the display name shown to colleagues for one row
+   * @param counsellorDisplayName the assigned consultant's internal display name (#996 rule),
+   *     nullable when the session has no consultant
+   * @return the marker, never null
+   */
+  public SessionSupervisionDTO toSupervisionDTO(
+      List<SessionSupervisorMarkerRow> activeSupervisors,
+      String requestingConsultantId,
+      Function<SessionSupervisorMarkerRow, String> displayName,
+      String counsellorDisplayName) {
+    return toSupervisionDTO(
+        activeSupervisors, requestingConsultantId, displayName, counsellorDisplayName, null);
+  }
+
+  /**
+   * Builds the marker including the private ADR-008 side room. The room is disclosed only to its
+   * assigned counsellor or an active supervisor. Legacy rows that stored the help-seeker room in
+   * the side-room column are rejected, as are inconsistent active rows naming multiple rooms.
+   */
+  public SessionSupervisionDTO toSupervisionDTO(
+      List<SessionSupervisorMarkerRow> activeSupervisors,
+      String requestingConsultantId,
+      Function<SessionSupervisorMarkerRow, String> displayName,
+      String counsellorDisplayName,
+      String counsellorConsultantId) {
+    List<String> ids = new ArrayList<>();
+    List<String> names = new ArrayList<>();
+    boolean supervisedByMe = false;
+    if (nonNull(activeSupervisors)) {
+      for (var row : activeSupervisors) {
+        ids.add(row.consultantId());
+        names.add(displayName.apply(row));
+        supervisedByMe |=
+            nonNull(requestingConsultantId) && requestingConsultantId.equals(row.consultantId());
+      }
+    }
+    String uniqueSideRoomId = uniqueRealSideRoom(activeSupervisors);
+    boolean requesterIsCounsellor =
+        nonNull(requestingConsultantId) && requestingConsultantId.equals(counsellorConsultantId);
+    boolean requesterOwnsSideRoom =
+        supervisedByMe
+            && supervisorOwnsSideRoom(activeSupervisors, requestingConsultantId, uniqueSideRoomId);
+    String sideRoomId =
+        nonNull(uniqueSideRoomId) && (requesterIsCounsellor || requesterOwnsSideRoom)
+            ? uniqueSideRoomId
+            : null;
+    return new SessionSupervisionDTO()
+        .supervisedByMe(supervisedByMe)
+        .supervisorConsultantIds(ids)
+        .supervisorDisplayNames(names)
+        .counsellorDisplayName(counsellorDisplayName)
+        .sideRoomId(sideRoomId);
+  }
+
+  private String uniqueRealSideRoom(List<SessionSupervisorMarkerRow> activeSupervisors) {
+    if (isNull(activeSupervisors)
+        || activeSupervisors.isEmpty()
+        || activeSupervisors.stream().anyMatch(row -> !isRealSideRoom(row))) {
+      return null;
+    }
+    var roomIds =
+        activeSupervisors.stream()
+            .map(SessionSupervisorMarkerRow::sideRoomId)
+            .distinct()
+            .limit(2)
+            .toList();
+    return roomIds.size() == 1 ? roomIds.getFirst() : null;
+  }
+
+  private boolean supervisorOwnsSideRoom(
+      List<SessionSupervisorMarkerRow> activeSupervisors,
+      String supervisorConsultantId,
+      String sideRoomId) {
+    return nonNull(activeSupervisors)
+        && nonNull(supervisorConsultantId)
+        && nonNull(sideRoomId)
+        && activeSupervisors.stream()
+            .anyMatch(
+                row ->
+                    supervisorConsultantId.equals(row.consultantId())
+                        && sideRoomId.equals(row.sideRoomId())
+                        && isRealSideRoom(row));
+  }
+
+  private boolean isRealSideRoom(SessionSupervisorMarkerRow row) {
+    return nonNull(row.sideRoomId())
+        && !row.sideRoomId().isBlank()
+        && nonNull(row.clientRoomId())
+        && !row.clientRoomId().isBlank()
+        && !row.sideRoomId().equals(row.clientRoomId());
   }
 
   private SessionUserDTO convertToSessionUserDTO(Session session) {
@@ -84,9 +239,17 @@ public class SessionMapper {
 
     var sessionUserDto = new SessionUserDTO();
     sessionUserDto.setId(session.getUser().getUserId());
+    sessionUserDto.setAvatarId(session.getUser().getAvatarId());
     sessionUserDto.setUsername(
         new UsernameTranscoder().decodeUsername(session.getUser().getUsername()));
-    sessionUserDto.setDeleted(session.getUser().getDeleteDate() != null);
+    var temporaryAccount =
+        de.caritas.cob.userservice.api.service.temporaryaccount.TemporaryAccountService.toDtoOrNull(
+            session.getUser());
+    sessionUserDto.setTemporaryAccount(temporaryAccount);
+    // A deleted direct-link guest shows as "Gast (gelöscht)" (ADR-029 §5, #1476).
+    sessionUserDto.setDeleted(
+        session.getUser().getDeleteDate() != null
+            || (temporaryAccount != null && Boolean.TRUE.equals(temporaryAccount.getDeleted())));
     if (nonNull(session.getSessionData())) {
       var sessionData = buildSessionDataMapFromSession(session);
       sessionUserDto.setSessionData(sessionData);
@@ -105,6 +268,9 @@ public class SessionMapper {
             .id(consultant.getId())
             .firstName(consultant.getFirstName())
             .lastName(consultant.getLastName())
+            .avatarKind(
+                consultant.getAvatarKind() == null ? null : consultant.getAvatarKind().name())
+            .avatarId(consultant.getAvatarId())
         : null;
   }
 
@@ -117,11 +283,34 @@ public class SessionMapper {
     return sessionDataMap;
   }
 
+  /**
+   * The asker's own view of themself in a session: only the alias a counsellor sees (#2175). Other
+   * registration data is not repeated in the asker's list.
+   */
+  public SessionUserDTO toOwnSessionAlias(Session session) {
+    if (session.getUser() == null) {
+      return null;
+    }
+    var user = new SessionUserDTO();
+    user.setId(session.getUser().getUserId());
+    user.setUsername(new UsernameTranscoder().decodeUsername(session.getUser().getUsername()));
+    if (nonNull(session.getSessionData())) {
+      session.getSessionData().stream()
+          .filter(data -> SessionDataKeyRegistration.DISPLAY_NAME.getValue().equals(data.getKey()))
+          .map(SessionData::getValue)
+          .filter(value -> value != null && !value.isBlank())
+          .findFirst()
+          .ifPresent(user::setDisplayName);
+    }
+    return user;
+  }
+
   public GroupSessionResponseDTO toGroupSessionResponse(
       UserSessionResponseDTO userSessionResponse) {
     var response =
         new GroupSessionResponseDTO()
             .session(userSessionResponse.getSession())
+            .user(userSessionResponse.getUser())
             .agency(userSessionResponse.getAgency())
             .chat(userSessionResponse.getChat())
             .latestMessage(userSessionResponse.getLatestMessage());
@@ -136,7 +325,9 @@ public class SessionMapper {
             .username(sessionConsultant.getUsername())
             .displayName(sessionConsultant.getDisplayName())
             .isAbsent(sessionConsultant.isAbsent())
-            .absenceMessage(sessionConsultant.getAbsenceMessage());
+            .absenceMessage(sessionConsultant.getAbsenceMessage())
+            .avatarKind(sessionConsultant.getAvatarKind())
+            .avatarId(sessionConsultant.getAvatarId());
     return response.consultant(consultant.build());
   }
 
@@ -158,7 +349,9 @@ public class SessionMapper {
             .id(sessionConsultant.getId())
             .firstName(sessionConsultant.getFirstName())
             .lastName(sessionConsultant.getLastName())
-            .displayName(sessionConsultant.getDisplayName());
+            .displayName(sessionConsultant.getDisplayName())
+            .avatarKind(sessionConsultant.getAvatarKind())
+            .avatarId(sessionConsultant.getAvatarId());
     return response.consultant(consultant.build());
   }
 }

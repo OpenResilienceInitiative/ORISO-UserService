@@ -1,20 +1,22 @@
 package de.caritas.cob.userservice.api.conversation.provider;
 
 import static de.caritas.cob.userservice.api.conversation.model.ConversationListType.ANONYMOUS_ENQUIRY;
+import static de.caritas.cob.userservice.api.helper.CustomLocalDateTime.nowInUtc;
 import static de.caritas.cob.userservice.api.model.Session.RegistrationType.ANONYMOUS;
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.CONSULTING_TYPE_ID_OFFENDER;
 import static java.util.Collections.singletonList;
 import static java.util.Objects.nonNull;
 import static org.hamcrest.MatcherAssert.assertThat;
+import static org.hamcrest.Matchers.greaterThanOrEqualTo;
 import static org.hamcrest.Matchers.hasSize;
 import static org.hamcrest.Matchers.is;
-import static org.hamcrest.Matchers.lessThanOrEqualTo;
 import static org.hibernate.validator.internal.util.CollectionHelper.asSet;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 import com.google.api.client.util.Lists;
+import com.neovisionaries.i18n.LanguageCode;
 import de.caritas.cob.userservice.api.UserServiceApplication;
 import de.caritas.cob.userservice.api.adapters.web.dto.AgencyDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantSessionListResponseDTO;
@@ -128,9 +130,34 @@ class AnonymousEnquiryConversationListProviderIT {
       ConsultantSessionResponseDTO current = peeker.next();
       ConsultantSessionResponseDTO next = peeker.peek();
       if (nonNull(next)) {
-        assertThat(next.getLatestMessage(), lessThanOrEqualTo(current.getLatestMessage()));
+        assertThat(next.getLatestMessage(), greaterThanOrEqualTo(current.getLatestMessage()));
       }
     }
+  }
+
+  /**
+   * The counsellor's side of ORISO-Frontend#1404.
+   *
+   * <p>A live-chat enquiry has no goodbye: closing the tab leaves it NEW forever, so the queue
+   * decides who is still there by the last sign of life instead. What the asker sees as "people
+   * ahead" and what the counsellor sees as cards have to agree about that, or one guest who
+   * reloaded a few times fills the counsellor's queue with copies of themselves.
+   *
+   * <p>Fixtures are written in UTC because that is what the application writes ({@code nowInUtc}).
+   * A cutoff taken from the server's local clock is hours away from them on a non-UTC host, which
+   * at a five-minute window empties the queue entirely — this test says so.
+   */
+  @Test
+  void buildConversations_Should_onlyShowGuestsSeenWithinTheConfiguredWindow() {
+    saveWaitingSession(nowInUtc().minusMinutes(60));
+    saveWaitingSession(nowInUtc().minusMinutes(1));
+    PageableListRequest request = PageableListRequest.builder().count(10).offset(0).build();
+
+    ConsultantSessionListResponseDTO responseDTO =
+        this.anonymousEnquiryConversationListProvider.buildConversations(request);
+
+    assertThat(responseDTO.getTotal(), is(1));
+    assertThat(responseDTO.getSessions(), hasSize(1));
   }
 
   @Test
@@ -141,11 +168,35 @@ class AnonymousEnquiryConversationListProviderIT {
     assertThat(conversationListType, is(ANONYMOUS_ENQUIRY));
   }
 
+  /** One waiting live-chat enquiry whose last sign of life was at {@code lastSeen}. */
+  private void saveWaitingSession(LocalDateTime lastSeen) {
+    User user = this.userRepository.findAll().iterator().next();
+    user.setDataPrivacyConfirmation(nowInUtc());
+    this.userRepository.save(user);
+
+    var session = new Session();
+    session.setUser(user);
+    session.setRegistrationType(ANONYMOUS);
+    session.setConsultant(null);
+    session.setPostcode("12345");
+    session.setLanguageCode(LanguageCode.de);
+    session.setConsultingTypeId(CONSULTING_TYPE_ID_OFFENDER);
+    session.setStatus(SessionStatus.NEW);
+    session.setMainTopicId(11L);
+    session.setSessionTopics(Lists.newArrayList());
+    session.setIsConsultantDirectlySet(false);
+    session.setTeamSession(false);
+    session.setCreateDate(lastSeen);
+    session.setEnquiryMessageDate(lastSeen);
+    session.setUpdateDate(lastSeen);
+    this.sessionRepository.save(session);
+  }
+
   private void saveAnonymousSessions(int amount) {
     List<Session> sessions =
         new EasyRandom().objects(Session.class, amount + 4).collect(Collectors.toList());
     User user = this.userRepository.findAll().iterator().next();
-    user.setDataPrivacyConfirmation(LocalDateTime.now());
+    user.setDataPrivacyConfirmation(nowInUtc());
     this.userRepository.save(user);
     var sessionIndex = new AtomicInteger();
     var baseDate = LocalDateTime.of(2026, 1, 1, 12, 0);
@@ -156,6 +207,9 @@ class AnonymousEnquiryConversationListProviderIT {
           session.setConsultant(null);
           session.setUser(user);
           session.setId(null);
+          // A random string would not fit the column; these are no direct-link sessions (#1952).
+          session.setDirectLinkMedium(null);
+          session.setConversationType(null);
           session.setSessionData(null);
           session.setPostcode("12345");
           session.setConsultingTypeId(CONSULTING_TYPE_ID_OFFENDER);
@@ -164,7 +218,7 @@ class AnonymousEnquiryConversationListProviderIT {
           session.setSessionTopics(Lists.newArrayList());
           session.setCreateDate(orderedDate);
           session.setEnquiryMessageDate(orderedDate);
-          session.setUpdateDate(LocalDateTime.now());
+          session.setUpdateDate(nowInUtc());
         });
     sessions.get(0).setStatus(SessionStatus.INITIAL);
     sessions.get(1).setStatus(SessionStatus.IN_PROGRESS);

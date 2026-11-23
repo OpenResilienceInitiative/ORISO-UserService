@@ -3,8 +3,10 @@ package de.caritas.cob.userservice.api.facade.conversation;
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.CONSULTING_TYPE_ID_KREUZBUND;
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.CONSULTING_TYPE_ID_SUCHT;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
@@ -20,25 +22,114 @@ import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestExceptio
 import de.caritas.cob.userservice.api.helper.UserHelper;
 import de.caritas.cob.userservice.api.manager.consultingtype.ConsultingTypeManager;
 import de.caritas.cob.userservice.api.model.Session;
+import de.caritas.cob.userservice.api.tenant.TenantContext;
 import de.caritas.cob.userservice.consultingtypeservice.generated.web.model.ExtendedConsultingTypeResponseDTO;
+import java.util.concurrent.atomic.AtomicReference;
 import org.jeasy.random.EasyRandom;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.test.util.ReflectionTestUtils;
 
 @ExtendWith(MockitoExtension.class)
 public class CreateAnonymousEnquiryFacadeTest {
 
-  @InjectMocks private CreateAnonymousEnquiryFacade createAnonymousEnquiryFacade;
+  private CreateAnonymousEnquiryFacade createAnonymousEnquiryFacade;
   @Mock private AnonymousUserCreatorService anonymousUserCreatorService;
   @Mock private AnonymousConversationCreatorService anonymousConversationCreatorService;
   @Mock private AnonymousUsernameRegistry usernameRegistry;
   @Mock private UserHelper userHelper;
   @Mock private ConsultingTypeManager consultingTypeManager;
 
+  @org.junit.jupiter.api.BeforeEach
+  void realDpaPolicyFixture() {
+    createAnonymousEnquiryFacade =
+        new CreateAnonymousEnquiryFacade(
+            anonymousUserCreatorService,
+            de.caritas.cob.userservice.api.testHelper.PermittingDpaOwnerFixture.policy(),
+            anonymousConversationCreatorService,
+            usernameRegistry,
+            userHelper,
+            consultingTypeManager,
+            mock(de.caritas.cob.userservice.api.admin.service.tenant.TenantService.class));
+  }
+
   EasyRandom easyRandom = new EasyRandom();
+
+  @Test
+  void pausedTenantStopsAnonymousCreationBeforeIdentityRowsUsernameOrConversationWork() {
+    ReflectionTestUtils.setField(
+        createAnonymousEnquiryFacade,
+        "tenantService",
+        de.caritas.cob.userservice.api.testHelper.PausedTenantAuthorityFixture.paused(79L));
+    TenantContext.setCurrentTenant(79L);
+    var refused =
+        org.junit.jupiter.api.Assertions.assertThrows(
+            org.springframework.web.server.ResponseStatusException.class,
+            () ->
+                createAnonymousEnquiryFacade.createAnonymousEnquiry(
+                    new CreateAnonymousEnquiryDTO(1), false));
+    org.junit.jupiter.api.Assertions.assertEquals(
+        org.springframework.http.HttpStatus.FORBIDDEN, refused.getStatusCode());
+    org.mockito.Mockito.verifyNoInteractions(
+        anonymousUserCreatorService,
+        anonymousConversationCreatorService,
+        usernameRegistry,
+        userHelper,
+        consultingTypeManager);
+  }
+
+  @Test
+  void createAnonymousEnquiry_Should_CreateTheHandleTheGuestRolled_When_OneIsChosen() {
+    when(usernameRegistry.claimChosenUsername("katze_sam_4821")).thenReturn("enc.katze");
+    when(anonymousUserCreatorService.createAnonymousUser(any()))
+        .thenReturn(AnonymousUserCredentials.builder().userId("user-id").build());
+    when(anonymousConversationCreatorService.createAnonymousConversation(any(), any()))
+        .thenReturn(easyRandom.nextObject(Session.class));
+
+    var response =
+        createAnonymousEnquiryFacade.createAnonymousEnquiry(
+            new CreateAnonymousEnquiryDTO(CONSULTING_TYPE_ID_SUCHT), true, "katze_sam_4821");
+
+    var created =
+        org.mockito.ArgumentCaptor.forClass(
+            de.caritas.cob.userservice.api.adapters.web.dto.UserDTO.class);
+    verify(anonymousUserCreatorService).createAnonymousUser(created.capture());
+    assertEquals("enc.katze", created.getValue().getUsername());
+    assertEquals("enc.katze", response.getUserName());
+    verify(usernameRegistry, org.mockito.Mockito.never()).generateUniqueUsername();
+  }
+
+  @Test
+  void createAnonymousEnquiry_Should_CreateNothing_When_TheChosenHandleIsRefused() {
+    when(usernameRegistry.claimChosenUsername("max_mustermann"))
+        .thenThrow(new BadRequestException("typed"));
+
+    assertThrows(
+        BadRequestException.class,
+        () ->
+            createAnonymousEnquiryFacade.createAnonymousEnquiry(
+                new CreateAnonymousEnquiryDTO(CONSULTING_TYPE_ID_SUCHT), true, "max_mustermann"));
+    verifyNoInteractions(anonymousUserCreatorService, anonymousConversationCreatorService);
+  }
+
+  @Test
+  void createAnonymousEnquiry_Should_LetTheServerRoll_When_NoHandleIsChosen() {
+    when(usernameRegistry.generateUniqueUsername()).thenReturn("enc.eule");
+    when(anonymousUserCreatorService.createAnonymousUser(any()))
+        .thenReturn(AnonymousUserCredentials.builder().userId("user-id").build());
+    when(anonymousConversationCreatorService.createAnonymousConversation(any(), any()))
+        .thenReturn(easyRandom.nextObject(Session.class));
+
+    var response =
+        createAnonymousEnquiryFacade.createAnonymousEnquiry(
+            new CreateAnonymousEnquiryDTO(CONSULTING_TYPE_ID_SUCHT), true, null);
+
+    assertEquals("enc.eule", response.getUserName());
+    verify(usernameRegistry, org.mockito.Mockito.never()).claimChosenUsername(any());
+  }
 
   @Test
   void createAnonymousEnquiry_Should_ReturnMatrixOnlyResponse() {
@@ -79,7 +170,7 @@ public class CreateAnonymousEnquiryFacadeTest {
                   anonymousEnquiryDTO.getConsultingType()))
               .thenReturn(consultingTypeResponseDTO);
 
-          createAnonymousEnquiryFacade.createAnonymousEnquiry(anonymousEnquiryDTO);
+          createAnonymousEnquiryFacade.createAnonymousEnquiry(anonymousEnquiryDTO, false);
 
           verifyNoInteractions(anonymousUserCreatorService);
           verifyNoInteractions(anonymousConversationCreatorService);
@@ -103,11 +194,61 @@ public class CreateAnonymousEnquiryFacadeTest {
     when(consultingTypeManager.getConsultingTypeSettings(anonymousEnquiryDTO.getConsultingType()))
         .thenReturn(consultingTypeResponseDTO);
 
-    createAnonymousEnquiryFacade.createAnonymousEnquiry(anonymousEnquiryDTO);
+    createAnonymousEnquiryFacade.createAnonymousEnquiry(anonymousEnquiryDTO, false);
 
     verify(anonymousUserCreatorService, times(1)).createAnonymousUser(any());
     verify(anonymousConversationCreatorService, times(1)).createAnonymousConversation(any(), any());
     verify(consultingTypeManager, times(1))
         .getConsultingTypeSettings(anonymousEnquiryDTO.getConsultingType());
+  }
+
+  // --- which tenant the enquiry is written in ---------------------------------------------------
+
+  @AfterEach
+  void clearTenant() {
+    TenantContext.clear();
+  }
+
+  @Test
+  void createAnonymousEnquiry_Should_WriteInTheCallersTenant_When_OneIsSet() {
+    TenantContext.setCurrentTenant(5L);
+    var writtenIn = givenCreationRecordsItsTenant();
+
+    createAnonymousEnquiryFacade.createAnonymousEnquiry(anonymousEnquiry(), false);
+
+    assertEquals(5L, writtenIn.get());
+  }
+
+  @Test
+  void createAnonymousEnquiry_Should_Proceed_When_SingleTenantDeploymentHasNoTenant() {
+    TenantContext.clear();
+    var writtenIn = givenCreationRecordsItsTenant();
+
+    createAnonymousEnquiryFacade.createAnonymousEnquiry(anonymousEnquiry(), false);
+
+    assertNull(writtenIn.get());
+    verify(anonymousUserCreatorService).createAnonymousUser(any());
+  }
+
+  private CreateAnonymousEnquiryDTO anonymousEnquiry() {
+    var dto = new CreateAnonymousEnquiryDTO(CONSULTING_TYPE_ID_SUCHT);
+    var settings = easyRandom.nextObject(ExtendedConsultingTypeResponseDTO.class);
+    settings.setIsAnonymousConversationAllowed(true);
+    when(consultingTypeManager.getConsultingTypeSettings(CONSULTING_TYPE_ID_SUCHT))
+        .thenReturn(settings);
+    return dto;
+  }
+
+  private AtomicReference<Long> givenCreationRecordsItsTenant() {
+    var writtenIn = new AtomicReference<Long>();
+    when(anonymousUserCreatorService.createAnonymousUser(any()))
+        .thenAnswer(
+            call -> {
+              writtenIn.set(TenantContext.getCurrentTenant());
+              return easyRandom.nextObject(AnonymousUserCredentials.class);
+            });
+    when(anonymousConversationCreatorService.createAnonymousConversation(any(), any()))
+        .thenReturn(easyRandom.nextObject(Session.class));
+    return writtenIn;
   }
 }

@@ -1,16 +1,26 @@
 package de.caritas.cob.userservice.api.adapters.web.controller;
 
-import com.google.common.collect.Lists;
 import de.caritas.cob.userservice.api.adapters.web.dto.AdminFilter;
+import de.caritas.cob.userservice.api.adapters.web.dto.AdminListPreferencesDTO;
+import de.caritas.cob.userservice.api.adapters.web.dto.AdminListSortDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.AdminResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.AdminSearchResultDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.AgencyConsultantResponseDTO;
+import de.caritas.cob.userservice.api.adapters.web.dto.AgencyContactCoverageDTO;
+import de.caritas.cob.userservice.api.adapters.web.dto.AgencyContactCoverageRequestDTO;
+import de.caritas.cob.userservice.api.adapters.web.dto.AgencyContactPersonAdminDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.AgencyTypeDTO;
+import de.caritas.cob.userservice.api.adapters.web.dto.AskerFilter;
+import de.caritas.cob.userservice.api.adapters.web.dto.AskerReactivationRequestDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.AskerResponseDTO;
+import de.caritas.cob.userservice.api.adapters.web.dto.AskerSearchResultDTO;
+import de.caritas.cob.userservice.api.adapters.web.dto.ChangeConsultantTenantDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantAdminResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantAgencyResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantFilter;
 import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantSearchResultDTO;
+import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantTenantChangeResultDTO;
+import de.caritas.cob.userservice.api.adapters.web.dto.ContactAdminDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateAdminAgencyRelationDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateAdminDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateConsultantAgencyDTO;
@@ -22,9 +32,14 @@ import de.caritas.cob.userservice.api.adapters.web.dto.RootDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.SessionAdminResultDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.SessionFilter;
 import de.caritas.cob.userservice.api.adapters.web.dto.Sort;
+import de.caritas.cob.userservice.api.adapters.web.dto.TenantAdminLoginEmailsDTO;
+import de.caritas.cob.userservice.api.adapters.web.dto.TenantContactPersonDTO;
+import de.caritas.cob.userservice.api.adapters.web.dto.TenantDeletionBlockersDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.UpdateAdminConsultantDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.UpdateAgencyAdminDTO;
+import de.caritas.cob.userservice.api.adapters.web.dto.UpdateContactPersonDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.UpdateTenantAdminDTO;
+import de.caritas.cob.userservice.api.adapters.web.dto.UpdateTenantContactPersonDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.UserIdentitiesDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.ViolationDTO;
 import de.caritas.cob.userservice.api.adapters.web.mapping.AdminDtoMapper;
@@ -34,21 +49,27 @@ import de.caritas.cob.userservice.api.admin.facade.ConsultantAdminFacade;
 import de.caritas.cob.userservice.api.admin.hallink.RootDTOBuilder;
 import de.caritas.cob.userservice.api.admin.report.service.ViolationReportGenerator;
 import de.caritas.cob.userservice.api.admin.service.consultant.create.GrantConsultantIdentityService;
+import de.caritas.cob.userservice.api.admin.service.contactperson.ContactPersonAdminService;
+import de.caritas.cob.userservice.api.admin.service.listpreference.AdminListPreferenceService;
+import de.caritas.cob.userservice.api.admin.service.listpreference.AdminListPreferenceService.ListSort;
 import de.caritas.cob.userservice.api.admin.service.session.SessionAdminService;
+import de.caritas.cob.userservice.api.admin.service.tenant.TenantDeletionBlockerService;
+import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
-import de.caritas.cob.userservice.api.service.appointment.AppointmentService;
-import de.caritas.cob.userservice.api.service.helper.EmailUrlDecoder;
+import de.caritas.cob.userservice.api.helper.PasswordPolicy;
+import de.caritas.cob.userservice.api.helper.UserHelper;
+import de.caritas.cob.userservice.api.model.Admin;
+import de.caritas.cob.userservice.api.port.out.SearchFilter;
 import de.caritas.cob.userservice.api.service.identity.UserIdentitiesService;
 import de.caritas.cob.userservice.generated.api.adapters.web.controller.UseradminApi;
 import io.swagger.annotations.Api;
 import jakarta.validation.Valid;
-import java.net.URLDecoder;
-import java.nio.charset.StandardCharsets;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.apache.commons.validator.routines.EmailValidator;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.validation.annotation.Validated;
@@ -69,16 +90,36 @@ import org.springframework.web.bind.annotation.RestController;
 @Api(tags = "admin-user-controller")
 public class UserAdminController implements UseradminApi {
 
+  @org.springframework.beans.factory.annotation.Autowired
+  private IdentityObservationHttpAdapter identityObservationHttpAdapter;
+
+  @Override
+  public ResponseEntity<
+          de.caritas.cob.userservice.api.adapters.web.dto.IdentityObservationResponseDTO>
+      observeIdentityOccupancy(
+          de.caritas.cob.userservice.api.adapters.web.dto.IdentityObservationRequestDTO request) {
+    return identityObservationHttpAdapter.observeIdentityOccupancy(request);
+  }
+
   private final @NonNull SessionAdminService sessionAdminService;
   private final @NonNull ViolationReportGenerator violationReportGenerator;
   private final @NonNull ConsultantAdminFacade consultantAdminFacade;
   private final @NonNull AskerUserAdminFacade askerUserAdminFacade;
   private final @NonNull AdminUserFacade adminUserFacade;
-  private final @NonNull AppointmentService appointmentService;
   private final @NonNull AdminDtoMapper adminDtoMapper;
   private final @NonNull AuthenticatedUser authenticatedUser;
   private final @NonNull GrantConsultantIdentityService grantConsultantIdentityService;
   private final @NonNull UserIdentitiesService userIdentitiesService;
+  private final @NonNull AdminListPreferenceService adminListPreferenceService;
+  private final @NonNull de.caritas.cob.userservice.api.service.accountinvite
+          .ExistingAccountSetupIssuer
+      accountSetupIssuer;
+  private final @NonNull UserHelper userHelper;
+  private final @NonNull TenantDeletionBlockerService tenantDeletionBlockerService;
+  private final @NonNull ContactPersonAdminService contactPersonAdminService;
+
+  /** Never typed by anyone and valid until the setup link expires, so length costs nothing. */
+  static final int SETUP_ONLY_PASSWORD_LENGTH = 32;
 
   /**
    * Creates the root hal based navigation entity.
@@ -89,6 +130,26 @@ public class UserAdminController implements UseradminApi {
   public ResponseEntity<RootDTO> getRoot() {
     RootDTO rootDTO = new RootDTOBuilder().buildRootDTO();
     return ResponseEntity.ok(rootDTO);
+  }
+
+  /** The caller's own saved user-list sorts, keyed by tab (#1263). */
+  @Override
+  public ResponseEntity<AdminListPreferencesDTO> getOwnAdminListPreferences() {
+    var sorts = new LinkedHashMap<String, AdminListSortDTO>();
+    adminListPreferenceService
+        .findOwnSorts(authenticatedUser.getUserId())
+        .forEach(
+            (tab, sort) ->
+                sorts.put(tab, new AdminListSortDTO().field(sort.field()).order(sort.order())));
+    return ResponseEntity.ok(new AdminListPreferencesDTO().sorts(sorts));
+  }
+
+  /** Saves the caller's last chosen sort for one user-list tab (#1263). */
+  @Override
+  public ResponseEntity<Void> putOwnAdminListSort(String tab, AdminListSortDTO sort) {
+    adminListPreferenceService.saveOwnSort(
+        authenticatedUser.getUserId(), tab, new ListSort(sort.getField(), sort.getOrder()));
+    return ResponseEntity.noContent().build();
   }
 
   /**
@@ -122,10 +183,37 @@ public class UserAdminController implements UseradminApi {
     de.caritas.cob.userservice.api.helper.PlainCredentialsHolder.set(
         createConsultantDTO.getUsername(), null);
 
-    createConsultantDTO.setEmail(createConsultantDTO.getEmail().toLowerCase());
+    createConsultantDTO.setEmail(createConsultantDTO.getEmail().toLowerCase(Locale.ROOT));
+    // #1144: the setup e-mail is the way in, so the first password is one nobody knows. It is
+    // generated here, not in the saga, because the setup issuer below needs the same value. An
+    // empty password never gets here: the request validation answers 400.
+    requireMinimumPasswordLength(createConsultantDTO.getPassword());
+    if (createConsultantDTO.getPassword() == null) {
+      createConsultantDTO.setPassword(userHelper.getRandomPassword(SETUP_ONLY_PASSWORD_LENGTH));
+    }
     var consultant = consultantAdminFacade.createNewConsultant(createConsultantDTO);
+    accountSetupIssuer.issueAfterCreation(
+        de.caritas.cob.userservice.api.service.accountinvite.AccountInviteTargetRole.COUNSELLOR,
+        consultant.getEmbedded().getId(),
+        createConsultantDTO.getPassword());
 
     return ResponseEntity.ok(consultant);
+  }
+
+  /**
+   * Completes the chat (Matrix) provisioning of a consultant created while the chat server was
+   * unreachable.
+   *
+   * <p>Idempotent: a consultant that already owns a chat identity is answered {@code 200} and left
+   * unchanged. A chat server that is still down answers {@code 424}.
+   *
+   * @param consultantId the id of the consultant to repair (required)
+   * @return {@link ConsultantAdminResponseDTO} carrying the resulting {@code chatIdentityStatus}
+   */
+  @Override
+  public ResponseEntity<ConsultantAdminResponseDTO> repairConsultantChatIdentity(
+      @PathVariable String consultantId) {
+    return ResponseEntity.ok(this.consultantAdminFacade.repairConsultantChatIdentity(consultantId));
   }
 
   /**
@@ -196,8 +284,6 @@ public class UserAdminController implements UseradminApi {
   @Override
   public ResponseEntity<Void> createConsultantAgency(
       @PathVariable String consultantId, CreateConsultantAgencyDTO createConsultantAgencyDTO) {
-    consultantAdminFacade.checkPermissionsToAssignedAgencies(
-        Lists.newArrayList(createConsultantAgencyDTO));
     this.consultantAdminFacade.createNewConsultantAgency(consultantId, createConsultantAgencyDTO);
     return new ResponseEntity<>(HttpStatus.CREATED);
   }
@@ -205,9 +291,21 @@ public class UserAdminController implements UseradminApi {
   @Override
   public ResponseEntity<Void> setConsultantAgencies(
       String consultantId, List<CreateConsultantAgencyDTO> agencyList) {
-    this.consultantAdminFacade.checkPermissionsToAssignedAgencies(agencyList);
     this.consultantAdminFacade.setConsultantAgencies(consultantId, agencyList);
     return ResponseEntity.ok().build();
+  }
+
+  /**
+   * Moves a consultant to another Träger; their cases stay with the old one [platform admin only].
+   *
+   * @param consultantId Consultant Id (required)
+   * @param changeConsultantTenantDTO the new Träger, its centres and topics (required)
+   */
+  @Override
+  public ResponseEntity<ConsultantTenantChangeResultDTO> changeConsultantTenant(
+      @PathVariable String consultantId, ChangeConsultantTenantDTO changeConsultantTenantDTO) {
+    return ResponseEntity.ok(
+        consultantAdminFacade.changeConsultantTenant(consultantId, changeConsultantTenantDTO));
   }
 
   /**
@@ -256,6 +354,17 @@ public class UserAdminController implements UseradminApi {
     return new ResponseEntity<>(HttpStatus.OK);
   }
 
+  /** Cancels a consultant deletion while it is still within the safeguard window. */
+  @PostMapping(
+      value = {
+        "/useradmin/consultants/{consultantId}/deletion/cancel",
+        "/service/useradmin/consultants/{consultantId}/deletion/cancel"
+      })
+  public ResponseEntity<Void> cancelConsultantDeletion(@PathVariable String consultantId) {
+    this.consultantAdminFacade.cancelConsultantDeletion(consultantId);
+    return new ResponseEntity<>(HttpStatus.OK);
+  }
+
   /**
    * Entry point to update a consultant. Accepts the full {@link UpdateAdminConsultantDTO} including
    * an optional {@code topicIds} list that fully replaces the consultant's current topics (add new
@@ -285,7 +394,7 @@ public class UserAdminController implements UseradminApi {
   private ConsultantAdminResponseDTO performUpdate(
       String consultantId, UpdateAdminConsultantDTO updateConsultantDTO) {
     if (updateConsultantDTO.getEmail() != null) {
-      updateConsultantDTO.setEmail(updateConsultantDTO.getEmail().toLowerCase());
+      updateConsultantDTO.setEmail(updateConsultantDTO.getEmail().toLowerCase(Locale.ROOT));
     }
     return consultantAdminFacade.updateConsultant(consultantId, updateConsultantDTO);
   }
@@ -360,6 +469,20 @@ public class UserAdminController implements UseradminApi {
   }
 
   /**
+   * GET /useradmin/askers: advice seekers within the caller's reach, newest first.
+   *
+   * @param page page to return, 1-based (required)
+   * @param perPage page size, at most 100 (required)
+   * @param filter username, agency and (platform admins only) Träger
+   * @return the page and the total number of matches
+   */
+  @Override
+  public ResponseEntity<AskerSearchResultDTO> getAskers(
+      Integer page, Integer perPage, AskerFilter filter) {
+    return ResponseEntity.ok(askerUserAdminFacade.findAskers(page, perPage, filter));
+  }
+
+  /**
    * Entry point to mark a asker for deletion.
    *
    * @param askerId asker id (required)
@@ -386,6 +509,18 @@ public class UserAdminController implements UseradminApi {
     return new ResponseEntity<>(HttpStatus.OK);
   }
 
+  @PostMapping(
+      value = {
+        "/useradmin/askers/deletion/reactivate",
+        "/service/useradmin/askers/deletion/reactivate"
+      },
+      consumes = "application/json")
+  public ResponseEntity<Void> reactivateAsker(
+      @Valid @RequestBody AskerReactivationRequestDTO reactivationRequest) {
+    askerUserAdminFacade.reactivateAsker(reactivationRequest);
+    return ResponseEntity.noContent().build();
+  }
+
   @Override
   public ResponseEntity<AskerResponseDTO> getAsker(String askerId) {
     AskerResponseDTO response = this.askerUserAdminFacade.getAsker(askerId);
@@ -394,7 +529,8 @@ public class UserAdminController implements UseradminApi {
 
   @Override
   public ResponseEntity<AdminResponseDTO> createTenantAdmin(CreateAdminDTO createAgencyAdminDTO) {
-    createAgencyAdminDTO.setEmail(createAgencyAdminDTO.getEmail().toLowerCase());
+    requireMinimumPasswordLength(createAgencyAdminDTO.getPassword());
+    createAgencyAdminDTO.setEmail(createAgencyAdminDTO.getEmail().toLowerCase(Locale.ROOT));
     var admin = adminUserFacade.createNewTenantAdmin(createAgencyAdminDTO);
 
     return ResponseEntity.ok(admin);
@@ -402,7 +538,13 @@ public class UserAdminController implements UseradminApi {
 
   @Override
   public ResponseEntity<AdminResponseDTO> createAgencyAdmin(final CreateAdminDTO createAdminDTO) {
-    return ResponseEntity.ok(this.adminUserFacade.createNewAgencyAdmin(createAdminDTO));
+    // Same normalisation as every sibling here. Without it this was the one account path
+    // that stored the address as typed, so the same person could end up with two
+    // differently-cased identities depending on which screen created them.
+    requireMinimumPasswordLength(createAdminDTO.getPassword());
+    createAdminDTO.setEmail(createAdminDTO.getEmail().toLowerCase(Locale.ROOT));
+    var admin = this.adminUserFacade.createNewAgencyAdmin(createAdminDTO);
+    return ResponseEntity.ok(admin);
   }
 
   @Override
@@ -421,8 +563,69 @@ public class UserAdminController implements UseradminApi {
   }
 
   @Override
+  public ResponseEntity<List<TenantAdminLoginEmailsDTO>> getTenantAdminLoginEmails(
+      List<Long> tenantIds) {
+    return ResponseEntity.ok(adminUserFacade.findTenantAdminLoginEmails(tenantIds));
+  }
+
+  /** What still blocks deleting the Träger; asked by TenantService before it deletes (#1466). */
+  @Override
+  public ResponseEntity<TenantDeletionBlockersDTO> getTenantDeletionBlockers(final Long tenantId) {
+    return ResponseEntity.ok(tenantDeletionBlockerService.findBlockers(tenantId));
+  }
+
+  /** Contact person of a counselling centre (ORISO-Admin#1534). */
+  @Override
+  public ResponseEntity<AgencyContactPersonAdminDTO> getAgencyContactPerson(
+      Long agencyId, Long tenantId) {
+    return ResponseEntity.ok(contactPersonAdminService.getAgencyContactPerson(agencyId, tenantId));
+  }
+
+  @Override
+  public ResponseEntity<AgencyContactPersonAdminDTO> updateAgencyContactPerson(
+      Long agencyId, UpdateContactPersonDTO updateContactPersonDTO, Long tenantId) {
+    return ResponseEntity.ok(
+        contactPersonAdminService.updateAgencyContactPerson(
+            agencyId, tenantId, updateContactPersonDTO));
+  }
+
+  @Override
+  public ResponseEntity<List<ContactAdminDTO>> getAgencyContactPersonCandidates(
+      Long agencyId, Long tenantId) {
+    return ResponseEntity.ok(
+        contactPersonAdminService.getAgencyContactPersonCandidates(agencyId, tenantId));
+  }
+
+  /** Träger default contact person and general contact e-mail (ORISO-Admin#1534). */
+  @Override
+  public ResponseEntity<TenantContactPersonDTO> getTenantContactPerson(Long tenantId) {
+    return ResponseEntity.ok(contactPersonAdminService.getTenantContactPerson(tenantId));
+  }
+
+  @Override
+  public ResponseEntity<TenantContactPersonDTO> updateTenantContactPerson(
+      Long tenantId, UpdateTenantContactPersonDTO updateTenantContactPersonDTO) {
+    return ResponseEntity.ok(
+        contactPersonAdminService.updateTenantContactPerson(
+            tenantId, updateTenantContactPersonDTO));
+  }
+
+  @Override
+  public ResponseEntity<List<ContactAdminDTO>> getTenantContactPersonCandidates(Long tenantId) {
+    return ResponseEntity.ok(contactPersonAdminService.getTenantContactPersonCandidates(tenantId));
+  }
+
+  /** Which centres have a contact person, for the admin dashboard (ORISO-Admin#1534). */
+  @Override
+  public ResponseEntity<List<AgencyContactCoverageDTO>> getAgencyContactCoverage(
+      AgencyContactCoverageRequestDTO agencyContactCoverageRequestDTO) {
+    return ResponseEntity.ok(
+        contactPersonAdminService.getAgencyContactCoverage(agencyContactCoverageRequestDTO));
+  }
+
+  @Override
   public ResponseEntity<List<Long>> getAdminAgencies(@PathVariable String adminId) {
-    var adminAgencies = this.adminUserFacade.findAdminUserAgencyIds(adminId);
+    var adminAgencies = this.adminUserFacade.findAgencyIdsOfAdminInCallerScope(adminId);
     return ResponseEntity.ok(adminAgencies);
   }
 
@@ -448,7 +651,7 @@ public class UserAdminController implements UseradminApi {
   @Override
   public ResponseEntity<AdminResponseDTO> updateAgencyAdmin(
       final String adminId, UpdateAgencyAdminDTO updateAgencyAdminDTO) {
-    updateAgencyAdminDTO.setEmail(updateAgencyAdminDTO.getEmail().toLowerCase());
+    updateAgencyAdminDTO.setEmail(updateAgencyAdminDTO.getEmail().toLowerCase(Locale.ROOT));
     var admin = adminUserFacade.updateAgencyAdmin(adminId, updateAgencyAdminDTO);
 
     return new ResponseEntity<>(admin, HttpStatus.OK);
@@ -457,7 +660,7 @@ public class UserAdminController implements UseradminApi {
   @Override
   public ResponseEntity<AdminResponseDTO> updateTenantAdmin(
       final String adminId, UpdateTenantAdminDTO updateTenantAdminDTO) {
-    updateTenantAdminDTO.setEmail(updateTenantAdminDTO.getEmail().toLowerCase());
+    updateTenantAdminDTO.setEmail(updateTenantAdminDTO.getEmail().toLowerCase(Locale.ROOT));
     var admin = adminUserFacade.updateTenantAdmin(adminId, updateTenantAdminDTO);
 
     return new ResponseEntity<>(admin, HttpStatus.OK);
@@ -491,36 +694,55 @@ public class UserAdminController implements UseradminApi {
 
   @Override
   public ResponseEntity<AdminSearchResultDTO> searchAgencyAdmins(
-      String query, Integer page, Integer perPage, String field, String order) {
+      String query,
+      Integer page,
+      Integer perPage,
+      String field,
+      String order,
+      Long tenantId,
+      List<Long> agencyId) {
     String decodedInfix = determineDecodedInfix(query);
     var isAscending = order.equalsIgnoreCase("asc");
     var mappedField = adminDtoMapper.mappedFieldOf(field);
+    var filter = new SearchFilter(tenantId, agencyId);
     var resultMap =
         adminUserFacade.findAgencyAdminsByInfix(
-            decodedInfix, page - 1, perPage, mappedField, isAscending);
-    var result = adminDtoMapper.adminSearchResultOf(resultMap, query, page, perPage, field, order);
+            decodedInfix, filter, page - 1, perPage, mappedField, isAscending);
+    var result =
+        adminDtoMapper.adminSearchResultOf(resultMap, query, page, perPage, field, order, filter);
 
     return ResponseEntity.ok(result);
   }
 
   @Override
   public ResponseEntity<AdminSearchResultDTO> searchTenantAdmins(
-      String query, Integer page, Integer perPage, String field, String order) {
+      String query, Integer page, Integer perPage, String field, String order, Long tenantId) {
     String decodedInfix = determineDecodedInfix(query);
     var isAscending = order.equalsIgnoreCase("asc");
     var mappedField = adminDtoMapper.mappedFieldOf(field);
+    var filter = new SearchFilter(tenantId, null);
     var resultMap =
         adminUserFacade.findTenantAdminsByInfix(
-            decodedInfix, page - 1, perPage, mappedField, isAscending);
-    var result = adminDtoMapper.adminSearchResultOf(resultMap, query, page, perPage, field, order);
+            decodedInfix, filter, page - 1, perPage, mappedField, isAscending);
+    var result =
+        adminDtoMapper.adminSearchResultOf(
+            resultMap, query, page, perPage, field, order, filter, Admin.AdminType.TENANT);
     return ResponseEntity.ok(result);
   }
 
-  private String determineDecodedInfix(String query) {
-    if (EmailValidator.getInstance().isValid(query)) {
-      return EmailUrlDecoder.decodeEmailQuery(query);
-    } else {
-      return URLDecoder.decode(query, StandardCharsets.UTF_8).trim();
+  /**
+   * The published contract still says minLength 8, because raising it is a breaking change for
+   * every generated client. The server enforces the one rule (16) here instead.
+   */
+  private static void requireMinimumPasswordLength(String password) {
+    if (password != null && !PasswordPolicy.isLongEnough(password)) {
+      throw new BadRequestException(
+          "The password must be at least " + PasswordPolicy.MIN_LENGTH + " characters long");
     }
+  }
+
+  private String determineDecodedInfix(String query) {
+    // Spring has already decoded the request parameter. A second pass corrupts literal % and +.
+    return query.trim();
   }
 }

@@ -3,6 +3,7 @@ package de.caritas.cob.userservice.api.service.matrix;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
@@ -14,7 +15,9 @@ import static org.mockito.Mockito.when;
 import ch.qos.logback.classic.Logger;
 import ch.qos.logback.classic.spi.ILoggingEvent;
 import ch.qos.logback.core.read.ListAppender;
+import de.caritas.cob.userservice.api.adapters.matrix.MatrixIdentifierRedactor;
 import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
+import de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHttpStatusException;
 import de.caritas.cob.userservice.api.exception.matrix.MatrixInviteUserException;
 import de.caritas.cob.userservice.api.model.Chat;
 import de.caritas.cob.userservice.api.model.Consultant;
@@ -22,6 +25,7 @@ import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -35,12 +39,12 @@ import org.slf4j.LoggerFactory;
 @ExtendWith(MockitoExtension.class)
 class GroupChatMembershipServiceTest {
 
-  private static final String MATRIX_ROOM_ID = "!room:matrix.oriso.org";
-  private static final String LEAVER_MATRIX_ID = "@leaver:matrix.oriso.org";
-  private static final String CONSULTANT_MATRIX_ID = "@consultant:matrix.oriso.org";
-  private static final String ASKER_MATRIX_ID = "@asker:matrix.oriso.org";
-  private static final String AGENCY_BOT_MATRIX_ID = "@agency-1:matrix.oriso.org";
-  private static final String SYSTEM_USER_MATRIX_ID = "@group-chat-system-1:matrix.oriso.org";
+  private static final String MATRIX_ROOM_ID = "!room:matrix.example.org";
+  private static final String LEAVER_MATRIX_ID = "@leaver:matrix.example.org";
+  private static final String CONSULTANT_MATRIX_ID = "@consultant:matrix.example.org";
+  private static final String ASKER_MATRIX_ID = "@asker:matrix.example.org";
+  private static final String AGENCY_BOT_MATRIX_ID = "@agency-1:matrix.example.org";
+  private static final String SYSTEM_USER_MATRIX_ID = "@group-chat-system-1:matrix.example.org";
 
   @InjectMocks private GroupChatMembershipService groupChatMembershipService;
 
@@ -49,6 +53,8 @@ class GroupChatMembershipServiceTest {
   @Mock private ConsultantRepository consultantRepository;
 
   @Mock private UserRepository userRepository;
+
+  @Mock private MatrixIdentifierRedactor redactor;
 
   @Mock private Consultant consultant;
 
@@ -63,6 +69,36 @@ class GroupChatMembershipServiceTest {
     logAppender = new ListAppender<>();
     logAppender.start();
     logger.addAppender(logAppender);
+  }
+
+  @Test
+  void removalConfirmationRequiresActualRemoteAbsence() {
+    when(matrixSynapseService.getRoomMembers(MATRIX_ROOM_ID))
+        .thenReturn(Optional.of(List.of(LEAVER_MATRIX_ID)), Optional.of(List.of()));
+    when(matrixSynapseService.loginAsUserAccessToken(LEAVER_MATRIX_ID)).thenReturn("token");
+    when(matrixSynapseService.leaveRoom(MATRIX_ROOM_ID, "token")).thenReturn(true);
+    assertTrue(
+        groupChatMembershipService.removeMemberFromRoomAndConfirm(
+            MATRIX_ROOM_ID, LEAVER_MATRIX_ID));
+    verify(matrixSynapseService).leaveRoom(MATRIX_ROOM_ID, "token");
+  }
+
+  @Test
+  void failedOrUnknownRemovalCannotBeReportedAsConfirmed() {
+    when(matrixSynapseService.getRoomMembers(MATRIX_ROOM_ID))
+        .thenReturn(Optional.of(List.of(LEAVER_MATRIX_ID)), Optional.empty());
+    assertFalse(
+        groupChatMembershipService.removeMemberFromRoomAndConfirm(
+            MATRIX_ROOM_ID, LEAVER_MATRIX_ID));
+  }
+
+  @Test
+  void alreadyAbsentMemberNeedsNoTokenOrRemoteWrite() {
+    when(matrixSynapseService.getRoomMembers(MATRIX_ROOM_ID)).thenReturn(Optional.of(List.of()));
+    assertTrue(
+        groupChatMembershipService.removeMemberFromRoomAndConfirm(
+            MATRIX_ROOM_ID, LEAVER_MATRIX_ID));
+    verify(matrixSynapseService, never()).loginAsUserAccessToken(anyString());
   }
 
   @AfterEach
@@ -81,6 +117,70 @@ class GroupChatMembershipServiceTest {
 
   private Chat chatWithMatrixRoom() {
     return chatBuilder().matrixRoomId(MATRIX_ROOM_ID).build();
+  }
+
+  @Test
+  void resolvedMembersShouldCarryTheStoredAvatarWithoutLoadingNonMembers() throws Exception {
+    when(matrixSynapseService.getRoomMembers(MATRIX_ROOM_ID))
+        .thenReturn(Optional.of(List.of(CONSULTANT_MATRIX_ID)));
+    when(consultantRepository.findByMatrixUserIdAndDeleteDateIsNull(CONSULTANT_MATRIX_ID))
+        .thenReturn(Optional.of(consultant));
+    when(consultant.getId()).thenReturn("consultant-id");
+    when(consultant.getAvatarKind())
+        .thenReturn(de.caritas.cob.userservice.api.model.ConsultantAvatarKind.ICON);
+    when(consultant.getAvatarId()).thenReturn("magpie");
+    var mapper = new de.caritas.cob.userservice.api.config.AppConfig().objectMapper();
+    var members = groupChatMembershipService.resolveHumanMembers(MATRIX_ROOM_ID);
+    var response = mapper.readTree(mapper.writeValueAsString(members));
+    assertEquals("magpie", response.get(0).path("avatarId").asText());
+    assertEquals("ICON", response.get(0).path("avatarKind").asText());
+    assertEquals(1, response.size());
+  }
+
+  @Test
+  void resolvedAskerShouldCarryItsStoredAnimalAndDropTheClearedChoice() throws Exception {
+    var asker = new de.caritas.cob.userservice.api.model.User();
+    asker.setUserId("asker-id");
+    asker.setUsername("asker");
+    asker.setAvatarId("fox");
+    when(matrixSynapseService.getRoomMembers(MATRIX_ROOM_ID))
+        .thenReturn(Optional.of(List.of("@asker:example.org")));
+    when(userRepository.findByMatrixUserIdAndDeleteDateIsNull("@asker:example.org"))
+        .thenReturn(Optional.of(asker));
+    var mapper = new de.caritas.cob.userservice.api.config.AppConfig().objectMapper();
+    var response =
+        mapper.readTree(
+            mapper.writeValueAsString(
+                groupChatMembershipService.resolveHumanMembers(MATRIX_ROOM_ID)));
+    assertEquals("fox", response.get(0).path("avatarId").asText());
+    assertTrue(
+        response.get(0).path("avatarKind").isNull()
+            || response.get(0).path("avatarKind").isMissingNode());
+    asker.setAvatarId(null);
+    var cleared =
+        mapper.readTree(
+            mapper.writeValueAsString(
+                groupChatMembershipService.resolveHumanMembers(MATRIX_ROOM_ID)));
+    assertTrue(
+        cleared.get(0).path("avatarId").isNull()
+            || cleared.get(0).path("avatarId").isMissingNode());
+  }
+
+  @Test
+  void memberSnapshotDistinguishesExistingAbsentAndUnknown() {
+    when(matrixSynapseService.getRoomMembers(MATRIX_ROOM_ID))
+        .thenReturn(
+            Optional.of(List.of(CONSULTANT_MATRIX_ID)), Optional.of(List.of()), Optional.empty());
+
+    assertEquals(
+        Optional.of(true),
+        groupChatMembershipService.isMemberInRoom(chatWithMatrixRoom(), CONSULTANT_MATRIX_ID));
+    assertEquals(
+        Optional.of(false),
+        groupChatMembershipService.isMemberInRoom(chatWithMatrixRoom(), CONSULTANT_MATRIX_ID));
+    assertEquals(
+        Optional.empty(),
+        groupChatMembershipService.isMemberInRoom(chatWithMatrixRoom(), CONSULTANT_MATRIX_ID));
   }
 
   @Test
@@ -255,10 +355,110 @@ class GroupChatMembershipServiceTest {
     verify(matrixSynapseService, never()).leaveRoom(anyString(), any());
   }
 
+  // ── removeParticipantFromRoom: a members-only room must not keep a former participant ─────
+
+  private Chat membersOnlyChatWithMatrixRoom() {
+    return chatBuilder().matrixRoomId(MATRIX_ROOM_ID).membersOnly(true).build();
+  }
+
+  @Test
+  void removeParticipantFromRoom_Should_FailForAMembersOnlyRoom_When_NoTokenCanBeMinted() {
+    when(matrixSynapseService.loginAsUserAccessToken(LEAVER_MATRIX_ID)).thenReturn(null);
+
+    assertThrows(
+        CustomValidationHttpStatusException.class,
+        () ->
+            groupChatMembershipService.removeParticipantFromRoom(
+                membersOnlyChatWithMatrixRoom(), LEAVER_MATRIX_ID));
+  }
+
+  @Test
+  void removeParticipantFromRoom_Should_FailForAMembersOnlyRoom_When_MatrixRefusesTheLeave() {
+    when(matrixSynapseService.loginAsUserAccessToken(LEAVER_MATRIX_ID)).thenReturn("token");
+    when(matrixSynapseService.leaveRoom(MATRIX_ROOM_ID, "token")).thenReturn(false);
+
+    assertThrows(
+        CustomValidationHttpStatusException.class,
+        () ->
+            groupChatMembershipService.removeParticipantFromRoom(
+                membersOnlyChatWithMatrixRoom(), LEAVER_MATRIX_ID));
+  }
+
+  @Test
+  void removeParticipantFromRoom_Should_FailForAMembersOnlyRoom_When_MatrixCannotBeReached() {
+    when(matrixSynapseService.loginAsUserAccessToken(LEAVER_MATRIX_ID))
+        .thenThrow(new RuntimeException("synapse down"));
+
+    assertThrows(
+        CustomValidationHttpStatusException.class,
+        () ->
+            groupChatMembershipService.removeParticipantFromRoom(
+                membersOnlyChatWithMatrixRoom(), LEAVER_MATRIX_ID));
+  }
+
+  @Test
+  void removeParticipantFromRoom_Should_LeaveWithTheMembersOwnToken_ForAMembersOnlyRoom() {
+    when(matrixSynapseService.loginAsUserAccessToken(LEAVER_MATRIX_ID)).thenReturn("token");
+    when(matrixSynapseService.leaveRoom(MATRIX_ROOM_ID, "token")).thenReturn(true);
+
+    groupChatMembershipService.removeParticipantFromRoom(
+        membersOnlyChatWithMatrixRoom(), LEAVER_MATRIX_ID);
+
+    verify(matrixSynapseService).leaveRoom(MATRIX_ROOM_ID, "token");
+  }
+
+  @Test
+  void removeParticipantFromRoom_Should_StayBestEffortForAnOrdinaryChat() {
+    when(matrixSynapseService.loginAsUserAccessToken(LEAVER_MATRIX_ID)).thenReturn(null);
+
+    groupChatMembershipService.removeParticipantFromRoom(chatWithMatrixRoom(), LEAVER_MATRIX_ID);
+
+    verify(matrixSynapseService, never()).leaveRoom(anyString(), any());
+  }
+
+  @Test
+  void removeParticipantFromRoom_Should_DoNothing_When_ThereIsNoMemberOrNoRoomToLeave() {
+    groupChatMembershipService.removeParticipantFromRoom(membersOnlyChatWithMatrixRoom(), null);
+    groupChatMembershipService.removeParticipantFromRoom(
+        chatBuilder().matrixRoomId(null).membersOnly(true).build(), LEAVER_MATRIX_ID);
+
+    verifyNoInteractions(matrixSynapseService);
+  }
+
+  // ── removeMemberFromRoomOrFail: a side room is left strictly too ─────────────────────
+
+  @Test
+  void removeMemberFromRoomOrFail_Should_Fail_When_TheMemberCannotLeave() {
+    when(matrixSynapseService.loginAsUserAccessToken(LEAVER_MATRIX_ID)).thenReturn(null);
+    assertThrows(
+        CustomValidationHttpStatusException.class,
+        () -> groupChatMembershipService.removeMemberFromRoomOrFail("!side:x", LEAVER_MATRIX_ID));
+
+    when(matrixSynapseService.loginAsUserAccessToken(LEAVER_MATRIX_ID)).thenReturn("token");
+    when(matrixSynapseService.leaveRoom("!side:x", "token")).thenReturn(false);
+    assertThrows(
+        CustomValidationHttpStatusException.class,
+        () -> groupChatMembershipService.removeMemberFromRoomOrFail("!side:x", LEAVER_MATRIX_ID));
+  }
+
+  @Test
+  void removeMemberFromRoomOrFail_Should_Leave_And_IgnoreABlankRoomOrMember() {
+    when(matrixSynapseService.loginAsUserAccessToken(LEAVER_MATRIX_ID)).thenReturn("token");
+    when(matrixSynapseService.leaveRoom("!side:x", "token")).thenReturn(true);
+
+    groupChatMembershipService.removeMemberFromRoomOrFail("!side:x", LEAVER_MATRIX_ID);
+    groupChatMembershipService.removeMemberFromRoomOrFail(" ", LEAVER_MATRIX_ID);
+    groupChatMembershipService.removeMemberFromRoomOrFail("!side:x", null);
+
+    verify(matrixSynapseService).leaveRoom("!side:x", "token");
+  }
+
   // ── resolveHumanMembers ────────────────────────────────────────────────────
 
   @Test
   void resolveHumanMembers_Should_MapConsultantsAndAskers_AndFilterTechnicalAccounts() {
+    when(userRepository.findByMatrixUserIdAndDeleteDateIsNull(CONSULTANT_MATRIX_ID))
+        .thenReturn(Optional.empty());
     when(matrixSynapseService.getRoomMembers(MATRIX_ROOM_ID))
         .thenReturn(
             Optional.of(
@@ -322,6 +522,20 @@ class GroupChatMembershipServiceTest {
 
     assertEquals(1, resolved.size());
     assertEquals("Jane Doe", resolved.get(0).displayName());
+  }
+
+  @Test
+  void resolveHumanMembersRejectsAnAmbiguousMatrixIdentityInsteadOfChoosingTheFirstRole() {
+    when(matrixSynapseService.getRoomMembers(MATRIX_ROOM_ID))
+        .thenReturn(Optional.of(List.of("@ambiguous:synthetic.test")));
+    when(consultantRepository.findByMatrixUserIdAndDeleteDateIsNull("@ambiguous:synthetic.test"))
+        .thenReturn(Optional.of(new Consultant()));
+    when(userRepository.findByMatrixUserIdAndDeleteDateIsNull("@ambiguous:synthetic.test"))
+        .thenReturn(Optional.of(new User()));
+    org.junit.jupiter.api.Assertions.assertThrows(
+        de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHttpStatusException
+            .class,
+        () -> groupChatMembershipService.resolveHumanMembers(MATRIX_ROOM_ID));
   }
 
   @Test
@@ -466,17 +680,174 @@ class GroupChatMembershipServiceTest {
   @Test
   void hasRemainingHumanMembers_Should_FilterExactGroupChatSystemPrefix() {
     when(matrixSynapseService.getRoomMembers(MATRIX_ROOM_ID))
-        .thenReturn(Optional.of(List.of(LEAVER_MATRIX_ID, "@group-chat-system:matrix.oriso.org")));
+        .thenReturn(
+            Optional.of(List.of(LEAVER_MATRIX_ID, "@group-chat-system:matrix.example.org")));
     when(consultantRepository.findByMatrixUserIdAndDeleteDateIsNull(
-            "@group-chat-system:matrix.oriso.org"))
+            "@group-chat-system:matrix.example.org"))
         .thenReturn(Optional.empty());
     when(userRepository.findByMatrixUserIdAndDeleteDateIsNull(
-            "@group-chat-system:matrix.oriso.org"))
+            "@group-chat-system:matrix.example.org"))
         .thenReturn(Optional.of(user));
     when(user.getUserId()).thenReturn("group-chat-system");
 
     assertFalse(
         groupChatMembershipService.hasRemainingHumanMembers(
             chatWithMatrixRoom(), LEAVER_MATRIX_ID));
+  }
+
+  private static Map<String, Object> powerLevels(Map<String, Object> users) {
+    return Map.of("users", users, "users_default", 0, "invite", 50);
+  }
+
+  @Test
+  void ensureOwnerCanInvite_Should_ChangeNothing_When_OwnerIsJoinedWithInvitePower() {
+    when(matrixSynapseService.getRoomMembers(MATRIX_ROOM_ID))
+        .thenReturn(Optional.of(List.of(CONSULTANT_MATRIX_ID)));
+    when(matrixSynapseService.loginAsUserAccessToken(CONSULTANT_MATRIX_ID)).thenReturn("token");
+    when(matrixSynapseService.getPowerLevels(MATRIX_ROOM_ID, "token"))
+        .thenReturn(Optional.of(powerLevels(Map.of(CONSULTANT_MATRIX_ID, 100))));
+
+    assertTrue(
+        groupChatMembershipService.ensureOwnerCanInvite(MATRIX_ROOM_ID, CONSULTANT_MATRIX_ID));
+
+    verify(matrixSynapseService, never()).makeRoomAdmin(anyString(), anyString());
+    verify(matrixSynapseService, never()).joinRoom(anyString(), anyString());
+  }
+
+  /** The room was prepared by a former owner; the new owner is not in it. */
+  @Test
+  void ensureOwnerCanInvite_Should_RaiseAndJoinTheOwner_When_OwnerIsNotInTheRoom() {
+    when(matrixSynapseService.getRoomMembers(MATRIX_ROOM_ID))
+        .thenReturn(Optional.of(List.of(LEAVER_MATRIX_ID)));
+    when(matrixSynapseService.loginAsUserAccessToken(CONSULTANT_MATRIX_ID)).thenReturn("token");
+    when(matrixSynapseService.makeRoomAdmin(MATRIX_ROOM_ID, CONSULTANT_MATRIX_ID)).thenReturn(true);
+    when(matrixSynapseService.joinRoom(MATRIX_ROOM_ID, "token")).thenReturn(true);
+    when(matrixSynapseService.getPowerLevels(MATRIX_ROOM_ID, "token"))
+        .thenReturn(
+            Optional.of(powerLevels(Map.of(LEAVER_MATRIX_ID, 100, CONSULTANT_MATRIX_ID, 100))));
+
+    assertTrue(
+        groupChatMembershipService.ensureOwnerCanInvite(MATRIX_ROOM_ID, CONSULTANT_MATRIX_ID));
+
+    verify(matrixSynapseService).joinRoom(MATRIX_ROOM_ID, "token");
+    verify(matrixSynapseService, never()).forceJoinUserToRoom(anyString(), anyString(), any());
+  }
+
+  /** Carried over as an ordinary member by an earlier attempt, owner only since then. */
+  @Test
+  void ensureOwnerCanInvite_Should_RaiseTheOwner_When_OwnerIsJoinedWithoutInvitePower() {
+    when(matrixSynapseService.getRoomMembers(MATRIX_ROOM_ID))
+        .thenReturn(Optional.of(List.of(LEAVER_MATRIX_ID, CONSULTANT_MATRIX_ID)));
+    when(matrixSynapseService.loginAsUserAccessToken(CONSULTANT_MATRIX_ID)).thenReturn("token");
+    when(matrixSynapseService.getPowerLevels(MATRIX_ROOM_ID, "token"))
+        .thenReturn(
+            Optional.of(powerLevels(Map.of(LEAVER_MATRIX_ID, 100))),
+            Optional.of(powerLevels(Map.of(LEAVER_MATRIX_ID, 100, CONSULTANT_MATRIX_ID, 100))));
+    when(matrixSynapseService.makeRoomAdmin(MATRIX_ROOM_ID, CONSULTANT_MATRIX_ID)).thenReturn(true);
+
+    assertTrue(
+        groupChatMembershipService.ensureOwnerCanInvite(MATRIX_ROOM_ID, CONSULTANT_MATRIX_ID));
+
+    verify(matrixSynapseService, never()).joinRoom(anyString(), anyString());
+  }
+
+  /** Nobody joined holds power any more: the admin join gets the owner in, but not the power. */
+  @Test
+  void ensureOwnerCanInvite_Should_Fail_When_NoJoinedMemberCanHandPowerOver() {
+    when(matrixSynapseService.getRoomMembers(MATRIX_ROOM_ID))
+        .thenReturn(Optional.of(List.of(ASKER_MATRIX_ID)));
+    when(matrixSynapseService.loginAsUserAccessToken(CONSULTANT_MATRIX_ID)).thenReturn("token");
+    when(matrixSynapseService.makeRoomAdmin(MATRIX_ROOM_ID, CONSULTANT_MATRIX_ID))
+        .thenReturn(false);
+    when(matrixSynapseService.forceJoinUserToRoom(
+            MATRIX_ROOM_ID, CONSULTANT_MATRIX_ID, List.of(ASKER_MATRIX_ID)))
+        .thenReturn(true);
+    when(matrixSynapseService.getPowerLevels(MATRIX_ROOM_ID, "token"))
+        .thenReturn(Optional.of(powerLevels(Map.of(LEAVER_MATRIX_ID, 100))));
+
+    assertFalse(
+        groupChatMembershipService.ensureOwnerCanInvite(MATRIX_ROOM_ID, CONSULTANT_MATRIX_ID));
+
+    assertNoMatrixUserIdLogged();
+  }
+
+  /** Joined, power unknown, and the admin cannot raise it either: never assume the power. */
+  @Test
+  void ensureOwnerCanInvite_Should_Fail_When_PowerLevelsAreUnreadable() {
+    when(matrixSynapseService.getRoomMembers(MATRIX_ROOM_ID))
+        .thenReturn(Optional.of(List.of(CONSULTANT_MATRIX_ID)));
+    when(matrixSynapseService.loginAsUserAccessToken(CONSULTANT_MATRIX_ID)).thenReturn("token");
+    when(matrixSynapseService.getPowerLevels(MATRIX_ROOM_ID, "token")).thenReturn(Optional.empty());
+
+    assertFalse(
+        groupChatMembershipService.ensureOwnerCanInvite(MATRIX_ROOM_ID, CONSULTANT_MATRIX_ID));
+  }
+
+  /** The owner's own join is refused after the raise: the admin's force-join takes over. */
+  @Test
+  void ensureOwnerCanInvite_Should_ForceJoinTheOwner_When_TheirOwnJoinFails() {
+    when(matrixSynapseService.getRoomMembers(MATRIX_ROOM_ID))
+        .thenReturn(Optional.of(List.of(LEAVER_MATRIX_ID)));
+    when(matrixSynapseService.loginAsUserAccessToken(CONSULTANT_MATRIX_ID)).thenReturn("token");
+    when(matrixSynapseService.makeRoomAdmin(MATRIX_ROOM_ID, CONSULTANT_MATRIX_ID)).thenReturn(true);
+    when(matrixSynapseService.joinRoom(MATRIX_ROOM_ID, "token")).thenReturn(false);
+    when(matrixSynapseService.forceJoinUserToRoom(
+            MATRIX_ROOM_ID, CONSULTANT_MATRIX_ID, List.of(LEAVER_MATRIX_ID)))
+        .thenReturn(true);
+    when(matrixSynapseService.getPowerLevels(MATRIX_ROOM_ID, "token"))
+        .thenReturn(
+            Optional.of(powerLevels(Map.of(LEAVER_MATRIX_ID, 100, CONSULTANT_MATRIX_ID, 100))));
+
+    assertTrue(
+        groupChatMembershipService.ensureOwnerCanInvite(MATRIX_ROOM_ID, CONSULTANT_MATRIX_ID));
+
+    verify(matrixSynapseService)
+        .forceJoinUserToRoom(MATRIX_ROOM_ID, CONSULTANT_MATRIX_ID, List.of(LEAVER_MATRIX_ID));
+  }
+
+  @Test
+  void ensureOwnerCanInvite_Should_Fail_When_NoOwnerTokenCanBeMinted() {
+    when(matrixSynapseService.getRoomMembers(MATRIX_ROOM_ID))
+        .thenReturn(Optional.of(List.of(CONSULTANT_MATRIX_ID)));
+    when(matrixSynapseService.loginAsUserAccessToken(CONSULTANT_MATRIX_ID)).thenReturn(" ");
+
+    assertFalse(
+        groupChatMembershipService.ensureOwnerCanInvite(MATRIX_ROOM_ID, CONSULTANT_MATRIX_ID));
+
+    verify(matrixSynapseService, never()).makeRoomAdmin(anyString(), anyString());
+  }
+
+  @Test
+  void ensureOwnerCanInvite_Should_Fail_When_RoomMembersAreUnreadable() {
+    when(matrixSynapseService.getRoomMembers(MATRIX_ROOM_ID)).thenReturn(Optional.empty());
+
+    assertFalse(
+        groupChatMembershipService.ensureOwnerCanInvite(MATRIX_ROOM_ID, CONSULTANT_MATRIX_ID));
+
+    verify(matrixSynapseService, never()).makeRoomAdmin(anyString(), anyString());
+  }
+
+  @Test
+  void addMemberToRoom_Should_LogNoMatrixUserId_When_InviteIsRefused()
+      throws MatrixInviteUserException {
+    when(redactor.pseudonym(ASKER_MATRIX_ID)).thenReturn("mx#asker");
+    when(redactor.scrub(anyString())).thenReturn("refused for mx#asker");
+    when(matrixSynapseService.loginAsUserAccessToken(CONSULTANT_MATRIX_ID)).thenReturn("token");
+    when(matrixSynapseService.inviteUserToRoom(MATRIX_ROOM_ID, ASKER_MATRIX_ID, "token"))
+        .thenThrow(new MatrixInviteUserException("refused for " + ASKER_MATRIX_ID));
+
+    assertFalse(
+        groupChatMembershipService.addMemberToRoom(
+            MATRIX_ROOM_ID, CONSULTANT_MATRIX_ID, ASKER_MATRIX_ID));
+
+    assertNoMatrixUserIdLogged();
+  }
+
+  private void assertNoMatrixUserIdLogged() {
+    assertFalse(logAppender.list.isEmpty());
+    assertTrue(
+        logAppender.list.stream()
+            .map(ILoggingEvent::getFormattedMessage)
+            .noneMatch(message -> message.contains("@")));
   }
 }

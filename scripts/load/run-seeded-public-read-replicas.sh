@@ -99,7 +99,12 @@ python3 "${repo_root}/tests/load/seeded_agency_stub.py" \
 agency_stub_pid="$!"
 
 "${repo_root}/mvnw" -B -DskipTests -Dskip.unit-tests=true -Dskip.integration-tests=true package \
-  >"${run_dir}/package.log" 2>&1
+  >"${run_dir}/package.log" 2>&1 || {
+  package_status="$?"
+  echo "UserService Maven package failed (exit ${package_status}):" >&2
+  tail -n 120 "${run_dir}/package.log" >&2 || true
+  exit "${package_status}"
+}
 jar_path="${repo_root}/target/UserService.jar"
 if [[ ! -f "${jar_path}" ]]; then
   echo "Packaged UserService jar is missing: ${jar_path}" >&2
@@ -124,8 +129,8 @@ start_replica() {
   SPRING_DATA_REDIS_HOST=127.0.0.1 \
   SPRING_DATA_REDIS_PORT="${redis_port}" \
   AGENCY_SERVICE_API_URL="http://127.0.0.1:${agency_stub_port}" \
-  IDENTITY_TECHNICAL_USER_USERNAME=load-test-technical-user \
-  IDENTITY_TECHNICAL_USER_PASSWORD=load-test-technical-user-password \
+  IDENTITY_TECHNICAL_CLIENT_ID=backend-technical \
+  KEYCLOAK_BACKEND_TECHNICAL_CLIENT_SECRET=load-test-technical-client-secret \
   MATRIX_REGISTRATION_SHARED_SECRET=load-test-registration-shared-secret \
   MATRIX_EVENT_LISTENER_ENABLED=false \
   MANAGEMENT_ENDPOINTS_WEB_EXPOSURE_INCLUDE=health,loggers,metrics \

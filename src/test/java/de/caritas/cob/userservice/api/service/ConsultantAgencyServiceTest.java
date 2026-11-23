@@ -74,6 +74,7 @@ public class ConsultantAgencyServiceTest {
 
   @InjectMocks private ConsultantAgencyService consultantAgencyService;
   @Mock private ConsultantAgencyRepository consultantAgencyRepository;
+  @Mock private de.caritas.cob.userservice.api.port.out.ConsultantRepository consultantRepository;
   @Mock private AgencyService agencyService;
 
   @Mock
@@ -113,6 +114,35 @@ public class ConsultantAgencyServiceTest {
 
     assertNotNull(transactional);
     assertTrue(transactional.readOnly());
+  }
+
+  /** Method: isConsultantAssignedToAgency (#1107) */
+  @Test
+  public void isConsultantAssignedToAgency_Should_ReturnRepositoryVerdict() {
+    when(consultantAgencyRepository.existsByConsultantIdAndAgencyIdAndDeleteDateIsNull(
+            CONSULTANT_ID, AGENCY_ID))
+        .thenReturn(true);
+
+    assertTrue(consultantAgencyService.isConsultantAssignedToAgency(CONSULTANT_ID, AGENCY_ID));
+  }
+
+  @Test
+  public void isConsultantAssignedToAgency_Should_ReturnFalse_WhenNoAssignmentExists() {
+    when(consultantAgencyRepository.existsByConsultantIdAndAgencyIdAndDeleteDateIsNull(
+            CONSULTANT_ID, AGENCY_ID))
+        .thenReturn(false);
+
+    assertFalse(consultantAgencyService.isConsultantAssignedToAgency(CONSULTANT_ID, AGENCY_ID));
+  }
+
+  @Test
+  public void isConsultantAssignedToAgency_Should_DenyAndNotQuery_WhenEitherIdIsNull() {
+    // A null id must not reach a query that could match a row by accident; deny outright.
+    assertFalse(consultantAgencyService.isConsultantAssignedToAgency(null, AGENCY_ID));
+    assertFalse(consultantAgencyService.isConsultantAssignedToAgency(CONSULTANT_ID, null));
+
+    Mockito.verify(consultantAgencyRepository, Mockito.never())
+        .existsByConsultantIdAndAgencyIdAndDeleteDateIsNull(Mockito.any(), Mockito.any());
   }
 
   /** Method: getConsultantsOfAgency */

@@ -1,0 +1,280 @@
+package de.caritas.cob.userservice.api.service.chat;
+
+import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
+import de.caritas.cob.userservice.api.exception.httpresponses.ConflictException;
+import de.caritas.cob.userservice.api.model.Chat;
+import de.caritas.cob.userservice.api.model.Consultant;
+import de.caritas.cob.userservice.api.model.GroupChatMatrixCleanupTask;
+import de.caritas.cob.userservice.api.model.GroupChatMatrixCleanupTask.Action;
+import de.caritas.cob.userservice.api.port.out.ChatMatrixRoomRepository;
+import de.caritas.cob.userservice.api.port.out.ChatRepository;
+import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
+import de.caritas.cob.userservice.api.port.out.GroupChatMatrixCleanupTaskRepository;
+import de.caritas.cob.userservice.api.port.out.GroupChatParticipantRepository;
+import de.caritas.cob.userservice.api.service.matrix.GroupChatMembershipService;
+import de.caritas.cob.userservice.api.tenant.TenantContext;
+import java.time.Clock;
+import java.time.Duration;
+import java.time.LocalDateTime;
+import java.util.List;
+import java.util.Objects;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
+import org.springframework.transaction.annotation.Transactional;
+
+/** Journals only newly created group rooms or new remote joins, never pre-existing access. */
+@Service
+@RequiredArgsConstructor
+@Slf4j
+public class GroupChatMatrixCleanupService {
+  // About an hour at the default one-minute backoff; repeats so a stuck task stays visible.
+  private static final int STUCK_ATTEMPT_WARNING_INTERVAL = 60;
+
+  private final GroupChatMatrixCleanupTaskRepository tasks;
+  private final ConsultantRepository consultants;
+  private final ChatRepository chats;
+  private final ChatMatrixRoomRepository roomHistory;
+  private final GroupChatParticipantRepository participants;
+  private final MatrixSynapseService matrix;
+  private final GroupChatMembershipService membership;
+  private final Clock clock;
+
+  @Value("${group.chat.matrix-cleanup.retry-backoff:PT1M}")
+  private Duration retryBackoff;
+
+  // Longer than any room creation can take: a younger alias intent may still get its room.
+  @Value("${group.chat.matrix-cleanup.alias-grace:PT10M}")
+  private Duration aliasGrace = Duration.ofMinutes(10);
+
+  /** Writers and retry workers acquire this stable existing row before any chat/task lock. */
+  @Transactional(propagation = Propagation.MANDATORY)
+  public void lockOwner(Consultant expected) {
+    // A group participant may be in another Träger. Cross tenants only for this exact owner
+    // row lock; keep the caller's context for authorization and all other work.
+    var current =
+        TenantContext.supplyAcrossTenants(
+                () -> consultants.findPictureOwnerForUpdate(expected.getId()))
+            .orElseThrow(() -> new ConflictException("Group owner no longer exists"));
+    if (!Objects.equals(current.getTenantId(), expected.getTenantId()))
+      throw new ConflictException("Group owner changed tenant");
+  }
+
+  @Transactional(propagation = Propagation.MANDATORY)
+  public void lockGroup(Chat expected) {
+    lockOwner(expected.getChatOwner());
+    var current =
+        chats
+            .findByIdForUpdate(expected.getId())
+            .orElseThrow(() -> new ConflictException("Group no longer exists"));
+    if (!Objects.equals(current.getChatOwner().getId(), expected.getChatOwner().getId())
+        || !Objects.equals(current.getMatrixRoomId(), expected.getMatrixRoomId()))
+      throw new ConflictException("Group room ownership changed");
+  }
+
+  /** Immutable ownership scalars extracted before suspending the caller's transaction. */
+  public record GroupOwner(Long seriesId, String ownerId, Long tenantId) {}
+
+  // No entity/proxy access or owner/chat lookup here: the suspended writer holds those locks.
+  @Transactional(propagation = Propagation.REQUIRES_NEW)
+  public Long recordRoom(GroupOwner owner, String roomId) {
+    return record(Action.PURGE_ROOM, owner, null, roomId, null);
+  }
+
+  /** Commit before creating the room, so a crash right after creation stays recoverable. */
+  @Transactional(propagation = Propagation.REQUIRES_NEW)
+  public Long recordAlias(GroupOwner owner, String roomAlias) {
+    return record(Action.PURGE_ALIAS, owner, null, roomAlias, null);
+  }
+
+  /** The room now exists: replace its alias intent with an ordinary room intent. */
+  @Transactional(propagation = Propagation.REQUIRES_NEW)
+  public Long bindRoom(Long aliasTaskId, GroupOwner owner, String roomId) {
+    var id = record(Action.PURGE_ROOM, owner, null, roomId, null);
+    if (aliasTaskId != null) tasks.discard(aliasTaskId);
+    return id;
+  }
+
+  /** The room was durably adopted without a room intent; its alias intent is no longer needed. */
+  @Transactional(propagation = Propagation.REQUIRES_NEW)
+  public void discard(Long id) {
+    if (id != null) tasks.discard(id);
+  }
+
+  @Transactional(propagation = Propagation.REQUIRES_NEW)
+  public Long recordJoin(GroupOwner owner, String consultantId, String roomId, String memberId) {
+    return record(Action.REMOVE_MEMBER, owner, consultantId, roomId, memberId);
+  }
+
+  private Long record(
+      Action action, GroupOwner owner, String consultantId, String roomId, String memberId) {
+    return tasks
+        .saveAndFlush(
+            GroupChatMatrixCleanupTask.builder()
+                .action(action)
+                .seriesId(owner.seriesId())
+                .ownerId(owner.ownerId())
+                .tenantId(owner.tenantId())
+                .consultantId(consultantId)
+                .roomId(roomId)
+                .memberId(memberId)
+                .createdAt(LocalDateTime.now(clock))
+                .build())
+        .getId();
+  }
+
+  /** Deletions participate in the writer: rollback restores independently committed intents. */
+  @Transactional(propagation = Propagation.MANDATORY)
+  public void clear(Long id) {
+    tasks.deleteById(id);
+  }
+
+  /** Caller still owns the operation lock. Failure leaves the committed intent for retry. */
+  public void compensate(Long id) {
+    if (id == null) return;
+    try {
+      tasks
+          .findById(id)
+          .ifPresent(
+              task -> {
+                if (attempt(task)) tasks.delete(task);
+              });
+    } catch (RuntimeException failure) {
+      log.warn(
+          "Group Matrix cleanup {} remains pending ({})", id, failure.getClass().getSimpleName());
+    }
+  }
+
+  public boolean purgeUnjournaledRoom(String roomId) {
+    var outcome = matrix.purgeRoomOrConfirmGone(roomId);
+    return outcome != null && outcome != MatrixSynapseService.RoomPurgeOutcome.FAILED;
+  }
+
+  @Transactional(readOnly = true)
+  public List<Long> readyIds() {
+    return tasks
+        .findReady(LocalDateTime.now(clock).minus(retryBackoff), PageRequest.of(0, 20))
+        .stream()
+        .map(GroupChatMatrixCleanupTask::getId)
+        .toList();
+  }
+
+  // The initial task read may establish a repeatable-read snapshot before the owner-lock wait.
+  // Both destructive guards below use current locking reads to see later committed adoption.
+  @Transactional(propagation = Propagation.REQUIRES_NEW)
+  public void retry(Long id) {
+    var snapshot = tasks.findById(id);
+    if (snapshot.isEmpty()) return;
+    // Same lock order as creation/reconciliation. No concurrent writer can be mistaken for
+    // rollback.
+    var owner = consultants.findPictureOwnerForUpdate(snapshot.get().getOwnerId());
+    var series = chats.findByIdForUpdate(snapshot.get().getSeriesId());
+    var task = tasks.findByIdForUpdate(id);
+    if (task.isEmpty()) return;
+    var pending = task.get();
+    if (owner.isPresent() && !Objects.equals(owner.get().getTenantId(), pending.getTenantId())) {
+      defer(pending);
+      return;
+    }
+    if (series.isPresent()
+        && (!Objects.equals(series.get().getChatOwner().getId(), pending.getOwnerId())
+            || !Objects.equals(series.get().getChatOwner().getTenantId(), pending.getTenantId()))) {
+      defer(pending);
+      return;
+    }
+    if (pending.getAction() == Action.PURGE_ALIAS) {
+      retryAlias(pending);
+      return;
+    }
+    var roomOwner = chats.findByMatrixRoomIdForUpdate(pending.getRoomId());
+    if (roomOwner.isPresent()) {
+      if (!Objects.equals(roomOwner.get().getId(), pending.getSeriesId())) {
+        defer(pending);
+        return;
+      }
+      if (pending.getAction() == Action.PURGE_ROOM
+          || participants
+              .findBySeriesIdAndConsultantIdForUpdate(
+                  pending.getSeriesId(), pending.getConsultantId())
+              .isPresent()) {
+        tasks.delete(pending);
+        return; // Committed legitimate ownership/participation supersedes cleanup.
+      }
+    }
+    if (pending.getAction() == Action.PURGE_ROOM) {
+      // A next-occurrence room may already be durably reserved while Chat still points at the
+      // previous occurrence. A current locking read is required under repeatable read.
+      var reserved = roomHistory.findByRoomIdForUpdate(pending.getRoomId());
+      if (reserved.isPresent()) {
+        var history = reserved.get();
+        if (Objects.equals(history.getSeries().getId(), pending.getSeriesId())
+            && Objects.equals(history.getOwnerTenantId(), pending.getTenantId())
+            && series.isPresent()) {
+          tasks.delete(pending);
+        } else {
+          defer(pending);
+        }
+        return;
+      }
+    }
+    try {
+      if (attempt(pending)) {
+        tasks.delete(pending);
+        return;
+      }
+    } catch (RuntimeException failure) {
+      log.warn("Group Matrix cleanup {} failed ({})", id, failure.getClass().getSimpleName());
+    }
+    defer(pending);
+  }
+
+  /**
+   * An alias intent that outlived its writer: either no room was created, or the writer died before
+   * recording the room. The room intent written here passes every adoption guard above.
+   */
+  private void retryAlias(GroupChatMatrixCleanupTask pending) {
+    if (pending.getCreatedAt().isAfter(LocalDateTime.now(clock).minus(aliasGrace))) {
+      defer(pending);
+      return;
+    }
+    var lookup = matrix.resolveRoomAlias(pending.getRoomId());
+    if (lookup == null || !lookup.known()) {
+      defer(pending);
+      return;
+    }
+    if (lookup.roomId() != null) {
+      tasks.save(
+          GroupChatMatrixCleanupTask.builder()
+              .action(Action.PURGE_ROOM)
+              .seriesId(pending.getSeriesId())
+              .ownerId(pending.getOwnerId())
+              .tenantId(pending.getTenantId())
+              .roomId(lookup.roomId())
+              .createdAt(LocalDateTime.now(clock))
+              .build());
+    }
+    tasks.delete(pending);
+  }
+
+  private boolean attempt(GroupChatMatrixCleanupTask task) {
+    return task.getAction() == Action.PURGE_ROOM
+        ? purgeUnjournaledRoom(task.getRoomId())
+        : membership.removeMemberFromRoomAndConfirm(task.getRoomId(), task.getMemberId());
+  }
+
+  private void defer(GroupChatMatrixCleanupTask task) {
+    task.setAttemptCount(task.getAttemptCount() + 1);
+    if (task.getAttemptCount() % STUCK_ATTEMPT_WARNING_INTERVAL == 0) {
+      log.warn(
+          "Group Matrix cleanup {} ({}) still pending after {} attempts",
+          task.getId(),
+          task.getAction(),
+          task.getAttemptCount());
+    }
+    task.setLastAttemptAt(LocalDateTime.now(clock));
+    tasks.save(task);
+  }
+}

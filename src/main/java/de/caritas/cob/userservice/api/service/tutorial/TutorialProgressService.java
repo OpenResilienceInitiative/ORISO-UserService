@@ -42,11 +42,30 @@ public class TutorialProgressService {
    * e2e-20260720-1507, probe S6). Configured rather than hardcoded so enabling a new tour stays a
    * deployment concern; the frontends remain the source of truth for tour content.
    */
-  @Value("${tutorial.tours.frontend:consultant-walkthrough}")
-  private String[] frontendTours = {"consultant-walkthrough"};
+  @Value(
+      "${tutorial.tours.frontend:consultant-walkthrough,consultant-mail-counselling,"
+          + "consultant-practice-accept,consultant-practice-supervision,"
+          + "consultant-case-handover,consultant-calendar,consultant-group-circle,"
+          + "consultant-profile,consultant-live-chat,consultant-timeline,"
+          + "consultant-video-call,asker-first-steps,asker-settings}")
+  private String[] frontendTours = {
+    "consultant-walkthrough",
+    "consultant-mail-counselling",
+    "consultant-practice-accept",
+    "consultant-practice-supervision",
+    "consultant-case-handover",
+    "consultant-calendar",
+    "consultant-group-circle",
+    "consultant-profile",
+    "consultant-live-chat",
+    "consultant-timeline",
+    "consultant-video-call",
+    "asker-first-steps",
+    "asker-settings"
+  };
 
-  @Value("${tutorial.tours.admin:}")
-  private String[] adminTours = {};
+  @Value("${tutorial.tours.admin:admin-introduction}")
+  private String[] adminTours = {"admin-introduction"};
 
   /**
    * Upper bound of progress rows a single account may own. Rows are only ever created by their own

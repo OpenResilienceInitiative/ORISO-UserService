@@ -35,8 +35,9 @@ import org.springframework.stereotype.Component;
  *       Schweigepflicht. The event is posted with the existing credential resolution.
  * </ul>
  *
- * <p>The wording here is the German platform text. It is written <b>gender-neutral by
- * reformulation</b>, not by notation (ADR-018 §7) — "eine passende Ansprechperson", never {@code
+ * <p>The legacy wording here is German platform text. New events with a validated UI locale receive
+ * the localized platform defaults before their wording is frozen. It is written <b>gender-neutral
+ * by reformulation</b>, not by notation (ADR-018 §7) — "eine passende Ansprechperson", never {@code
  * Berater*in} / {@code Berater_innen} / {@code Berater:innen}. The frontend catalogue
  * (ORISO-Frontend {@code erstantwortCatalogue.ts}) carries the same texts for the client-side
  * triggers and for Storybook; both sides are pinned by their own tests.
@@ -102,17 +103,23 @@ public class ErstantwortPayloadBuilder {
 
     if (modality.isAsynchronous()) {
       // Live Chat has neither teams nor case handover — nothing to disclose.
-      add(
-          bausteine,
-          "whoReadsAlong",
-          informal ? "Wer Deine Nachricht liest" : "Wer Ihre Nachricht liest",
+      /* ORISO-UserService#1565: who else reads a conversation differs per centre (a supervisor,
+      a team lead, a case handover), so the platform must not say it for them. Like freeNotice
+      and emergencyAddition this Baustein has no platform wording: when no level stated it, it is
+      left out entirely, headline included, and the rest of the first reply goes out unchanged. */
+      var whoReadsAlong =
           resolve(
               context.getWhoReadsAlongByTopic(),
               context.getWhoReadsAlongByAgency(),
               context.getWhoReadsAlongByTenant(),
-              (informal ? "Deine" : "Ihre")
-                  + " Nachricht lesen ausschließlich die Fachkräfte der zuständigen"
-                  + " Beratungsstelle. Alle sind zur Verschwiegenheit verpflichtet."));
+              null);
+      if (whoReadsAlong != null) {
+        add(
+            bausteine,
+            "whoReadsAlong",
+            informal ? "Wer Deine Nachricht liest" : "Wer Ihre Nachricht liest",
+            whoReadsAlong);
+      }
 
       var days =
           context.getResponseDeadlineDays() == null
@@ -170,6 +177,17 @@ public class ErstantwortPayloadBuilder {
                 + " Daten umgehen, steht in der Datenschutzerklärung.");
     addLinks(dataProtection, context);
 
+    /* ADR-018 §6: the Träger's emergency numbers are an addition, never a replacement. They
+    travel as their own Baustein so the client can file them with the other collapsible infos
+    instead of appending them to the always-visible platform bubble. */
+    if (ErstantwortText.hasText(context.getEmergencyAdditionByTenant())) {
+      add(
+          bausteine,
+          "emergencyAddition",
+          "Weitere Notfallkontakte",
+          context.getEmergencyAdditionByTenant().trim());
+    }
+
     // The single escape hatch, at a fixed position. Absent until a Träger fills it.
     var freeNotice =
         resolve(
@@ -177,7 +195,7 @@ public class ErstantwortPayloadBuilder {
             context.getFreeNoticeByAgency(),
             context.getFreeNoticeByTenant(),
             null);
-    if (isNotBlank(freeNotice)) {
+    if (ErstantwortText.hasText(freeNotice)) {
       add(bausteine, "freeNotice", null, freeNotice);
     }
 
@@ -215,6 +233,7 @@ public class ErstantwortPayloadBuilder {
                 ? "Bis bald — wir melden uns bei Dir."
                 : "Bis bald — wir melden uns bei Ihnen."));
 
+    ErstantwortTranslations.localizePlatformDefaults(bausteine, context);
     return bausteine;
   }
 
@@ -224,13 +243,13 @@ public class ErstantwortPayloadBuilder {
    * must not silence a text the level below it still provides.
    */
   private String resolve(String byTopic, String byAgency, String byTenant, String platform) {
-    if (isNotBlank(byTopic)) {
+    if (ErstantwortText.hasText(byTopic)) {
       return byTopic.trim();
     }
-    if (isNotBlank(byAgency)) {
+    if (ErstantwortText.hasText(byAgency)) {
       return byAgency.trim();
     }
-    if (isNotBlank(byTenant)) {
+    if (ErstantwortText.hasText(byTenant)) {
       return byTenant.trim();
     }
     return platform;

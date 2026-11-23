@@ -1,0 +1,221 @@
+package de.caritas.cob.userservice.api.service.session;
+
+import de.caritas.cob.userservice.api.exception.httpresponses.ConflictException;
+import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
+import de.caritas.cob.userservice.api.model.AgencyEnquiryRoomDecision;
+import de.caritas.cob.userservice.api.model.AgencyEnquiryRoomDecision.Outcome;
+import de.caritas.cob.userservice.api.model.Consultant;
+import de.caritas.cob.userservice.api.model.Session;
+import de.caritas.cob.userservice.api.model.Session.SessionStatus;
+import de.caritas.cob.userservice.api.port.out.SessionRepository;
+import jakarta.persistence.EntityManager;
+import jakarta.persistence.LockModeType;
+import java.time.LocalDateTime;
+import java.util.Comparator;
+import java.util.List;
+import java.util.Objects;
+import java.util.Optional;
+import lombok.NonNull;
+import lombok.RequiredArgsConstructor;
+import org.springframework.lang.Nullable;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
+import org.springframework.transaction.annotation.Transactional;
+
+/** The single transactional boundary for changing the consultant who owns a session. */
+@Service
+@RequiredArgsConstructor
+public class SessionOwnershipService {
+
+  public record OwnershipChange(Long sessionId, @Nullable String ownerId, long revision) {}
+
+  private final @NonNull SessionRepository sessionRepository;
+  private final @NonNull EntityManager entityManager;
+  private final @NonNull AgencyEnquiryRoomDecisions roomDecisions;
+  private final @NonNull de.caritas.cob.userservice.api.service.matrix.InquiryAcceptanceNoticeStore
+      acceptanceNotices;
+
+  @Transactional
+  public OwnershipChange updateOwnerAndStatus(
+      Session expectedSession, @Nullable Consultant newOwner, SessionStatus newStatus) {
+    return updateOwner(expectedSession, newOwner, newStatus, expectedSession.getUpdateDate());
+  }
+
+  @Transactional
+  public OwnershipChange updateOwner(
+      Session expectedSession,
+      @Nullable Consultant newOwner,
+      SessionStatus newStatus,
+      @Nullable LocalDateTime updateDate) {
+    String expectedOwnerId = ownerId(expectedSession.getConsultant());
+    long expectedRevision = expectedSession.getOwnershipRevision();
+    long expectedRowVersion = expectedSession.getRowVersion();
+    if (entityManager.contains(expectedSession)) {
+      entityManager.detach(expectedSession);
+    }
+    Session current = lock(expectedSession.getId());
+    if (current.getStatus() == SessionStatus.REJECTED) {
+      throw new ConflictException("Rejected enquiry cannot be reopened");
+    }
+    requireCurrentOwnership(current, expectedOwnerId, expectedRevision, expectedRowVersion);
+    if (current.getConversationType() == null) {
+      current.setConversationType(expectedSession.getConversationType());
+    }
+    boolean trackInitialRoom =
+        newStatus == SessionStatus.IN_PROGRESS
+            && newOwner != null
+            && Objects.equals(current.getAgencyId(), expectedSession.getAgencyId())
+            && AgencyEnquiryRoomDecisions.tracksRegistration(current)
+            && AgencyEnquiryRoomRetirements.isInitialHoldingRoom(current);
+    var openingStatus = current.getStatus();
+    // The accepting counsellor’s validated department is bound before this locked update.
+    current.setAgencyId(expectedSession.getAgencyId());
+    apply(current, newOwner, newStatus, updateDate);
+    if (trackInitialRoom) {
+      roomDecisions.begin(current, openingStatus);
+    }
+    synchronizeExpectedSession(expectedSession, current);
+    return token(current);
+  }
+
+  @Transactional
+  public boolean compensateOwnerChange(
+      Long sessionId,
+      OwnershipChange assignment,
+      @Nullable Consultant restoredOwner,
+      SessionStatus restoredStatus,
+      @Nullable LocalDateTime updateDate) {
+    return compensateOwnerChange(
+        sessionId, assignment, restoredOwner, restoredStatus, updateDate, false);
+  }
+
+  @Transactional
+  public boolean compensateOwnerChange(
+      Long sessionId,
+      OwnershipChange assignment,
+      @Nullable Consultant restoredOwner,
+      SessionStatus restoredStatus,
+      @Nullable LocalDateTime updateDate,
+      boolean clearDepartment) {
+    Session current = lock(sessionId);
+    if (current.getStatus() == SessionStatus.REJECTED
+        || !Objects.equals(ownerId(current.getConsultant()), assignment.ownerId())
+        || current.getOwnershipRevision() != assignment.revision()) {
+      return false;
+    }
+    if (restoredOwner == null
+        && AgencyOpenEnquiryMembership.OPEN_STATUSES.contains(restoredStatus)
+        && AgencyEnquiryRoomDecisions.tracksRegistration(current)) {
+      roomDecisions.resolve(current, Outcome.REOPENED);
+    }
+    if (clearDepartment) {
+      current.setAgencyId(null);
+    }
+    apply(current, restoredOwner, restoredStatus, updateDate);
+    acceptanceNotices.cancelPreparation(sessionId, assignment.revision());
+    return true;
+  }
+
+  @Transactional(
+      propagation = Propagation.REQUIRES_NEW,
+      timeout = AgencyEnquiryRoomDecisions.SWEEP_TRANSACTION_TIMEOUT_SECONDS)
+  public void recoverExpiredRoomPreparation(AgencyEnquiryRoomDecision candidate) {
+    var current = findLocked(candidate.getSessionId()).orElse(null);
+    var openingStatus = roomDecisions.reopenExpiredPreparation(candidate, current);
+    if (current != null && openingStatus.isPresent()) {
+      restorePreparedEnquiry(current, openingStatus.get());
+    }
+  }
+
+  /** The caller verified and locked the accepted session before invoking this operation. */
+  @Transactional(propagation = Propagation.MANDATORY)
+  boolean startEnquiryRoomWork(Session current) {
+    var openingStatus = roomDecisions.startExternalWork(current);
+    if (openingStatus.isEmpty()) {
+      return true;
+    }
+    restorePreparedEnquiry(current, openingStatus.get());
+    return false;
+  }
+
+  private void restorePreparedEnquiry(Session current, SessionStatus openingStatus) {
+    var revision = current.getOwnershipRevision();
+    apply(current, null, openingStatus, current.getUpdateDate());
+    acceptanceNotices.cancelPreparation(current.getId(), revision);
+  }
+
+  @Transactional
+  public void clearOwnerFromSessions(Consultant expectedOwner, List<SessionStatus> statuses) {
+    sessionRepository.findIdsByConsultantAndStatusInOrderById(expectedOwner, statuses).stream()
+        .sorted(Comparator.naturalOrder())
+        .forEach(
+            sessionId -> {
+              Session current = lock(sessionId);
+              if (Objects.equals(ownerId(current.getConsultant()), expectedOwner.getId())
+                  && statuses.contains(current.getStatus())) {
+                apply(current, null, current.getStatus(), current.getUpdateDate());
+              }
+            });
+  }
+
+  private Session lock(Long sessionId) {
+    return findLocked(sessionId)
+        .orElseThrow(() -> new NotFoundException("Session not found: " + sessionId));
+  }
+
+  private Optional<Session> findLocked(Long sessionId) {
+    var current = sessionRepository.findByIdForUpdate(sessionId);
+    current.ifPresent(session -> entityManager.refresh(session, LockModeType.PESSIMISTIC_WRITE));
+    return current;
+  }
+
+  private void requireCurrentOwnership(
+      Session current, String expectedOwnerId, long expectedRevision, long expectedRowVersion) {
+    if (!Objects.equals(ownerId(current.getConsultant()), expectedOwnerId)
+        || current.getOwnershipRevision() != expectedRevision
+        || current.getRowVersion() != expectedRowVersion) {
+      throw new ConflictException(
+          "Session ownership changed while the operation was in progress: " + current.getId());
+    }
+  }
+
+  private void apply(
+      Session current,
+      @Nullable Consultant newOwner,
+      SessionStatus newStatus,
+      @Nullable LocalDateTime updateDate) {
+    boolean initialAcceptance =
+        newOwner != null
+            && (current.getStatus() == SessionStatus.INITIAL
+                || current.getStatus() == SessionStatus.NEW)
+            && newStatus == SessionStatus.IN_PROGRESS;
+    if (!Objects.equals(ownerId(current.getConsultant()), ownerId(newOwner))) {
+      current.setConsultant(newOwner);
+      current.setOwnershipRevision(Math.incrementExact(current.getOwnershipRevision()));
+    }
+    current.setStatus(newStatus);
+    current.setUpdateDate(updateDate);
+    sessionRepository.save(current);
+    if (initialAcceptance) acceptanceNotices.prepare(current);
+    entityManager.flush();
+  }
+
+  private static void synchronizeExpectedSession(Session expected, Session current) {
+    expected.setConsultant(current.getConsultant());
+    expected.setAgencyId(current.getAgencyId());
+    expected.setConversationType(current.getConversationType());
+    expected.setOwnershipRevision(current.getOwnershipRevision());
+    expected.setStatus(current.getStatus());
+    expected.setUpdateDate(current.getUpdateDate());
+    expected.setRowVersion(current.getRowVersion());
+  }
+
+  private static OwnershipChange token(Session session) {
+    return new OwnershipChange(
+        session.getId(), ownerId(session.getConsultant()), session.getOwnershipRevision());
+  }
+
+  private static String ownerId(@Nullable Consultant consultant) {
+    return consultant == null ? null : consultant.getId();
+  }
+}

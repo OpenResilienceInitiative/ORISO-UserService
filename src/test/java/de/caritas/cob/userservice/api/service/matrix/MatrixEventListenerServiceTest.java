@@ -4,10 +4,12 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.atLeast;
 import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -31,6 +33,7 @@ import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
 import de.caritas.cob.userservice.api.service.mobilepushmessage.MobilePushNotificationService;
+import de.caritas.cob.userservice.api.service.notification.AdviceSeekerReplyEmailService;
 import de.caritas.cob.userservice.api.service.notification.EventNotificationService;
 import de.caritas.cob.userservice.api.service.notification.PrivacyEnvelope;
 import de.caritas.cob.userservice.api.service.session.SessionService;
@@ -81,14 +84,28 @@ class MatrixEventListenerServiceTest {
   @Mock private SessionRepository sessionRepository;
   @Mock private RedisMessageMirrorService redisMessageMirrorService;
   @Mock private ConsultantMessageStatService consultantMessageStatService;
+
+  @Mock
+  private de.caritas.cob.userservice.api.service.statistics.CommunicationStatService
+      communicationStatService;
+
+  @Mock private AdviceSeekerReplyEmailService replyEmailService;
+
+  @Mock private MatrixEmailSyncCursorStore emailSyncCursorStore;
+
+  @Mock
+  private de.caritas.cob.userservice.api.service.notification.InternalChatEmailService
+      internalChatEmailService;
+
   @Mock private LiveChatDiagnosticMetrics diagnosticMetrics;
+  @Mock private MatrixCallInviteNotificationService callInviteNotifications;
 
   private Logger logger;
   private ListAppender<ILoggingEvent> logAppender;
 
-  private static final String MATRIX_ROOM_ID = "!room:matrix.oriso.org";
-  private static final String SENDER_MATRIX_ID = "@asker:matrix.oriso.org";
-  private static final String CONSULTANT_MATRIX_ID = "@consultant:matrix.oriso.org";
+  private static final String MATRIX_ROOM_ID = "!room:matrix.example.org";
+  private static final String SENDER_MATRIX_ID = "@asker:matrix.example.org";
+  private static final String CONSULTANT_MATRIX_ID = "@consultant:matrix.example.org";
   private static final String ASKER_DOMAIN_ID = "asker-user-id";
   private static final String CONSULTANT_DOMAIN_ID = "consultant-id";
 
@@ -99,6 +116,9 @@ class MatrixEventListenerServiceTest {
     logAppender.start();
     logger.addAppender(logAppender);
     logger.setLevel(Level.DEBUG);
+    lenient()
+        .when(emailSyncCursorStore.readOrCreateActivation())
+        .thenReturn(new MatrixEmailSyncCursorStore.Start(null, 0L));
   }
 
   @AfterEach
@@ -121,7 +141,12 @@ class MatrixEventListenerServiceTest {
             userRepository,
             consultantRepository,
             sessionRepository,
-            consultantMessageStatService);
+            consultantMessageStatService,
+            communicationStatService,
+            callInviteNotifications,
+            replyEmailService,
+            emailSyncCursorStore,
+            internalChatEmailService);
     service.setDiagnosticMetrics(diagnosticMetrics);
     return service;
   }
@@ -193,7 +218,12 @@ class MatrixEventListenerServiceTest {
             userRepository,
             consultantRepository,
             sessionRepository,
-            consultantMessageStatService) {
+            consultantMessageStatService,
+            communicationStatService,
+            callInviteNotifications,
+            replyEmailService,
+            emailSyncCursorStore,
+            internalChatEmailService) {
           @Override
           void sleep(long millis) {
             // deterministic: never actually sleep in the test
@@ -638,7 +668,12 @@ class MatrixEventListenerServiceTest {
             userRepository,
             consultantRepository,
             sessionRepository,
-            consultantMessageStatService) {
+            consultantMessageStatService,
+            communicationStatService,
+            callInviteNotifications,
+            replyEmailService,
+            emailSyncCursorStore,
+            internalChatEmailService) {
           @Override
           void sleep(long millis) {
             // no-op
@@ -670,7 +705,12 @@ class MatrixEventListenerServiceTest {
             userRepository,
             consultantRepository,
             sessionRepository,
-            consultantMessageStatService) {
+            consultantMessageStatService,
+            communicationStatService,
+            callInviteNotifications,
+            replyEmailService,
+            emailSyncCursorStore,
+            internalChatEmailService) {
           @Override
           void sleep(long millis) throws InterruptedException {
             throw new InterruptedException("shutdown");
@@ -826,7 +866,8 @@ class MatrixEventListenerServiceTest {
         (Map<String, Object>) ReflectionTestUtils.invokeMethod(service, "performMatrixSync");
 
     assertThat(result).containsEntry("next_batch", "s1");
-    assertThat(ReflectionTestUtils.getField(service, "syncToken")).isEqualTo("s1");
+    assertThat(ReflectionTestUtils.getField(service, "syncToken")).isEqualTo("s0");
+    verifyNoInteractions(emailSyncCursorStore);
   }
 
   @Test
@@ -916,6 +957,7 @@ class MatrixEventListenerServiceTest {
 
     assertThat(result).hasToString("SUCCESS");
     assertThat(ReflectionTestUtils.getField(service, "syncToken")).isEqualTo("batch-observed");
+    verify(emailSyncCursorStore).write("batch-observed");
     assertThat(registry.getCurrentObservation()).isNull();
     assertThat(syncObservation.get()).isNotNull();
     assertThat(processingObservation.get()).isSameAs(syncObservation.get());
@@ -977,6 +1019,143 @@ class MatrixEventListenerServiceTest {
         .hasMessage("repository unavailable");
   }
 
+  @Test
+  void syncCycle_Should_StopBeforeTheJoinedRoomsAndReplayTheBatch_When_ALeaveCannotBeRecorded() {
+    // FE#2209 round 11 (F4): a leave arrives once. If its marker cannot be written, the joined
+    // rooms of the batch are not handled and the cursor stays, so the whole batch is replayed.
+    var service = newService();
+    ReflectionTestUtils.setField(service, "adminAccessToken", "admin-token");
+    // CodeRabbit 4585785827: the in-memory cursor must stay too, or the next request skips the
+    // batch although the persisted email cursor was never written.
+    ReflectionTestUtils.setField(service, "syncToken", "previous-batch");
+    when(matrixSynapseService.getMatrixApiUrl()).thenReturn("https://matrix.example");
+    var rooms =
+        Map.<String, Object>of(
+            "leave", Map.of("!left-call-room:example", Map.of()),
+            "join",
+                Map.of(
+                    "!joined-call-room:example", Map.of("timeline", Map.of("events", List.of()))));
+    when(matrixSynapseService.makeMatrixRequest(
+            anyString(), eq("GET"), eq("admin-token"), eq(null)))
+        .thenReturn(Map.of("next_batch", "batch-with-a-leave", "rooms", rooms));
+    org.mockito.Mockito.doThrow(new MatrixCallInviteNotificationService.CallRoomBatchReplay())
+        .when(callInviteNotifications)
+        .handleMediaRoomLeft("!left-call-room:example");
+
+    assertThatThrownBy(
+            () -> ReflectionTestUtils.invokeMethod(service, "executeObservedMatrixSyncCycle"))
+        .isInstanceOf(MatrixCallInviteNotificationService.CallRoomBatchReplay.class);
+
+    verify(callInviteNotifications, never()).handleMediaRooms(any());
+    verify(callInviteNotifications, never()).reconcileMediaRooms();
+    verify(emailSyncCursorStore, never()).write(anyString());
+    assertThat(ReflectionTestUtils.getField(service, "syncToken")).isEqualTo("previous-batch");
+  }
+
+  // ── tenant of each unit of work ───────────────────────────────────────────
+
+  @Test
+  void syncCycle_Should_RunInTheTechnicalTenant_When_TheWorkerThreadCarriesAnotherOne() {
+    var service = newServiceWithSyncExecutor();
+    service.setTenantContextProvider(multiTenantProvider());
+    ReflectionTestUtils.setField(service, "adminAccessToken", "admin-token");
+    when(matrixSynapseService.getMatrixApiUrl()).thenReturn("https://matrix.example");
+    var tenantInCycle = new AtomicReference<Long>();
+    when(matrixSynapseService.makeMatrixRequest(
+            anyString(), eq("GET"), eq("admin-token"), eq(null)))
+        .thenAnswer(
+            ignored -> {
+              tenantInCycle.set(
+                  de.caritas.cob.userservice.api.tenant.TenantContext.getCurrentTenant());
+              return new HashMap<String, Object>(Map.of("next_batch", "batch-1"));
+            });
+    // Something earlier on this pooled thread left a Träger behind.
+    de.caritas.cob.userservice.api.tenant.TenantContext.setCurrentTenant(5L);
+    try {
+      ReflectionTestUtils.invokeMethod(service, "executeObservedMatrixSyncCycle");
+
+      assertThat(tenantInCycle.get())
+          .isEqualTo(de.caritas.cob.userservice.api.tenant.TenantContext.TECHNICAL_TENANT_ID);
+      assertThat(de.caritas.cob.userservice.api.tenant.TenantContext.getCurrentTenant())
+          .isEqualTo(5L);
+    } finally {
+      de.caritas.cob.userservice.api.tenant.TenantContext.clear();
+    }
+  }
+
+  @Test
+  void notificationTask_Should_RunInTheTechnicalTenant_When_TheWorkerThreadCarriesAnotherOne() {
+    var service = newServiceWithSyncExecutor();
+    service.setTenantContextProvider(multiTenantProvider());
+    service.registerRoom(10L, MATRIX_ROOM_ID, Set.of(ASKER_DOMAIN_ID, CONSULTANT_DOMAIN_ID));
+    when(userRepository.findByMatrixUserIdAndDeleteDateIsNull(CONSULTANT_MATRIX_ID))
+        .thenReturn(Optional.empty());
+    when(consultantRepository.findByMatrixUserIdAndDeleteDateIsNull(CONSULTANT_MATRIX_ID))
+        .thenReturn(Optional.of(consultantWithId(CONSULTANT_DOMAIN_ID)));
+    var tenantInTask = new AtomicReference<Long>();
+    doAnswer(
+            ignored -> {
+              tenantInTask.set(
+                  de.caritas.cob.userservice.api.tenant.TenantContext.getCurrentTenant());
+              return null;
+            })
+        .when(eventNotificationService)
+        .createMessageNotificationFromRoom(
+            eq(MATRIX_ROOM_ID), eq(CONSULTANT_DOMAIN_ID), any(PrivacyEnvelope.class));
+    de.caritas.cob.userservice.api.tenant.TenantContext.setCurrentTenant(5L);
+    try {
+      invokeProcessMatrixSyncEvents(
+          service,
+          syncResultWithEvents(
+              MATRIX_ROOM_ID,
+              List.of(messageEvent(CONSULTANT_MATRIX_ID, "m.text", "hello", "$evt-tenant"))));
+
+      assertThat(tenantInTask.get())
+          .isEqualTo(de.caritas.cob.userservice.api.tenant.TenantContext.TECHNICAL_TENANT_ID);
+    } finally {
+      de.caritas.cob.userservice.api.tenant.TenantContext.clear();
+    }
+  }
+
+  private static de.caritas.cob.userservice.api.tenant.TenantContextProvider multiTenantProvider() {
+    var provider = new de.caritas.cob.userservice.api.tenant.TenantContextProvider();
+    ReflectionTestUtils.setField(provider, "multiTenancyEnabled", true);
+    return provider;
+  }
+
+  @Test
+  void observedSyncCycle_shouldReplayBatchWhenDurableReplyClaimFails() {
+    var service = newServiceWithSyncExecutor();
+    service.registerRoom(10L, MATRIX_ROOM_ID, Set.of(ASKER_DOMAIN_ID, CONSULTANT_DOMAIN_ID));
+    ReflectionTestUtils.setField(service, "syncToken", "previous-batch");
+    ReflectionTestUtils.setField(service, "adminAccessToken", "admin-token");
+    when(matrixSynapseService.getMatrixApiUrl()).thenReturn("https://matrix.example");
+    var response =
+        new HashMap<String, Object>(
+            syncResultWithEvents(
+                MATRIX_ROOM_ID,
+                List.of(messageEvent(CONSULTANT_MATRIX_ID, "m.text", "reply", "$new-reply"))));
+    response.put("next_batch", "uncommitted-batch");
+    when(matrixSynapseService.makeMatrixRequest(
+            anyString(), eq("GET"), eq("admin-token"), eq(null)))
+        .thenReturn(response);
+    when(userRepository.findByMatrixUserIdAndDeleteDateIsNull(CONSULTANT_MATRIX_ID))
+        .thenReturn(Optional.empty());
+    when(consultantRepository.findByMatrixUserIdAndDeleteDateIsNull(CONSULTANT_MATRIX_ID))
+        .thenReturn(Optional.of(consultantWithId(CONSULTANT_DOMAIN_ID)));
+    doThrow(new IllegalStateException("delivery claim database unavailable"))
+        .when(replyEmailService)
+        .onConsultantReply(MATRIX_ROOM_ID, "$new-reply", CONSULTANT_MATRIX_ID);
+
+    assertThatThrownBy(
+            () -> ReflectionTestUtils.invokeMethod(service, "executeObservedMatrixSyncCycle"))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("delivery claim database unavailable");
+
+    assertThat(ReflectionTestUtils.getField(service, "syncToken")).isEqualTo("previous-batch");
+    verify(emailSyncCursorStore, never()).write(anyString());
+  }
+
   // ── processMatrixSyncEvents ────────────────────────────────────────────────
 
   @Test
@@ -1033,7 +1212,319 @@ class MatrixEventListenerServiceTest {
     verify(eventNotificationService, never())
         .createThreadReplyNotificationFromRoom(
             anyString(), any(), anyString(), any(PrivacyEnvelope.class));
+    verify(replyEmailService)
+        .onConsultantReply(MATRIX_ROOM_ID, "$evt-direct", CONSULTANT_MATRIX_ID);
+    // FE#1725 story 40: the service itself ignores rooms that are not internal groups.
+    verify(internalChatEmailService)
+        .onMatrixMessage(MATRIX_ROOM_ID, "$evt-direct", CONSULTANT_MATRIX_ID);
     verify(consultantMessageStatService).recordMessageSent(CONSULTANT_DOMAIN_ID, 10L);
+    verify(communicationStatService, never()).recordAdviceSeekerMessage(any(), any());
+  }
+
+  @Test
+  void aCounsellorMessageInASessionIsReportedAsInteractionWithItsServerTime() {
+    var service = newServiceWithSyncExecutor();
+    var interactions =
+        mock(de.caritas.cob.userservice.api.service.lifecycle.SessionInteractionService.class);
+    service.setSessionInteractions(interactions);
+    service.registerRoom(10L, MATRIX_ROOM_ID, Set.of(ASKER_DOMAIN_ID, CONSULTANT_DOMAIN_ID));
+    when(consultantRepository.findByMatrixUserIdAndDeleteDateIsNull(CONSULTANT_MATRIX_ID))
+        .thenReturn(Optional.of(consultantWithId(CONSULTANT_DOMAIN_ID)));
+    var message = messageEvent(CONSULTANT_MATRIX_ID, "m.text", "hello", "$evt-1");
+    message.put("origin_server_ts", 1_763_370_000_000L);
+    var notice = messageEvent(CONSULTANT_MATRIX_ID, "m.notice", "bot", "$evt-2");
+    notice.put("origin_server_ts", 1_763_370_000_000L);
+
+    invokeProcessMatrixSyncEvents(
+        service, syncResultWithEvents(MATRIX_ROOM_ID, List.of(message, notice)));
+
+    verify(interactions)
+        .messageWritten(
+            10L, CONSULTANT_DOMAIN_ID, java.time.Instant.ofEpochMilli(1_763_370_000_000L));
+    org.mockito.Mockito.verifyNoMoreInteractions(interactions);
+  }
+
+  @Test
+  void anAdviceSeekerMessageIsNoInteraction() {
+    var service = newServiceWithSyncExecutor();
+    var interactions =
+        mock(de.caritas.cob.userservice.api.service.lifecycle.SessionInteractionService.class);
+    service.setSessionInteractions(interactions);
+    service.registerRoom(10L, MATRIX_ROOM_ID, Set.of(ASKER_DOMAIN_ID, CONSULTANT_DOMAIN_ID));
+    when(userRepository.findByMatrixUserIdAndDeleteDateIsNull(SENDER_MATRIX_ID))
+        .thenReturn(Optional.of(userWithId(ASKER_DOMAIN_ID)));
+    var message = messageEvent(SENDER_MATRIX_ID, "m.text", "hello", "$evt-1");
+    message.put("origin_server_ts", 1_763_370_000_000L);
+
+    invokeProcessMatrixSyncEvents(service, syncResultWithEvents(MATRIX_ROOM_ID, List.of(message)));
+
+    org.mockito.Mockito.verifyNoInteractions(interactions);
+  }
+
+  // ── Admin Statistik communication tracking ─────────────────────────────────
+
+  @Test
+  void adviceSeekerMessage_isCountedForTheMappedSession_andNotAsCounsellorMessage() {
+    var service = newServiceWithSyncExecutor();
+    service.registerRoom(10L, MATRIX_ROOM_ID, Set.of(ASKER_DOMAIN_ID, CONSULTANT_DOMAIN_ID));
+    var seeker = userWithId(ASKER_DOMAIN_ID);
+    when(userRepository.findByMatrixUserIdAndDeleteDateIsNull(SENDER_MATRIX_ID))
+        .thenReturn(Optional.of(seeker));
+
+    var encrypted = new HashMap<String, Object>();
+    encrypted.put("type", "m.room.encrypted");
+    encrypted.put("sender", SENDER_MATRIX_ID);
+    encrypted.put("event_id", "$enc");
+    encrypted.put("content", Map.of("algorithm", "m.megolm.v1.aes-sha2", "ciphertext", "x"));
+    invokeProcessMatrixSyncEvents(
+        service, syncResultWithEvents(MATRIX_ROOM_ID, List.of(encrypted)));
+
+    verify(communicationStatService).recordAdviceSeekerMessage(10L, "$enc");
+    verify(consultantMessageStatService, never()).recordMessageSent(anyString(), any());
+  }
+
+  @Test
+  void adviceSeekerMessage_failingStatistic_doesNotBreakTheNotificationPath() {
+    var service = newServiceWithSyncExecutor();
+    service.registerRoom(10L, MATRIX_ROOM_ID, Set.of(ASKER_DOMAIN_ID, CONSULTANT_DOMAIN_ID));
+    when(userRepository.findByMatrixUserIdAndDeleteDateIsNull(SENDER_MATRIX_ID))
+        .thenReturn(Optional.of(userWithId(ASKER_DOMAIN_ID)));
+    org.mockito.Mockito.doThrow(new IllegalStateException("db down"))
+        .when(communicationStatService)
+        .recordAdviceSeekerMessage(10L, "$s");
+
+    invokeProcessMatrixSyncEvents(
+        service,
+        syncResultWithEvents(
+            MATRIX_ROOM_ID, List.of(messageEvent(SENDER_MATRIX_ID, "m.text", "hi", "$s"))));
+
+    verify(eventNotificationService)
+        .createMessageNotificationFromRoom(
+            eq(MATRIX_ROOM_ID), eq(ASKER_DOMAIN_ID), any(PrivacyEnvelope.class));
+  }
+
+  @Test
+  void adviceSeekerMessage_isCounted_whenNoOneElseIsInTheSessionYet() {
+    // An unassigned enquiry: the advice seeker is the only participant, so nobody is notified.
+    var service = newServiceWithSyncExecutor();
+    service.registerRoom(10L, MATRIX_ROOM_ID, Set.of(ASKER_DOMAIN_ID));
+    when(userRepository.findByMatrixUserIdAndDeleteDateIsNull(SENDER_MATRIX_ID))
+        .thenReturn(Optional.of(userWithId(ASKER_DOMAIN_ID)));
+
+    invokeProcessMatrixSyncEvents(
+        service,
+        syncResultWithEvents(
+            MATRIX_ROOM_ID, List.of(messageEvent(SENDER_MATRIX_ID, "m.text", "hi", "$alone"))));
+
+    verify(communicationStatService).recordAdviceSeekerMessage(10L, "$alone");
+    verify(eventNotificationService, never())
+        .createMessageNotificationFromRoom(anyString(), any(), any(PrivacyEnvelope.class));
+  }
+
+  @Test
+  void adviceSeekerMessage_isCounted_whenTheFeedNotificationFails() {
+    var service = newServiceWithSyncExecutor();
+    service.registerRoom(10L, MATRIX_ROOM_ID, Set.of(ASKER_DOMAIN_ID, CONSULTANT_DOMAIN_ID));
+    when(userRepository.findByMatrixUserIdAndDeleteDateIsNull(SENDER_MATRIX_ID))
+        .thenReturn(Optional.of(userWithId(ASKER_DOMAIN_ID)));
+    org.mockito.Mockito.doThrow(new IllegalStateException("feed down"))
+        .when(eventNotificationService)
+        .createMessageNotificationFromRoom(anyString(), any(), any(PrivacyEnvelope.class));
+
+    invokeProcessMatrixSyncEvents(
+        service,
+        syncResultWithEvents(
+            MATRIX_ROOM_ID, List.of(messageEvent(SENDER_MATRIX_ID, "m.text", "hi", "$feed"))));
+
+    verify(communicationStatService).recordAdviceSeekerMessage(10L, "$feed");
+  }
+
+  @Test
+  void validatedOrisoCallInvite_isCountedOncePerCall_withItsVideoFlag() {
+    var service = newServiceWithSyncExecutor();
+    service.registerRoom(10L, MATRIX_ROOM_ID, Set.of(ASKER_DOMAIN_ID, CONSULTANT_DOMAIN_ID));
+    var invite =
+        Map.<String, Object>of(
+            "type",
+            "org.oriso.call.invite",
+            "sender",
+            SENDER_MATRIX_ID,
+            "content",
+            Map.of("call_id", "call-1", "is_video", true, "call_room_id", "!media:x"));
+    when(callInviteNotifications.handle(MATRIX_ROOM_ID, invite)).thenReturn(true);
+
+    invokeProcessMatrixEvent(service, MATRIX_ROOM_ID, invite);
+
+    verify(communicationStatService).recordCall(10L, "call-1", true);
+  }
+
+  @Test
+  void rejectedOrisoCallInvite_isNotCounted() {
+    var service = newServiceWithSyncExecutor();
+    service.registerRoom(10L, MATRIX_ROOM_ID, Set.of(ASKER_DOMAIN_ID, CONSULTANT_DOMAIN_ID));
+    var invite =
+        Map.<String, Object>of(
+            "type",
+            "org.oriso.call.invite",
+            "sender",
+            SENDER_MATRIX_ID,
+            "content",
+            Map.of("call_id", "forged", "is_video", false));
+    when(callInviteNotifications.handle(MATRIX_ROOM_ID, invite)).thenReturn(false);
+
+    invokeProcessMatrixEvent(service, MATRIX_ROOM_ID, invite);
+
+    verify(communicationStatService, never()).recordCall(any(), any(), anyBoolean());
+  }
+
+  @Test
+  void legacyCallInvite_isCountedAsAudioOrVideoFromItsSdpOffer() {
+    var service = newServiceWithSyncExecutor();
+    service.registerRoom(10L, MATRIX_ROOM_ID, Set.of(ASKER_DOMAIN_ID, CONSULTANT_DOMAIN_ID));
+    when(userRepository.findByMatrixUserIdAndDeleteDateIsNull(SENDER_MATRIX_ID))
+        .thenReturn(Optional.of(userWithId(ASKER_DOMAIN_ID)));
+    invokeProcessMatrixEvent(
+        service,
+        MATRIX_ROOM_ID,
+        Map.of(
+            "type",
+            "m.call.invite",
+            "sender",
+            SENDER_MATRIX_ID,
+            "content",
+            Map.of("call_id", "audio-1", "offer", Map.of("sdp", "v=0\r\nm=audio 9"))));
+    invokeProcessMatrixEvent(
+        service,
+        MATRIX_ROOM_ID,
+        Map.of(
+            "type",
+            "m.call.invite",
+            "sender",
+            SENDER_MATRIX_ID,
+            "content",
+            Map.of("call_id", "video-1", "offer", Map.of("sdp", "m=audio 9\r\nm=video 9"))));
+
+    verify(communicationStatService).recordCall(10L, "audio-1", false);
+    verify(communicationStatService).recordCall(10L, "video-1", true);
+  }
+
+  @Test
+  void legacyCallInvite_fromSomeoneOutsideTheSession_isNotCounted() {
+    var service = newServiceWithSyncExecutor();
+    service.registerRoom(10L, MATRIX_ROOM_ID, Set.of(ASKER_DOMAIN_ID, CONSULTANT_DOMAIN_ID));
+    // the sender resolves to no ORISO account, or to one that is not part of this session
+    when(userRepository.findByMatrixUserIdAndDeleteDateIsNull("@stranger:matrix.example.org"))
+        .thenReturn(Optional.of(userWithId("someone-else")));
+    for (String sender : List.of("@stranger:matrix.example.org", "@unknown:matrix.example.org")) {
+      invokeProcessMatrixEvent(
+          service,
+          MATRIX_ROOM_ID,
+          Map.of(
+              "type",
+              "m.call.invite",
+              "sender",
+              sender,
+              "content",
+              Map.of("call_id", "forged-" + sender, "offer", Map.of("sdp", "m=video 9"))));
+    }
+
+    verify(communicationStatService, never()).recordCall(any(), any(), anyBoolean());
+  }
+
+  @Test
+  void callInvite_inARoomWithoutSession_isNotCounted() {
+    var service = newServiceWithSyncExecutor();
+    invokeProcessMatrixEvent(
+        service,
+        "!unmapped:x",
+        Map.of(
+            "type",
+            "m.call.invite",
+            "sender",
+            SENDER_MATRIX_ID,
+            "content",
+            Map.of("call_id", "c", "offer", Map.of("sdp", "m=video"))));
+
+    verify(communicationStatService, never()).recordCall(any(), any(), anyBoolean());
+  }
+
+  @Test
+  void seekerMatrixEventClaimsOnlyTheConsultantMailPathBeforeCursorAdvance() {
+    var service = newServiceWithSyncExecutor();
+    service.registerRoom(10L, MATRIX_ROOM_ID, Set.of(ASKER_DOMAIN_ID, CONSULTANT_DOMAIN_ID));
+    var seeker = userWithId(ASKER_DOMAIN_ID);
+    when(userRepository.findByMatrixUserIdAndDeleteDateIsNull(SENDER_MATRIX_ID))
+        .thenReturn(Optional.of(seeker));
+
+    invokeProcessMatrixSyncEvents(
+        service,
+        syncResultWithEvents(
+            MATRIX_ROOM_ID,
+            List.of(messageEvent(SENDER_MATRIX_ID, "m.text", "private text", "$seeker-event"))));
+
+    verify(replyEmailService)
+        .onAdviceSeekerMessage(MATRIX_ROOM_ID, "$seeker-event", SENDER_MATRIX_ID);
+    verify(replyEmailService, never()).onConsultantReply(anyString(), anyString(), anyString());
+  }
+
+  @Test
+  void seekerMailClaimDoesNotDependOnTheInAppRecipientCache() {
+    var service = newServiceWithSyncExecutor();
+    service.registerRoom(10L, MATRIX_ROOM_ID, Set.of(ASKER_DOMAIN_ID));
+    when(userRepository.findByMatrixUserIdAndDeleteDateIsNull(SENDER_MATRIX_ID))
+        .thenReturn(Optional.of(userWithId(ASKER_DOMAIN_ID)));
+
+    invokeProcessMatrixSyncEvents(
+        service,
+        syncResultWithEvents(
+            MATRIX_ROOM_ID,
+            List.of(messageEvent(SENDER_MATRIX_ID, "m.text", "private text", "$seeker-event"))));
+
+    verify(replyEmailService)
+        .onAdviceSeekerMessage(MATRIX_ROOM_ID, "$seeker-event", SENDER_MATRIX_ID);
+    verifyNoInteractions(mobilePushNotificationService);
+  }
+
+  @Test
+  void processMatrixSyncEvents_shouldNotEmailConsultantAuthoredSystemCard() {
+    var service = newServiceWithSyncExecutor();
+    service.registerRoom(10L, MATRIX_ROOM_ID, Set.of(ASKER_DOMAIN_ID, CONSULTANT_DOMAIN_ID));
+    when(consultantRepository.findByMatrixUserIdAndDeleteDateIsNull(CONSULTANT_MATRIX_ID))
+        .thenReturn(Optional.of(consultantWithId(CONSULTANT_DOMAIN_ID)));
+    var event =
+        messageEvent(
+            CONSULTANT_MATRIX_ID,
+            "m.text",
+            "[SYSTEM_NOTIFICATION]{\"type\":\"CASE_HANDOVER_GRANTED\"}",
+            "$handover");
+
+    invokeProcessMatrixSyncEvents(service, syncResultWithEvents(MATRIX_ROOM_ID, List.of(event)));
+
+    verify(replyEmailService, never()).onConsultantReply(anyString(), anyString(), anyString());
+    verify(internalChatEmailService, never())
+        .onMatrixMessage(anyString(), anyString(), anyString());
+  }
+
+  @Test
+  void firstMatrixSyncDoesNotEmailHistoricalRepliesButKeepsNewOnes() {
+    var service = newServiceWithSyncExecutor();
+    service.registerRoom(10L, MATRIX_ROOM_ID, Set.of(ASKER_DOMAIN_ID, CONSULTANT_DOMAIN_ID));
+    ReflectionTestUtils.setField(service, "firstEmailSyncStartedAtMillis", 1_000L);
+    when(userRepository.findByMatrixUserIdAndDeleteDateIsNull(CONSULTANT_MATRIX_ID))
+        .thenReturn(Optional.empty());
+    when(consultantRepository.findByMatrixUserIdAndDeleteDateIsNull(CONSULTANT_MATRIX_ID))
+        .thenReturn(Optional.of(consultantWithId(CONSULTANT_DOMAIN_ID)));
+    var oldReply = messageEvent(CONSULTANT_MATRIX_ID, "m.text", "old", "$old");
+    oldReply.put("origin_server_ts", 999L);
+    var newReply = messageEvent(CONSULTANT_MATRIX_ID, "m.text", "new", "$new");
+    newReply.put("origin_server_ts", 1_000L);
+
+    invokeProcessMatrixEvent(service, MATRIX_ROOM_ID, oldReply);
+    invokeProcessMatrixEvent(service, MATRIX_ROOM_ID, newReply);
+
+    verify(replyEmailService, never())
+        .onConsultantReply(MATRIX_ROOM_ID, "$old", CONSULTANT_MATRIX_ID);
+    verify(replyEmailService).onConsultantReply(MATRIX_ROOM_ID, "$new", CONSULTANT_MATRIX_ID);
   }
 
   @Test
@@ -1065,6 +1556,8 @@ class MatrixEventListenerServiceTest {
     assertThat(envelopeCaptor.getValue().getMessageId()).isEqualTo("$evt-thread");
     verify(eventNotificationService, never())
         .createMessageNotificationFromRoom(anyString(), any(), any(PrivacyEnvelope.class));
+    verify(replyEmailService)
+        .onAdviceSeekerMessage(MATRIX_ROOM_ID, "$evt-thread", SENDER_MATRIX_ID);
     verify(consultantMessageStatService, never()).recordMessageSent(any(), any());
   }
 
@@ -1455,6 +1948,50 @@ class MatrixEventListenerServiceTest {
     verify(diagnosticMetrics).recordMatrixEvent("m.room.encrypted", Outcome.SUCCESS);
     verify(diagnosticMetrics).recordSideEffect(SideEffect.MOBILE_PUSH, Outcome.SUCCESS);
     verify(diagnosticMetrics).recordSideEffect(SideEffect.NOTIFICATION, Outcome.SUCCESS);
+  }
+
+  @Test
+  void processMatrixEvent_shouldNotEmailAnEncryptedEditOrReactionAsANewReply() {
+    var service = newServiceWithSyncExecutor();
+    service.registerRoom(31L, MATRIX_ROOM_ID, Set.of(ASKER_DOMAIN_ID, CONSULTANT_DOMAIN_ID));
+    // The sender is a present counsellor, so only the relation guard keeps these out of mail.
+    when(consultantRepository.findByMatrixUserIdAndDeleteDateIsNull(CONSULTANT_MATRIX_ID))
+        .thenReturn(Optional.of(consultantWithId(CONSULTANT_DOMAIN_ID)));
+
+    for (String relationType : List.of("m.replace", "m.annotation")) {
+      var event = new HashMap<String, Object>();
+      event.put("type", "m.room.encrypted");
+      event.put("sender", CONSULTANT_MATRIX_ID);
+      event.put("event_id", "$" + relationType);
+      event.put(
+          "content",
+          Map.of(
+              "algorithm", "m.megolm.v1.aes-sha2",
+              "ciphertext", "opaque-payload",
+              "m.relates_to", Map.of("rel_type", relationType, "event_id", "$original")));
+
+      invokeProcessMatrixEvent(service, MATRIX_ROOM_ID, event);
+    }
+
+    verifyNoInteractions(
+        replyEmailService,
+        internalChatEmailService,
+        eventNotificationService,
+        mobilePushNotificationService);
+
+    // Positive control: the same sender's plain encrypted message does reach the mail path.
+    var message = new HashMap<String, Object>();
+    message.put("type", "m.room.encrypted");
+    message.put("sender", CONSULTANT_MATRIX_ID);
+    message.put("event_id", "$enc-plain");
+    message.put(
+        "content", Map.of("algorithm", "m.megolm.v1.aes-sha2", "ciphertext", "opaque-payload"));
+
+    invokeProcessMatrixEvent(service, MATRIX_ROOM_ID, message);
+
+    verify(replyEmailService).onConsultantReply(MATRIX_ROOM_ID, "$enc-plain", CONSULTANT_MATRIX_ID);
+    verify(internalChatEmailService)
+        .onMatrixMessage(MATRIX_ROOM_ID, "$enc-plain", CONSULTANT_MATRIX_ID);
   }
 
   @Test

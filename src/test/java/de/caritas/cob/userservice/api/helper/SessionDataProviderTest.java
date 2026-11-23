@@ -159,6 +159,27 @@ class SessionDataProviderTest {
               .roles(null)
               .registration(null);
 
+  @Test
+  void optionalSignupAliasMapsToSessionDataWithoutChangingLoginName() throws Exception {
+    var mapper =
+        new com.fasterxml.jackson.databind.ObjectMapper()
+            .disable(
+                com.fasterxml.jackson.databind.DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES);
+    var signup =
+        mapper.readValue(
+            """
+        {"username":"immutable-login","displayName":"  Éloïse 🌻  ","age":"17","state":"9"}
+        """,
+            de.caritas.cob.userservice.api.adapters.web.dto.UserDTO.class);
+
+    var initialData = SessionDataProvider.fromUserDTO(signup);
+
+    assertEquals("Éloïse 🌻", initialData.getDisplayName());
+    assertEquals("17", initialData.getAge());
+    assertEquals("9", initialData.getState());
+    assertEquals("immutable-login", signup.getUsername());
+  }
+
   @BeforeEach
   void setup() {
     consultingTypeManager = Mockito.mock(ConsultingTypeManager.class);

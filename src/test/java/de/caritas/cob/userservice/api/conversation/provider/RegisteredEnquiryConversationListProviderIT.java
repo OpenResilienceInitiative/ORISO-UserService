@@ -36,6 +36,7 @@ import java.util.Map;
 import java.util.Random;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Collectors;
+import java.util.stream.StreamSupport;
 import org.apache.commons.collections4.iterators.PeekingIterator;
 import org.jeasy.random.EasyRandom;
 import org.junit.jupiter.api.AfterEach;
@@ -143,6 +144,37 @@ public class RegisteredEnquiryConversationListProviderIT {
   }
 
   @Test
+  public void buildConversations_Should_hideDraftsFromPagesAndTotalsUntilSubmitted() {
+    saveRegisteredSessions(3);
+    Session draft =
+        StreamSupport.stream(sessionRepository.findAll().spliterator(), false)
+            .filter(session -> session.getStatus() == SessionStatus.NEW)
+            .findFirst()
+            .orElseThrow();
+    draft.setEnquiryMessageDate(null);
+    draft = sessionRepository.save(draft);
+    PageableListRequest request = PageableListRequest.builder().count(2).offset(0).build();
+
+    ConsultantSessionListResponseDTO before =
+        registeredEnquiryConversationListProvider.buildConversations(request);
+
+    assertThat(before.getTotal(), is(2));
+    assertThat(before.getCount(), is(2));
+    assertThat(before.getSessions(), hasSize(2));
+
+    draft.setEnquiryMessageDate(LocalDateTime.now());
+    sessionRepository.save(draft);
+
+    ConsultantSessionListResponseDTO after =
+        registeredEnquiryConversationListProvider.buildConversations(
+            PageableListRequest.builder().count(2).offset(2).build());
+
+    assertThat(after.getTotal(), is(3));
+    assertThat(after.getCount(), is(1));
+    assertThat(after.getSessions(), hasSize(1));
+  }
+
+  @Test
   public void providedType_Should_return_registeredEnquiry() {
     ConversationListType conversationListType =
         this.registeredEnquiryConversationListProvider.providedType();
@@ -164,6 +196,9 @@ public class RegisteredEnquiryConversationListProviderIT {
           session.setConsultant(null);
           session.setUser(user);
           session.setId(null);
+          // A random string would not fit the column; these are no direct-link sessions (#1952).
+          session.setDirectLinkMedium(null);
+          session.setConversationType(null);
           session.setSessionData(null);
           session.setPostcode("12345");
           session.setAgencyId(1L);
@@ -186,6 +221,7 @@ public class RegisteredEnquiryConversationListProviderIT {
     User user = this.userRepository.findAll().iterator().next();
     Session session = new Session(user, 1, "12345", 1L, SessionStatus.NEW, false);
     session.setId(null);
+    session.setConversationType(null);
     session.setLanguageCode(LanguageCode.de);
     session.setEnquiryMessageDate(LocalDateTime.now());
     session.setCreateDate(LocalDateTime.now());

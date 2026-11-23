@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+  xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.3.xsd">
+  <!-- ORISO-UserService#1662: the guest account mode a temporary guest entered under. "Konto
+       behalten" is judged by it, so a counsellor switching the link or circle later only affects
+       new guests. Null for permanent accounts and for temporary accounts created before this
+       column; those are still judged by their link or circle. -->
+  <changeSet id="20261117-user-guest-account-mode-at-entry-1662" author="oriso">
+    <preConditions onFail="MARK_RAN">
+      <not>
+        <columnExists tableName="user" columnName="guest_account_mode_at_entry"/>
+      </not>
+    </preConditions>
+    <addColumn tableName="user">
+      <column name="guest_account_mode_at_entry" type="VARCHAR(16)"/>
+    </addColumn>
+    <!-- Additive and nullable: an older application ignores the column. -->
+    <rollback><sql>SELECT 1</sql></rollback>
+  </changeSet>
+</databaseChangeLog>

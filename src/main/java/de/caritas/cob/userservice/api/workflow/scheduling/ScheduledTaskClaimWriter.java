@@ -5,6 +5,7 @@ import de.caritas.cob.userservice.api.port.out.ScheduledTaskClaimRepository;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.LocalDateTime;
+import java.util.Optional;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -21,31 +22,53 @@ public class ScheduledTaskClaimWriter {
 
   @Transactional(propagation = Propagation.REQUIRES_NEW)
   public boolean claim(String taskName, Duration claimDuration) {
-    LocalDateTime now = LocalDateTime.now(clock);
+    return claimUntil(taskName, claimDuration).isPresent();
+  }
+
+  @Transactional(propagation = Propagation.REQUIRES_NEW)
+  public Optional<LocalDateTime> claimUntil(String taskName, Duration claimDuration) {
+    LocalDateTime now = LocalDateTime.now(clock).truncatedTo(java.time.temporal.ChronoUnit.MICROS);
     var existingClaim = claimRepository.findByTaskNameForUpdate(taskName);
     if (existingClaim.isPresent()) {
       var claim = existingClaim.get();
       if (claim.getClaimedUntil().isAfter(now)) {
-        return false;
+        return Optional.empty();
       }
       claim.setClaimedAt(now);
-      claim.setClaimedUntil(now.plus(claimDuration));
+      claim.setClaimedUntil(
+          now.plus(claimDuration).truncatedTo(java.time.temporal.ChronoUnit.MICROS));
       claimRepository.saveAndFlush(claim);
-      return true;
+      return Optional.of(claim.getClaimedUntil());
     }
 
     claimRepository.saveAndFlush(
         ScheduledTaskClaim.builder()
             .taskName(taskName)
             .claimedAt(now)
-            .claimedUntil(now.plus(claimDuration))
+            .claimedUntil(now.plus(claimDuration).truncatedTo(java.time.temporal.ChronoUnit.MICROS))
             .build());
+    return Optional.of(now.plus(claimDuration).truncatedTo(java.time.temporal.ChronoUnit.MICROS));
+  }
+
+  @Transactional(propagation = Propagation.REQUIRES_NEW)
+  public boolean runIfHeld(ScheduledTaskClaimService.ClaimLease lease, Runnable operation) {
+    var claim = claimRepository.findByTaskNameForUpdate(lease.taskName());
+    if (claim.isEmpty()
+        || !claim.get().getClaimedUntil().equals(lease.claimedUntil())
+        || !claim.get().getClaimedUntil().isAfter(LocalDateTime.now(clock))) return false;
+    operation.run();
     return true;
+  }
+
+  /** Deletes only the exact lease version acquired by this execution. */
+  @Transactional(propagation = Propagation.REQUIRES_NEW)
+  public boolean release(String taskName, LocalDateTime claimedUntil) {
+    return claimRepository.deleteByTaskNameAndClaimedUntil(taskName, claimedUntil) == 1;
   }
 
   @Transactional(propagation = Propagation.REQUIRES_NEW, readOnly = true)
   public boolean hasActiveClaim(String taskName) {
-    LocalDateTime now = LocalDateTime.now(clock);
+    LocalDateTime now = LocalDateTime.now(clock).truncatedTo(java.time.temporal.ChronoUnit.MICROS);
     return claimRepository
         .findById(taskName)
         .map(ScheduledTaskClaim::getClaimedUntil)

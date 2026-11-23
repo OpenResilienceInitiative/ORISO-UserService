@@ -1,0 +1,111 @@
+package de.caritas.cob.userservice.api.service.notification;
+
+import static de.caritas.cob.userservice.api.helper.EmailNotificationUtils.deserializeNotificationSettingsDTOOrDefaultIfNull;
+import static de.caritas.cob.userservice.api.service.helper.MailService.safeFailureReason;
+
+import de.caritas.cob.userservice.api.admin.service.tenant.TenantService;
+import de.caritas.cob.userservice.api.port.out.SessionRepository;
+import de.caritas.cob.userservice.api.service.consultingtype.ReleaseToggle;
+import de.caritas.cob.userservice.api.service.consultingtype.ReleaseToggleService;
+import de.caritas.cob.userservice.api.service.emailsupplier.TenantTemplateSupplier;
+import de.caritas.cob.userservice.tenantservice.generated.web.model.RestrictedTenantDTO;
+import java.net.URI;
+import java.util.Objects;
+import lombok.NonNull;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.scheduling.annotation.Async;
+import org.springframework.stereotype.Service;
+
+/** Sends one committed TAKEOVER notification through the tenant's explicit mail route. */
+@Service
+@RequiredArgsConstructor
+@Slf4j
+public class CaseHandoverMailSender {
+  private final @NonNull TenantSystemEmailRouteService routes;
+  private final @NonNull TenantSystemEmailDelivery delivery;
+  private final @NonNull TenantService tenants;
+  private final @NonNull TenantTemplateSupplier tenantUrls;
+  private final @NonNull CaseHandoverMailComposer composer;
+  private final @NonNull CaseHandoverGrantedMailEligibility eligibility;
+  private final @NonNull CaseHandoverRequiredConsentMailEligibility consentEligibility;
+  private final @NonNull SessionRepository sessions;
+  private final @NonNull ReleaseToggleService releaseToggles;
+
+  @Async
+  public void send(CaseHandoverEmailNotification.Mail mail) {
+    try {
+      var session = sessions.findById(mail.sessionId()).orElse(null);
+      if (session == null || AskerNotificationChannelPolicy.isLiveChat(session)) return;
+      var route = routes.resolve(mail.tenantId());
+      if (route.isEmpty()) return;
+      if (mail.outcome() == CaseHandoverEmailNotification.Outcome.GRANTED
+          && !eligibility.isEligible(mail)) return;
+      if (mail.outcome() == CaseHandoverEmailNotification.Outcome.CONSENT_REQUESTED
+          && mail.accessType()
+              == de.caritas.cob.userservice.api.model.CaseHandoverRequest.AccessType.TAKEOVER
+          && !consentEligibility.isEligible(mail)) return;
+      RestrictedTenantDTO tenant = tenants.getRestrictedTenantDataFresh(mail.tenantId());
+      if (tenant == null || !Objects.equals(tenant.getId(), mail.tenantId())) {
+        throw new TenantSystemEmailRouteService.ConfigurationException(
+            "Takeover email tenant is unavailable");
+      }
+      // Required TAKEOVER consent uses its current-state eligibility above; the optional
+      // conversation/account preferences below remain specific to Dev's CO_ACCESS channel.
+      if (mail.outcome() == CaseHandoverEmailNotification.Outcome.CONSENT_REQUESTED
+          && mail.accessType()
+              == de.caritas.cob.userservice.api.model.CaseHandoverRequest.AccessType.CO_ACCESS) {
+        if (session.getStatus()
+                == de.caritas.cob.userservice.api.model.Session.SessionStatus.REJECTED
+            || !Objects.equals(session.getTenantId(), mail.tenantId())
+            || !AskerNotificationChannelPolicy.emailAllowed(session, tenant.getSettings())) return;
+        var user = session.getUser();
+        if (user == null
+            || user.getDeleteDate() != null
+            || mail.recipientUserId() == null
+            || !Objects.equals(user.getUserId(), mail.recipientUserId())
+            || !Objects.equals(user.getEmail(), mail.recipient())) return;
+        if (releaseToggles.isToggleEnabled(ReleaseToggle.NEW_EMAIL_NOTIFICATIONS)
+            && (!user.isNotificationsEnabled()
+                || !Boolean.TRUE.equals(
+                    deserializeNotificationSettingsDTOOrDefaultIfNull(user)
+                        .getReassignmentNotificationEnabled()))) return;
+      }
+      String baseUrl = tenantUrls.getTenantBaseUrl(tenant);
+      if (!hasConfiguredTenantUrl(baseUrl)) {
+        throw new TenantSystemEmailRouteService.ConfigurationException(
+            "Takeover email requires a configured tenant URL");
+      }
+      var content = composer.compose(mail, baseUrl);
+      var purpose =
+          mail.outcome() == CaseHandoverEmailNotification.Outcome.CONSENT_REQUESTED
+              ? TenantSystemEmailDelivery.Purpose.HANDOVER_REQUESTED
+              : TenantSystemEmailDelivery.Purpose.HANDOVER_CONFIRMED;
+      if (!delivery.sendConfirmed(
+          mail.tenantId(), route.get(), purpose, mail.recipient(), content)) {
+        log.error("Takeover mail was rejected by platform SMTP for tenant {}", mail.tenantId());
+      }
+    } catch (TenantSystemEmailRouteService.ConfigurationException failure) {
+      log.error(
+          "Takeover mail configuration for tenant {}: {}", mail.tenantId(), failure.getMessage());
+    } catch (RuntimeException failure) {
+      // No recipient, case reference or untrusted provider message in logs.
+      log.error(
+          "Takeover mail failed for tenant {}: {}", mail.tenantId(), safeFailureReason(failure));
+    }
+  }
+
+  private boolean hasConfiguredTenantUrl(String baseUrl) {
+    if (baseUrl == null || baseUrl.isBlank()) return false;
+    try {
+      URI url = URI.create(baseUrl);
+      String host = url.getHost();
+      return "https".equalsIgnoreCase(url.getScheme())
+          && host != null
+          && !host.startsWith("null.")
+          && !host.startsWith(".");
+    } catch (IllegalArgumentException ignored) {
+      return false;
+    }
+  }
+}

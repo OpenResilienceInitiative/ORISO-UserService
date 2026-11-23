@@ -11,11 +11,11 @@ import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import de.caritas.cob.userservice.api.adapters.web.dto.AbsenceDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.DeleteUserAccountDTO;
-import de.caritas.cob.userservice.api.adapters.web.dto.EmailNotificationsDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.LanguageCode;
 import de.caritas.cob.userservice.api.adapters.web.dto.MasterKeyDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.MobileTokenDTO;
@@ -30,7 +30,10 @@ import de.caritas.cob.userservice.api.admin.service.consultant.update.Consultant
 import de.caritas.cob.userservice.api.config.VideoChatConfig;
 import de.caritas.cob.userservice.api.config.auth.UserRole;
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
+import de.caritas.cob.userservice.api.exception.httpresponses.ConflictException;
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
+import de.caritas.cob.userservice.api.exception.httpresponses.ServiceUnavailableException;
+import de.caritas.cob.userservice.api.facade.userdata.AgencyAdminDataProvider;
 import de.caritas.cob.userservice.api.facade.userdata.AskerDataProvider;
 import de.caritas.cob.userservice.api.facade.userdata.ConsultantDataFacade;
 import de.caritas.cob.userservice.api.facade.userdata.ConsultantDataProvider;
@@ -42,8 +45,8 @@ import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.in.AccountManaging;
 import de.caritas.cob.userservice.api.port.in.IdentityManaging;
+import de.caritas.cob.userservice.api.port.in.IdentityPolicy;
 import de.caritas.cob.userservice.api.port.in.Messaging;
-import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
 import de.caritas.cob.userservice.api.service.ConsultantService;
 import de.caritas.cob.userservice.api.service.DecryptionService;
 import de.caritas.cob.userservice.api.service.user.UserAccountService;
@@ -68,7 +71,7 @@ class UserAccountControllerDelegateTest {
   @Mock private AuthenticatedUser authenticatedUser;
   @Mock private DecryptionService decryptionService;
   @Mock private ConsultantDataFacade consultantDataFacade;
-  @Mock private IdentityClientConfig identityClientConfig;
+  @Mock private IdentityPolicy identityPolicy;
   @Mock private IdentityManaging identityManager;
   @Mock private AccountManaging accountManager;
   @Mock private Messaging messenger;
@@ -80,34 +83,128 @@ class UserAccountControllerDelegateTest {
   @Mock private AskerDataProvider askerDataProvider;
   @Mock private VideoChatConfig videoChatConfig;
   @Mock private KeycloakUserDataProvider keycloakUserDataProvider;
+  @Mock private AgencyAdminDataProvider agencyAdminDataProvider;
   @Mock private UsernameTranscoder usernameTranscoder;
+
+  @Mock
+  private de.caritas.cob.userservice.api.service.AskerEmailCollectionPolicy emailCollectionPolicy;
 
   @InjectMocks private UserAccountControllerDelegate delegate;
 
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.ValueSource(booleans = {true, false})
+  void askerUserDataProjectsServerDerivedCollectionCapability(boolean allowed) {
+    var user =
+        new de.caritas.cob.userservice.api.model.User(
+            USER_ID, null, USERNAME, "asker@example.org", false);
+    var partial = new UserDataResponseDTO();
+    var roles = Set.of(UserRole.USER.getValue());
+    when(authenticatedUser.getRoles()).thenReturn(roles);
+    when(userAccountProvider.retrieveValidatedUser()).thenReturn(user);
+    when(askerDataProvider.retrieveData(user)).thenReturn(partial);
+    when(emailCollectionPolicy.capabilityForAccount(user)).thenReturn(allowed);
+    when(userDtoMapper.userDataOf(eq(partial), isNull(), anyBoolean(), anyBoolean()))
+        .thenReturn(partial);
+
+    var response = delegate.getUserData();
+
+    assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+    assertThat(response.getBody().getIsAskerEmailCollectionAllowed()).isEqualTo(allowed);
+  }
+
   @Test
-  void getUserDataShouldPreserveOtpAvailabilityWhenOtpLookupFails() {
-    var roles = Set.of(UserRole.TENANT_ADMIN.getValue());
+  void legacyNameAndLanguageAccountPatchStillUpdatesLanguage() {
+    var patch =
+        new PatchUserDTO()
+            .displayName("legacy ignored alias")
+            .preferredLanguage(de.caritas.cob.userservice.api.adapters.web.dto.LanguageCode.EN);
+    var values = Map.<String, Object>of("id", USER_ID, "displayName", "legacy ignored alias");
+    when(authenticatedUser.getUserId()).thenReturn(USER_ID);
+    when(userDtoMapper.mapOf(patch, authenticatedUser)).thenReturn(Optional.of(values));
+    when(userDtoMapper.preferredLanguageOf(patch)).thenReturn(Optional.of("en"));
+    when(userDtoMapper.availableOf(patch)).thenReturn(Optional.empty());
+    when(accountManager.patchUser(values)).thenReturn(Optional.of(values));
+    assertThat(delegate.patchUser(patch).getStatusCode()).isEqualTo(HttpStatus.NO_CONTENT);
+    verify(identityManager).changeLanguage(USER_ID, "en");
+  }
+
+  @Test
+  void getUserDataShouldResolveAssignedAgenciesForRestrictedAgencyAdmin() {
+    var roles = Set.of(UserRole.RESTRICTED_AGENCY_ADMIN.getValue(), UserRole.USER_ADMIN.getValue());
     var partialUserData = new UserDataResponseDTO();
     var fullUserData = new UserDataResponseDTO();
-    when(authenticatedUser.isTenantSuperAdmin()).thenReturn(true);
+    when(authenticatedUser.isRestrictedAgencyAdmin()).thenReturn(true);
     when(authenticatedUser.getRoles()).thenReturn(roles);
-    when(authenticatedUser.getUserId()).thenReturn(USER_ID);
-    when(authenticatedUser.getUsername()).thenReturn(USERNAME);
-    when(keycloakUserDataProvider.retrieveAuthenticatedUserData()).thenReturn(partialUserData);
-    when(identityClientConfig.isOtpAllowed(roles)).thenReturn(true);
-    when(usernameTranscoder.encodeUsername(USERNAME)).thenReturn(USERNAME);
-    when(identityManager.getOtpCredential(USERNAME)).thenThrow(new RuntimeException("OTP down"));
-    when(userDtoMapper.userDataOf(
-            eq(partialUserData), any(IdentityOtpCredential.class), anyBoolean(), anyBoolean()))
+    when(agencyAdminDataProvider.retrieveData()).thenReturn(partialUserData);
+    when(identityPolicy.isTwoFactorAuthenticationAllowed(roles)).thenReturn(false);
+    when(userDtoMapper.userDataOf(eq(partialUserData), isNull(), anyBoolean(), anyBoolean()))
         .thenReturn(fullUserData);
 
     var response = delegate.getUserData();
 
     assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
     assertThat(response.getBody()).isSameAs(fullUserData);
-    verify(userDtoMapper)
-        .userDataOf(
-            eq(partialUserData), any(IdentityOtpCredential.class), anyBoolean(), anyBoolean());
+    verify(keycloakUserDataProvider, never()).retrieveAuthenticatedUserData();
+  }
+
+  @Test
+  void getUserDataShouldKeepTenantAdminOnKeycloakDataEvenWithAgencyAdminRole() {
+    var roles =
+        Set.of(UserRole.TENANT_ADMIN.getValue(), UserRole.RESTRICTED_AGENCY_ADMIN.getValue());
+    var partialUserData = new UserDataResponseDTO();
+    var fullUserData = new UserDataResponseDTO();
+    when(authenticatedUser.isTenantSuperAdmin()).thenReturn(true);
+    when(authenticatedUser.getRoles()).thenReturn(roles);
+    when(keycloakUserDataProvider.retrieveAuthenticatedUserData()).thenReturn(partialUserData);
+    when(identityPolicy.isTwoFactorAuthenticationAllowed(roles)).thenReturn(false);
+    when(userDtoMapper.userDataOf(eq(partialUserData), isNull(), anyBoolean(), anyBoolean()))
+        .thenReturn(fullUserData);
+
+    var response = delegate.getUserData();
+
+    assertThat(response.getBody()).isSameAs(fullUserData);
+    verify(agencyAdminDataProvider, never()).retrieveData();
+  }
+
+  @Test
+  void getUserDataShouldNotTreatForbiddenOtpLookupAsUnconfigured() {
+    var roles = Set.of(UserRole.TENANT_ADMIN.getValue());
+    var partialUserData = new UserDataResponseDTO();
+    when(authenticatedUser.isTenantSuperAdmin()).thenReturn(true);
+    when(authenticatedUser.getRoles()).thenReturn(roles);
+    when(authenticatedUser.getUsername()).thenReturn(USERNAME);
+    when(keycloakUserDataProvider.retrieveAuthenticatedUserData()).thenReturn(partialUserData);
+    when(identityPolicy.isTwoFactorAuthenticationAllowed(roles)).thenReturn(true);
+    when(usernameTranscoder.encodeUsername(USERNAME)).thenReturn(USERNAME);
+    when(identityManager.getOtpCredential(USERNAME))
+        .thenThrow(new jakarta.ws.rs.ForbiddenException("OTP SPI access denied"));
+
+    assertThatThrownBy(() -> delegate.getUserData())
+        .isInstanceOf(ServiceUnavailableException.class)
+        .hasMessageContaining("OTP credential");
+    verify(userDtoMapper, never()).userDataOf(any(), any(), anyBoolean(), anyBoolean());
+  }
+
+  @Test
+  void getUserDataShouldPreserveTrulyUnconfiguredOtpState() {
+    var roles = Set.of(UserRole.TENANT_ADMIN.getValue());
+    var partialUserData = new UserDataResponseDTO();
+    var emptyOtp = IdentityOtpCredential.empty();
+    var fullUserData = new UserDataResponseDTO();
+    when(authenticatedUser.isTenantSuperAdmin()).thenReturn(true);
+    when(authenticatedUser.getRoles()).thenReturn(roles);
+    when(authenticatedUser.getUsername()).thenReturn(USERNAME);
+    when(keycloakUserDataProvider.retrieveAuthenticatedUserData()).thenReturn(partialUserData);
+    when(identityPolicy.isTwoFactorAuthenticationAllowed(roles)).thenReturn(true);
+    when(usernameTranscoder.encodeUsername(USERNAME)).thenReturn(USERNAME);
+    when(identityManager.getOtpCredential(USERNAME)).thenReturn(emptyOtp);
+    when(userDtoMapper.userDataOf(eq(partialUserData), eq(emptyOtp), anyBoolean(), anyBoolean()))
+        .thenReturn(fullUserData);
+
+    var response = delegate.getUserData();
+
+    assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+    assertThat(response.getBody()).isSameAs(fullUserData);
   }
 
   @Test
@@ -119,7 +216,7 @@ class UserAccountControllerDelegateTest {
     when(authenticatedUser.isPlatformAdmin()).thenReturn(true);
     when(authenticatedUser.getRoles()).thenReturn(roles);
     when(keycloakUserDataProvider.retrieveAuthenticatedUserData()).thenReturn(partialUserData);
-    when(identityClientConfig.isOtpAllowed(roles)).thenReturn(true);
+    when(identityPolicy.isTwoFactorAuthenticationAllowed(roles)).thenReturn(true);
     when(userDtoMapper.userDataOf(eq(partialUserData), isNull(), anyBoolean(), anyBoolean()))
         .thenReturn(fullUserData);
 
@@ -138,7 +235,7 @@ class UserAccountControllerDelegateTest {
     when(authenticatedUser.isPlatformAdmin()).thenReturn(true);
     when(authenticatedUser.getRoles()).thenReturn(roles);
     when(keycloakUserDataProvider.retrieveAuthenticatedUserData()).thenReturn(partialUserData);
-    when(identityClientConfig.isOtpAllowed(roles)).thenReturn(false);
+    when(identityPolicy.isTwoFactorAuthenticationAllowed(roles)).thenReturn(false);
     when(userDtoMapper.userDataOf(eq(partialUserData), isNull(), anyBoolean(), anyBoolean()))
         .thenReturn(fullUserData);
 
@@ -158,7 +255,8 @@ class UserAccountControllerDelegateTest {
     consultant.setEmail("dummy@example.invalid");
     when(authenticatedUser.isConsultant()).thenReturn(true);
     when(userAccountProvider.retrieveValidatedConsultant()).thenReturn(consultant);
-    when(identityClientConfig.getEmailDummySuffix()).thenReturn("@example.invalid");
+    when(identityPolicy.isProfileEmailUsableForMagicLink("dummy@example.invalid"))
+        .thenReturn(false);
 
     assertThatThrownBy(() -> delegate.patchUser(patchUserDTO))
         .isInstanceOf(BadRequestException.class);
@@ -183,9 +281,22 @@ class UserAccountControllerDelegateTest {
   }
 
   @Test
+  void updatePasswordShouldRejectAFifteenCharacterNewPasswordBeforeAnyIdentityCall() {
+    var passwordDTO = new PasswordDTO();
+    passwordDTO.setOldPassword("old");
+    passwordDTO.setNewPassword("123456789012345");
+
+    assertThatThrownBy(() -> delegate.updatePassword(passwordDTO))
+        .isInstanceOf(BadRequestException.class);
+
+    verifyNoInteractions(identityManager);
+  }
+
+  @Test
   void updatePasswordShouldThrowBadRequestWhenOldPasswordIsInvalid() {
     var passwordDTO = new PasswordDTO();
     passwordDTO.setOldPassword("old");
+    passwordDTO.setNewPassword("new-password-16-chars");
     when(authenticatedUser.getUsername()).thenReturn(USERNAME);
     when(usernameTranscoder.encodeUsername(USERNAME)).thenReturn(USERNAME);
     when(identityManager.validatePasswordIgnoring2fa(USERNAME, "old")).thenReturn(false);
@@ -199,20 +310,112 @@ class UserAccountControllerDelegateTest {
   }
 
   @Test
+  void updatePasswordShouldRefuseTheOldPasswordAsTheNewOneAndKeepTheRequirement() {
+    var passwordDTO = new PasswordDTO();
+    passwordDTO.setOldPassword("same-password-16-chars");
+    passwordDTO.setNewPassword("same-password-16-chars");
+
+    assertThatThrownBy(() -> delegate.updatePassword(passwordDTO))
+        .isInstanceOf(ConflictException.class);
+
+    verify(identityManager, never())
+        .changePassword(
+            org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.anyString());
+    verify(consultantService, never()).saveConsultant(org.mockito.ArgumentMatchers.any());
+  }
+
+  @Test
   void updatePasswordShouldChangePasswordAndReturnOk() {
     var passwordDTO = new PasswordDTO();
     passwordDTO.setOldPassword("old");
-    passwordDTO.setNewPassword("new");
+    passwordDTO.setNewPassword("new-password-16-chars");
     when(authenticatedUser.getUsername()).thenReturn(USERNAME);
     when(authenticatedUser.getUserId()).thenReturn(USER_ID);
     when(usernameTranscoder.encodeUsername(USERNAME)).thenReturn(USERNAME);
     when(identityManager.validatePasswordIgnoring2fa(USERNAME, "old")).thenReturn(true);
-    when(identityManager.changePassword(USER_ID, "new")).thenReturn(true);
+    when(identityManager.changePassword(USER_ID, "new-password-16-chars")).thenReturn(true);
 
     var response = delegate.updatePassword(passwordDTO);
 
     assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
-    verify(identityManager).changePassword(USER_ID, "new");
+    verify(identityManager).changePassword(USER_ID, "new-password-16-chars");
+  }
+
+  @Test
+  void updatePasswordShouldClearThePasswordChangeRequirement() {
+    // The requirement exists because an administrator chose the password. Once the
+    // counsellor has replaced it, it is theirs and the gate must open.
+    var consultant = consultantOwing(true);
+    givenAPasswordChangeSucceedsFor(consultant);
+
+    delegate.updatePassword(passwordChange());
+
+    assertThat(consultant.getPasswordChangeRequired()).isFalse();
+    verify(consultantService).saveConsultant(consultant);
+  }
+
+  @Test
+  void updatePasswordShouldNotWriteWhenNoChangeWasOwed() {
+    var consultant = consultantOwing(false);
+    givenAPasswordChangeSucceedsFor(consultant);
+
+    delegate.updatePassword(passwordChange());
+
+    verify(consultantService, never()).saveConsultant(any(Consultant.class));
+  }
+
+  @Test
+  void updatePasswordShouldSucceedForAccountsThatAreNotConsultants() {
+    // Askers and admins have no consultant row; there is nothing to clear and that
+    // is not an error.
+    givenAPasswordChangeSucceedsFor(null);
+
+    var response = delegate.updatePassword(passwordChange());
+
+    assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+    verify(consultantService, never()).saveConsultant(any(Consultant.class));
+  }
+
+  @Test
+  void updatePasswordShouldKeepTheRequirementWhenTheChangeFailed() {
+    var passwordDTO = passwordChange();
+    when(authenticatedUser.getUsername()).thenReturn(USERNAME);
+    when(authenticatedUser.getUserId()).thenReturn(USER_ID);
+    when(usernameTranscoder.encodeUsername(USERNAME)).thenReturn(USERNAME);
+    when(identityManager.validatePasswordIgnoring2fa(USERNAME, "old")).thenReturn(true);
+    when(identityManager.changePassword(USER_ID, "new-password-16-chars")).thenReturn(false);
+
+    assertThatThrownBy(() -> delegate.updatePassword(passwordDTO))
+        .isInstanceOf(InternalServerErrorException.class);
+
+    verify(consultantService, never()).saveConsultant(any(Consultant.class));
+  }
+
+  private static Consultant consultantOwing(boolean passwordChangeRequired) {
+    return Consultant.builder()
+        .id(USER_ID)
+        .username(USERNAME)
+        .firstName("Lisa")
+        .lastName("Simpson")
+        .email("lisa.simpson@example.org")
+        .passwordChangeRequired(passwordChangeRequired)
+        .build();
+  }
+
+  private PasswordDTO passwordChange() {
+    var passwordDTO = new PasswordDTO();
+    passwordDTO.setOldPassword("old");
+    passwordDTO.setNewPassword("new-password-16-chars");
+    return passwordDTO;
+  }
+
+  private void givenAPasswordChangeSucceedsFor(Consultant consultant) {
+    when(authenticatedUser.getUsername()).thenReturn(USERNAME);
+    when(authenticatedUser.getUserId()).thenReturn(USER_ID);
+    when(usernameTranscoder.encodeUsername(USERNAME)).thenReturn(USERNAME);
+    when(identityManager.validatePasswordIgnoring2fa(USERNAME, "old")).thenReturn(true);
+    when(identityManager.changePassword(USER_ID, "new-password-16-chars")).thenReturn(true);
+    when(consultantService.getConsultant(USER_ID)).thenReturn(Optional.ofNullable(consultant));
   }
 
   @Test
@@ -248,22 +451,6 @@ class UserAccountControllerDelegateTest {
   }
 
   @Test
-  void getUserEmailNotificationsShouldReturnConsultantNotificationsWhenConsultantExists() {
-    var consultant = new Consultant();
-    var emailNotifications = new EmailNotificationsDTO().emailNotificationsEnabled(true);
-    var consultantData = new UserDataResponseDTO();
-    consultantData.setEmailNotifications(emailNotifications);
-    when(userAccountProvider.findConsultantByEmail("name@example.org"))
-        .thenReturn(Optional.of(consultant));
-    when(consultantDataProvider.retrieveData(consultant)).thenReturn(consultantData);
-
-    var response = delegate.getUserEmailNotifications("name@example.org");
-
-    assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
-    assertThat(response.getBody()).isSameAs(emailNotifications);
-  }
-
-  @Test
   void updateAbsence_happyPath_delegatesToConsultantDataFacade() {
     // Consultants update absence through the shared consultant data facade.
     var absence = new AbsenceDTO().absent(true).message("away");
@@ -274,35 +461,6 @@ class UserAccountControllerDelegateTest {
 
     assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
     verify(consultantDataFacade).updateConsultantAbsent(consultant, absence);
-  }
-
-  @Test
-  void getUserEmailNotifications_adviceSeekerPath_returnsAdviceSeekerNotifications() {
-    // Advice seekers expose notification settings through the asker data provider.
-    var user = new User();
-    var emailNotifications = new EmailNotificationsDTO().emailNotificationsEnabled(false);
-    var userData = new UserDataResponseDTO();
-    userData.setEmailNotifications(emailNotifications);
-    when(userAccountProvider.findConsultantByEmail("user@example.org"))
-        .thenReturn(Optional.empty());
-    when(userAccountProvider.findUserByEmail("user@example.org")).thenReturn(Optional.of(user));
-    when(askerDataProvider.retrieveData(user)).thenReturn(userData);
-
-    var response = delegate.getUserEmailNotifications("user@example.org");
-
-    assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
-    assertThat(response.getBody()).isSameAs(emailNotifications);
-  }
-
-  @Test
-  void getUserEmailNotifications_neitherConsultantNorAdviceSeeker_throwsNotFoundException() {
-    // Unknown emails must not leak whether an account exists.
-    when(userAccountProvider.findConsultantByEmail("unknown@example.org"))
-        .thenReturn(Optional.empty());
-    when(userAccountProvider.findUserByEmail("unknown@example.org")).thenReturn(Optional.empty());
-
-    assertThatThrownBy(() -> delegate.getUserEmailNotifications("unknown@example.org"))
-        .isInstanceOf(NotFoundException.class);
   }
 
   @Test
@@ -321,9 +479,9 @@ class UserAccountControllerDelegateTest {
     when(accountManager.findConsultant(USER_ID)).thenReturn(Optional.of(consultantMap));
     when(userDtoMapper.displayNameOf(consultantMap)).thenReturn("Display Name");
     when(messenger.getAvailability(USER_ID)).thenReturn(true);
-    when(identityClientConfig.isOtpAllowed(roles)).thenReturn(false);
+    when(identityPolicy.isTwoFactorAuthenticationAllowed(roles)).thenReturn(false);
     when(videoChatConfig.getE2eEncryptionEnabled()).thenReturn(true);
-    when(identityClientConfig.getDisplayNameAllowedForConsultants()).thenReturn(true);
+    when(identityPolicy.isConsultantDisplayNameAllowed()).thenReturn(true);
     when(userDtoMapper.userDataOf(eq(partialUserData), isNull(), eq(true), eq(true)))
         .thenReturn(fullUserData);
 
@@ -336,18 +494,19 @@ class UserAccountControllerDelegateTest {
   }
 
   @Test
-  void getUserData_agencyAdminPath_returnsKeycloakUserData() {
-    // Agency admins load profile data from Keycloak rather than consultant tables.
+  void getUserData_agencyAdminPath_returnsKeycloakUserDataWithAssignedAgencies() {
+    // Agency admins load profile data from Keycloak plus their admin_agency assignments
+    // never from consultant tables.
     var roles = Set.of(UserRole.AGENCY_ADMIN.getValue());
     var partialUserData = new UserDataResponseDTO();
     var fullUserData = new UserDataResponseDTO();
     when(authenticatedUser.isConsultant()).thenReturn(false);
     when(authenticatedUser.isAgencySuperAdmin()).thenReturn(true);
     when(authenticatedUser.getRoles()).thenReturn(roles);
-    when(keycloakUserDataProvider.retrieveAuthenticatedUserData()).thenReturn(partialUserData);
-    when(identityClientConfig.isOtpAllowed(roles)).thenReturn(false);
+    when(agencyAdminDataProvider.retrieveData()).thenReturn(partialUserData);
+    when(identityPolicy.isTwoFactorAuthenticationAllowed(roles)).thenReturn(false);
     when(videoChatConfig.getE2eEncryptionEnabled()).thenReturn(false);
-    when(identityClientConfig.getDisplayNameAllowedForConsultants()).thenReturn(false);
+    when(identityPolicy.isConsultantDisplayNameAllowed()).thenReturn(false);
     when(userDtoMapper.userDataOf(eq(partialUserData), isNull(), eq(false), eq(false)))
         .thenReturn(fullUserData);
 
@@ -355,7 +514,8 @@ class UserAccountControllerDelegateTest {
 
     assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
     assertThat(response.getBody()).isSameAs(fullUserData);
-    verify(keycloakUserDataProvider).retrieveAuthenticatedUserData();
+    verify(agencyAdminDataProvider).retrieveData();
+    verify(keycloakUserDataProvider, never()).retrieveAuthenticatedUserData();
   }
 
   @Test
@@ -373,9 +533,9 @@ class UserAccountControllerDelegateTest {
     when(authenticatedUser.getRoles()).thenReturn(roles);
     when(userAccountProvider.retrieveValidatedUser()).thenReturn(user);
     when(askerDataProvider.retrieveData(user)).thenReturn(partialUserData);
-    when(identityClientConfig.isOtpAllowed(roles)).thenReturn(false);
+    when(identityPolicy.isTwoFactorAuthenticationAllowed(roles)).thenReturn(false);
     when(videoChatConfig.getE2eEncryptionEnabled()).thenReturn(false);
-    when(identityClientConfig.getDisplayNameAllowedForConsultants()).thenReturn(false);
+    when(identityPolicy.isConsultantDisplayNameAllowed()).thenReturn(false);
     when(userDtoMapper.userDataOf(eq(partialUserData), isNull(), eq(false), eq(false)))
         .thenReturn(fullUserData);
 
@@ -402,11 +562,11 @@ class UserAccountControllerDelegateTest {
     when(authenticatedUser.getUsername()).thenReturn(USERNAME);
     when(userAccountProvider.retrieveValidatedUser()).thenReturn(new User());
     when(askerDataProvider.retrieveData(any(User.class))).thenReturn(partialUserData);
-    when(identityClientConfig.isOtpAllowed(roles)).thenReturn(true);
+    when(identityPolicy.isTwoFactorAuthenticationAllowed(roles)).thenReturn(true);
     when(usernameTranscoder.encodeUsername(USERNAME)).thenReturn(USERNAME);
     when(identityManager.getOtpCredential(USERNAME)).thenReturn(otpInfo);
     when(videoChatConfig.getE2eEncryptionEnabled()).thenReturn(false);
-    when(identityClientConfig.getDisplayNameAllowedForConsultants()).thenReturn(false);
+    when(identityPolicy.isConsultantDisplayNameAllowed()).thenReturn(false);
     when(userDtoMapper.userDataOf(eq(partialUserData), eq(otpInfo), eq(false), eq(false)))
         .thenReturn(fullUserData);
 
@@ -429,9 +589,9 @@ class UserAccountControllerDelegateTest {
     when(consultantDataProvider.retrieveData(any(Consultant.class))).thenReturn(partialUserData);
     when(accountManager.findConsultant(USER_ID)).thenReturn(Optional.empty());
     when(messenger.getAvailability(USER_ID)).thenReturn(false);
-    when(identityClientConfig.isOtpAllowed(roles)).thenReturn(false);
+    when(identityPolicy.isTwoFactorAuthenticationAllowed(roles)).thenReturn(false);
     when(videoChatConfig.getE2eEncryptionEnabled()).thenReturn(false);
-    when(identityClientConfig.getDisplayNameAllowedForConsultants()).thenReturn(false);
+    when(identityPolicy.isConsultantDisplayNameAllowed()).thenReturn(false);
     when(userDtoMapper.userDataOf(eq(partialUserData), isNull(), eq(false), eq(false)))
         .thenReturn(fullUserData);
 
@@ -456,9 +616,9 @@ class UserAccountControllerDelegateTest {
     when(accountManager.findConsultant(USER_ID))
         .thenThrow(new RuntimeException("display name down"));
     when(messenger.getAvailability(USER_ID)).thenReturn(true);
-    when(identityClientConfig.isOtpAllowed(roles)).thenReturn(false);
+    when(identityPolicy.isTwoFactorAuthenticationAllowed(roles)).thenReturn(false);
     when(videoChatConfig.getE2eEncryptionEnabled()).thenReturn(false);
-    when(identityClientConfig.getDisplayNameAllowedForConsultants()).thenReturn(false);
+    when(identityPolicy.isConsultantDisplayNameAllowed()).thenReturn(false);
     when(userDtoMapper.userDataOf(eq(partialUserData), isNull(), eq(false), eq(false)))
         .thenReturn(fullUserData);
 
@@ -481,9 +641,9 @@ class UserAccountControllerDelegateTest {
     when(consultantDataProvider.retrieveData(any(Consultant.class))).thenReturn(partialUserData);
     when(accountManager.findConsultant(USER_ID)).thenReturn(Optional.empty());
     when(messenger.getAvailability(USER_ID)).thenThrow(new RuntimeException("availability down"));
-    when(identityClientConfig.isOtpAllowed(roles)).thenReturn(false);
+    when(identityPolicy.isTwoFactorAuthenticationAllowed(roles)).thenReturn(false);
     when(videoChatConfig.getE2eEncryptionEnabled()).thenReturn(false);
-    when(identityClientConfig.getDisplayNameAllowedForConsultants()).thenReturn(false);
+    when(identityPolicy.isConsultantDisplayNameAllowed()).thenReturn(false);
     when(userDtoMapper.userDataOf(eq(partialUserData), isNull(), eq(false), eq(false)))
         .thenReturn(fullUserData);
 
@@ -587,7 +747,7 @@ class UserAccountControllerDelegateTest {
     when(authenticatedUser.isConsultant()).thenReturn(false);
     when(authenticatedUser.isAdviceSeeker()).thenReturn(true);
     when(userAccountProvider.retrieveValidatedUser()).thenReturn(user);
-    when(identityClientConfig.getEmailDummySuffix()).thenReturn("@example.invalid");
+    when(identityPolicy.isProfileEmailUsableForMagicLink("user@example.org")).thenReturn(true);
     when(userDtoMapper.mapOf(patchUserDTO, authenticatedUser)).thenReturn(Optional.of(patchMap));
     when(accountManager.patchUser(patchMap)).thenReturn(Optional.of(patchMap));
     when(userDtoMapper.preferredLanguageOf(patchUserDTO)).thenReturn(Optional.empty());
@@ -613,7 +773,7 @@ class UserAccountControllerDelegateTest {
     var response = delegate.updateConsultantData(updateConsultantDTO);
 
     assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
-    verify(consultantUpdateService).updateConsultant(USER_ID, updateAdminConsultantDTO);
+    verify(consultantUpdateService).updateConsultant(USER_ID, updateAdminConsultantDTO, false);
   }
 
   @Test
@@ -631,12 +791,12 @@ class UserAccountControllerDelegateTest {
     // Identity provider failures during password change surface as server errors.
     var passwordDTO = new PasswordDTO();
     passwordDTO.setOldPassword("old");
-    passwordDTO.setNewPassword("new");
+    passwordDTO.setNewPassword("new-password-16-chars");
     when(authenticatedUser.getUsername()).thenReturn(USERNAME);
     when(authenticatedUser.getUserId()).thenReturn(USER_ID);
     when(usernameTranscoder.encodeUsername(USERNAME)).thenReturn(USERNAME);
     when(identityManager.validatePasswordIgnoring2fa(USERNAME, "old")).thenReturn(true);
-    when(identityManager.changePassword(USER_ID, "new")).thenReturn(false);
+    when(identityManager.changePassword(USER_ID, "new-password-16-chars")).thenReturn(false);
 
     assertThatThrownBy(() -> delegate.updatePassword(passwordDTO))
         .isInstanceOf(InternalServerErrorException.class);

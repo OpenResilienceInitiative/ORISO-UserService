@@ -2,6 +2,7 @@ package de.caritas.cob.userservice.api.adapters.web.controller;
 
 import de.caritas.cob.userservice.api.facade.SessionSupervisorFacade;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
+import de.caritas.cob.userservice.api.helper.ConsultantDisplayNameResolver;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.SessionSupervisor;
 import de.caritas.cob.userservice.api.model.User;
@@ -50,6 +51,7 @@ public class SessionSupervisorController {
   private final @NonNull SupervisorAddedEmailNotificationService
       supervisorAddedEmailNotificationService;
   private final @NonNull SessionService sessionService;
+  private final @NonNull ConsultantDisplayNameResolver consultantDisplayNameResolver;
 
   /**
    * Add a supervisor to a session.
@@ -120,10 +122,12 @@ public class SessionSupervisorController {
   /** Fire the "supervisor added / assigned" notifications for a now-active supervisor. */
   private void fireSupervisorActivatedNotifications(SessionSupervisor supervisor) {
     String accessToken = authenticatedUser.getAccessToken();
+    // ADR-002 §2 / #1201: the added/removed entry below is addressed to the advice seeker, so the
+    // colleague's real name is not a legal fallback here. The e-mail service takes the same value
+    // but never renders it.
     String supervisorDisplayName =
-        supervisor.getSupervisorConsultant().getDisplayName() != null
-            ? supervisor.getSupervisorConsultant().getDisplayName()
-            : supervisor.getSupervisorConsultant().getFullName();
+        consultantDisplayNameResolver.resolveMatrixDisplayName(
+            supervisor.getSupervisorConsultant());
 
     if (supervisor.getSession() != null
         && supervisor.getSession().getUser() != null
@@ -137,7 +141,6 @@ public class SessionSupervisorController {
     supervisorAddedEmailNotificationService.notifySupervisorAdded(
         supervisor.getSession() != null ? supervisor.getSession().getUser() : null,
         supervisor.getSupervisorConsultant(),
-        supervisorDisplayName,
         supervisor.getSession() != null ? supervisor.getSession().getId() : null,
         TenantContext.getCurrentTenantData(),
         accessToken);
@@ -176,14 +179,11 @@ public class SessionSupervisorController {
         .getSession(sessionId)
         .ifPresent(
             session -> {
+              // ADR-002 §2 / #1201: see fireSupervisorActivatedNotifications.
               String supervisorDisplayName =
                   supervisorToRemove
                       .map(SessionSupervisor::getSupervisorConsultant)
-                      .map(
-                          consultant ->
-                              consultant.getDisplayName() != null
-                                  ? consultant.getDisplayName()
-                                  : consultant.getFullName())
+                      .map(consultantDisplayNameResolver::resolveMatrixDisplayName)
                       .orElse("A supervisor");
               if (session.getUser() != null && session.getUser().getUserId() != null) {
                 eventNotificationService.createSupervisorRemovedNotification(
@@ -194,7 +194,6 @@ public class SessionSupervisorController {
                       supervisorAddedEmailNotificationService.notifySupervisorRemoved(
                           session.getUser(),
                           item.getSupervisorConsultant(),
-                          supervisorDisplayName,
                           session.getId(),
                           TenantContext.getCurrentTenantData(),
                           accessToken));
@@ -212,7 +211,12 @@ public class SessionSupervisorController {
   public ResponseEntity<List<SessionSupervisorResponseDTO>> getSupervisors(
       @PathVariable @NotNull Long sessionId) {
     log.info("Get supervisors request: sessionId={}", sessionId);
-    List<SessionSupervisor> supervisors = sessionSupervisorFacade.getSupervisors(sessionId);
+    Consultant currentConsultant = userAccountService.retrieveValidatedConsultant();
+    if (currentConsultant == null) {
+      return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
+    }
+    List<SessionSupervisor> supervisors =
+        sessionSupervisorFacade.getSupervisors(sessionId, currentConsultant);
     List<SessionSupervisorResponseDTO> response =
         supervisors.stream().map(this::mapToDTO).collect(Collectors.toList());
     return ResponseEntity.ok(response);
@@ -242,6 +246,11 @@ public class SessionSupervisorController {
     dto.setSessionId(supervisor.getSession().getId());
     dto.setSupervisorConsultantId(supervisor.getSupervisorConsultant().getId());
     dto.setSupervisorUsername(supervisor.getSupervisorConsultant().getUsername());
+    String supervisorMatrixUserId = supervisor.getSupervisorConsultant().getMatrixUserId();
+    dto.setSupervisorMatrixUserId(
+        supervisorMatrixUserId == null || supervisorMatrixUserId.isBlank()
+            ? null
+            : supervisorMatrixUserId);
     dto.setAddedByConsultantId(supervisor.getAddedByConsultant().getId());
     dto.setAddedDate(supervisor.getAddedDate());
     dto.setMatrixRoomId(supervisor.getMatrixRoomId());
@@ -358,6 +367,7 @@ public class SessionSupervisorController {
     private Long sessionId;
     private String supervisorConsultantId;
     private String supervisorUsername;
+    private String supervisorMatrixUserId;
     private String addedByConsultantId;
     private java.time.LocalDateTime addedDate;
     private String matrixRoomId;
@@ -397,6 +407,14 @@ public class SessionSupervisorController {
 
     public void setSupervisorUsername(String supervisorUsername) {
       this.supervisorUsername = supervisorUsername;
+    }
+
+    public String getSupervisorMatrixUserId() {
+      return supervisorMatrixUserId;
+    }
+
+    public void setSupervisorMatrixUserId(String supervisorMatrixUserId) {
+      this.supervisorMatrixUserId = supervisorMatrixUserId;
     }
 
     public String getAddedByConsultantId() {

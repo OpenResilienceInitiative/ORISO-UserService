@@ -8,6 +8,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.web.servlet.FilterRegistrationBean;
 import org.springframework.context.annotation.Bean;
 import org.springframework.core.Ordered;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.converter.HttpMessageConverter;
 import org.springframework.http.converter.json.JacksonJsonHttpMessageConverter;
 import org.springframework.stereotype.Component;
@@ -19,6 +20,7 @@ import org.springframework.web.servlet.config.annotation.ResourceHandlerRegistry
 import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
 import tools.jackson.core.JacksonException;
 import tools.jackson.core.JsonGenerator;
+import tools.jackson.databind.DeserializationFeature;
 import tools.jackson.databind.SerializationContext;
 import tools.jackson.databind.ValueSerializer;
 import tools.jackson.databind.json.JsonMapper;
@@ -66,7 +68,18 @@ public class CustomWebMvcConfigurer implements WebMvcConfigurer {
 
     for (int index = 0; index < converters.size(); index++) {
       if (converters.get(index) instanceof JacksonJsonHttpMessageConverter converter) {
-        var mapper = (JsonMapper) converter.getMapper().rebuild().addModule(module).build();
+        // Jackson 3 enables FAIL_ON_NULL_FOR_PRIMITIVES for creator-bound
+        // properties; hand-written request DTOs (e.g. NewRegistrationDto's
+        // hidden primitive newUserAccount) rely on the Jackson 2 semantics
+        // where an absent field defaults the primitive instead of a 400.
+        var mapper =
+            (JsonMapper)
+                converter
+                    .getMapper()
+                    .rebuild()
+                    .addModule(module)
+                    .disable(DeserializationFeature.FAIL_ON_NULL_FOR_PRIMITIVES)
+                    .build();
         var replacement = new JacksonJsonHttpMessageConverter(mapper);
         replacement.setSupportedMediaTypes(converter.getSupportedMediaTypes());
         converters.set(index, replacement);
@@ -90,7 +103,7 @@ public class CustomWebMvcConfigurer implements WebMvcConfigurer {
     configuration.setAllowedOrigins(List.of(allowedOrigins));
     configuration.setAllowedMethods(List.of("OPTIONS", "GET", "POST", "PUT", "PATCH", "DELETE"));
     configuration.setAllowedHeaders(List.of("*"));
-    configuration.setExposedHeaders(List.of("X-Reason"));
+    configuration.setExposedHeaders(List.of("X-Reason", HttpHeaders.RETRY_AFTER));
 
     var source = new UrlBasedCorsConfigurationSource();
     allowedPaths.forEach(path -> source.registerCorsConfiguration(path, configuration));

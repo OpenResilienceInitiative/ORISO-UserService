@@ -21,10 +21,13 @@ import de.caritas.cob.userservice.api.service.consultingtype.TopicConsultantRout
 import de.caritas.cob.userservice.api.service.erstantwort.ErstantwortContext;
 import de.caritas.cob.userservice.api.service.erstantwort.ErstantwortModality;
 import de.caritas.cob.userservice.api.service.erstantwort.ErstantwortPayloadBuilder;
+import de.caritas.cob.userservice.api.service.erstantwort.ErstantwortTenantTextResolver;
+import de.caritas.cob.userservice.api.service.erstantwort.TenantErstantwortContentClient;
 import de.caritas.cob.userservice.api.service.matrix.MatrixSessionSystemMessageService;
 import de.caritas.cob.userservice.api.service.notification.EventNotificationService;
 import de.caritas.cob.userservice.api.service.session.AgencyPreAssignmentRoomService;
 import de.caritas.cob.userservice.api.service.session.SessionService;
+import de.caritas.cob.userservice.tenantadminservice.generated.web.model.MultilingualContent;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -32,7 +35,6 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
-import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
@@ -64,14 +66,28 @@ class CreateEnquiryMessageFacadeErstantwortTest {
   @Mock private AgencyPreAssignmentRoomService agencyPreAssignmentRoomService;
   @Mock private ErstantwortPayloadBuilder erstantwortPayloadBuilder;
   @Mock private MatrixSessionSystemMessageService matrixSessionSystemMessageService;
+  @Mock private TenantErstantwortContentClient tenantContentClient;
 
-  @InjectMocks private CreateEnquiryMessageFacade facade;
+  private CreateEnquiryMessageFacade facade;
 
   private Session session;
   private User user;
 
   @BeforeEach
   void setUp() {
+    facade =
+        new CreateEnquiryMessageFacade(
+            sessionService,
+            de.caritas.cob.userservice.api.testHelper.PermittingDpaOwnerFixture.policy(),
+            matrixSynapseService,
+            emailNotificationFacade,
+            consultantAgencyService,
+            topicConsultantRoutingService,
+            eventNotificationService,
+            agencyPreAssignmentRoomService,
+            erstantwortPayloadBuilder,
+            matrixSessionSystemMessageService,
+            new ErstantwortTenantTextResolver(tenantContentClient));
     user = new User();
     user.setUserId("asker-1");
     user.setMatrixUserId("@asker:matrix.test");
@@ -87,6 +103,13 @@ class CreateEnquiryMessageFacadeErstantwortTest {
     session.setIsConsultantDirectlySet(false);
 
     when(sessionService.getSession(42L)).thenReturn(Optional.of(session));
+    when(sessionService.finalizeEnquiry(session, "de", ROOM_ID))
+        .thenAnswer(
+            invocation -> {
+              session.setStatus(SessionStatus.NEW);
+              session.setEnquiryMessageDate(java.time.LocalDateTime.now(java.time.ZoneOffset.UTC));
+              return session;
+            });
     when(matrixSynapseService.loginAsUserAccessToken(anyString())).thenReturn("token");
     when(matrixSynapseService.getRoomEvent(anyString(), anyString(), anyString()))
         .thenReturn(
@@ -107,6 +130,108 @@ class CreateEnquiryMessageFacadeErstantwortTest {
     var data = new EnquiryData(user, 42L, "Hallo", "de");
     data.setMatrixEventId(EVENT_ID);
     return data;
+  }
+
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.ValueSource(
+      strings = {"de", "de@informal", "en", "fr", "ru", "tr", "ti"})
+  void enquiryDispatchFreezesTheRequestedUiLanguageInItsSystemMessage(String locale)
+      throws Exception {
+    when(erstantwortPayloadBuilder.buildFirstResponseBody(any()))
+        .thenAnswer(
+            call -> new ErstantwortPayloadBuilder().buildFirstResponseBody(call.getArgument(0)));
+    var data = enquiryData();
+    data.setUiLocale(locale);
+    facade.createEnquiryMessage(data);
+    var context = ArgumentCaptor.forClass(ErstantwortContext.class);
+    verify(erstantwortPayloadBuilder).buildFirstResponseBody(context.capture());
+    assertThat(context.getValue().getLocale()).isEqualTo(locale);
+    var body = ArgumentCaptor.forClass(String.class);
+    verify(matrixSessionSystemMessageService).postFirstResponseMessage(eq(session), body.capture());
+    var parsed =
+        new com.fasterxml.jackson.databind.ObjectMapper()
+            .readTree(
+                body.getValue()
+                    .substring(ErstantwortPayloadBuilder.SYSTEM_NOTIFICATION_PREFIX.length()));
+    assertThat(parsed.path("type").asText()).isEqualTo("FIRST_RESPONSE");
+    assertThat(parsed.path("bausteine").size()).isGreaterThan(0);
+    assertThat(body.getValue()).doesNotContain("{{", "erstantwort.");
+    verify(eventNotificationService).createFirstResponseNotification(session);
+  }
+
+  @Test
+  void tenantAuthoredTextsReachThePostedPayload() {
+    session.setTenantId(77L);
+    when(tenantContentClient.readContent(77L))
+        .thenReturn(
+            new MultilingualContent()
+                .erstantwortGreeting(Map.of("de", "<p>Willkommen beim Träger Sonnenblume</p>"))
+                .erstantwortEmergencyAddition(Map.of("de", "<p>Notruf Sonnenblume 0800</p>"))
+                .erstantwortResponseDeadlineDays(4));
+    when(erstantwortPayloadBuilder.buildFirstResponseBody(any()))
+        .thenAnswer(
+            call -> new ErstantwortPayloadBuilder().buildFirstResponseBody(call.getArgument(0)));
+    var data = enquiryData();
+    data.setUiLocale("de");
+
+    facade.createEnquiryMessage(data);
+
+    verify(tenantContentClient).readContent(77L);
+    var body = ArgumentCaptor.forClass(String.class);
+    verify(matrixSessionSystemMessageService).postFirstResponseMessage(eq(session), body.capture());
+    assertThat(body.getValue())
+        .contains("Willkommen beim Träger Sonnenblume")
+        .contains("emergencyAddition")
+        .contains("Notruf Sonnenblume 0800")
+        .doesNotContain("<p>", "</p>");
+  }
+
+  /**
+   * #1565: when TenantService cannot be read (timeout, refused, pool saturated) the centre's text
+   * is unknown. Omitting the sentence is the right result: the rest of the first reply goes out and
+   * the platform does not guess who reads along.
+   */
+  @Test
+  void whenTheTenantLookupFailsTheReplyGoesOutWithoutWhoReadsAlong() {
+    session.setTenantId(77L);
+    when(tenantContentClient.readContent(77L))
+        .thenThrow(new java.util.concurrent.RejectedExecutionException("pool busy"));
+    when(erstantwortPayloadBuilder.buildFirstResponseBody(any()))
+        .thenAnswer(
+            call -> new ErstantwortPayloadBuilder().buildFirstResponseBody(call.getArgument(0)));
+    var data = enquiryData();
+    data.setUiLocale("de");
+
+    var response = facade.createEnquiryMessage(data);
+
+    assertThat(response.getMatrixRoomId()).isEqualTo(ROOM_ID);
+    var body = ArgumentCaptor.forClass(String.class);
+    verify(matrixSessionSystemMessageService).postFirstResponseMessage(eq(session), body.capture());
+    assertThat(body.getValue())
+        .doesNotContain("whoReadsAlong", "Fachkräfte", "Wer Ihre Nachricht liest")
+        .contains("\"greeting\"", "responseDeadline", "noPersonalData", "emergencyNumbers")
+        .contains("\"closing\"");
+    verify(eventNotificationService).createFirstResponseNotification(session);
+  }
+
+  @Test
+  void aCentresOwnWhoReadsAlongTextReachesThePostedPayload() {
+    session.setTenantId(77L);
+    when(tenantContentClient.readContent(77L))
+        .thenReturn(
+            new MultilingualContent()
+                .erstantwortWhoReadsAlong(Map.of("de", "<p>Unser Team und die Supervision.</p>")));
+    when(erstantwortPayloadBuilder.buildFirstResponseBody(any()))
+        .thenAnswer(
+            call -> new ErstantwortPayloadBuilder().buildFirstResponseBody(call.getArgument(0)));
+    var data = enquiryData();
+    data.setUiLocale("de");
+
+    facade.createEnquiryMessage(data);
+
+    var body = ArgumentCaptor.forClass(String.class);
+    verify(matrixSessionSystemMessageService).postFirstResponseMessage(eq(session), body.capture());
+    assertThat(body.getValue()).contains("whoReadsAlong", "Unser Team und die Supervision.");
   }
 
   @Test

@@ -1,23 +1,42 @@
 package de.caritas.cob.userservice.api.port.out;
 
+import de.caritas.cob.userservice.api.model.CaseHandoverRequest;
 import de.caritas.cob.userservice.api.model.Consultant;
+import de.caritas.cob.userservice.api.model.HandoverCandidate;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.Session.RegistrationType;
 import de.caritas.cob.userservice.api.model.Session.SessionStatus;
 import de.caritas.cob.userservice.api.model.User;
 import jakarta.persistence.LockModeType;
 import java.time.LocalDateTime;
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.Lock;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.CrudRepository;
 import org.springframework.data.repository.query.Param;
+import org.springframework.transaction.annotation.Transactional;
 
-public interface SessionRepository extends CrudRepository<Session, Long> {
+public interface SessionRepository extends CrudRepository<Session, Long>, SessionRowLock {
+
+  /**
+   * FE#2209: whether any session of any tenant uses this Matrix room. Native, so the Hibernate
+   * tenant filter does not apply: a room of another tenant is still an ORISO conversation room.
+   */
+  @Query(value = "SELECT COUNT(*) FROM session WHERE matrix_room_id = :room", nativeQuery = true)
+  long countAnyTenantByMatrixRoomId(@Param("room") String room);
+
+  // A known modality is authoritative; the older markers only identify pre-modality rows. Guests
+  // are recognised by stored facts, never by the User-ID text (ORISO-UserService#1697).
+  String LIVE_CHAT_MODALITY =
+      " AND (s.conversationType = de.caritas.cob.userservice.api.model.ConversationType.LIVE_CHAT"
+          + " OR (s.conversationType IS NULL"
+          + " AND (s.registrationType = :anonymousRegistrationType OR s.postcode = '00000')))";
 
   interface AgencyConsultingTypeProjection {
 
@@ -29,6 +48,93 @@ public interface SessionRepository extends CrudRepository<Session, Long> {
   @Lock(LockModeType.PESSIMISTIC_WRITE)
   @Query("SELECT session FROM Session session WHERE session.id = :sessionId")
   Optional<Session> findByIdForUpdate(@Param("sessionId") Long sessionId);
+
+  /**
+   * The conversation's row lock alone, without loading it (ORISO-Frontend#2252): a deletion takes
+   * it before it reads the invited members, a join reservation before it writes one.
+   */
+  @Query(value = "SELECT id FROM session WHERE id = :id FOR UPDATE", nativeQuery = true)
+  Optional<Long> lockById(@Param("id") Long id);
+
+  /** Scalar lock avoids returning an earlier managed Session snapshot after remote call lookup. */
+  @Query(
+      value =
+          "SELECT status FROM session WHERE id=:id AND matrix_room_id=:room AND (tenant_id=:tenant OR (:tenant=1 AND tenant_id IS NULL)) FOR UPDATE",
+      nativeQuery = true)
+  Optional<Integer> lockCallStatus(
+      @Param("id") Long id, @Param("room") String room, @Param("tenant") Long tenant);
+
+  /**
+   * ORISO-Frontend#1952: remember the medium of the direct link a conversation was opened through.
+   * First link wins: a conversation that already has one keeps it. Leaves ownership and the
+   * optimistic version alone, like the preference writer below.
+   *
+   * @return one if written, zero if the conversation is missing or already has an origin
+   */
+  @Transactional
+  @Modifying(flushAutomatically = true)
+  @Query(
+      "UPDATE Session session SET session.directLinkMedium = :medium"
+          + " WHERE session.id = :sessionId AND session.directLinkMedium IS NULL")
+  int recordDirectLinkOrigin(@Param("sessionId") Long sessionId, @Param("medium") String medium);
+
+  /**
+   * ORISO-Frontend#2170: remember the name of the direct link a conversation was opened through, so
+   * its call is called that. First name wins, like the medium above; a conversation opened before
+   * this existed has none and takes the next link's. Leaves ownership and the optimistic version
+   * alone.
+   *
+   * @return one if written, zero if the conversation is missing or already has a name
+   */
+  @Transactional
+  @Modifying(flushAutomatically = true)
+  @Query(
+      "UPDATE Session session SET session.directLinkName = :name"
+          + " WHERE session.id = :sessionId AND session.directLinkName IS NULL")
+  int recordDirectLinkName(@Param("sessionId") Long sessionId, @Param("name") String name);
+
+  /** ORISO-Frontend#2252: this session is the shared conversation of a direct invitation. */
+  @Transactional
+  @Modifying(flushAutomatically = true)
+  @Query(
+      "UPDATE Session session SET session.directInvitationConversation = true"
+          + " WHERE session.id = :sessionId")
+  int markDirectInvitationConversation(@Param("sessionId") Long sessionId);
+
+  /**
+   * Write the independent standing preference without changing ownership or its optimistic version.
+   * Callers must first lock the session and validate its owner, tenant and conversation scope.
+   */
+  @Transactional
+  @Modifying(flushAutomatically = true)
+  @Query(
+      "UPDATE Session session SET session.alwaysAskBeforeAdditionalAccess = :alwaysAsk WHERE session.id = :sessionId")
+  void updateAdditionalAccessPreference(
+      @Param("sessionId") Long sessionId, @Param("alwaysAsk") boolean alwaysAsk);
+
+  /**
+   * Refresh only the timestamp of a still-waiting enquiry whose heartbeat is due.
+   *
+   * <p>The database checks eligibility and writes under the same row lock used by assignment.
+   * Updating only updateDate prevents a stale heartbeat from overwriting a consultant or status.
+   *
+   * @return one if refreshed, otherwise zero (missing, assigned, no longer waiting, or throttled)
+   */
+  @Transactional
+  @Modifying(flushAutomatically = true, clearAutomatically = true)
+  @Query(
+      """
+      UPDATE Session session SET session.updateDate = :now
+      WHERE session.id = :sessionId
+        AND session.status = :waitingStatus
+        AND session.consultant IS NULL
+        AND (session.updateDate IS NULL OR session.updateDate < :cutoff)
+      """)
+  int touchLiveChatQueueHeartbeat(
+      @Param("sessionId") Long sessionId,
+      @Param("waitingStatus") SessionStatus waitingStatus,
+      @Param("now") LocalDateTime now,
+      @Param("cutoff") LocalDateTime cutoff);
 
   /**
    * Find a {@link Session} by a consultant id and a session status.
@@ -47,6 +153,13 @@ public interface SessionRepository extends CrudRepository<Session, Long> {
    * @return A list of {@link Session}s for the specific consultant id and status
    */
   List<Session> findByConsultantAndStatusIn(Consultant consultant, List<SessionStatus> statuses);
+
+  @Query(
+      "SELECT session.id FROM Session session "
+          + "WHERE session.consultant = :consultant AND session.status IN :statuses "
+          + "ORDER BY session.id")
+  List<Long> findIdsByConsultantAndStatusInOrderById(
+      @Param("consultant") Consultant consultant, @Param("statuses") List<SessionStatus> statuses);
 
   /**
    * Find a {@link Session} list by a consultant and a session status ordered by update date desc.
@@ -101,9 +214,41 @@ public interface SessionRepository extends CrudRepository<Session, Long> {
    * Find metadata-only case handover candidates in the requester's agencies. These sessions are
    * already owned by another consultant and are therefore not part of the normal "my sessions"
    * list.
+   *
+   * <p>Team sessions are included: the silent-membership handover model is team-session based, so
+   * excluding them hid exactly the cases the feature exists for (#202). Agency is only the coarse
+   * half of the scope — {@code CaseHandoverService} narrows the result to the requester's
+   * departments (agency × topic) before anything is returned.
    */
-  List<Session> findByAgencyIdInAndConsultantNotAndStatusInAndTeamSessionFalseOrderByUpdateDateDesc(
-      List<Long> agencyIds, Consultant consultant, List<SessionStatus> statuses);
+  @Query(
+      """
+      select new de.caritas.cob.userservice.api.model.HandoverCandidate(
+          s.id, s.agencyId, s.mainTopicId, s.postcode, s.matrixRoomId, s.conversationType,
+          s.teamSession, asker.username, owner.username, owner.displayName, owner.internalDisplayName,
+          owner.firstName, owner.lastName)
+      from Session s
+      left join s.user asker on :includeNames = true
+      left join s.consultant owner on :includeNames = true
+      where s.agencyId in :agencyIds and s.consultant <> :requester and s.status in :statuses
+      order by s.updateDate desc, s.id asc
+      """)
+  List<HandoverCandidate> findHandoverCandidates(
+      @Param("agencyIds") List<Long> agencyIds,
+      @Param("requester") Consultant requester,
+      @Param("statuses") List<SessionStatus> statuses,
+      @Param("includeNames") boolean includeNames);
+
+  @Query("select s from Session s where s.id in :ids")
+  List<Session> findHandoverCandidatePage(@Param("ids") Collection<Long> ids);
+
+  @Query(
+      """
+      select distinct s.id from Session s join s.sessionTopics topic
+      where s.id in :sessionIds and topic.topicId in :topicIds
+      """)
+  Set<Long> findSessionIdsWithAnyAdditionalTopic(
+      @Param("sessionIds") Collection<Long> sessionIds,
+      @Param("topicIds") Collection<Long> topicIds);
 
   /**
    * Find team {@link Session} list by agency ids and status where consultant is not the given
@@ -131,6 +276,18 @@ public interface SessionRepository extends CrudRepository<Session, Long> {
    * @return A list of {@link Session}s for the specified user ID
    */
   List<Session> findByUserUserId(String userId);
+
+  /** One row per session of the given advice seekers that has an agency. */
+  interface UserAgencyId {
+    String getUserId();
+
+    Long getAgencyId();
+  }
+
+  @Query(
+      "select distinct s.user.userId as userId, s.agencyId as agencyId from Session s"
+          + " where s.user.userId in :userIds and s.agencyId is not null")
+  List<UserAgencyId> findAgencyIdsByUserIds(@Param("userIds") Collection<String> userIds);
 
   /**
    * Find the {@link Session}s by user id and pageable.
@@ -161,6 +318,45 @@ public interface SessionRepository extends CrudRepository<Session, Long> {
    * @param sessionStatus {@link SessionStatus}
    * @return A list of {@link Session}s for the specified agency ID
    */
+  /**
+   * Closes the advice seeker's enquiries nobody has taken yet ({@code INITIAL}/{@code NEW} without
+   * a counsellor). Used when the advice seeker is marked for deletion, so the enquiries leave the
+   * counsellors' lists and no longer block deleting an agency's last counsellor.
+   *
+   * @return how many enquiries were closed
+   */
+  @Transactional
+  @Modifying(flushAutomatically = true)
+  @Query(
+      "update Session s set s.status ="
+          + " de.caritas.cob.userservice.api.model.Session.SessionStatus.DONE,"
+          + " s.updateDate = :now, s.rowVersion = s.rowVersion + 1"
+          + " where s.user = :user and s.consultant is null and s.status in"
+          + " (de.caritas.cob.userservice.api.model.Session.SessionStatus.INITIAL,"
+          + " de.caritas.cob.userservice.api.model.Session.SessionStatus.NEW)")
+  int closeUnassignedEnquiries(@Param("user") User user, @Param("now") LocalDateTime now);
+
+  /** Scoped current read even when a roster transaction has an earlier snapshot. */
+  @Lock(LockModeType.PESSIMISTIC_READ)
+  @Query(
+      """
+      select enquiry.id as sessionId, enquiry.matrixRoomId as roomId
+      from Session enquiry
+      where enquiry.agencyId = :agencyId
+        and enquiry.status in :statuses
+        and enquiry.consultant is null
+        and (enquiry.isConsultantDirectlySet is null or enquiry.isConsultantDirectlySet = false)
+        and enquiry.matrixRoomId is not null and trim(enquiry.matrixRoomId) <> ''
+      """)
+  List<OpenEnquiryRoomBinding> lockOpenEnquiryBindings(
+      @Param("agencyId") Long agencyId, @Param("statuses") List<SessionStatus> statuses);
+
+  interface OpenEnquiryRoomBinding {
+    Long getSessionId();
+
+    String getRoomId();
+  }
+
   List<Session> findByAgencyIdAndStatusAndConsultantIsNull(
       Long agencyId, SessionStatus sessionStatus);
 
@@ -203,6 +399,18 @@ public interface SessionRepository extends CrudRepository<Session, Long> {
 
   Page<Session> findAll(Pageable pageable);
 
+  /** {@code agencyIds} must not be empty. */
+  Page<Session> findByAgencyIdIn(Set<Long> agencyIds, Pageable pageable);
+
+  Page<Session> findByUserUserIdAndAgencyIdIn(
+      String userId, Set<Long> agencyIds, Pageable pageable);
+
+  Page<Session> findByConsultantIdAndAgencyIdIn(
+      String consultantId, Set<Long> agencyIds, Pageable pageable);
+
+  Page<Session> findByConsultingTypeIdAndAgencyIdIn(
+      int consultingTypeId, Set<Long> agencyIds, Pageable pageable);
+
   /**
    * Find the {@link Session}s by consulting type, registration type and pageable.
    *
@@ -223,7 +431,6 @@ public interface SessionRepository extends CrudRepository<Session, Long> {
           + "WHERE s.consultingTypeId IN :consultingTypeIds "
           + "AND s.registrationType = :registrationType "
           + "AND s.status = :sessionStatus "
-          + "AND u.dataPrivacyConfirmation IS NOT NULL "
           + "ORDER BY s.createDate DESC")
   Page<Session> findAnonymousEnquiriesVisibleForConsultants(
       @Param("consultingTypeIds") Set<Integer> consultingTypeIds,
@@ -237,10 +444,8 @@ public interface SessionRepository extends CrudRepository<Session, Long> {
           + "WHERE s.consultingTypeId IN :consultingTypeIds "
           + "AND s.status = :sessionStatus "
           + "AND s.consultant IS NULL "
-          + "AND u.dataPrivacyConfirmation IS NOT NULL "
           + "AND s.updateDate >= :minUpdateDate "
-          + "AND (s.registrationType = :anonymousRegistrationType OR s.postcode = '00000' "
-          + "     OR u.username LIKE 'Anonymous-%') "
+          + "AND (s.registrationType = :anonymousRegistrationType OR s.postcode = '00000') "
           + "AND s.mainTopicId IS NULL "
           + "ORDER BY s.createDate DESC")
   Page<Session> findAnonymousEnquiriesVisibleForConsultantsWithoutTopic(
@@ -256,10 +461,8 @@ public interface SessionRepository extends CrudRepository<Session, Long> {
           + "WHERE s.consultingTypeId IN :consultingTypeIds "
           + "AND s.status = :sessionStatus "
           + "AND s.consultant IS NULL "
-          + "AND u.dataPrivacyConfirmation IS NOT NULL "
           + "AND s.updateDate >= :minUpdateDate "
-          + "AND (s.registrationType = :anonymousRegistrationType OR s.postcode = '00000' "
-          + "     OR u.username LIKE 'Anonymous-%') "
+          + "AND (s.registrationType = :anonymousRegistrationType OR s.postcode = '00000') "
           + "AND (s.mainTopicId IS NULL OR s.mainTopicId IN :topicIds) "
           + "ORDER BY s.createDate DESC")
   Page<Session> findAnonymousEnquiriesVisibleForConsultantsByTopics(
@@ -276,6 +479,15 @@ public interface SessionRepository extends CrudRepository<Session, Long> {
    * topic-bound and deliberately cross-agency/cross-tenant. Used instead of the consulting-type
    * variant so the queue never needs an authenticated AgencyService lookup to resolve the
    * consultant's consulting types.
+   *
+   * <p><b>None of the anonymous queue queries filter on {@code dataPrivacyConfirmation}, and
+   * re-adding it would silently break the live chat again</b> (#431). {@code CreateUserFacade}
+   * clears that field for anonymous registrations on purpose, so the in-chat consent gate fires
+   * (ADR-018 §9, #927). Requiring it here made those two deliberate decisions cancel each other
+   * out: every anonymous live-chat enquiry was invisible to every consultant, the asker clicked and
+   * nothing happened. Consent and missing-policy disclosure belong to the client entry flow. They
+   * must not hide an enquiry or block its assignment: the counselling centre is only confirmed by
+   * that assignment, so enforcing consent here would recreate the same cycle.
    */
   @Query(
       "SELECT s FROM Session s "
@@ -283,11 +495,9 @@ public interface SessionRepository extends CrudRepository<Session, Long> {
           + "WHERE s.mainTopicId IN :topicIds "
           + "AND s.status = :sessionStatus "
           + "AND s.consultant IS NULL "
-          + "AND u.dataPrivacyConfirmation IS NOT NULL "
           + "AND s.updateDate >= :minUpdateDate "
-          + "AND (s.registrationType = :anonymousRegistrationType OR s.postcode = '00000' "
-          + "     OR u.username LIKE 'Anonymous-%') "
-          + "ORDER BY s.createDate DESC")
+          + LIVE_CHAT_MODALITY
+          + " ORDER BY s.createDate ASC, s.id ASC")
   Page<Session> findAnonymousEnquiriesVisibleForConsultantsByTopicsOnly(
       @Param("topicIds") Set<Long> topicIds,
       @Param("sessionStatus") SessionStatus sessionStatus,
@@ -313,37 +523,30 @@ public interface SessionRepository extends CrudRepository<Session, Long> {
           + "AND s.mainTopicId IN :topicIds "
           + "AND s.status = :sessionStatus "
           + "AND s.consultant IS NULL "
-          + "AND u.dataPrivacyConfirmation IS NOT NULL "
-          + "AND (s.registrationType = :anonymousRegistrationType OR s.postcode = '00000' "
-          + "     OR u.username LIKE 'Anonymous-%') ")
+          + LIVE_CHAT_MODALITY)
   List<Session> findVisibleAnonymousLiveChatEnquiriesForConsultantByIds(
       @Param("sessionIds") Set<Long> sessionIds,
       @Param("topicIds") Set<Long> topicIds,
       @Param("sessionStatus") SessionStatus sessionStatus,
       @Param("anonymousRegistrationType") RegistrationType anonymousRegistrationType);
 
-  /**
-   * Count live-chat enquiries that are visible in the consultant queue and were created before the
-   * reference session — i.e. people genuinely ahead of the asker. Matches the same visibility rules
-   * as {@code SessionService#isVisibleRegisteredEnquiryForConsultant}: anonymous-style session,
-   * privacy confirmed, unassigned, same consulting type and topic.
-   */
-  @Query(
-      "SELECT COUNT(s) FROM Session s "
-          + "JOIN s.user u "
-          + "WHERE s.status = :sessionStatus "
-          + "AND s.consultant IS NULL "
-          + "AND s.createDate < :beforeDate "
-          + "AND s.consultingTypeId = :consultingTypeId "
-          + "AND ((:mainTopicId IS NULL AND s.mainTopicId IS NULL) OR s.mainTopicId = :mainTopicId) "
-          + "AND u.dataPrivacyConfirmation IS NOT NULL "
-          + "AND s.updateDate >= :minUpdateDate "
-          + "AND (s.registrationType = :anonymousRegistrationType OR s.postcode = '00000' "
-          + "     OR u.username LIKE 'Anonymous-%') "
-          + "AND (:agencyId IS NULL OR s.agencyId = :agencyId)")
+  // Keep the guest's position and the assignment guard on the same queue and ordering key.
+  String EARLIER_LIVE_CHAT =
+      " FROM Session s JOIN s.user u"
+          + " WHERE s.status = :sessionStatus AND s.consultant IS NULL"
+          + " AND (s.createDate < :beforeDate OR (s.createDate = :beforeDate AND s.id < :beforeId))"
+          // A topic queue is topic-only, as in the consultant's list; only no-topic stays typed.
+          + " AND ((:mainTopicId IS NULL AND s.mainTopicId IS NULL"
+          + " AND s.consultingTypeId = :consultingTypeId) OR s.mainTopicId = :mainTopicId)"
+          + " AND s.updateDate >= :minUpdateDate"
+          + LIVE_CHAT_MODALITY
+          + " AND (:agencyId IS NULL OR s.agencyId = :agencyId)";
+
+  @Query("SELECT COUNT(s)" + EARLIER_LIVE_CHAT)
   long countPendingEnquiriesAheadOf(
       @Param("sessionStatus") SessionStatus sessionStatus,
       @Param("beforeDate") LocalDateTime beforeDate,
+      @Param("beforeId") Long beforeId,
       @Param("consultingTypeId") Integer consultingTypeId,
       @Param("mainTopicId") Long mainTopicId,
       @Param("agencyId") Long agencyId,
@@ -351,15 +554,14 @@ public interface SessionRepository extends CrudRepository<Session, Long> {
       @Param("anonymousRegistrationType") RegistrationType anonymousRegistrationType);
 
   /**
-   * Returns anonymous and live-chat-style sessions (REGISTERED with postcode {@code 00000} or
-   * {@code Anonymous-} username) for deactivation workflows.
+   * Returns anonymous and live-chat-style sessions (REGISTERED with postcode {@code 00000}) for
+   * deactivation workflows, whatever the guest's User-ID looks like (ORISO-UserService#1697).
    */
   @Query(
       "SELECT s FROM Session s "
           + "JOIN s.user u "
           + "WHERE s.status IN :statuses "
-          + "AND (s.registrationType = :anonymousRegistrationType OR s.postcode = '00000' "
-          + "     OR u.username LIKE 'Anonymous-%')")
+          + "AND (s.registrationType = :anonymousRegistrationType OR s.postcode = '00000')")
   List<Session> findLiveChatSessionsByStatusIn(
       @Param("statuses") Set<SessionStatus> statuses,
       @Param("anonymousRegistrationType") RegistrationType anonymousRegistrationType);
@@ -385,15 +587,19 @@ public interface SessionRepository extends CrudRepository<Session, Long> {
       RegistrationType registrationType);
 
   /**
-   * Find one session by assigned consultant and user.
-   *
-   * @param consultant the consultant
-   * @param user the user
-   * @param consultingTypeId the id of the consulting type
-   * @return an {@link Optional} of the result
+   * The person's 1:1 sessions with the counsellor in a consulting type, oldest first, without the
+   * shared conversations of direct invitations with an appointment (ORISO-Frontend#2252): those are
+   * sessions of the same three, and a person can have several. Their mark is on the session, so it
+   * holds after the invitation is deleted; a 1:1 an invitation was created from stays in.
    */
-  Optional<Session> findByConsultantAndUserAndConsultingTypeId(
-      Consultant consultant, User user, Integer consultingTypeId);
+  @Query(
+      "SELECT s FROM Session s WHERE s.consultant = :consultant AND s.user = :user"
+          + " AND s.consultingTypeId = :consultingTypeId"
+          + " AND s.directInvitationConversation = false ORDER BY s.id")
+  List<Session> findOneToOneSessions(
+      @Param("consultant") Consultant consultant,
+      @Param("user") User user,
+      @Param("consultingTypeId") Integer consultingTypeId);
 
   /**
    * Find one session by assigned consultant and user.
@@ -432,4 +638,139 @@ public interface SessionRepository extends CrudRepository<Session, Long> {
           + "FROM Session s WHERE s.agencyId IN :agencyIds GROUP BY s.agencyId")
   List<AgencyConsultingTypeProjection> findLowestConsultingTypeIdsByAgencyIds(
       @Param("agencyIds") Set<Long> agencyIds);
+
+  /**
+   * Open cases a counsellor owns in one Träger, for counting what a move leaves behind (#1419). The
+   * owner stays on a case when its counsellor moves, so without the tenant a move back would count
+   * the cases of the Träger they return to as left behind. Same tenant predicate as the room
+   * queries: cases without a tenant belong to the technical tenant 1.
+   */
+  @Query(
+      """
+      SELECT COUNT(s) FROM Session s
+      WHERE s.consultant.id = :consultantId
+        AND s.status IN :statuses
+        AND (s.tenantId = :tenantId OR (s.tenantId IS NULL AND :tenantId = 1))
+      """)
+  long countOpenCasesOfTenant(
+      @Param("consultantId") String consultantId,
+      @Param("statuses") Collection<SessionStatus> statuses,
+      @Param("tenantId") Long tenantId);
+
+  /**
+   * The Matrix rooms through which a counsellor can read the cases of the Träger they are leaving
+   * (#1419): the rooms of cases they own, of team cases of the centres they leave, of cases they
+   * supervise and of cases a colleague granted them access to, all of the given Träger only: the
+   * owner stays on a case when its counsellor moves, so without the Träger a move back would pick
+   * up the cases of the Träger they are returning to. No case data leaves the query: a case id and
+   * a room id.
+   */
+  @Query(
+      """
+      SELECT new de.caritas.cob.userservice.api.port.out.SessionRoomRow(s.id, s.matrixRoomId)
+      FROM Session s
+      WHERE s.matrixRoomId IS NOT NULL
+        AND (s.consultant.id = :consultantId
+          OR (s.teamSession = true AND s.agencyId IN :agencyIds)
+          OR s.id IN (SELECT sv.session.id FROM SessionSupervisor sv
+                      WHERE sv.supervisorConsultant.id = :consultantId AND sv.isActive = true)
+          OR s.id IN (SELECT r.session.id FROM CaseHandoverRequest r
+                      WHERE r.requesterConsultant.id = :consultantId
+                        AND r.status IN :grantedStatuses))
+        AND (s.tenantId = :tenantId OR (s.tenantId IS NULL AND :tenantId = 1))
+      """)
+  List<SessionRoomRow> findRoomsReadableBy(
+      @Param("tenantId") Long tenantId,
+      @Param("consultantId") String consultantId,
+      @Param("agencyIds") Collection<Long> agencyIds,
+      @Param("grantedStatuses") Collection<CaseHandoverRequest.Status> grantedStatuses);
+
+  /**
+   * The staff-only supervision side rooms (ADR-008) a counsellor sits in: those of cases they
+   * supervise and those of cases they own. Rows that were ended earlier count as well, because the
+   * member stays in the room until somebody removes them. Only those of cases of the given Träger.
+   */
+  @Query(
+      """
+      SELECT new de.caritas.cob.userservice.api.port.out.SessionRoomRow(
+          ss.session.id, ss.matrixRoomId)
+      FROM SessionSupervisor ss
+      WHERE ss.matrixRoomId IS NOT NULL
+        AND (ss.supervisorConsultant.id = :consultantId
+          OR ss.session.consultant.id = :consultantId)
+        AND (ss.session.tenantId = :tenantId
+          OR (ss.session.tenantId IS NULL AND :tenantId = 1))
+      """)
+  List<SessionRoomRow> findSupervisionSideRoomsOf(
+      @Param("tenantId") Long tenantId, @Param("consultantId") String consultantId);
+
+  /**
+   * Of the given Matrix rooms, those that are the chat room of a case of the Träger (#1421). A
+   * counsellor is a silent member of the accepted cases of their department's other counsellors
+   * (ADR-002 §1); no ownership or grant points at them, only the room membership does.
+   */
+  @Query(
+      """
+      SELECT new de.caritas.cob.userservice.api.port.out.SessionRoomRow(s.id, s.matrixRoomId)
+      FROM Session s
+      WHERE s.matrixRoomId IN :roomIds
+        AND (s.tenantId = :tenantId OR (s.tenantId IS NULL AND :tenantId = 1))
+      """)
+  List<SessionRoomRow> findSessionRoomsOfTenantIn(
+      @Param("tenantId") Long tenantId, @Param("roomIds") Collection<String> roomIds);
+
+  /** Of the given Matrix rooms, those that are a supervision side room of a case of the Träger. */
+  @Query(
+      """
+      SELECT new de.caritas.cob.userservice.api.port.out.SessionRoomRow(
+          ss.session.id, ss.matrixRoomId)
+      FROM SessionSupervisor ss
+      WHERE ss.matrixRoomId IN :roomIds
+        AND (ss.session.tenantId = :tenantId
+          OR (ss.session.tenantId IS NULL AND :tenantId = 1))
+      """)
+  List<SessionRoomRow> findSideRoomsOfTenantIn(
+      @Param("tenantId") Long tenantId, @Param("roomIds") Collection<String> roomIds);
+
+  /** Every case room of the given centres: the fallback when membership cannot be asked. */
+  @Query(
+      """
+      SELECT new de.caritas.cob.userservice.api.port.out.SessionRoomRow(s.id, s.matrixRoomId)
+      FROM Session s
+      WHERE s.matrixRoomId IS NOT NULL AND s.agencyId IN :agencyIds
+      """)
+  List<SessionRoomRow> findSessionRoomsOfAgencies(@Param("agencyIds") Collection<Long> agencyIds);
+
+  /** The upper ID is fixed before a late-joiner sweep so new sessions do not extend it. */
+  @Query("SELECT MAX(s.id) FROM Session s WHERE s.agencyId = :agencyId")
+  Optional<Long> findAgencySessionUpperId(@Param("agencyId") Long agencyId);
+
+  @Query(
+      """
+      SELECT new de.caritas.cob.userservice.api.port.out.SessionRoomRow(s.id, s.matrixRoomId)
+      FROM Session s
+      WHERE s.agencyId = :agencyId
+        AND s.id > :afterId AND s.id <= :upperId
+        AND s.status IN :openStatuses
+        AND s.consultant IS NULL
+        AND (s.isConsultantDirectlySet IS NULL OR s.isConsultantDirectlySet = false)
+        AND s.matrixRoomId IS NOT NULL AND TRIM(s.matrixRoomId) <> ''
+      ORDER BY s.id
+      """)
+  List<SessionRoomRow> findLateJoinerEnquiryRooms(
+      @Param("agencyId") Long agencyId,
+      @Param("openStatuses") Collection<SessionStatus> openStatuses,
+      @Param("afterId") long afterId,
+      @Param("upperId") long upperId,
+      Pageable page);
+
+  /** Every supervision side room of cases of the given centres: the fallback, as above. */
+  @Query(
+      """
+      SELECT new de.caritas.cob.userservice.api.port.out.SessionRoomRow(
+          ss.session.id, ss.matrixRoomId)
+      FROM SessionSupervisor ss
+      WHERE ss.matrixRoomId IS NOT NULL AND ss.session.agencyId IN :agencyIds
+      """)
+  List<SessionRoomRow> findSideRoomsOfAgencies(@Param("agencyIds") Collection<Long> agencyIds);
 }

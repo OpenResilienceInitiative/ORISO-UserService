@@ -31,7 +31,7 @@ import de.caritas.cob.userservice.api.facade.rollback.RollbackFacade;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.port.out.identity.CreatedIdentity;
 import de.caritas.cob.userservice.api.service.ConsultantImportService.ImportRecord;
-import de.caritas.cob.userservice.api.service.appointment.AppointmentService;
+import de.caritas.cob.userservice.api.testHelper.AccountInactivityPolicyHttpFixture;
 import de.caritas.cob.userservice.tenantadminservice.generated.web.model.Settings;
 import de.caritas.cob.userservice.tenantadminservice.generated.web.model.TenantDTO;
 import org.jeasy.random.EasyRandom;
@@ -45,12 +45,20 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.http.HttpStatus;
 import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
-import org.springframework.test.util.ReflectionTestUtils;
 
 @SpringBootTest(classes = UserServiceApplication.class)
 @TestPropertySource(properties = "spring.profiles.active=testing")
 @AutoConfigureTestDatabase(replace = Replace.NONE)
-public class CreateConsultantSagaIT {
+public class CreateConsultantSagaIT extends AccountInactivityPolicyHttpFixture {
+  @org.junit.jupiter.api.BeforeEach
+  void recoveryPolicyFixture() {
+    org.mockito.Mockito.when(
+            tenantService.getRestrictedTenantDataFresh(org.mockito.ArgumentMatchers.anyLong()))
+        .thenReturn(de.caritas.cob.userservice.api.testHelper.ChatRecoveryPolicyFixtures.tenant());
+  }
+
+  @MockitoBean
+  private de.caritas.cob.userservice.api.admin.service.tenant.TenantService tenantService;
 
   private static final String VALID_USERNAME = "validUsername";
   private static final String VALID_EMAILADDRESS = "valid@emailaddress.de";
@@ -66,20 +74,17 @@ public class CreateConsultantSagaIT {
 
   @MockitoBean private RollbackFacade rollbackFacade;
 
-  @MockitoBean private AppointmentService appointmentService;
-
   private final EasyRandom easyRandom = new EasyRandom();
 
   @BeforeEach
-  public void setup() {
-    ReflectionTestUtils.setField(createConsultantSaga, "appointmentFeatureEnabled", false);
-  }
+  public void setup() {}
 
   @Test
   public void createNewConsultant_Should_returnExpectedCreatedConsultant_When_inputDataIsCorrect() {
     when(keycloakService.createUser(any(), anyString(), any()))
         .thenReturn(easyRandom.nextObject(CreatedIdentity.class));
     CreateConsultantDTO createConsultantDTO = this.easyRandom.nextObject(CreateConsultantDTO.class);
+    createConsultantDTO.setTenantId(TENANT_ID);
     createConsultantDTO.setUsername(VALID_USERNAME);
     createConsultantDTO.setEmail(VALID_EMAILADDRESS);
     createConsultantDTO.setIsGroupchatConsultant(false);
@@ -92,6 +97,7 @@ public class CreateConsultantSagaIT {
 
     assertThat(consultant, notNullValue());
     assertThat(consultant.getId(), notNullValue());
+    assertDefaultInactivityPolicy(consultant.getId());
     assertThat(consultant.getAbsenceMessage(), notNullValue());
     assertThat(consultant.getCreateDate(), notNullValue());
     assertThat(consultant.getUpdateDate(), notNullValue());
@@ -102,38 +108,14 @@ public class CreateConsultantSagaIT {
   }
 
   @Test
-  public void createNewConsultant_Should_callRollback_When_AppointmentServiceThrowsException() {
-    ReflectionTestUtils.setField(createConsultantSaga, "appointmentFeatureEnabled", true);
-    doThrow(BadRequestException.class).when(appointmentService).createConsultant(any());
-    when(keycloakService.createUser(any(), anyString(), any()))
-        .thenReturn(easyRandom.nextObject(CreatedIdentity.class));
-    CreateConsultantDTO createConsultantDTO = this.easyRandom.nextObject(CreateConsultantDTO.class);
-    createConsultantDTO.setUsername(VALID_USERNAME);
-    createConsultantDTO.setEmail(VALID_EMAILADDRESS);
-    createConsultantDTO.setIsGroupchatConsultant(false);
-
-    try {
-      this.createConsultantSaga.createNewConsultant(createConsultantDTO);
-      fail("Exception should be thrown");
-    } catch (DistributedTransactionException ex) {
-      assertThat(
-          ex.getCustomHttpHeaders().get("X-Reason").get(0),
-          is(
-              "DISTRIBUTED_TRANSACTION_FAILED_ON_STEP_CREATE_ACCOUNT_IN_CALCOM_OR_APPOINTMENTSERVICE"));
-      verify(keycloakService).updateRole(anyString(), eq(CONSULTANT.getValue()));
-      verify(keycloakService).updateRole(anyString(), eq(CONSULTANT.getValue()));
-      verify(rollbackFacade).rollbackConsultantAccount(Mockito.any(Consultant.class));
-    }
-  }
-
-  @Test
   public void createNewConsultant_Should_callRollback_When_KeycloakUpdatePasswordThrowsException() {
     when(keycloakService.createUser(any(), anyString(), any()))
         .thenReturn(easyRandom.nextObject(CreatedIdentity.class));
     doThrow(new CustomValidationHttpStatusException(PASSWORD_NOT_VALID, HttpStatus.BAD_REQUEST))
         .when(keycloakService)
-        .updatePassword(any(), any());
+        .updateTemporaryPassword(any(), any());
     CreateConsultantDTO createConsultantDTO = this.easyRandom.nextObject(CreateConsultantDTO.class);
+    createConsultantDTO.setTenantId(TENANT_ID);
     createConsultantDTO.setUsername(VALID_USERNAME);
     createConsultantDTO.setEmail(VALID_EMAILADDRESS);
     createConsultantDTO.setIsGroupchatConsultant(false);
@@ -154,6 +136,7 @@ public class CreateConsultantSagaIT {
         .thenReturn(easyRandom.nextObject(CreatedIdentity.class));
     doThrow(BadRequestException.class).when(keycloakService).updateRole(anyString(), anyString());
     CreateConsultantDTO createConsultantDTO = this.easyRandom.nextObject(CreateConsultantDTO.class);
+    createConsultantDTO.setTenantId(TENANT_ID);
     createConsultantDTO.setUsername(VALID_USERNAME);
     createConsultantDTO.setEmail(VALID_EMAILADDRESS);
     createConsultantDTO.setIsGroupchatConsultant(false);
@@ -180,6 +163,7 @@ public class CreateConsultantSagaIT {
 
     CreateConsultantDTO createConsultantDTO = this.easyRandom.nextObject(CreateConsultantDTO.class);
     createConsultantDTO.setTenantId(TENANT_ID);
+    createConsultantDTO.setTenantId(TENANT_ID);
     createConsultantDTO.setUsername(VALID_USERNAME);
     createConsultantDTO.setEmail(VALID_EMAILADDRESS);
     createConsultantDTO.setIsGroupchatConsultant(true);
@@ -202,6 +186,7 @@ public class CreateConsultantSagaIT {
     when(keycloakService.createUser(any(), anyString(), any()))
         .thenReturn(easyRandom.nextObject(CreatedIdentity.class));
     ImportRecord importRecord = this.easyRandom.nextObject(ImportRecord.class);
+    importRecord.setTenantId(TENANT_ID);
     importRecord.setUsername(VALID_USERNAME);
     importRecord.setEmail(VALID_EMAILADDRESS);
 
@@ -232,6 +217,7 @@ public class CreateConsultantSagaIT {
           when(keycloakService.createUser(any(), anyString(), any())).thenReturn(keycloakResponse);
           CreateConsultantDTO createConsultantDTO =
               this.easyRandom.nextObject(CreateConsultantDTO.class);
+          createConsultantDTO.setTenantId(TENANT_ID);
 
           this.createConsultantSaga.createNewConsultant(createConsultantDTO);
         });
@@ -240,6 +226,7 @@ public class CreateConsultantSagaIT {
   @Test
   public void createNewConsultant_Should_throwExpectedException_When_emailIsInvalid() {
     CreateConsultantDTO createConsultantDTO = this.easyRandom.nextObject(CreateConsultantDTO.class);
+    createConsultantDTO.setTenantId(TENANT_ID);
     createConsultantDTO.setEmail("invalid");
 
     try {

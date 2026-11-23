@@ -11,9 +11,14 @@ public interface EmailSupplier {
   String TEMPLATE_NEW_DIRECT_ENQUIRY_NOTIFICATION = "direct-enquiry-notification-consultant";
   String TEMPLATE_ASSIGN_ENQUIRY_NOTIFICATION = "assign-enquiry-notification";
   String TEMPLATE_FREE_TEXT = "free-text";
+  String TEMPLATE_INQUIRY_ACCEPTED_NOTIFICATION = "inquiry-accepted-notification";
+  String TEMPLATE_ADDON_NOTIFICATION = "addon-notification";
   String TEMPLATE_DAILY_ENQUIRY_NOTIFICATION = "daily-enquiry-notification";
   String TEMPLATE_REASSIGN_REQUEST_NOTIFICATION = "reassign-request-notification";
   String TEMPLATE_REASSIGN_CONFIRMATION_NOTIFICATION = "reassign-confirmation-notification";
+
+  /** A colleague proposes to move one's appointment (ADR-032); rendered by OrisoEmailRenderer. */
+  String TEMPLATE_CALENDAR_MOVE_PROPOSAL = "calendar-move-proposal";
 
   /**
    * Functionality to generate a list of {@link MailDTO} used in {@link EmailNotificationFacade}.

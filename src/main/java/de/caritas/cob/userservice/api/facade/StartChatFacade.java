@@ -10,6 +10,7 @@ import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.service.ChatService;
 import de.caritas.cob.userservice.api.service.LogService;
 import de.caritas.cob.userservice.api.service.chat.GroupChatPermissionService;
+import de.caritas.cob.userservice.api.service.chat.GroupCounsellingDpaPolicy;
 import de.caritas.cob.userservice.api.service.notification.GroupChatLifecycleNotificationService;
 import de.caritas.cob.userservice.api.service.notification.GroupChatNotificationRecipientService;
 import lombok.NonNull;
@@ -23,6 +24,7 @@ public class StartChatFacade {
 
   private final @NonNull ChatService chatService;
   private final @NonNull GroupChatPermissionService groupChatPermissionService;
+  private final @NonNull GroupCounsellingDpaPolicy groupCounsellingDpaPolicy;
   private final @NonNull GroupChatNotificationRecipientService notificationRecipientService;
   private final @NonNull GroupChatLifecycleNotificationService
       groupChatLifecycleNotificationService;
@@ -38,10 +40,11 @@ public class StartChatFacade {
     groupChatPermissionService.requireCanModerate(chat, consultant);
     checkIfChatIsAlreadyActive(chat);
     checkMatrixRoom(chat);
+    groupCounsellingDpaPolicy.requireFirstStart(chat);
     chat.setActive(true);
     chatService.saveChat(chat);
     try {
-      publishOpenedNotification(chat);
+      publishOpenedNotification(chat, consultant);
     } catch (RuntimeException notificationException) {
       LogService.logInternalServerError(notificationException);
     }
@@ -61,10 +64,12 @@ public class StartChatFacade {
     }
   }
 
-  private void publishOpenedNotification(Chat chat) {
+  /** FE#1211: the moderator who opens the group is the one person who needs no notice of it. */
+  private void publishOpenedNotification(Chat chat, Consultant opener) {
     if (chat.getId() == null) {
       return;
     }
+    String openerId = opener != null ? opener.getId() : null;
     groupChatLifecycleNotificationService.createOpenedNotifications(
         chat.getId(),
         chat.getCurrentOccurrenceIndex(),
@@ -72,6 +77,8 @@ public class StartChatFacade {
         chat.getMatrixRoomId(),
         null,
         chat.getChatModality() == Chat.ChatModality.VIDEO,
-        notificationRecipientService.resolveRecipientIds(chat));
+        notificationRecipientService.resolveRecipientIds(chat).stream()
+            .filter(recipientId -> !recipientId.equals(openerId))
+            .toList());
   }
 }

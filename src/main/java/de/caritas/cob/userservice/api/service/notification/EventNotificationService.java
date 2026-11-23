@@ -4,6 +4,7 @@ import static java.util.Objects.nonNull;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import de.caritas.cob.userservice.api.helper.ConsultantDisplayNameResolver;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.EventNotification;
 import de.caritas.cob.userservice.api.model.Session;
@@ -11,17 +12,22 @@ import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.EventNotificationRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
+import de.caritas.cob.userservice.api.service.matrix.MatrixFeedUpdateSignalService;
 import de.caritas.cob.userservice.api.workflow.delete.service.IdentityTombstoneService;
 import java.time.Duration;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.util.Collection;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.LongSupplier;
+import java.util.function.Predicate;
 import java.util.stream.Collectors;
 import lombok.Builder;
 import lombok.Getter;
@@ -32,6 +38,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 @Slf4j
@@ -41,6 +48,7 @@ public class EventNotificationService {
 
   public static final String CATEGORY_SYSTEM = "system";
   public static final String CATEGORY_MESSAGE = "message";
+  public static final String ADDON_NOTIFICATION_EVENT = "ADDON_NOTIFICATION";
 
   /** Matches the {@code deduplication_key} column length (VARCHAR(191), changeset 0063). */
   static final int MAX_DEDUPLICATION_KEY_LENGTH = 191;
@@ -53,8 +61,14 @@ public class EventNotificationService {
   private final @NonNull SessionRepository sessionRepository;
   private final @NonNull UserRepository userRepository;
   private final @NonNull ConsultantRepository consultantRepository;
+  // Optional so slim contexts that only need notifications still start; production always has it.
+  private final @NonNull org.springframework.beans.factory.ObjectProvider<
+          MatrixCaseReplyActorAuthorizer>
+      caseWriterAuthorizer;
   private final @NonNull IdentityTombstoneService identityTombstoneService;
   private final @NonNull EventNotificationDeduplicationWriter deduplicationWriter;
+  private final @NonNull MatrixFeedUpdateSignalService feedUpdateSignalService;
+  private final @NonNull ConsultantDisplayNameResolver consultantDisplayNameResolver;
   private final Map<String, ActiveViewState> activeViewByUserId = new ConcurrentHashMap<>();
   private final ObjectMapper paramsObjectMapper = new ObjectMapper();
   private volatile LongSupplier monotonicNanos = System::nanoTime;
@@ -81,6 +95,64 @@ public class EventNotificationService {
         buildSessionActionPath(session),
         session.getId(),
         session.getTenantId());
+  }
+
+  /** FE#1876: bell type for the existing counsellor when a same-topic conversation starts. */
+  public static final String TOPIC_DUPLICATE_STARTED_EVENT = "topic_duplicate.started";
+
+  /**
+   * FE#1876: bell entry for the existing conversation's counsellor, at most once per (existing,
+   * new) pair. The params carry ids only; the new centre is not named.
+   *
+   * @return true only when this call persisted the entry; false when it already existed or there is
+   *     no counsellor to notify
+   */
+  public boolean createTopicDuplicateStartedNotification(Session existing, Long newSessionId) {
+    if (existing == null
+        || existing.getId() == null
+        || newSessionId == null
+        || existing.getConsultant() == null
+        || existing.getConsultant().getId() == null
+        || existing.getConsultant().getId().isBlank()) {
+      return false;
+    }
+    String recipientId = existing.getConsultant().getId();
+    String key = topicDuplicateStartedKey(existing, newSessionId);
+    Map<String, Object> params = baseParams(existing);
+    params.put("topicId", existing.getMainTopicId());
+    return persistOnce(
+        key,
+        recipientId,
+        TOPIC_DUPLICATE_STARTED_EVENT,
+        CATEGORY_SYSTEM,
+        "Another counselling on the same topic",
+        String.format(
+            "Another counselling on the topic of chat #%s has started.", existing.getId()),
+        serializeParams(params),
+        buildSessionActionPathForRecipient(existing, recipientId, null),
+        existing.getId(),
+        existing.getTenantId());
+  }
+
+  /**
+   * FE#1876: releases the once-per-pair marker when the room notice was not delivered, so a later
+   * acceptance run can deliver it. Commits on its own, like the write.
+   */
+  public void removeTopicDuplicateStartedNotification(Session existing, Long newSessionId) {
+    if (existing == null
+        || existing.getId() == null
+        || newSessionId == null
+        || existing.getConsultant() == null
+        || existing.getConsultant().getId() == null
+        || existing.getConsultant().getId().isBlank()) {
+      return;
+    }
+    deduplicationWriter.deleteInNewTransaction(
+        existing.getConsultant().getId(), topicDuplicateStartedKey(existing, newSessionId));
+  }
+
+  private static String topicDuplicateStartedKey(Session existing, Long newSessionId) {
+    return TOPIC_DUPLICATE_STARTED_EVENT + ":" + existing.getId() + ":" + newSessionId;
   }
 
   @Transactional
@@ -146,26 +218,32 @@ public class EventNotificationService {
         session.getTenantId());
   }
 
+  /**
+   * ADR-002 §2 / ORISO-UserService#1201: the recipient of this entry is the <b>advice seeker</b>,
+   * so it carries no counsellor name — neither the previous one nor the current one.
+   *
+   * <p>It took two names before. Naming both is a wider disclosure than the rename itself: it
+   * publishes a rename <em>history</em>, and when no pseudonym was stored those two names were the
+   * counsellor's real name, old and new. The advice seeker's actual question is only "why is this
+   * person suddenly called something else", which the neutral sentence answers; the current name is
+   * already visible in the room, so repeating it here adds nothing and costs the guarantee.
+   *
+   * <p>The names are absent from the signature, not merely unused, so a caller cannot pass one.
+   */
   @Transactional
-  public void createCounselorRenamedNotification(
-      Session session, String recipientUserId, String oldDisplayName, String newDisplayName) {
+  public void createCounselorRenamedNotification(Session session, String recipientUserId) {
     if (session == null || recipientUserId == null || recipientUserId.isBlank()) {
       return;
     }
-    String previous = safeValue(oldDisplayName, "your counselor");
-    String updated = safeValue(newDisplayName, "your counselor");
-    String changedAt = LocalDateTime.now(ZoneOffset.UTC).toString();
     Map<String, Object> params = baseParams(session);
-    params.put("oldName", previous);
-    params.put("newName", updated);
+    params.put("changedAt", LocalDateTime.now(ZoneOffset.UTC).toString());
     createEvent(
         recipientUserId,
         "counselor.renamed",
         CATEGORY_SYSTEM,
         "Counselor name updated",
         String.format(
-            "Your counselor display name changed from \"%s\" to \"%s\" at %s UTC.",
-            previous, updated, changedAt),
+            "The name shown for your counselor in chat #%s has changed.", session.getId()),
         serializeParams(params),
         buildSessionActionPath(session),
         session.getId(),
@@ -279,6 +357,43 @@ public class EventNotificationService {
             });
   }
 
+  /** Enquiry events that announce an open request to every eligible consultant. */
+  static final Set<String> OPEN_ENQUIRY_EVENT_TYPES =
+      Set.of("request.new", "waiting_room.client.joined");
+
+  /**
+   * ORISO-Frontend#1472: once a consultant has accepted an enquiry, the "New client request" and
+   * "Client joined the waiting room" entries of the other consultants are stale — opening them only
+   * tells the colleague that someone else took the case. Remove them and nudge those clients to
+   * refresh their feed. The accepting consultant keeps their own entry; it leads into their case.
+   *
+   * <p>Best-effort: cleaning up the timeline must never fail the acceptance. Callers run it after
+   * the acceptance has committed; it always opens its own transaction so it never joins (and can
+   * never mark rollback-only) the caller's.
+   */
+  @Transactional(propagation = org.springframework.transaction.annotation.Propagation.REQUIRES_NEW)
+  public void retireOpenEnquiryNotifications(Session session, String acceptingConsultantId) {
+    if (session == null
+        || session.getId() == null
+        || acceptingConsultantId == null
+        || acceptingConsultantId.isBlank()) {
+      return;
+    }
+    try {
+      List<String> otherRecipients =
+          eventNotificationRepository.findOtherRecipientsOfSessionEvents(
+              session.getId(), OPEN_ENQUIRY_EVENT_TYPES, acceptingConsultantId);
+      if (otherRecipients.isEmpty()) {
+        return;
+      }
+      eventNotificationRepository.deleteOpenEnquiryEvents(
+          session.getId(), OPEN_ENQUIRY_EVENT_TYPES, acceptingConsultantId);
+      otherRecipients.forEach(this::signalFeedUpdatedSafely);
+    } catch (RuntimeException ex) {
+      log.warn("Could not retire open enquiry notifications for session {}", session.getId(), ex);
+    }
+  }
+
   /**
    * WP-06 Slice 3 (Tier 3): persist a {@code waiting_room.client.joined} timeline event for each
    * eligible consultant when a client enters the anonymous live-chat waiting room (a new anonymous
@@ -320,6 +435,106 @@ public class EventNotificationService {
                     ex);
               }
             });
+  }
+
+  /** ORISO-Frontend#1952: bell type for a knock on a direct-link call. */
+  public static final String CALL_KNOCK_REQUESTED_EVENT = "call.knock.requested";
+
+  /**
+   * ORISO-Frontend#1952: someone opened the counsellor's audio or video direct link and knocks on
+   * the call in their conversation. Without this the counsellor heard nothing: the knock only sat
+   * in a list read inside a running call. The entry goes to the counsellor of the conversation (the
+   * link owner, ADR-029 §2), plays the calls-family tone, and one click starts (or rejoins) the
+   * call in that conversation, where the counsellor lets the person in. The roomRef param names
+   * that conversation's room; the action path is the fallback that opens it.
+   *
+   * <p>Once per knock (the knock id is the deduplication key), written in its own transaction like
+   * every once-only entry, so it is in the feed when the feed-update signal reaches the client. The
+   * params carry the medium and the conversation, never who knocks. Best-effort: a failed entry
+   * never fails the knock. REQUIRES_NEW: the caller runs this in afterCommit, where the knock's
+   * finished transaction is still bound and a joined transaction would never commit.
+   */
+  @Transactional(propagation = Propagation.REQUIRES_NEW)
+  public void createCallKnockRequestedNotification(
+      Session session, de.caritas.cob.userservice.api.model.GroupChatJoinRequest knock) {
+    if (session == null
+        || session.getId() == null
+        || knock == null
+        || knock.getId() == null
+        || session.getConsultant() == null
+        || session.getConsultant().getId() == null
+        || session.getConsultant().getId().isBlank()) {
+      return;
+    }
+    Map<String, Object> params = baseParams(session);
+    putIfPresent(params, "medium", knock.getMedium());
+    try {
+      createEventOnce(
+          CALL_KNOCK_REQUESTED_EVENT + ":" + knock.getId(),
+          session.getConsultant().getId(),
+          CALL_KNOCK_REQUESTED_EVENT,
+          CATEGORY_SYSTEM,
+          "Someone is knocking",
+          "Someone wants to join your call.",
+          serializeParams(params),
+          buildSessionActionPath(session, null, true),
+          session.getId(),
+          session.getTenantId());
+    } catch (RuntimeException ex) {
+      log.warn(
+          "Could not persist call.knock.requested notification for knock {} (session {})",
+          knock.getId(),
+          session.getId(),
+          ex);
+    }
+  }
+
+  public static final String DIRECT_INVITATION_RENEWAL_REQUESTED_EVENT =
+      "direct_invitation.renewal_requested";
+
+  /**
+   * "Neuen Link anfragen" (ORISO-Frontend#2252): a person in a direct invitation's conversation
+   * asks its counsellor for a new link. One notice per person and token; the card offers "Neuen
+   * Link senden" with {@code linkId}. A notice that could not be stored throws, so the request
+   * never answers "sent" for nothing.
+   */
+  public void createDirectInvitationRenewalRequestedNotification(
+      Session session, Long linkId, String requesterUserId, String token) {
+    if (session == null
+        || session.getId() == null
+        || linkId == null
+        || session.getConsultant() == null
+        || session.getConsultant().getId() == null
+        || session.getConsultant().getId().isBlank()) {
+      // Nobody to tell: the request must not read as delivered.
+      throw new IllegalStateException("The invitation's conversation has no counsellor");
+    }
+    Map<String, Object> params = baseParams(session);
+    params.put("linkId", linkId);
+    createEventOnce(
+        truncateKey(
+            DIRECT_INVITATION_RENEWAL_REQUESTED_EVENT
+                + ":"
+                + linkId
+                + ":"
+                + requesterUserId
+                + ":"
+                + Integer.toHexString(token == null ? 0 : token.hashCode())),
+        session.getConsultant().getId(),
+        DIRECT_INVITATION_RENEWAL_REQUESTED_EVENT,
+        CATEGORY_SYSTEM,
+        "New link requested",
+        "Someone asks for a new link to your appointment.",
+        serializeParams(params),
+        buildSessionActionPath(session, null, true),
+        session.getId(),
+        session.getTenantId());
+  }
+
+  private static String truncateKey(String key) {
+    return key.length() <= MAX_DEDUPLICATION_KEY_LENGTH
+        ? key
+        : key.substring(0, MAX_DEDUPLICATION_KEY_LENGTH);
   }
 
   private String buildNewClientRequestParams(Session session) {
@@ -374,6 +589,9 @@ public class EventNotificationService {
    */
   private Map<String, Object> baseParams(Session session) {
     Map<String, Object> params = new LinkedHashMap<>();
+    if (session != null)
+      params.put(
+          "conversationType", AskerNotificationChannelPolicy.conversationType(session).name());
     if (session != null && session.getId() != null) {
       params.put("sessionId", session.getId());
     }
@@ -424,10 +642,33 @@ public class EventNotificationService {
       String reasonCode,
       String reasonLabel,
       Long caseHandoverRequestId) {
+    return buildCaseHandoverParams(
+        session, requesterName, reasonCode, reasonLabel, caseHandoverRequestId, null);
+  }
+
+  public String buildCaseHandoverParams(
+      Session session,
+      String requesterName,
+      String reasonCode,
+      String reasonLabel,
+      Long caseHandoverRequestId,
+      String clientConsent) {
     Map<String, Object> params = baseParams(session);
     putIfPresent(params, "requesterName", requesterName);
     putIfPresent(params, "reasonCode", reasonCode);
     putIfPresent(params, "reasonLabel", reasonLabel);
+    if (caseHandoverRequestId != null) {
+      params.put("caseHandoverRequestId", caseHandoverRequestId);
+    }
+    putIfPresent(params, "clientConsent", clientConsent);
+    return serializeParams(params);
+  }
+
+  /** Redacted recipient-offer metadata. Free-text reason and explanation stay out of events. */
+  public String buildCaseHandoverOfferParams(
+      Session session, String initiatorName, Long caseHandoverRequestId) {
+    Map<String, Object> params = baseParams(session);
+    putIfPresent(params, "initiatorName", initiatorName);
     if (caseHandoverRequestId != null) {
       params.put("caseHandoverRequestId", caseHandoverRequestId);
     }
@@ -449,33 +690,34 @@ public class EventNotificationService {
   @Transactional
   public void createMessageNotificationFromRoom(
       String roomId, String senderUserId, String messagePreview) {
-    createMessageNotificationFromRoom(roomId, senderUserId, messagePreview, false, null, null);
+    createMessageNotificationFromRoom(roomId, senderUserId, messagePreview, false, null);
   }
 
   @Transactional
   public void createMessageNotificationFromRoom(
       String roomId, String senderUserId, PrivacyEnvelope envelope) {
-    createMessageNotificationFromRoom(roomId, senderUserId, null, false, null, envelope);
+    createMessageNotificationFromRoom(roomId, senderUserId, null, false, envelope);
   }
 
   @Transactional
   public void createMessageNotificationFromRoom(
-      String roomId,
-      String senderUserId,
-      String messagePreview,
-      boolean supervisorMessage,
-      String senderDisplayName) {
+      String roomId, String senderUserId, String messagePreview, boolean supervisorMessage) {
     createMessageNotificationFromRoom(
-        roomId, senderUserId, messagePreview, supervisorMessage, senderDisplayName, null);
+        roomId, senderUserId, messagePreview, supervisorMessage, null);
   }
 
+  /**
+   * ADR-002 §2 / ORISO-UserService#1201: there is deliberately no {@code senderDisplayName}
+   * parameter. This notification is addressed to the other party, and the sender's name is not the
+   * sender's to choose: {@code senderUserId} comes from the authenticated principal, so the server
+   * can always look the sender up and apply the publication rule itself.
+   */
   @Transactional
   public void createMessageNotificationFromRoom(
       String roomId,
       String senderUserId,
       String messagePreview,
       boolean supervisorMessage,
-      String senderDisplayName,
       PrivacyEnvelope envelope) {
     if (roomId == null || roomId.isBlank()) {
       return;
@@ -490,7 +732,7 @@ public class EventNotificationService {
     }
 
     Session session = sessionOpt.get();
-    String senderLabel = resolveSenderName(senderUserId, senderDisplayName);
+    String senderLabel = resolveSenderName(senderUserId);
     String text = buildMessageNotificationText(senderLabel, envelope);
     String contentClass = envelope != null ? envelope.getContentClass() : null;
     String matrixEventId = envelope != null ? envelope.getMessageId() : null;
@@ -533,14 +775,14 @@ public class EventNotificationService {
   public void createThreadReplyNotificationFromRoom(
       String roomId, String senderUserId, String threadRootId, PrivacyEnvelope envelope) {
     createThreadReplyNotificationFromRoom(
-        roomId, senderUserId, null, threadRootId, false, null, null, envelope);
+        roomId, senderUserId, null, threadRootId, false, null, envelope);
   }
 
   @Transactional
   public void createThreadReplyNotificationFromRoom(
       String roomId, String senderUserId, String messagePreview, String threadRootId) {
     createThreadReplyNotificationFromRoom(
-        roomId, senderUserId, messagePreview, threadRootId, false, null, null, null);
+        roomId, senderUserId, messagePreview, threadRootId, false, null, null);
   }
 
   @Transactional
@@ -550,7 +792,6 @@ public class EventNotificationService {
       String messagePreview,
       String threadRootId,
       boolean supervisorMessage,
-      String senderDisplayName,
       String threadParentPreview) {
     createThreadReplyNotificationFromRoom(
         roomId,
@@ -558,11 +799,11 @@ public class EventNotificationService {
         messagePreview,
         threadRootId,
         supervisorMessage,
-        senderDisplayName,
         threadParentPreview,
         null);
   }
 
+  /** No {@code senderDisplayName} parameter, for the reason given on the message variant. */
   @Transactional
   public void createThreadReplyNotificationFromRoom(
       String roomId,
@@ -570,7 +811,6 @@ public class EventNotificationService {
       String messagePreview,
       String threadRootId,
       boolean supervisorMessage,
-      String senderDisplayName,
       String threadParentPreview,
       PrivacyEnvelope envelope) {
     if (roomId == null || roomId.isBlank()) {
@@ -586,7 +826,7 @@ public class EventNotificationService {
     }
 
     Session session = sessionOpt.get();
-    String senderLabel = resolveSenderName(senderUserId, senderDisplayName);
+    String senderLabel = resolveSenderName(senderUserId);
     String text = buildThreadReplyNotificationText(senderLabel, envelope);
     String contentClass = envelope != null ? envelope.getContentClass() : null;
     String matrixEventId = envelope != null ? envelope.getMessageId() : null;
@@ -628,10 +868,98 @@ public class EventNotificationService {
     }
   }
 
+  /**
+   * ORISO-UserService#1510: the row of each counsellor @-mentioned in this message says so. It is
+   * the same message row, under the same key, so a person never gets two rows for one message. Call
+   * this before the ordinary fan-out, which then finds the row written. Where the Matrix listener
+   * won the race, the row it wrote is marked instead. A mentioned colleague is not always the
+   * conversation's counsellor, so the link always opens the counsellor view.
+   */
+  @Transactional
+  public void createMentionNotifications(
+      String roomId,
+      String senderUserId,
+      String threadRootId,
+      PrivacyEnvelope envelope,
+      Set<String> recipientUserIds) {
+    String matrixEventId = envelope != null ? envelope.getMessageId() : null;
+    if (roomId == null || roomId.isBlank() || matrixEventId == null || matrixEventId.isBlank()) {
+      return;
+    }
+    Session session = sessionRepository.findByMatrixRoomId(roomId).orElse(null);
+    if (session == null) {
+      return;
+    }
+    boolean threadReply = threadRootId != null && !threadRootId.isBlank();
+    String eventType = threadReply ? "thread.reply.new" : "message.new";
+    String deduplicationKey = eventType + ":" + matrixEventId;
+    if (deduplicationKey.length() > MAX_DEDUPLICATION_KEY_LENGTH) {
+      return;
+    }
+    String senderLabel = resolveSenderName(senderUserId);
+    String text =
+        threadReply
+            ? buildThreadReplyNotificationText(senderLabel, envelope)
+            : buildMessageNotificationText(senderLabel, envelope);
+    for (String recipientUserId : recipientUserIds) {
+      if (shouldSuppressMention(recipientUserId, roomId, threadRootId)) {
+        continue;
+      }
+      boolean written =
+          persistOnce(
+              deduplicationKey,
+              recipientUserId,
+              eventType,
+              CATEGORY_MESSAGE,
+              threadReply ? "New thread reply" : "New message",
+              text,
+              buildMentionParams(
+                  session, senderLabel, envelope.getContentClass(), threadRootId, matrixEventId),
+              buildSessionActionPath(session, threadRootId, true),
+              session.getId(),
+              session.getTenantId());
+      if (!written
+          && deduplicationWriter.markMentionedInNewTransaction(
+              recipientUserId, deduplicationKey, session.getId())) {
+        signalFeedUpdatedSafely(recipientUserId);
+      }
+    }
+  }
+
+  private String buildMentionParams(
+      Session session,
+      String senderName,
+      String contentClass,
+      String threadRootId,
+      String matrixEventId) {
+    Map<String, Object> params = baseParams(session);
+    putIfPresent(params, "senderName", senderName);
+    putIfPresent(params, "contentClass", contentClass);
+    putIfPresent(params, "threadRootId", threadRootId);
+    putIfPresent(params, "recipientRole", "consultant");
+    putIfPresent(params, "matrixEventId", matrixEventId);
+    params.put("mentioned", true);
+    return serializeParams(params);
+  }
+
   @Transactional(readOnly = true)
   public NotificationFeedResponse getFeed(String recipientUserId, int page, int perPage) {
+    return getFeed(recipientUserId, page, perPage, Set.of());
+  }
+
+  /**
+   * Feed page plus the unread total. With {@code excludeEventTypes} the total leaves those event
+   * types out (#1377 display filter, slice 7): the client hides some kinds and the rail badge must
+   * be exact rather than "server total minus what happens to be loaded". The rows of the page are
+   * never filtered — the client applies its own filter to them — and the response echoes the
+   * excluded types so a client can tell an exact total from one an older server ignored.
+   */
+  @Transactional(readOnly = true)
+  public NotificationFeedResponse getFeed(
+      String recipientUserId, int page, int perPage, Set<String> excludeEventTypes) {
     int safePage = Math.max(0, page);
     int safePerPage = Math.max(1, Math.min(perPage, 100));
+    Set<String> excluded = normaliseEventTypes(excludeEventTypes);
 
     var pageable = PageRequest.of(safePage, safePerPage);
     List<NotificationItem> items =
@@ -641,14 +969,51 @@ public class EventNotificationService {
             .map(this::toItem)
             .collect(Collectors.toList());
 
-    long unreadCount =
-        eventNotificationRepository.countByRecipientUserIdAndReadDateIsNull(recipientUserId);
     return NotificationFeedResponse.builder()
         .items(items)
-        .unreadCount(unreadCount)
+        .unreadCount(countUnread(recipientUserId, excluded))
+        .excludedEventTypes(List.copyOf(excluded))
         .page(safePage)
         .perPage(safePerPage)
         .build();
+  }
+
+  /** Unread total, optionally without the given event types (#1377 slice 7). */
+  @Transactional(readOnly = true)
+  public long countUnread(String recipientUserId, Set<String> excludeEventTypes) {
+    Set<String> excluded = normaliseEventTypes(excludeEventTypes);
+    if (excluded.isEmpty()) {
+      return eventNotificationRepository.countByRecipientUserIdAndReadDateIsNull(recipientUserId);
+    }
+    return eventNotificationRepository.countByRecipientUserIdAndReadDateIsNullAndEventTypeNotIn(
+        recipientUserId, excluded);
+  }
+
+  /**
+   * Marks every unread row of the given event types read, loaded or not (#1377 slice 7: the
+   * client's "hidden ⇒ read" rule no longer stops at the pages it has loaded).
+   *
+   * @return number of rows marked read
+   */
+  @Transactional
+  public int markAsReadByEventTypes(String recipientUserId, Set<String> eventTypes) {
+    Set<String> types = normaliseEventTypes(eventTypes);
+    if (types.isEmpty()) {
+      return 0;
+    }
+    return eventNotificationRepository.markReadByEventTypes(
+        recipientUserId, types, currentReadDay());
+  }
+
+  /** Trimmed, non-blank, de-duplicated; {@code null} reads as empty. */
+  private static Set<String> normaliseEventTypes(Set<String> eventTypes) {
+    if (eventTypes == null || eventTypes.isEmpty()) {
+      return Set.of();
+    }
+    return eventTypes.stream()
+        .filter(type -> type != null && !type.isBlank())
+        .map(String::trim)
+        .collect(Collectors.toCollection(java.util.TreeSet::new));
   }
 
   @Transactional
@@ -658,7 +1023,7 @@ public class EventNotificationService {
         .ifPresent(
             item -> {
               if (item.getReadDate() == null) {
-                item.setReadDate(LocalDateTime.now());
+                item.setReadDate(currentReadDay());
                 eventNotificationRepository.save(item);
               }
             });
@@ -671,9 +1036,13 @@ public class EventNotificationService {
     if (unread.isEmpty()) {
       return;
     }
-    var now = LocalDateTime.now();
-    unread.forEach(item -> item.setReadDate(now));
+    var readDay = currentReadDay();
+    unread.forEach(item -> item.setReadDate(readDay));
     eventNotificationRepository.saveAll(unread);
+  }
+
+  private static LocalDateTime currentReadDay() {
+    return LocalDate.now(ZoneOffset.UTC).atStartOfDay();
   }
 
   @Transactional
@@ -682,6 +1051,15 @@ public class EventNotificationService {
   }
 
   public void updateActiveView(String userId, String roomId, String threadRootId, boolean active) {
+    updateActiveView(userId, roomId, threadRootId, active, false);
+  }
+
+  /**
+   * @param mainChatHidden a side panel fills the screen instead of the room's main chat (phone
+   *     layout), so a mention in that chat is not seen
+   */
+  public void updateActiveView(
+      String userId, String roomId, String threadRootId, boolean active, boolean mainChatHidden) {
     if (userId == null || userId.isBlank()) {
       return;
     }
@@ -694,7 +1072,8 @@ public class EventNotificationService {
       return;
     }
     activeViewByUserId.put(
-        userId, new ActiveViewState(roomId, threadRootId, monotonicNanos.getAsLong()));
+        userId,
+        new ActiveViewState(roomId, threadRootId, mainChatHidden, monotonicNanos.getAsLong()));
   }
 
   void setMonotonicNanosForTesting(LongSupplier monotonicNanos) {
@@ -805,11 +1184,281 @@ public class EventNotificationService {
             sourceSessionId,
             tenantId,
             null));
+    // P2 feed-update signal (ADR-020): nudge the recipient's clients to refresh the Activity
+    // Timeline now instead of on the next 15 s poll. Best-effort and content-free.
+    signalFeedUpdatedSafely(recipientUserId);
+  }
+
+  @Transactional
+  public Long createAddonNotification(
+      String recipientUserId,
+      Long tenantId,
+      String title,
+      String text,
+      String params,
+      String actionPath,
+      Long sourceSessionId) {
+    var saved =
+        eventNotificationRepository.save(
+            buildEvent(
+                recipientUserId,
+                ADDON_NOTIFICATION_EVENT,
+                CATEGORY_SYSTEM,
+                title,
+                text,
+                params,
+                actionPath,
+                sourceSessionId,
+                tenantId,
+                null));
+    signalFeedUpdatedSafely(recipientUserId);
+    return saved.getId();
+  }
+
+  /** Keeps invite identity stable across repeated sync batches and application restarts. */
+  @Transactional
+  public void createCallInvitationNotification(
+      de.caritas.cob.userservice.api.service.matrix.MatrixCallConversation session,
+      String recipientId,
+      boolean consultantRecipient,
+      String senderId,
+      String callId,
+      String mediaRoomId,
+      boolean video) {
+    if (!isSessionCallParticipant(session, recipientId)) {
+      return;
+    }
+    var params = callParams(session, callId, mediaRoomId);
+    params.put("callType", video ? "video" : "audio");
+    params.put("callerName", resolveSenderName(senderId));
+    String key = callEventKey("call.invited", session.getMatrixRoomId(), callId);
+    createEventOnce(
+        key,
+        recipientId,
+        "call.invited",
+        CATEGORY_SYSTEM,
+        "Call invitation",
+        "You were invited to a call.",
+        serializeParams(params),
+        session.actionPath(consultantRecipient),
+        session.getSessionId(),
+        session.getTenantId());
+  }
+
+  /**
+   * One retained start per original invitee and call, independent of devices and listener restarts.
+   */
+  @Transactional
+  public void createCallStartedNotification(
+      de.caritas.cob.userservice.api.service.matrix.MatrixCallConversation session,
+      String recipientId,
+      boolean consultantRecipient,
+      String callId,
+      String mediaRoomId,
+      boolean video) {
+    if (!isSessionCallParticipant(session, recipientId)) {
+      return;
+    }
+    var params = callParams(session, callId, mediaRoomId);
+    params.put("callType", video ? "video" : "audio");
+    String key = callEventKey("call.started", session.getMatrixRoomId(), callId);
+    createEventOnce(
+        key,
+        recipientId,
+        "call.started",
+        CATEGORY_SYSTEM,
+        "Call started",
+        "The call has started.",
+        serializeParams(params),
+        session.actionPath(consultantRecipient),
+        session.getSessionId(),
+        session.getTenantId());
+  }
+
+  @Transactional
+  public void createCallEndedNotification(
+      de.caritas.cob.userservice.api.service.matrix.MatrixCallConversation session,
+      String recipientId,
+      boolean consultantRecipient,
+      String callId,
+      String mediaRoomId,
+      long startedAt,
+      long endedAt) {
+    if (!isSessionCallParticipant(session, recipientId)) {
+      return;
+    }
+    var params = callParams(session, callId, mediaRoomId);
+    params.put("durationSeconds", Long.toString(Math.max(0, endedAt - startedAt) / 1000));
+    String key = callEventKey("call.ended", session.getMatrixRoomId(), callId);
+    createEventOnce(
+        key,
+        recipientId,
+        "call.ended",
+        CATEGORY_SYSTEM,
+        "Call ended",
+        "The call has ended.",
+        serializeParams(params),
+        session.actionPath(consultantRecipient),
+        session.getSessionId(),
+        session.getTenantId());
+  }
+
+  @Transactional
+  public void createCallMissedNotification(
+      de.caritas.cob.userservice.api.service.matrix.MatrixCallConversation session,
+      String recipientId,
+      boolean consultantRecipient,
+      String callId,
+      String mediaRoomId,
+      boolean video) {
+    if (!isSessionCallParticipant(session, recipientId)) {
+      return;
+    }
+    var params = callParams(session, callId, mediaRoomId);
+    params.put("callType", video ? "video" : "audio");
+    String key = callEventKey("call.missed", session.getMatrixRoomId(), callId);
+    createEventOnce(
+        key,
+        recipientId,
+        "call.missed",
+        CATEGORY_SYSTEM,
+        "Missed call",
+        "You missed a call.",
+        serializeParams(params),
+        session.actionPath(consultantRecipient),
+        session.getSessionId(),
+        session.getTenantId());
+  }
+
+  /**
+   * A 1:1 session room also holds the department's other counsellors as silent members (ADR-002
+   * §1). A call there is the session's own: only its advice seeker and its assigned counsellor get
+   * call activity. Before this gate every silent member received an "internal group call"
+   * invitation for a case they cannot open (Activity showed only "Open chat", which led nowhere). A
+   * group chat's call keeps notifying every member.
+   */
+  /**
+   * A 1:1 session room also holds the agency's silent counsellors (ADR-002 §1). Call activity of a
+   * session reaches a counsellor only while they may write in the case: its assigned counsellor or
+   * a permitted team writer (the same rule as a case reply). Advice seekers and group chats are not
+   * gated here.
+   */
+  private boolean isSessionCallParticipant(
+      de.caritas.cob.userservice.api.service.matrix.MatrixCallConversation conversation,
+      String recipientId) {
+    if (conversation.getSessionId() == null) {
+      return true;
+    }
+    if (recipientId == null || recipientId.isBlank()) {
+      return false;
+    }
+    var counsellor = consultantRepository.findById(recipientId);
+    if (counsellor.isEmpty()) {
+      return true;
+    }
+    if (conversation.getMatrixRoomId() == null) {
+      return false;
+    }
+    // Same lookup as MatrixCallConversationResolver: the call's source room names the session.
+    return sessionRepository
+        .findByMatrixRoomId(conversation.getMatrixRoomId())
+        .filter(session -> Objects.equals(session.getId(), conversation.getSessionId()))
+        .filter(session -> Objects.equals(session.getTenantId(), conversation.getTenantId()))
+        // The authorizer leaves tenant and identity checks to its caller (as isCurrentWriter does).
+        .filter(
+            session ->
+                counsellor.get().getDeleteDate() == null
+                    && Objects.equals(counsellor.get().getTenantId(), session.getTenantId()))
+        .map(session -> isCaseWriter(session, counsellor.get()))
+        .orElse(false);
+  }
+
+  /** Without the case-writer rule (a slim context), only the assigned counsellor qualifies. */
+  private boolean isCaseWriter(
+      de.caritas.cob.userservice.api.model.Session session,
+      de.caritas.cob.userservice.api.model.Consultant counsellor) {
+    var authorizer = caseWriterAuthorizer.getIfAvailable();
+    return authorizer != null
+        ? authorizer.isCurrentAssignedOrTeamWriter(session, counsellor)
+        : session.isAdvisedBy(counsellor);
+  }
+
+  private Map<String, Object> callParams(
+      de.caritas.cob.userservice.api.service.matrix.MatrixCallConversation conversation,
+      String callId,
+      String mediaRoomId) {
+    var params = conversation.notificationParams();
+    params.put("callId", callId);
+    params.put("callRoomId", mediaRoomId);
+    return params;
+  }
+
+  private String callEventKey(String eventType, String sourceRoom, String callId) {
+    // Keep the persisted identity exactly stable, including Java's UTF-16 room length.
+    String identity = sourceRoom.length() + ":" + sourceRoom + ":" + callId;
+    try {
+      return eventType
+          + ":"
+          + java.util.HexFormat.of()
+              .formatHex(
+                  java.security.MessageDigest.getInstance("SHA-256")
+                      .digest(identity.getBytes(java.nio.charset.StandardCharsets.UTF_8)));
+    } catch (java.security.NoSuchAlgorithmException impossible) {
+      throw new IllegalStateException("SHA-256 unavailable", impossible);
+    }
   }
 
   /** Persists an event at most once for a producer-owned key and recipient. */
   @Transactional
   public void createEventOnce(
+      String deduplicationKey,
+      String recipientUserId,
+      String eventType,
+      String category,
+      String title,
+      String text,
+      String params,
+      String actionPath,
+      Long sourceSessionId,
+      Long tenantId) {
+    persistOnce(
+        deduplicationKey,
+        recipientUserId,
+        eventType,
+        category,
+        title,
+        text,
+        params,
+        actionPath,
+        sourceSessionId,
+        tenantId);
+  }
+
+  /** Called with the scheduler's lock transaction suspended. Only the writer uses a connection. */
+  void createGroupReminderOnce(
+      String deduplicationKey,
+      String recipientUserId,
+      String title,
+      String text,
+      String params,
+      Long seriesId) {
+    persistAndSignal(
+        buildEvent(
+            recipientUserId,
+            GroupChatLifecycleNotificationService.EVENT_GROUP_CHAT_REMINDER,
+            CATEGORY_SYSTEM,
+            title,
+            text,
+            params,
+            null,
+            seriesId,
+            null,
+            deduplicationKey),
+        deduplicationWriter::persistIfAbsentInNewTransaction);
+  }
+
+  /** Same as {@link #createEventOnce}; true only when this call persisted the event. */
+  private boolean persistOnce(
       String deduplicationKey,
       String recipientUserId,
       String eventType,
@@ -826,26 +1475,55 @@ public class EventNotificationService {
         || deduplicationKey.isBlank()
         || eventNotificationRepository.existsByRecipientUserIdAndDeduplicationKey(
             recipientUserId, deduplicationKey)) {
-      return;
+      return false;
     }
 
+    return persistAndSignal(
+        buildEvent(
+            recipientUserId,
+            eventType,
+            category,
+            title,
+            text,
+            params,
+            actionPath,
+            sourceSessionId,
+            tenantId,
+            deduplicationKey),
+        event -> {
+          deduplicationWriter.persistInNewTransaction(event);
+          return true;
+        });
+  }
+
+  private boolean persistAndSignal(EventNotification event, Predicate<EventNotification> persist) {
     try {
-      deduplicationWriter.persistInNewTransaction(
-          buildEvent(
-              recipientUserId,
-              eventType,
-              category,
-              title,
-              text,
-              params,
-              actionPath,
-              sourceSessionId,
-              tenantId,
-              deduplicationKey));
+      if (!persist.test(event)) {
+        return false;
+      }
+      // The independent writer has committed before the feed is signaled.
+      signalFeedUpdatedSafely(event.getRecipientUserId());
+      return true;
     } catch (DataIntegrityViolationException duplicate) {
       // Another scheduler replica won the unique-key race. The desired event already exists.
       log.debug(
-          "Notification {} already persisted for recipient {}", deduplicationKey, recipientUserId);
+          "Notification {} already persisted for recipient {}",
+          event.getDeduplicationKey(),
+          event.getRecipientUserId());
+      return false;
+    }
+  }
+
+  /**
+   * Fires the P2 feed-update signal without ever letting it break the flow that created the
+   * notification — the same best-effort contract commit {@code 8b75eddd} gave the retired
+   * LiveService hook.
+   */
+  private void signalFeedUpdatedSafely(String recipientUserId) {
+    try {
+      feedUpdateSignalService.signalFeedUpdated(recipientUserId);
+    } catch (Exception ex) {
+      log.warn("Feed-update signal failed: {}", ex.getClass().getSimpleName());
     }
   }
 
@@ -888,7 +1566,11 @@ public class EventNotificationService {
         .sourceSessionId(item.getSourceSessionId())
         .readAt(
             item.getReadDate() != null
-                ? item.getReadDate().atOffset(ZoneOffset.UTC).toString()
+                ? item.getReadDate()
+                    .toLocalDate()
+                    .atStartOfDay()
+                    .atOffset(ZoneOffset.UTC)
+                    .toString()
                 : null)
         .createdAt(
             item.getCreateDate() != null
@@ -897,16 +1579,18 @@ public class EventNotificationService {
         .build();
   }
 
+  /**
+   * The name a notification may use for whoever sent the message.
+   *
+   * <p>ADR-002 §2 / ORISO-UserService#1201: this used to accept a {@code senderDisplayName} from
+   * the caller and return it unchanged whenever it was non-blank and did not look encoded. The only
+   * caller that ever supplied one was the REST controller, straight out of the request body — so a
+   * client decided what a <em>third party</em> would be told the sender is called, and the app in
+   * fact sent {@code displayName || userName || firstName + " " + lastName} there. The override is
+   * gone: the sender's id comes from the authenticated principal, so the server looks the sender up
+   * and applies the rule itself. An unidentifiable sender is "Someone", not whatever was posted.
+   */
   private String resolveSenderName(String senderUserId) {
-    return resolveSenderName(senderUserId, null);
-  }
-
-  private String resolveSenderName(String senderUserId, String senderDisplayName) {
-    if (senderDisplayName != null
-        && !senderDisplayName.isBlank()
-        && !looksEncoded(senderDisplayName)) {
-      return senderDisplayName;
-    }
     if (senderUserId == null || senderUserId.isBlank()) {
       return "Someone";
     }
@@ -929,26 +1613,24 @@ public class EventNotificationService {
         .orElse("Someone");
   }
 
+  /**
+   * The counsellor name that may appear in a notification.
+   *
+   * <p>ADR-002 §2 / #1201: every caller of this feeds an <b>advice seeker</b> — the {@code
+   * inquiry.accepted} entry, the message notification and the thread-reply notification — so the
+   * real name is not an option here. It used to be: the ladder read {@code displayName ?? fullName
+   * ?? username}, and the middle rung meant that for every counsellor with no stored pseudonym the
+   * "fallback" was silently their real name.
+   *
+   * <p>The decision itself belongs to {@link ConsultantDisplayNameResolver}, the single place that
+   * knows which name may be published, so it is delegated rather than restated.
+   */
   private String resolveConsultantName(Consultant consultant) {
     if (consultant == null) {
       return "Counselor";
     }
-    if (consultant.getDisplayName() != null
-        && !consultant.getDisplayName().isBlank()
-        && !looksEncoded(consultant.getDisplayName())) {
-      return consultant.getDisplayName();
-    }
-    if (consultant.getFullName() != null
-        && !consultant.getFullName().isBlank()
-        && !looksEncoded(consultant.getFullName())) {
-      return consultant.getFullName();
-    }
-    if (consultant.getUsername() != null
-        && !consultant.getUsername().isBlank()
-        && !looksEncoded(consultant.getUsername())) {
-      return consultant.getUsername();
-    }
-    return "Counselor";
+    return safeValue(
+        consultantDisplayNameResolver.resolveMatrixDisplayName(consultant), "Counselor");
   }
 
   private String buildMessageNotificationText(String senderLabel, PrivacyEnvelope envelope) {
@@ -1018,6 +1700,20 @@ public class EventNotificationService {
    */
   public boolean isNotificationSuppressed(String recipientUserId, String roomId) {
     return shouldSuppressNotification(recipientUserId, roomId, null);
+  }
+
+  /** Only a mention breaks through a hidden main chat; plain messages stay as quiet as before. */
+  private boolean shouldSuppressMention(
+      String recipientUserId, String roomId, String threadRootId) {
+    ActiveViewState activeView = activeViewByUserId.get(recipientUserId);
+    boolean mainChatMention = threadRootId == null || threadRootId.isBlank();
+    if (mainChatMention
+        && activeView != null
+        && activeView.mainChatHidden
+        && roomId.equals(activeView.roomId)) {
+      return false;
+    }
+    return shouldSuppressNotification(recipientUserId, roomId, threadRootId);
   }
 
   private boolean shouldSuppressNotification(
@@ -1124,6 +1820,29 @@ public class EventNotificationService {
     private final long unreadCount;
     private final int page;
     private final int perPage;
+
+    /**
+     * Event types left out of {@link #unreadCount} (#1377 slice 7). Empty when the total covers
+     * everything; a client that asked for exclusions and gets an empty list back is talking to a
+     * server that does not support them.
+     */
+    private final List<String> excludedEventTypes;
+  }
+
+  /** #1377 slice 7: the unread total without hidden kinds. */
+  @Getter
+  @Builder
+  public static class UnreadCountResponse {
+    private final long unreadCount;
+    private final List<String> excludedEventTypes;
+  }
+
+  /** #1377 slice 7: how many rows a bulk read touched. */
+  @Getter
+  @Builder
+  public static class MarkReadResponse {
+    private final int updated;
+    private final List<String> eventTypes;
   }
 
   @Getter
@@ -1147,11 +1866,14 @@ public class EventNotificationService {
   private static class ActiveViewState {
     private final String roomId;
     private final String threadRootId;
+    private final boolean mainChatHidden;
     private final long lastHeartbeatNanos;
 
-    private ActiveViewState(String roomId, String threadRootId, long lastHeartbeatNanos) {
+    private ActiveViewState(
+        String roomId, String threadRootId, boolean mainChatHidden, long lastHeartbeatNanos) {
       this.roomId = roomId;
       this.threadRootId = threadRootId;
+      this.mainChatHidden = mainChatHidden;
       this.lastHeartbeatNanos = lastHeartbeatNanos;
     }
   }

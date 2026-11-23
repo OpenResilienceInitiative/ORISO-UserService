@@ -52,7 +52,7 @@ def scheduled_methods(source: Path) -> set[str]:
         if not scheduled or not line.strip() or line.lstrip().startswith("@"):
             continue
         declaration = re.search(
-            r"\b(?:public|protected|private)\s+"
+            r"\b(?:(?:public|protected|private)\s+)?"
             r"(?:(?:static|final|synchronized)\s+)*"
             r"[\w<>, ?\[\].]+\s+(\w+)\s*\(",
             line,

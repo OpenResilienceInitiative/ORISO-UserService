@@ -8,6 +8,8 @@ REST_TEMPLATE_FACTORIES = {
     JAVA_ROOT / "de/caritas/cob/userservice/api/config/AppConfig.java",
     JAVA_ROOT
     / "de/caritas/cob/userservice/api/adapters/keycloak/config/KeycloakConfig.java",
+    JAVA_ROOT
+    / "de/caritas/cob/userservice/api/service/matrixgroup/MatrixGroupPolicyHttpConfiguration.java",
 }
 
 

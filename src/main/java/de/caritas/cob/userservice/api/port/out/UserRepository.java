@@ -1,13 +1,19 @@
 package de.caritas.cob.userservice.api.port.out;
 
 import de.caritas.cob.userservice.api.model.User;
+import de.caritas.cob.userservice.api.workflow.delete.model.DeletionLifecycleState;
+import jakarta.persistence.LockModeType;
 import java.time.LocalDateTime;
 import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.EntityGraph;
+import org.springframework.data.jpa.repository.Lock;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.CrudRepository;
+import org.springframework.data.repository.query.Param;
 
 public interface UserRepository extends CrudRepository<User, String> {
 
@@ -18,7 +24,23 @@ public interface UserRepository extends CrudRepository<User, String> {
 
   Optional<User> findByMatrixUserIdAndDeleteDateIsNull(String matrixUserId);
 
+  /**
+   * Every not deleted user row holding one of the given Matrix ids, in one query. The call code
+   * resolves a whole conversation's members at once (#1656) and decides ambiguity itself.
+   */
+  List<User> findAllByMatrixUserIdInAndDeleteDateIsNull(Collection<String> matrixUserIds);
+
   List<User> findAllByDeleteDateNotNull();
+
+  List<User> findAllByDeletionLifecycleStateOrderByCreateDateAsc(
+      DeletionLifecycleState deletionLifecycleState);
+
+  /**
+   * Bounded, oldest-first variant. The durable repair queue is drained a page at a time so one
+   * scheduler run has a predictable upper cost; the remainder is picked up by the next run.
+   */
+  List<User> findAllByDeletionLifecycleStateOrderByCreateDateAsc(
+      DeletionLifecycleState deletionLifecycleState, Pageable pageable);
 
   List<User> findAllByDeleteDateIsNull();
 
@@ -31,6 +53,62 @@ public interface UserRepository extends CrudRepository<User, String> {
    */
   List<User> findAllByUsernameInAndDeleteDateIsNullOrderByCreateDateAsc(
       Collection<String> usernames);
+
+  @Lock(LockModeType.PESSIMISTIC_WRITE)
+  List<User> findAllByUsernameInOrderByCreateDateAsc(Collection<String> usernames);
+
+  @Lock(LockModeType.PESSIMISTIC_WRITE)
+  @Query("SELECT user FROM User user WHERE user.userId = :userId")
+  Optional<User> findByUserIdForUpdate(@Param("userId") String userId);
+
+  /** Stores why the nightly run kept this advice seeker (#1521); a deleted row is not touched. */
+  @Modifying(clearAutomatically = true, flushAutomatically = true)
+  @Query(
+      """
+      UPDATE User user
+         SET user.deletionFailureReason = :reason,
+             user.deletionFailedAt = :failedAt
+       WHERE user.userId = :userId
+      """)
+  int recordHardDeleteFailure(
+      @Param("userId") String userId,
+      @Param("reason") String reason,
+      @Param("failedAt") LocalDateTime failedAt);
+
+  @Modifying(clearAutomatically = true, flushAutomatically = true)
+  @Query(
+      """
+      UPDATE User user
+         SET user.deletionLifecycleState = :readyState
+       WHERE user.userId = :userId
+         AND user.deleteDate IS NOT NULL
+         AND user.deletionLifecycleState = :claimedState
+      """)
+  int releaseUserHardDeleteClaim(
+      @Param("userId") String userId,
+      @Param("claimedState") DeletionLifecycleState claimedState,
+      @Param("readyState") DeletionLifecycleState readyState);
+
+  @Modifying(clearAutomatically = true, flushAutomatically = true)
+  @Query(
+      """
+      UPDATE User user
+         SET user.deletionLifecycleState = :readyState
+       WHERE user.deleteDate IS NOT NULL
+         AND user.deletionLifecycleState = :claimedState
+      """)
+  int releaseInterruptedUserHardDeleteClaims(
+      @Param("claimedState") DeletionLifecycleState claimedState,
+      @Param("readyState") DeletionLifecycleState readyState);
+
+  /** Returns report IDs using the same session membership as the mapped collection. */
+  @Query(
+      """
+      SELECT u.userId FROM User u
+       WHERE u.sessions IS EMPTY
+         AND NOT EXISTS (SELECT 1 FROM UserAgency ua WHERE ua.user = u)
+      """)
+  List<String> findIdsWithoutSessionOrChatRelations();
 
   /**
    * Find all users whose create date is older than given date and having no new registered session
@@ -69,4 +147,31 @@ public interface UserRepository extends CrudRepository<User, String> {
               + "    AND s3.createDate >= ?1"
               + ")")
   List<User> findAllByDeleteDateNullAndNoRunningSessionsAndCreateDateOlderThan(LocalDateTime date);
+
+  /**
+   * Ids of temporary accounts created before {@code createdBefore} and not already being deleted.
+   */
+  @Query(
+      "SELECT u.userId FROM User u WHERE u.temporaryAccount = true AND u.deleteDate IS NULL"
+          + " AND u.temporaryAccountSnapshot.medium IS NULL AND u.createDate < ?1")
+  List<String> findTemporaryAccountIdsCreatedBefore(LocalDateTime createdBefore);
+
+  /**
+   * Direct-link temporary accounts (ADR-029, #1476) whose identities still exist. Their own
+   * snapshotted lifetimes decide when they go, not {@code user.temporary.deleteWorkflow.maxAge}.
+   */
+  @Query(
+      "SELECT u.userId FROM User u WHERE u.temporaryAccount = true AND u.deleteDate IS NULL"
+          + " AND u.temporaryAccountSnapshot.medium IS NOT NULL"
+          + " AND u.temporaryAccountSnapshot.deletedAt IS NULL")
+  List<String> findLiveDirectLinkTemporaryAccountIds();
+
+  /**
+   * Advice seekers of a Träger that still count as accounts: not marked for deletion and not one of
+   * the technical {@code group-chat-system} users, which go with their Träger (#1466).
+   */
+  @Query(
+      "SELECT COUNT(u) FROM User u WHERE u.tenantId = :tenantId AND u.deleteDate IS NULL"
+          + " AND u.userId NOT LIKE 'group-chat-system%'")
+  long countActiveAdviceSeekersOfTenant(@Param("tenantId") Long tenantId);
 }

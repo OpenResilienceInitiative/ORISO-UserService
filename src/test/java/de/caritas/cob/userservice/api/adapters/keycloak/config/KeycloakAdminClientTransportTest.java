@@ -37,6 +37,47 @@ class KeycloakAdminClientTransportTest {
   }
 
   @Test
+  void adminTokenUsesConfidentialClientWithoutHumanCredentials() throws IOException {
+    var form = new java.util.concurrent.atomic.AtomicReference<String>();
+    var authorization = new java.util.concurrent.atomic.AtomicReference<String>();
+    server = HttpServer.create(new InetSocketAddress("localhost", 0), 0);
+    server.createContext(
+        "/",
+        exchange -> {
+          var request =
+              new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
+          boolean token = exchange.getRequestURI().getPath().endsWith("/token");
+          if (token) {
+            form.set(request);
+            authorization.set(exchange.getRequestHeaders().getFirst("Authorization"));
+          }
+          byte[] body =
+              (token
+                      ? "{\"access_token\":\"service-token\",\"expires_in\":300,\"token_type\":\"Bearer\"}"
+                      : "0")
+                  .getBytes(StandardCharsets.UTF_8);
+          exchange.getResponseHeaders().add("Content-Type", "application/json");
+          exchange.sendResponseHeaders(200, body.length);
+          exchange.getResponseBody().write(body);
+          exchange.close();
+        });
+    server.start();
+    var transport =
+        new KeycloakAdminClientTransport(new OutboundHttpMetrics(new SimpleMeterRegistry()));
+    try (var keycloak = transport.create(serverUrl(), "oriso", adminConfig())) {
+      assertThat(keycloak.realm("oriso").users().count()).isZero();
+    }
+    assertThat(form.get())
+        .contains("grant_type=client_credentials")
+        .doesNotContain("username=", "password=", "refresh_token=", "client_secret=");
+    assertThat(authorization.get())
+        .isEqualTo(
+            "Basic "
+                + java.util.Base64.getEncoder()
+                    .encodeToString("backend-admin:password".getBytes(StandardCharsets.UTF_8)));
+  }
+
+  @Test
   void slowAdminResponseIsBoundedAndMeasuredAsTransportFailure() throws IOException {
     var registry = new SimpleMeterRegistry();
     startSlowAdminStub();
@@ -310,9 +351,9 @@ class KeycloakAdminClientTransportTest {
 
   private KeycloakCustomConfig adminConfig() {
     var config = new KeycloakCustomConfig();
-    config.setAdminUsername("admin");
-    config.setAdminPassword("password");
-    config.setAdminClientId("admin-cli");
+
+    config.setAdminClientSecret("password");
+    config.setAdminClientId("backend-admin");
     return config;
   }
 

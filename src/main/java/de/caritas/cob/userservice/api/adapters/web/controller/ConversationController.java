@@ -7,11 +7,10 @@ import static de.caritas.cob.userservice.api.conversation.model.ConversationList
 
 import de.caritas.cob.userservice.api.adapters.web.dto.AnonymousEnquiry;
 import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantSessionListResponseDTO;
-import de.caritas.cob.userservice.api.adapters.web.dto.CreateAnonymousEnquiryDTO;
-import de.caritas.cob.userservice.api.adapters.web.dto.CreateAnonymousEnquiryResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.mapping.ConversationDtoMapper;
+import de.caritas.cob.userservice.api.config.observability.LiveChatDiagnosticMetrics;
+import de.caritas.cob.userservice.api.config.observability.LiveChatDiagnosticMetrics.AvailabilityEndpoint;
 import de.caritas.cob.userservice.api.conversation.facade.AcceptAnonymousEnquiryFacade;
-import de.caritas.cob.userservice.api.conversation.facade.CreateAnonymousEnquiryFacade;
 import de.caritas.cob.userservice.api.conversation.facade.FinishAnonymousConversationFacade;
 import de.caritas.cob.userservice.api.conversation.service.ConversationListResolver;
 import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
@@ -21,28 +20,28 @@ import de.caritas.cob.userservice.api.port.in.Messaging;
 import de.caritas.cob.userservice.api.service.consultingtype.TopicConsultantRoutingService;
 import de.caritas.cob.userservice.generated.api.conversation.controller.ConversationsApi;
 import io.swagger.annotations.Api;
-import jakarta.validation.Valid;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
-import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RestController;
 
 /** Controller for conversation API requests. */
 @RestController
 @RequiredArgsConstructor
+@Slf4j
 @Api(tags = "conversation-controller")
 public class ConversationController implements ConversationsApi {
 
   private final @NonNull ConversationListResolver conversationListResolver;
-  private final @NonNull CreateAnonymousEnquiryFacade createAnonymousEnquiryFacade;
   private final @NonNull AcceptAnonymousEnquiryFacade acceptAnonymousEnquiryFacade;
   private final @NonNull FinishAnonymousConversationFacade finishAnonymousConversationFacade;
   private final ConversationDtoMapper mapper;
   private final Messaging messenger;
   private final TopicConsultantRoutingService topicConsultantRoutingService;
   private final AuthenticatedUser authenticatedUser;
+  private final LiveChatDiagnosticMetrics liveChatDiagnosticMetrics;
 
   /**
    * Entry point to retrieve all anonymous enquiries for current authenticated consultant.
@@ -124,23 +123,6 @@ public class ConversationController implements ConversationsApi {
     return ResponseEntity.ok().build();
   }
 
-  /**
-   * Starts a new anonymous conversation enquiry for the given consulting type and returns all
-   * needed user information for this conversation.
-   *
-   * @param createAnonymousEnquiryDTO {@link CreateAnonymousEnquiryDTO} (required)
-   * @return {@link ResponseEntity} containing {@link CreateAnonymousEnquiryResponseDTO} body
-   */
-  @Override
-  public ResponseEntity<CreateAnonymousEnquiryResponseDTO> createAnonymousEnquiry(
-      @Valid @RequestBody CreateAnonymousEnquiryDTO createAnonymousEnquiryDTO) {
-
-    var createAnonymousEnquiryResponseDTO =
-        createAnonymousEnquiryFacade.createAnonymousEnquiry(createAnonymousEnquiryDTO);
-
-    return new ResponseEntity<>(createAnonymousEnquiryResponseDTO, HttpStatus.CREATED);
-  }
-
   @Override
   public ResponseEntity<AnonymousEnquiry> getAnonymousEnquiryDetails(Long sessionId) {
     var sessionMap =
@@ -153,6 +135,12 @@ public class ConversationController implements ConversationsApi {
           "Access to session (%s) is limited to its advice seeker.", sessionId);
     }
 
+    /* The guest is on this page, right now — that is the only sign of life a live-chat queue
+    entry ever gets. The client cannot say goodbye reliably (a pagehide hook would also fire on
+    every reload and destroy a waiting enquiry), so presence is proven by asking, not by leaving:
+    this poll keeps the entry in the queue, and silence takes it out. #1404 */
+    messenger.touchLiveChatQueueHeartbeat(sessionId);
+
     var consultingTypeId = mapper.consultingTypeIdOf(sessionMap);
     var mainTopicId = mapper.mainTopicIdOf(sessionMap);
     int numAvailableConsultants = resolveNumAvailableConsultants(mainTopicId);
@@ -161,7 +149,8 @@ public class ConversationController implements ConversationsApi {
             mapper.agencyIdOf(sessionMap),
             consultingTypeId,
             mainTopicId,
-            mapper.createDateOf(sessionMap));
+            mapper.createDateOf(sessionMap),
+            sessionId);
     var anonymousEnquiry =
         mapper.anonymousEnquiryOf(sessionMap, numAvailableConsultants, peopleAhead);
 
@@ -188,7 +177,16 @@ public class ConversationController implements ConversationsApi {
       }
       return 0;
     } catch (Exception ex) {
-      // Availability is best-effort for this poll — never fail the whole response.
+      // Availability is best-effort for this poll — never fail the whole response. But the guest
+      // cannot tell this zero from a real one, so it is logged and counted (#1270). Only the topic
+      // and the exception class: no session id, message or stack trace (KDG).
+      log.warn(
+          "Live-chat availability lookup failed; reporting nobody live (endpoint=enquiry_details,"
+              + " topicId={}, exception={})",
+          mainTopicId,
+          ex.getClass().getSimpleName());
+      liveChatDiagnosticMetrics.recordAvailabilityLookupFailure(
+          AvailabilityEndpoint.ENQUIRY_DETAILS);
       return 0;
     }
   }

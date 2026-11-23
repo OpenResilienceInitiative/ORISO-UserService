@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import de.caritas.cob.userservice.api.config.auth.UserRole;
 import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
 import de.caritas.cob.userservice.api.identity.IdentityEmailVerification;
 import de.caritas.cob.userservice.api.identity.IdentityEmailVerificationStart;
@@ -13,6 +14,7 @@ import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import de.caritas.cob.userservice.api.port.out.IdentityEmailAddressUpdater;
 import de.caritas.cob.userservice.api.port.out.IdentityEmailOwner;
 import de.caritas.cob.userservice.api.port.out.IdentityEmailOwnerLookup;
+import de.caritas.cob.userservice.api.port.out.IdentityRoleLookup;
 import de.caritas.cob.userservice.api.port.out.IdentitySecondFactor;
 import de.caritas.cob.userservice.api.port.out.IdentityUsernameAvailability;
 import java.util.Optional;
@@ -34,11 +36,43 @@ class IdentityManagerTest {
   @Mock private IdentityEmailAddressUpdater identityEmailAddressUpdater;
   @Mock private IdentityAuthentication identityAuthentication;
   @Mock private IdentityEmailOwnerLookup identityEmailOwnerLookup;
+  @Mock private IdentityRoleLookup identityRoleLookup;
   @Mock private IdentitySecondFactor identitySecondFactor;
+
+  @Mock
+  private de.caritas.cob.userservice.api.service.AskerEmailCollectionGuard
+      askerEmailCollectionGuard;
+
   @Mock private IdentityUsernameAvailability identityUsernameAvailability;
   @Spy private UsernameTranscoder usernameTranscoder = new UsernameTranscoder();
 
   @InjectMocks private IdentityManager identityManager;
+
+  @Test
+  void forbiddenEmailEnrollmentSendsNoOtpAndUpdatesNoIdentity() {
+    org.mockito.Mockito.doThrow(
+            new de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException("off"))
+        .when(askerEmailCollectionGuard)
+        .beforeStart(EMAIL);
+    org.assertj.core.api.Assertions.assertThatThrownBy(
+            () -> identityManager.setUpOneTimePassword(ENCODED_USERNAME, EMAIL))
+        .isInstanceOf(
+            de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException.class);
+    org.mockito.Mockito.verifyNoInteractions(identitySecondFactor, identityEmailAddressUpdater);
+  }
+
+  @Test
+  void forbiddenPendingEmailEnrollmentDoesNotConsumeOtpOrUpdateIdentity() {
+    org.mockito.Mockito.doThrow(
+            new de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException("off"))
+        .when(askerEmailCollectionGuard)
+        .beforeFinish();
+    org.assertj.core.api.Assertions.assertThatThrownBy(
+            () -> identityManager.validateOneTimePassword(ENCODED_USERNAME, "123456"))
+        .isInstanceOf(
+            de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException.class);
+    org.mockito.Mockito.verifyNoInteractions(identitySecondFactor, identityEmailAddressUpdater);
+  }
 
   @Test
   void validatePasswordIgnoring2faShouldPreserveEncodedUsernameForIdentityAuthentication() {
@@ -149,6 +183,25 @@ class IdentityManagerTest {
         .thenReturn(Optional.of(new IdentityEmailOwner(null)));
 
     assertThat(identityManager.isEmailAvailableOrOwn(ENCODED_USERNAME, EMAIL)).isFalse();
+  }
+
+  @Test
+  void hasRoleShouldReadTheRoleListOnceThroughTheFocusedPort() {
+    // The behaviour the removed IdentityClient#userHasRole provided: one external
+    // read, then an in-process compare against the requested application role.
+    when(identityRoleLookup.findAllByUserId("consultant-id"))
+        .thenReturn(java.util.List.of("user", "consultant"));
+
+    assertThat(identityManager.hasRole("consultant-id", UserRole.CONSULTANT)).isTrue();
+
+    verify(identityRoleLookup).findAllByUserId("consultant-id");
+  }
+
+  @Test
+  void hasRoleShouldRejectARoleTheUserDoesNotHold() {
+    when(identityRoleLookup.findAllByUserId("user-id")).thenReturn(java.util.List.of("user"));
+
+    assertThat(identityManager.hasRole("user-id", UserRole.CONSULTANT)).isFalse();
   }
 
   @Test

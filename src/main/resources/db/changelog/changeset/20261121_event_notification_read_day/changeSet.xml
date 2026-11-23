@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+  xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+  xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.5.xsd">
+
+  <!-- Install both write guards before clearing historical times. Older application images can
+       continue to validate and write the existing DATETIME(3) column during a rolling update. -->
+  <changeSet id="20261121-event-notification-read-day-insert" author="codex" dbms="mariadb,mysql">
+    <sql>
+      CREATE TRIGGER IF NOT EXISTS userservice.event_notification_read_day_insert
+      BEFORE INSERT ON userservice.event_notification
+      FOR EACH ROW SET NEW.read_date = DATE(NEW.read_date);
+    </sql>
+    <rollback>
+      <sql>DROP TRIGGER IF EXISTS userservice.event_notification_read_day_insert;</sql>
+    </rollback>
+  </changeSet>
+  <changeSet id="20261121-event-notification-read-day-update" author="codex" dbms="mariadb,mysql">
+    <sql>
+      CREATE TRIGGER IF NOT EXISTS userservice.event_notification_read_day_update
+      BEFORE UPDATE ON userservice.event_notification
+      FOR EACH ROW SET NEW.read_date = DATE(NEW.read_date);
+    </sql>
+    <rollback>
+      <sql>DROP TRIGGER IF EXISTS userservice.event_notification_read_day_update;</sql>
+    </rollback>
+  </changeSet>
+  <changeSet id="20261121-event-notification-read-day-existing" author="codex" dbms="mariadb,mysql">
+    <sql>
+      UPDATE userservice.event_notification
+      SET read_date = DATE(read_date)
+      WHERE read_date IS NOT NULL AND read_date &lt;&gt; DATE(read_date);
+    </sql>
+    <!-- Deliberately discarded time-of-day values cannot be reconstructed. -->
+    <rollback/>
+  </changeSet>
+</databaseChangeLog>

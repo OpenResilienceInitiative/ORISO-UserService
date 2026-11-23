@@ -1,10 +1,15 @@
 package de.caritas.cob.userservice.api.service.accountinvite.onboarding;
 
+import static de.caritas.cob.userservice.api.service.accountinvite.onboarding.OnboardingTwoFactorGuard.isResumableAtTwoFactorStep;
+import static de.caritas.cob.userservice.api.service.accountinvite.onboarding.OnboardingTwoFactorGuard.linkDeathException;
+import static de.caritas.cob.userservice.api.service.accountinvite.onboarding.OnboardingTwoFactorGuard.revalidateTwoFactorGate;
+
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateAdminDTO;
 import de.caritas.cob.userservice.api.admin.service.admin.create.CreateAdminService;
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
 import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException;
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
+import de.caritas.cob.userservice.api.helper.PasswordPolicy;
 import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
 import de.caritas.cob.userservice.api.identity.IdentityOtpCredential;
 import de.caritas.cob.userservice.api.model.AccountInvite;
@@ -15,19 +20,36 @@ import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import de.caritas.cob.userservice.api.port.out.IdentityProfileLookup;
 import de.caritas.cob.userservice.api.port.out.IdentitySecondFactor;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteLinkException;
+import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteProvisioningStatus;
+import de.caritas.cob.userservice.api.service.accountinvite.AccountInvitePurpose;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteService;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteStatus;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteTargetRole;
+import de.caritas.cob.userservice.api.service.accountinvite.DpaForwardEmailService;
+import de.caritas.cob.userservice.api.service.accountinvite.DpaForwardEmailService.DpaForwardEmailCommand;
+import de.caritas.cob.userservice.api.service.accountinvite.InviteUnitCreatedEvent;
+import de.caritas.cob.userservice.api.service.accountinvite.InviteUnitType;
+import de.caritas.cob.userservice.api.service.accountinvite.ReservationLedger;
+import de.caritas.cob.userservice.api.service.accountinvite.allocation.IdAllocationMode;
+import de.caritas.cob.userservice.api.service.accountinvite.onboarding.OperatorDpaContentClient.DpaUnavailableReason;
 import de.caritas.cob.userservice.api.service.accountinvite.onboarding.OperatorDpaContentClient.OperatorDpa;
+import de.caritas.cob.userservice.tenantadminservice.generated.web.model.Licensing;
 import de.caritas.cob.userservice.tenantadminservice.generated.web.model.MultilingualTenantDTO;
 import de.caritas.cob.userservice.tenantadminservice.generated.web.model.OnboardingDpaAcceptanceDTO;
+import de.caritas.cob.userservice.tenantservice.generated.web.model.DpaSignInviteDTO;
+import jakarta.validation.Validation;
+import jakarta.validation.Validator;
+import jakarta.validation.constraints.Email;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.function.Supplier;
 import lombok.NonNull;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 
 /**
  * Public tenant-admin onboarding behind an invite link (#569 chain fix, UserService side of the
@@ -43,21 +65,91 @@ import org.springframework.transaction.annotation.Transactional;
  */
 @Slf4j
 @Service
-@RequiredArgsConstructor
 public class TenantAdminOnboardingService {
 
-  private static final int MIN_PASSWORD_LENGTH = 8;
+  private static final int MIN_PASSWORD_LENGTH = PasswordPolicy.MIN_LENGTH;
 
-  private final @NonNull AccountInviteRepository accountInviteRepository;
-  private final @NonNull AccountInviteService accountInviteService;
-  private final @NonNull CreateAdminService createAdminService;
-  private final @NonNull IdentityClient identityClient;
-  private final @NonNull IdentitySecondFactor identitySecondFactor;
-  private final @NonNull IdentityAccountRemover identityAccountRemover;
-  private final @NonNull IdentityProfileLookup identityProfileLookup;
-  private final @NonNull TenantCreationClient tenantCreationClient;
-  private final @NonNull OperatorDpaContentClient operatorDpaContentClient;
-  private final @NonNull UsernameTranscoder usernameTranscoder;
+  /* TenantService's tenant.legal_name / contact_email / contact_phone column limits. */
+  private static final int LEGAL_NAME_MAX_LENGTH = 255;
+  private static final int CONTACT_EMAIL_MAX_LENGTH = 255;
+  private static final int CONTACT_PHONE_MAX_LENGTH = 64;
+
+  /**
+   * Provisional consultant allowance stamped on every tenant this flow creates. It is NOT a
+   * considered business limit: the onboarding invite carries no licensing information, so this is a
+   * placeholder that keeps the required {@code Licensing.allowedNumberOfUsers} non-null until the
+   * platform operator sets the real number for the tenant. The value mirrors the Admin panel's own
+   * default (ORISO-Admin {@code EditableTable.tsx}, {@code allowedNumberOfUsers = 9999}) and is
+   * high enough never to block consultant creation in the meantime.
+   */
+  private static final int PROVISIONAL_ALLOWED_NUMBER_OF_USERS = 9999;
+
+  /**
+   * How often one invitation may forward the DPA. Small on purpose: a real forward needs one, a
+   * mistyped recipient address needs a second, and anything beyond that is far more likely to be
+   * abuse of an anonymous endpoint that mails live signing links than a genuine need.
+   */
+  static final int MAX_DPA_FORWARDS_PER_INVITE = 3;
+
+  private final AccountInviteRepository accountInviteRepository;
+  private final AccountInviteService accountInviteService;
+  private final ReservationLedger reservationLedger;
+  private final CreateAdminService createAdminService;
+  private final IdentityClient identityClient;
+  private final IdentitySecondFactor identitySecondFactor;
+  private final IdentityAccountRemover identityAccountRemover;
+  private final IdentityProfileLookup identityProfileLookup;
+  private final TenantCreationClient tenantCreationClient;
+  private final OperatorDpaContentClient operatorDpaContentClient;
+  private final PublicDpaForwardClient publicDpaForwardClient;
+  private final DpaForwardEmailService dpaForwardEmailService;
+  private final UsernameTranscoder usernameTranscoder;
+  private final ApplicationEventPublisher eventPublisher;
+
+  /**
+   * Drives the short database-only transactions of the read paths explicitly: the invite row is
+   * read under a PESSIMISTIC_WRITE lock, so no upstream call (TenantService DPA text, Keycloak) may
+   * run while that lock is held (#1008 review, same treatment as {@link
+   * CounsellorOnboardingService}).
+   *
+   * <p>One reusable instance built in the constructor (#1008 review): a {@link TransactionTemplate}
+   * is thread-safe and stays unmodified after construction, so allocating a fresh one per call
+   * bought nothing.
+   */
+  private final TransactionTemplate transactionTemplate;
+
+  public TenantAdminOnboardingService(
+      @NonNull AccountInviteRepository accountInviteRepository,
+      @NonNull AccountInviteService accountInviteService,
+      @NonNull ReservationLedger reservationLedger,
+      @NonNull CreateAdminService createAdminService,
+      @NonNull IdentityClient identityClient,
+      @NonNull IdentitySecondFactor identitySecondFactor,
+      @NonNull IdentityAccountRemover identityAccountRemover,
+      @NonNull IdentityProfileLookup identityProfileLookup,
+      @NonNull TenantCreationClient tenantCreationClient,
+      @NonNull OperatorDpaContentClient operatorDpaContentClient,
+      @NonNull PublicDpaForwardClient publicDpaForwardClient,
+      @NonNull DpaForwardEmailService dpaForwardEmailService,
+      @NonNull UsernameTranscoder usernameTranscoder,
+      @NonNull ApplicationEventPublisher eventPublisher,
+      @NonNull PlatformTransactionManager transactionManager) {
+    this.accountInviteRepository = accountInviteRepository;
+    this.accountInviteService = accountInviteService;
+    this.reservationLedger = reservationLedger;
+    this.createAdminService = createAdminService;
+    this.identityClient = identityClient;
+    this.identitySecondFactor = identitySecondFactor;
+    this.identityAccountRemover = identityAccountRemover;
+    this.identityProfileLookup = identityProfileLookup;
+    this.tenantCreationClient = tenantCreationClient;
+    this.operatorDpaContentClient = operatorDpaContentClient;
+    this.publicDpaForwardClient = publicDpaForwardClient;
+    this.dpaForwardEmailService = dpaForwardEmailService;
+    this.usernameTranscoder = usernameTranscoder;
+    this.eventPublisher = eventPublisher;
+    this.transactionTemplate = new TransactionTemplate(transactionManager);
+  }
 
   /**
    * Resolves the invite state for a raw link token. Mirrors the accept endpoint's state machine: a
@@ -70,21 +162,64 @@ public class TenantAdminOnboardingService {
    * step asks the invitee to confirm the agreement on behalf of their organisation, so the wording
    * must be on screen and navigable (anchor/TOC) rather than replaced by a placeholder hint. The
    * resume path skips the lookup — it re-enters at the 2FA step, which shows no contract.
+   *
+   * <p>Transaction shape (#1008 review): the locked load, the expiry transition and the state
+   * classification are ONE short database transaction; the operator DPA lookup — an HTTP call to
+   * TenantService behind a technical-user login — runs after it committed, never while the invite's
+   * row lock is held.
    */
-  @Transactional
   public OnboardingInviteState resolveOnboardingInvite(String rawToken) {
-    AccountInvite invite = findTenantAdminInvite(rawToken);
-    LocalDateTime now = LocalDateTime.now();
+    ResolvedOnboardingInvite resolved = loadInviteForResolve(rawToken);
+    // Thrown only now, i.e. after the transaction committed, so a persisted EXPIRED transition
+    // survives the link-death answer (what noRollbackFor used to buy).
+    resolved.rethrowLinkDeath();
 
-    if (invite.getStatus() == AccountInviteStatus.EMAIL_SENT) {
-      expireIfPastExpiry(invite, now);
-      return new OnboardingInviteState(
-          invite, false, operatorDpaContentClient.fetchPublishedDpaContent());
+    if (resolved.pendingTwoFactorResume()) {
+      return new OnboardingInviteState(resolved.invite(), true, null, null);
     }
-    if (isResumableAtTwoFactorStep(invite, now)) {
-      return new OnboardingInviteState(invite, true, null);
+    if (resolved.invite().getPurpose() == AccountInvitePurpose.EXISTING_ACCOUNT_SETUP) {
+      // This link changes credentials on an existing account. It has no new tenant or DPA record
+      // to create, and resolving it must not depend on the operator DPA text service.
+      return new OnboardingInviteState(resolved.invite(), false, null, null, true);
     }
-    throw linkDeathException(invite);
+    if (resolved.joinsExistingTenant()) {
+      // The Träger already has its own DPA; the invitee confirms nothing on its behalf.
+      return new OnboardingInviteState(resolved.invite(), false, null, null, true);
+    }
+    var lookup = operatorDpaContentClient.lookupPublishedDpa();
+    return new OnboardingInviteState(resolved.invite(), false, lookup.content(), lookup.reason());
+  }
+
+  /** The database-only part of {@link #resolveOnboardingInvite}: locked load and classification. */
+  private ResolvedOnboardingInvite loadInviteForResolve(String rawToken) {
+    return inTransaction(
+        () -> {
+          AccountInvite invite = findTenantAdminInvite(rawToken);
+          LocalDateTime now = LocalDateTime.now();
+
+          if (invite.getPurpose() == AccountInvitePurpose.EXISTING_ACCOUNT_SETUP
+              && invite.getProvisioningStatus() == AccountInviteProvisioningStatus.IN_PROGRESS) {
+            return ResolvedOnboardingInvite.dead(
+                new AccountInviteLinkException(
+                    "SETUP_OUTCOME_INDETERMINATE".equals(invite.getProvisioningFailureReason())
+                        ? AccountInviteLinkException.Reason.SETUP_OPERATOR_REVIEW_REQUIRED
+                        : AccountInviteLinkException.Reason.SETUP_IN_PROGRESS));
+          }
+
+          if (invite.getStatus() == AccountInviteStatus.EMAIL_SENT) {
+            AccountInviteLinkException expired = expireIfPastExpiry(invite, now);
+            if (expired != null) {
+              return ResolvedOnboardingInvite.dead(expired);
+            }
+            return joinsExistingTenant(invite)
+                ? ResolvedOnboardingInvite.openJoiningExistingTenant(invite)
+                : ResolvedOnboardingInvite.open(invite);
+          }
+          if (isResumableAtTwoFactorStep(invite, now)) {
+            return ResolvedOnboardingInvite.pendingTwoFactorResume(invite);
+          }
+          return ResolvedOnboardingInvite.dead(linkDeathException(invite));
+        });
   }
 
   /**
@@ -107,17 +242,39 @@ public class TenantAdminOnboardingService {
    * registration is refused up front — before the invite is claimed, so the link stays usable once
    * the operator publishes.
    */
-  @Transactional
+  // noRollbackFor mirrors resolveOnboardingInvite: the expiry transition must survive the
+  // link-death exception. Every other AccountInviteLinkException in this method is thrown
+  // before any write (the lost claim race writes nothing), so nothing partial can commit.
+  //
+  // This method deliberately KEEPS its single atomic transaction (#1008 review): the tenant, the
+  // Keycloak account and the irreversible reservation consumption only stay compensable together,
+  // and the explicit Keycloak rollback below is built on exactly that. Every invite it writes is
+  // therefore a MANAGED entity — re-read by id inside this very transaction after the atomic
+  // claim — so it never merges a detached snapshot and needs no targeted-field treatment.
+  @Transactional(noRollbackFor = AccountInviteLinkException.class)
   public TenantAdminRegistrationResult registerTenantAdmin(
       String rawToken, RegisterTenantAdminCommand command) {
     validateRegistration(command);
     AccountInvite invite = findTenantAdminInvite(rawToken);
+    if (invite.getPurpose() != AccountInvitePurpose.INVITE) {
+      throw new BadRequestException("This link is for existing-account setup");
+    }
     LocalDateTime now = LocalDateTime.now();
 
     if (invite.getStatus() != AccountInviteStatus.EMAIL_SENT) {
       throw linkDeathException(invite);
     }
-    expireIfPastExpiry(invite, now);
+    AccountInviteLinkException expired = expireIfPastExpiry(invite, now);
+    if (expired != null) {
+      // noRollbackFor (see above) keeps the EXPIRED transition this just persisted.
+      throw expired;
+    }
+    if (joinsExistingTenant(invite)) {
+      return joinExistingTenant(invite, command, now);
+    }
+    if (isBlank(command.organisationName())) {
+      throw new BadRequestException("organisation.name is required");
+    }
     if (invite.getTenantId() == null || isBlank(invite.getTenantIdReservationToken())) {
       // Legacy invite created while TenantService lacked the TEN-INV-U1 allocation endpoints —
       // a reservation-consuming creation is impossible without the authoritative ledger.
@@ -131,17 +288,33 @@ public class TenantAdminOnboardingService {
       throw new NotFoundException("Reservation does not match this invite");
     }
 
-    OperatorDpa operatorDpa = operatorDpaContentClient.fetchPublishedDpa();
-    if (operatorDpa == null) {
-      // Nothing to accept: the acceptance would be unrecordable and the tenant would be created
-      // straight into the non-actionable DPA blocker. Refuse before touching the invite.
-      log.error(
-          "Tenant-admin onboarding registration refused for invite {}: the platform operator has"
-              + " published no data processing agreement, so the acceptance cannot be recorded",
-          invite.getId());
-      throw new InternalServerErrorException(
-          "No data processing agreement is published by the platform operator — publish it before"
-              + " tenant admins can complete the onboarding");
+    // ORISO-Admin#722: an admin who is not authorised to sign forwards the DPA instead of
+    // accepting it. The forward is recorded server-side on the invite (dpaForwardedAt via
+    // forwardDpa), so registration without an own acceptance is only possible when a forward
+    // genuinely happened — never on the client's say-so. The backend legal gate stays in force
+    // until the forwarded signature lands.
+    boolean dpaForwarded = invite.getDpaForwardedAt() != null;
+    // A verified confirmation (stamped by the DPA_SIGNED_NOTICE chain) counts as well (#1065).
+    boolean dpaConfirmed = invite.getDpaSignedAt() != null;
+    if (!command.dpaAccepted() && !dpaForwarded && !dpaConfirmed) {
+      throw new BadRequestException(
+          "The data processing agreement must be accepted or forwarded to an authorised signer");
+    }
+
+    OperatorDpa operatorDpa = null;
+    if (command.dpaAccepted()) {
+      operatorDpa = operatorDpaContentClient.fetchPublishedDpa();
+      if (operatorDpa == null) {
+        // Nothing to accept: the acceptance would be unrecordable and the tenant would be created
+        // straight into the non-actionable DPA blocker. Refuse before touching the invite.
+        log.error(
+            "Tenant-admin onboarding registration refused for invite {}: the platform operator has"
+                + " published no data processing agreement, so the acceptance cannot be recorded",
+            invite.getId());
+        throw new InternalServerErrorException(
+            "No data processing agreement is published by the platform operator — publish it"
+                + " before tenant admins can complete the onboarding");
+      }
     }
 
     int claimed = accountInviteRepository.claimForAcceptance(invite.getId(), null, now);
@@ -154,14 +327,15 @@ public class TenantAdminOnboardingService {
       throw linkDeathException(current);
     }
 
-    var admin = createAdminService.createNewTenantAdmin(buildAdminDto(invite, command));
+    var admin =
+        createAdminService.createNewTenantAdminForReservedTenant(buildAdminDto(invite, command));
     try {
       IdentityOtpCredential otpInfo =
           identitySecondFactor.getOtpCredential(
               usernameTranscoder.encodeUsername(admin.getUsername()));
       if (otpInfo == null || isBlank(otpInfo.secret())) {
-        throw new InternalServerErrorException(
-            "Keycloak issued no TOTP setup material for the onboarding account");
+        // App setup data is optional: the accepted account can still verify the email factor.
+        otpInfo = IdentityOtpCredential.empty();
       }
 
       AccountInvite claimedInvite =
@@ -170,19 +344,44 @@ public class TenantAdminOnboardingService {
               .orElseThrow(() -> new NotFoundException("Account invite not found"));
       claimedInvite.setAcceptedByUserId(admin.getId());
       claimedInvite.setTotpPendingSecret(otpInfo.secret());
+      // An earlier external confirmation keeps its own timestamp (#1065).
+      if (command.dpaAccepted() && claimedInvite.getDpaSignedAt() == null) {
+        // The own acceptance IS the signature (recorded below as the tenant's U9 admin
+        // signature), so stamp it on the invite: the Admin invite progress board proves its
+        // final "Vertrag unterschrieben" phase from dpa_signed_at (ORISO-Admin#896, epic #725).
+        // Rollback-safe: a tenant-creation failure below rolls this write back with the rest of
+        // the transaction. A forwarded DPA stays pending here - only the DPA_SIGNED_NOTICE chain
+        // may stamp it once TenantService verified the external signature actually landed.
+        claimedInvite.setDpaSignedAt(now);
+      }
       claimedInvite.setUpdateDate(now);
       accountInviteRepository.save(claimedInvite);
 
       MultilingualTenantDTO created =
           tenantCreationClient.createTenant(
-              buildTenantDto(invite, command, buildDpaAcceptance(command, admin, operatorDpa)));
-      log.info(
-          "Tenant-admin onboarding recorded the DPA acceptance of invite {} against operator DPA"
-              + " version {}",
-          invite.getId(),
-          operatorDpa.version());
+              buildTenantDto(
+                  invite,
+                  command,
+                  command.dpaAccepted() ? buildDpaAcceptance(command, admin, operatorDpa) : null));
+      if (command.dpaAccepted()) {
+        log.info(
+            "Tenant-admin onboarding recorded the DPA acceptance of invite {} against operator DPA"
+                + " version {}",
+            invite.getId(),
+            operatorDpa.version());
+      } else {
+        log.info(
+            "Tenant-admin onboarding of invite {} completed without an own DPA acceptance — the"
+                + " agreement was forwarded to an authorised signer and stays pending",
+            invite.getId());
+      }
       Long tenantId =
           created != null && created.getId() != null ? created.getId() : invite.getTenantId();
+      // Only now does the tenant exist whose inactivity policy the founding admin is enrolled in.
+      createAdminService.enrollReservedTenantAdmin(admin);
+      // The Admin's Träger tab dates "Träger angelegt" from this, for co-founders too.
+      accountInviteRepository.stampTraegerCreated(invite.getTenantId(), now);
+      publishTenantCreated(tenantId);
       return new TenantAdminRegistrationResult(tenantId, otpInfo.secret(), otpInfo.secretQrCode());
     } catch (RuntimeException exception) {
       // Every database change rolls back with the exception; the Keycloak account is external
@@ -193,48 +392,441 @@ public class TenantAdminOnboardingService {
   }
 
   /**
+   * No Träger, reservation or DPA here, but the same single-use claim, Keycloak compensation and
+   * TOTP resume contract as the new-Träger path.
+   */
+  private TenantAdminRegistrationResult joinExistingTenant(
+      AccountInvite invite, RegisterTenantAdminCommand command, LocalDateTime now) {
+    if (invite.getTenantId() == null) {
+      throw new InternalServerErrorException("Invite into an existing tenant carries no tenant");
+    }
+    int claimed = accountInviteRepository.claimForAcceptance(invite.getId(), null, now);
+    if (claimed == 0) {
+      AccountInvite current =
+          accountInviteRepository
+              .findById(invite.getId())
+              .orElseThrow(() -> new NotFoundException("Account invite not found"));
+      throw linkDeathException(current);
+    }
+
+    // The invited person chose this credential. Joining an existing tenant must not turn it into
+    // a temporary direct-create password or send an existing-account setup link.
+    var admin = createAdminService.createNewTenantAdminFromInvite(buildAdminDto(invite, command));
+    try {
+      IdentityOtpCredential otpInfo =
+          identitySecondFactor.getOtpCredential(
+              usernameTranscoder.encodeUsername(admin.getUsername()));
+      if (otpInfo == null || isBlank(otpInfo.secret())) {
+        // App setup data is optional: the accepted account can still verify the email factor.
+        otpInfo = IdentityOtpCredential.empty();
+      }
+      AccountInvite claimedInvite =
+          accountInviteRepository
+              .findById(invite.getId())
+              .orElseThrow(() -> new NotFoundException("Account invite not found"));
+      claimedInvite.setAcceptedByUserId(admin.getId());
+      claimedInvite.setTotpPendingSecret(otpInfo.secret());
+      claimedInvite.setUpdateDate(now);
+      accountInviteRepository.save(claimedInvite);
+      log.info(
+          "Tenant-admin onboarding of invite {} joined the existing tenant {}",
+          invite.getId(),
+          invite.getTenantId());
+      publishTenantCreated(invite.getTenantId());
+      return new TenantAdminRegistrationResult(
+          invite.getTenantId(), otpInfo.secret(), otpInfo.secretQrCode());
+    } catch (RuntimeException exception) {
+      identityAccountRemover.rollbackUser(admin.getId());
+      throw exception;
+    }
+  }
+
+  /** Also a further admin of a new Träger: whoever registers first creates it. */
+  private boolean joinsExistingTenant(AccountInvite invite) {
+    if (invite.getTenantIdAllocationMode() == IdAllocationMode.EXISTING) {
+      return true;
+    }
+    return invite.getTenantId() != null
+        && invite.getId() != null
+        && accountInviteRepository.existsByTargetRoleAndTenantIdAndStatusAndIdNot(
+            AccountInviteTargetRole.TENANT_ADMIN,
+            invite.getTenantId(),
+            AccountInviteStatus.ACCEPTED,
+            invite.getId());
+  }
+
+  /** The Träger exists and has an admin: release the invites waiting for it. */
+  private void publishTenantCreated(Long tenantId) {
+    eventPublisher.publishEvent(
+        new InviteUnitCreatedEvent(InviteUnitType.TENANT, tenantId, tenantId));
+  }
+
+  /**
+   * Creates a DPA sign link for the invite's reserved tenant because the onboarding administrator
+   * declared they are not authorised to sign (ORISO-Admin#722, wizard step 1). The invite token is
+   * the credential; the actual link creation is delegated to the TenantService's public forward
+   * endpoint, which validates the invite's tenant-ID reservation pair fail-closed
+   * (ORISO-TenantService#179).
+   *
+   * <p>Bounded at {@value #MAX_DPA_FORWARDS_PER_INVITE} forwards per invitation, after which the
+   * call answers 400 and the wizard should tell the administrator to request a new invitation. The
+   * budget exists because this route is anonymous — the invite token in the path is the only
+   * credential — and every call mints a fresh sign token and mails a live signing link to whatever
+   * address the request carries; unbounded, that is a mail relay for someone else's tenant. An
+   * attempt whose mint fails is refunded, so a TenantService outage or throttle does not cost the
+   * administrator a retry — only attempts that actually created a link stay charged.
+   *
+   * <p>The forward is recorded on the invite ({@code dpaForwardedAt}): it is the server-side proof
+   * that lets {@link #registerTenantAdmin} accept a registration without an own DPA acceptance, and
+   * the anchor for resolving the DPA_SIGNED_NOTICE recipient of a pre-account forward
+   * (ORISO-UserService#1005). With a recipient address the sign link is also delivered by mail via
+   * the same {@code DPA_FORWARD} path the authenticated forward uses; without one the wizard gets
+   * the link back to share manually. Only an EMAIL_SENT, unexpired invite may forward — the DPA
+   * step is only reachable in that state.
+   *
+   * <p>Transaction shape (#1008 rule, applied here by the #1065 review): the locked load, the
+   * expiry transition, the budget check and the reservation of the attempt are ONE short database
+   * transaction; the TenantService mint and the mail dispatch run after it committed, never while
+   * the invite's row lock is held. A mint that produced no link repays the reserved attempt in a
+   * second short transaction.
+   */
+  public DpaForwardResult forwardDpa(String rawToken, String recipientEmail) {
+    ReservedDpaForward reserved = reserveDpaForwardAttempt(rawToken);
+    // Thrown only after the reserving transaction committed, so the persisted EXPIRED transition
+    // survives the link-death answer (what noRollbackFor bought on the old single-transaction
+    // shape of this method).
+    reserved.rethrowLinkDeath();
+    AccountInvite invite = reserved.invite();
+
+    // The provider contract is checked BEFORE anything is recorded and regardless of whether a
+    // mail follows. A missing or unparseable expiry is TenantService breaking its contract (see
+    // parseExpiry): recording it as a completed forward, or handing the raw value back on the
+    // recipient-less path, would turn a broken provider answer into a successful one.
+    //
+    // Same reasoning for the link itself: TenantService emits a path-only link when its base URL is
+    // unset (Pre-Dev). The mail path already resolves that against the configured App origin, but
+    // the recipient-less and mail-failed branches hand the link back for MANUAL sharing — a copied
+    // "/dpa-sign/<token>" has no origin and never reaches the DPA frontend. Normalise once here so
+    // the mail and the returned link cannot disagree.
+    //
+    // Both checks run INSIDE the compensated region: a 200 carrying no usable link leaves the
+    // caller with nothing, exactly like an outage or a throttle, so the reserved attempt has to be
+    // repaid the same way. Charging it would let three malformed provider answers exhaust an
+    // invitation's five forwards for good.
+    LocalDateTime expiresAt;
+    String signLink;
+    String rawExpiresAt;
+    try {
+      DpaSignInviteDTO signInvite =
+          publicDpaForwardClient.createForwardSignLink(
+              invite.getTenantId(), invite.getTenantIdReservationToken());
+      rawExpiresAt = signInvite.getExpiresAt();
+      expiresAt = parseExpiry(rawExpiresAt);
+      signLink = dpaForwardEmailService.toAbsoluteSignLink(signInvite.getSignLink());
+    } catch (RuntimeException exception) {
+      // The mint produced no usable link, so the reserved attempt is repaid: an upstream outage,
+      // a throttle or a malformed answer must not exhaust the forwards a legitimate invitation
+      // gets.
+      refundDpaForwardAttempt(rawToken);
+      throw exception;
+    }
+
+    recordDpaForward(rawToken);
+
+    // Only the MAIL degrades, and only after the link exists. Everything that can go wrong before
+    // this point still fails the call: an unknown or dead invite (404/410), a missing reservation,
+    // a throttled or rejected mint (429/410/409). Those produce no link, so there is nothing to
+    // hand back. Once the link IS minted it is live for 14 days and counts against the cap of five
+    // outstanding links, so failing here would burn a slot for nothing — which is exactly how an
+    // onboarding ended up with five unusable links and no mail. The caller gets the link with
+    // mailSent=false and shares it manually.
+    boolean mailSent = false;
+    if (!isBlank(recipientEmail)) {
+      try {
+        dpaForwardEmailService.sendSigningLink(
+            new DpaForwardEmailCommand(invite.getTenantId(), recipientEmail, signLink, expiresAt));
+        mailSent = true;
+      } catch (RuntimeException exception) {
+        // Swallowed deliberately, never silently: the link is the deliverable, the mail is the
+        // convenience. The address is not logged (PII) - the invite id identifies the case.
+        log.warn(
+            "DPA_FORWARD mail could not be delivered for invite {} (reserved tenant {}); the sign"
+                + " link was created and is returned for manual sharing",
+            invite.getId(),
+            invite.getTenantId(),
+            exception);
+      }
+    }
+    log.info(
+        "DPA forwarded from the onboarding wizard for invite {} (reserved tenant {}); mail sent:"
+            + " {}",
+        invite.getId(),
+        invite.getTenantId(),
+        mailSent);
+    return new DpaForwardResult(signLink, rawExpiresAt, mailSent);
+  }
+
+  /**
+   * The database-only head of {@link #forwardDpa}: locked load, state and expiry checks, budget
+   * check, and the reservation of one forward attempt ({@code dpaForwardCount + 1}) — all in one
+   * short transaction, so the pessimistic row lock of {@code findByTokenHash} is never held across
+   * the TenantService mint or the mail dispatch. Reserving under that lock is what keeps {@code
+   * MAX_DPA_FORWARDS_PER_INVITE} airtight: concurrent forwards serialize on the row and each sees
+   * the other's increment.
+   */
+  private ReservedDpaForward reserveDpaForwardAttempt(String rawToken) {
+    return inTransaction(
+        () -> {
+          AccountInvite invite = findTenantAdminInvite(rawToken);
+          LocalDateTime now = LocalDateTime.now();
+
+          if (invite.getStatus() != AccountInviteStatus.EMAIL_SENT) {
+            throw linkDeathException(invite);
+          }
+          AccountInviteLinkException expired = expireIfPastExpiry(invite, now);
+          if (expired != null) {
+            // Returned, not thrown: the EXPIRED transition this just persisted must commit before
+            // the link-death exception leaves the flow.
+            return ReservedDpaForward.dead(expired);
+          }
+          if (joinsExistingTenant(invite)) {
+            throw new BadRequestException(
+                "This invitation joins an existing tenant; its data processing agreement is not"
+                    + " part of the onboarding");
+          }
+          if (invite.getTenantId() == null || isBlank(invite.getTenantIdReservationToken())) {
+            throw new InternalServerErrorException(
+                "Invite holds no authoritative tenant-ID reservation — re-issue the invite after"
+                    + " deploying the TenantService allocation endpoints (TEN-INV-U1)");
+          }
+          if (invite.getDpaForwardCount() >= MAX_DPA_FORWARDS_PER_INVITE) {
+            // Anonymous route, and every call mails a live signing link to a caller-supplied
+            // address: unbounded, this is a mail relay that delivers a valid signature link for
+            // someone else's tenant to any recipient, and each new link also kills the legitimate
+            // signer's outstanding one. The budget is per invite and is never replenished.
+            throw new BadRequestException(
+                "This invitation has already forwarded the data processing agreement "
+                    + MAX_DPA_FORWARDS_PER_INVITE
+                    + " times; ask the platform operator for a new invitation");
+          }
+          invite.setDpaForwardCount(invite.getDpaForwardCount() + 1);
+          invite.setUpdateDate(now);
+          accountInviteRepository.save(invite);
+          return ReservedDpaForward.reserved(invite);
+        });
+  }
+
+  /**
+   * Repays the attempt {@link #reserveDpaForwardAttempt} charged when the mint produced no link.
+   * The invite is reloaded under the row lock so a concurrent forward's increment is never
+   * clobbered by a stale in-memory copy; a vanished row makes the refund moot.
+   */
+  private void refundDpaForwardAttempt(String rawToken) {
+    inTransaction(
+        () -> {
+          accountInviteRepository
+              .findByTokenHash(AccountInviteService.hash(rawToken))
+              .ifPresent(
+                  invite -> {
+                    if (invite.getDpaForwardCount() > 0) {
+                      invite.setDpaForwardCount(invite.getDpaForwardCount() - 1);
+                      invite.setUpdateDate(LocalDateTime.now());
+                      accountInviteRepository.save(invite);
+                    }
+                  });
+          return null;
+        });
+  }
+
+  /**
+   * Records the server-side proof of the forward ({@code dpaForwardedAt}) once the link exists —
+   * the write that lets {@link #registerTenantAdmin} accept a registration without an own DPA
+   * acceptance. A locked reload for the same reason as the refund; best-effort against a vanished
+   * row, because the link is already live and the caller must still receive it.
+   */
+  private void recordDpaForward(String rawToken) {
+    inTransaction(
+        () -> {
+          accountInviteRepository
+              .findByTokenHash(AccountInviteService.hash(rawToken))
+              .ifPresent(
+                  invite -> {
+                    LocalDateTime now = LocalDateTime.now();
+                    invite.setDpaForwardedAt(now);
+                    invite.setUpdateDate(now);
+                    accountInviteRepository.save(invite);
+                  });
+          return null;
+        });
+  }
+
+  /**
+   * Outcome of {@link #reserveDpaForwardAttempt}: either a reserved attempt on a live invite, or a
+   * link-death answer whose EXPIRED transition already committed and must be thrown only now
+   * (mirrors {@link ResolvedOnboardingInvite}).
+   */
+  private record ReservedDpaForward(AccountInvite invite, AccountInviteLinkException linkDeath) {
+    static ReservedDpaForward reserved(AccountInvite invite) {
+      return new ReservedDpaForward(invite, null);
+    }
+
+    static ReservedDpaForward dead(AccountInviteLinkException linkDeath) {
+      return new ReservedDpaForward(null, linkDeath);
+    }
+
+    void rethrowLinkDeath() {
+      if (linkDeath != null) {
+        throw linkDeath;
+      }
+    }
+  }
+
+  /**
+   * The validity window TenantService actually issued. Never invented: the mail tells the signer
+   * how long they have to sign a legal document, and a guessed window is one the link does not
+   * honour — the API response would also be free to state a different one. A missing or unparseable
+   * value means the provider broke its contract, which is worth failing on rather than papering
+   * over.
+   */
+  private static LocalDateTime parseExpiry(String expiresAt) {
+    if (isBlank(expiresAt)) {
+      throw new InternalServerErrorException(
+          "TenantService returned a DPA sign link without an expiry; refusing to state a validity"
+              + " window the link may not honour");
+    }
+    try {
+      return LocalDateTime.parse(expiresAt);
+    } catch (java.time.format.DateTimeParseException exception) {
+      throw new InternalServerErrorException(
+          "TenantService returned an unparseable DPA sign link expiry: " + expiresAt);
+    }
+  }
+
+  /** Sends the existing SPI challenge to the recipient of a live, accepted invitation. */
+  public void startEmailTwoFactor(String rawToken) {
+    AccountInvite invite = loadInviteForTwoFactorActivation(rawToken);
+    OnboardingEmailSecondFactor.start(invite, identityProfileLookup, identitySecondFactor);
+  }
+
+  public void activateEmailTwoFactor(String rawToken, String oneTimePassword) {
+    if (isBlank(oneTimePassword)) {
+      throw new BadRequestException("otp is required");
+    }
+    AccountInvite invite = loadInviteForTwoFactorActivation(rawToken);
+
+    // Pinned BEFORE the remote verification for the same reason as in #activateTwoFactor: the
+    // gate may only be activated on a row that still carries the state this code was checked
+    // against. An e-mail factor carries no pending secret, so that half is usually null here.
+    String verifiedAcceptorId = invite.getAcceptedByUserId();
+    String verifiedPendingSecret = invite.getTotpPendingSecret();
+
+    OnboardingEmailSecondFactor.verify(
+        invite, oneTimePassword, identityProfileLookup, identitySecondFactor);
+    consumeTwoFactorGate(invite, verifiedAcceptorId, verifiedPendingSecret);
+  }
+
+  /**
    * Confirms the pending TOTP setup with a first one-time password. An invalid or rejected code
    * answers 400 (the Admin panel maps 400/422 to its invalid-code state); once the gate is
    * satisfied the link is terminally consumed.
+   *
+   * <p>Transaction shape (#1008 review): the state checks are one short transaction, the Keycloak
+   * round trips run outside it, and consuming the gate is a second short transaction — the invite's
+   * row lock is never held across a remote call.
    */
-  @Transactional
   public void activateTwoFactor(String rawToken, String oneTimePassword) {
     if (isBlank(oneTimePassword)) {
       throw new BadRequestException("otp is required");
     }
-    AccountInvite invite = findTenantAdminInvite(rawToken);
-    LocalDateTime now = LocalDateTime.now();
+    AccountInvite invite = loadInviteForTwoFactorActivation(rawToken);
 
-    if (invite.getStatus() == AccountInviteStatus.EMAIL_SENT) {
-      throw new BadRequestException("Registration has not happened yet for this invite");
-    }
-    if (invite.getStatus() != AccountInviteStatus.ACCEPTED) {
-      throw linkDeathException(invite);
-    }
-    if (!isResumableAtTwoFactorStep(invite, now)) {
-      // Gate already satisfied or resume window expired — terminally consumed.
-      throw new AccountInviteLinkException(AccountInviteLinkException.Reason.CONSUMED);
-    }
-    if (isBlank(invite.getTotpPendingSecret()) || isBlank(invite.getAcceptedByUserId())) {
+    if (isBlank(invite.getTotpPendingSecret())) {
       throw new BadRequestException("No pending TOTP setup exists for this invite");
     }
 
+    // Pinned BEFORE the Keycloak round trip: exactly this acceptor and exactly this secret are
+    // what the verification below proves the one-time password against, and the gate may only be
+    // activated on a row that still carries both (see #consumeTwoFactorGate).
+    String verifiedAcceptorId = invite.getAcceptedByUserId();
+    String verifiedPendingSecret = invite.getTotpPendingSecret();
+
     var profile =
         identityProfileLookup
-            .findById(invite.getAcceptedByUserId())
+            .findById(verifiedAcceptorId)
             .orElseThrow(
                 () -> new BadRequestException("No identity profile exists for this invite"));
+    OnboardingEmailSecondFactor.requireInactive(profile, identitySecondFactor);
     boolean valid =
         identitySecondFactor.setUpOtpCredential(
-            profile.username(), oneTimePassword.trim(), invite.getTotpPendingSecret());
+            profile.username(), oneTimePassword.trim(), verifiedPendingSecret);
     if (!valid) {
       throw new BadRequestException("Invalid one-time password");
     }
 
-    accountInviteService.markTwoFactorActive(invite.getAcceptedByUserId());
-    invite.setTotpPendingSecret(null);
-    invite.setUpdateDate(now);
-    accountInviteRepository.save(invite);
+    consumeTwoFactorGate(invite, verifiedAcceptorId, verifiedPendingSecret);
+  }
+
+  /**
+   * The database-only precondition check of {@link #activateTwoFactor}. Every rejection here is
+   * thrown before anything is written, so an ordinary rollback loses nothing.
+   */
+  private AccountInvite loadInviteForTwoFactorActivation(String rawToken) {
+    return inTransaction(
+        () -> {
+          AccountInvite invite = findTenantAdminInvite(rawToken);
+          LocalDateTime now = LocalDateTime.now();
+
+          if (invite.getStatus() == AccountInviteStatus.EMAIL_SENT) {
+            throw new BadRequestException("Registration has not happened yet for this invite");
+          }
+          if (invite.getStatus() != AccountInviteStatus.ACCEPTED) {
+            throw linkDeathException(invite);
+          }
+          if (!isResumableAtTwoFactorStep(invite, now)) {
+            // Gate already satisfied or resume window expired — terminally consumed.
+            throw new AccountInviteLinkException(AccountInviteLinkException.Reason.CONSUMED);
+          }
+          if (isBlank(invite.getAcceptedByUserId())) {
+            throw new BadRequestException("No pending TOTP setup exists for this invite");
+          }
+          return invite;
+        });
+  }
+
+  /**
+   * Terminal consumption of the link once Keycloak accepted the one-time password.
+   *
+   * <p>The instance held here was DETACHED across the remote round trip, so the row is re-read
+   * under its PESSIMISTIC_WRITE lock and only the field this write owns — the pending secret — is
+   * touched (#1008 review). Saving the detached snapshot instead would merge every column as it
+   * looked before the round trip and silently revert a concurrent update; {@link AccountInvite}
+   * carries neither {@code @Version} nor {@code @DynamicUpdate} to catch that. The freshly locked
+   * row is re-checked for eligibility, and against the acceptor and pending secret the code was
+   * actually verified for, by {@link OnboardingTwoFactorGuard#revalidateTwoFactorGate} before
+   * anything is written. Clearing the secret stays FIRST so the gate transition, which re-reads the
+   * invite by its acceptor and therefore works on the very same managed row, is not undone by this
+   * write.
+   */
+  private void consumeTwoFactorGate(
+      AccountInvite invite, String verifiedAcceptorId, String verifiedPendingSecret) {
+    inTransaction(
+        () -> {
+          AccountInvite locked =
+              accountInviteRepository
+                  .findByIdForUpdate(invite.getId())
+                  .orElseThrow(() -> new NotFoundException("Account invite not found"));
+          revalidateTwoFactorGate(locked, verifiedAcceptorId, verifiedPendingSecret);
+          locked.setTotpPendingSecret(null);
+          locked.setUpdateDate(LocalDateTime.now());
+          accountInviteRepository.save(locked);
+          accountInviteService.markTwoFactorActive(locked.getAcceptedByUserId());
+          return null;
+        });
+  }
+
+  /** Runs {@code action} in its own short database transaction (no remote call belongs inside). */
+  private <T> T inTransaction(Supplier<T> action) {
+    return transactionTemplate.execute(status -> action.get());
   }
 
   private AccountInvite findTenantAdminInvite(String rawToken) {
@@ -252,49 +844,66 @@ public class TenantAdminOnboardingService {
     return invite;
   }
 
-  private void expireIfPastExpiry(AccountInvite invite, LocalDateTime now) {
+  /**
+   * Persists the {@code EMAIL_SENT -> EXPIRED} transition of an overdue link and RETURNS the
+   * link-death answer instead of throwing it: the caller must let that write commit before the
+   * exception leaves the flow.
+   *
+   * @return the {@code EXPIRED} link-death exception, or {@code null} when the link is still live
+   */
+  private AccountInviteLinkException expireIfPastExpiry(AccountInvite invite, LocalDateTime now) {
     if (invite.getExpiresAt() != null && invite.getExpiresAt().isBefore(now)) {
       invite.setStatus(AccountInviteStatus.EXPIRED);
+      invite.setActiveRecipientKey(null);
       invite.setUpdateDate(now);
       accountInviteRepository.save(invite);
-      throw new AccountInviteLinkException(AccountInviteLinkException.Reason.EXPIRED);
+      reservationLedger.releaseUnneeded(invite, now);
+      return new AccountInviteLinkException(AccountInviteLinkException.Reason.EXPIRED);
     }
-  }
-
-  private static boolean isResumableAtTwoFactorStep(AccountInvite invite, LocalDateTime now) {
-    boolean twoFactorStillPending =
-        !AccountInviteService.isTwoFactorGateSatisfied(invite.getTwoFactorStatus());
-    boolean withinExpiryWindow =
-        invite.getExpiresAt() == null || !invite.getExpiresAt().isBefore(now);
-    return invite.getStatus() == AccountInviteStatus.ACCEPTED
-        && twoFactorStillPending
-        && withinExpiryWindow;
-  }
-
-  private static AccountInviteLinkException linkDeathException(AccountInvite invite) {
-    return switch (invite.getStatus()) {
-      case ACCEPTED -> new AccountInviteLinkException(AccountInviteLinkException.Reason.CONSUMED);
-      case REVOKED -> new AccountInviteLinkException(AccountInviteLinkException.Reason.REVOKED);
-      case SUPERSEDED ->
-          new AccountInviteLinkException(AccountInviteLinkException.Reason.SUPERSEDED);
-      case EXPIRED -> new AccountInviteLinkException(AccountInviteLinkException.Reason.EXPIRED);
-      default -> new AccountInviteLinkException(AccountInviteLinkException.Reason.NOT_ACTIVE);
-    };
+    return null;
   }
 
   private static void validateRegistration(RegisterTenantAdminCommand command) {
     if (command == null) {
       throw new BadRequestException("Request body is required");
     }
-    if (isBlank(command.organisationName())) {
-      throw new BadRequestException("organisation.name is required");
-    }
+    // organisation.name is checked in registerTenantAdmin: an EXISTING-Träger invite has none.
     if (isBlank(command.password()) || command.password().length() < MIN_PASSWORD_LENGTH) {
       throw new BadRequestException(
           "account.password must be at least " + MIN_PASSWORD_LENGTH + " characters long");
     }
-    if (!command.dpaAccepted()) {
-      throw new BadRequestException("The data processing agreement must be accepted");
+    // dpaAccepted is validated against the invite's forward state in registerTenantAdmin: a
+    // missing acceptance is only acceptable when the DPA was forwarded to an authorised signer.
+    validateSenderBlock(command);
+  }
+
+  /**
+   * The Träger's optional sender block, checked against TenantService's limits before anything is
+   * created: a value TenantService refuses would otherwise fail the registration half-way, after
+   * the admin account already exists.
+   */
+  private static void validateSenderBlock(RegisterTenantAdminCommand command) {
+    requireAtMost(command.legalName(), LEGAL_NAME_MAX_LENGTH, "organisation.legalName");
+    requireAtMost(command.contactEmail(), CONTACT_EMAIL_MAX_LENGTH, "organisation.contactEmail");
+    requireAtMost(command.contactPhone(), CONTACT_PHONE_MAX_LENGTH, "organisation.contactPhone");
+    if (!isBlank(command.contactEmail())
+        && !EMAIL_VALIDATOR
+            .validateValue(ContactEmail.class, "value", command.contactEmail().trim())
+            .isEmpty()) {
+      throw new BadRequestException("organisation.contactEmail is not a valid e-mail address");
+    }
+  }
+
+  /* The same @Email check TenantService applies to contactEmail — commons-validator would also
+  reject domains outside its TLD list, which TenantService accepts. */
+  private static final Validator EMAIL_VALIDATOR =
+      Validation.buildDefaultValidatorFactory().getValidator();
+
+  private record ContactEmail(@Email String value) {}
+
+  private static void requireAtMost(String value, int maxLength, String field) {
+    if (!isBlank(value) && value.trim().length() > maxLength) {
+      throw new BadRequestException(field + " must be at most " + maxLength + " characters long");
     }
   }
 
@@ -328,8 +937,16 @@ public class TenantAdminOnboardingService {
         .name(command.organisationName().trim())
         .subdomain(trimToNull(command.subdomain()))
         .address(trimToNull(command.address()))
+        .legalName(trimToNull(command.legalName()))
+        .contactEmail(trimToNull(command.contactEmail()))
+        .contactPhone(trimToNull(command.contactPhone()))
         .adminEmails(List.of(invite.getRecipientEmail()))
         .tenantIdReservationToken(invite.getTenantIdReservationToken())
+        // Licensing.allowedNumberOfUsers is required by the TenantService creation contract and
+        // its column has no database default, so leaving it out created tenants whose consultant
+        // allowance was null — the Admin tenant list then showed an empty "Max. erlaubte Berater"
+        // column and the number could only be repaired by hand.
+        .licensing(new Licensing().allowedNumberOfUsers(PROVISIONAL_ALLOWED_NUMBER_OF_USERS))
         .onboardingDpaAcceptance(dpaAcceptance);
   }
 
@@ -365,13 +982,38 @@ public class TenantAdminOnboardingService {
   /**
    * Resolved onboarding state: the invite, whether the flow re-enters at the 2FA step (#569 resume
    * contract) instead of the registration step, and the operator's published DPA/AVV text (stored
-   * language -&gt; HTML JSON map) the DPA step renders read-only; {@code null} when nothing is
-   * published or the lookup is unavailable.
+   * language -&gt; HTML JSON map) the DPA step renders read-only.
+   *
+   * <p>{@code dpaContent} is {@code null} when no contract could be shown; {@code
+   * dpaUnavailableReason} then tells the invitee's client which of the two very different causes it
+   * was — nothing published yet, or the upstream read failed. Both are {@code null} on the resume
+   * path, which re-enters at the 2FA step and shows no contract at all.
    */
   public record OnboardingInviteState(
-      AccountInvite invite, boolean pendingTwoFactorResume, String dpaContent) {}
+      AccountInvite invite,
+      boolean pendingTwoFactorResume,
+      String dpaContent,
+      /** Why {@code dpaContent} is absent; null when present or when there is no DPA step. */
+      DpaUnavailableReason dpaUnavailableReason,
+      /** The invitee joins an existing Träger: no organisation or DPA step. */
+      boolean joinsExistingTenant) {
 
-  /** Input for the reservation-consuming registration; mirrors the Admin panel request shape. */
+    public OnboardingInviteState(
+        AccountInvite invite,
+        boolean pendingTwoFactorResume,
+        String dpaContent,
+        DpaUnavailableReason dpaUnavailableReason) {
+      this(invite, pendingTwoFactorResume, dpaContent, dpaUnavailableReason, false);
+    }
+  }
+
+  /**
+   * Input for the reservation-consuming registration; mirrors the Admin panel request shape.
+   *
+   * @param legalName optional full legal name of the Träger — the mail footer's sender name
+   * @param contactEmail optional contact e-mail for the mail footer
+   * @param contactPhone optional contact phone for the mail footer
+   */
   public record RegisterTenantAdminCommand(
       String organisationName,
       String subdomain,
@@ -383,9 +1025,54 @@ public class TenantAdminOnboardingService {
       String dpaSignerOrganisation,
       String password,
       Long reservedTenantId,
-      String tenantIdReservationToken) {}
+      String tenantIdReservationToken,
+      String legalName,
+      String contactEmail,
+      String contactPhone) {
+
+    /** A registration without the optional sender block. */
+    public RegisterTenantAdminCommand(
+        String organisationName,
+        String subdomain,
+        String address,
+        boolean dpaAccepted,
+        String dpaSignerName,
+        String dpaSignerPosition,
+        String dpaSignerEmail,
+        String dpaSignerOrganisation,
+        String password,
+        Long reservedTenantId,
+        String tenantIdReservationToken) {
+      this(
+          organisationName,
+          subdomain,
+          address,
+          dpaAccepted,
+          dpaSignerName,
+          dpaSignerPosition,
+          dpaSignerEmail,
+          dpaSignerOrganisation,
+          password,
+          reservedTenantId,
+          tenantIdReservationToken,
+          null,
+          null,
+          null);
+    }
+  }
 
   /** The created (inactive) tenant plus the TOTP setup material for the 2FA step. */
   public record TenantAdminRegistrationResult(
       Long tenantId, String totpSecret, String totpQrCodeBase64) {}
+
+  /**
+   * The sign link created for the authorised signer (raw token embedded — show/copy, never log)
+   * plus its expiry as reported by TenantService (ISO local date-time string).
+   */
+  /**
+   * @param mailSent whether the DPA_FORWARD mail actually reached the mail service. False both when
+   *     no recipient was requested and when delivery failed — the link is live either way, so the
+   *     caller must offer it for manual sharing.
+   */
+  public record DpaForwardResult(String signUrl, String expiresAt, boolean mailSent) {}
 }

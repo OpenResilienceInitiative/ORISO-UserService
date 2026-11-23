@@ -2,47 +2,39 @@ package de.caritas.cob.userservice.api.service.agency.dto;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
 
 class AgencyMatrixCredentialsDTOTest {
 
-  @Test
-  void gettersAndSetters_Should_roundTripValues() {
-    AgencyMatrixCredentialsDTO dto = new AgencyMatrixCredentialsDTO();
-    dto.setMatrixUserId("@agency:matrix.example.com");
-    dto.setMatrixPassword("secret");
+  private final ObjectMapper json = new ObjectMapper();
 
-    assertThat(dto.getMatrixUserId()).isEqualTo("@agency:matrix.example.com");
-    assertThat(dto.getMatrixPassword()).isEqualTo("secret");
+  @Test
+  void identityOnlyResponseCanBeDeserialized() throws Exception {
+    var dto =
+        json.readValue("{\"matrixUserId\":\"@agency:matrix\"}", AgencyMatrixCredentialsDTO.class);
+    assertThat(dto.getMatrixUserId()).isEqualTo("@agency:matrix");
   }
 
   @Test
-  void equalsAndHashCode_Should_matchForSameValues() {
-    AgencyMatrixCredentialsDTO first = credentials("@user:matrix", "password");
-    AgencyMatrixCredentialsDTO second = credentials("@user:matrix", "password");
+  void oldAgencyResponseDiscardsPasswordWithoutRetainingOrReserializingIt() throws Exception {
+    var dto =
+        json.readValue(
+            "{\"matrixUserId\":\"@agency:matrix\",\"matrixPassword\":\"public-legacy-fixture\"}",
+            AgencyMatrixCredentialsDTO.class);
+    assertThat(dto.getMatrixUserId()).isEqualTo("@agency:matrix");
+    assertThat(dto.toString()).doesNotContain("Password", "public-legacy-fixture");
+    assertThat(json.writeValueAsString(dto)).isEqualTo("{\"matrixUserId\":\"@agency:matrix\"}");
+  }
 
+  @Test
+  void equalityAndHashCodeUseOnlyIdentity() {
+    var first = new AgencyMatrixCredentialsDTO();
+    first.setMatrixUserId("@agency:matrix");
+    var second = new AgencyMatrixCredentialsDTO();
+    second.setMatrixUserId("@agency:matrix");
     assertThat(first).isEqualTo(second).hasSameHashCodeAs(second);
-  }
-
-  @Test
-  void equals_Should_notMatch_When_valuesDiffer() {
-    AgencyMatrixCredentialsDTO first = credentials("@user:matrix", "password");
-    AgencyMatrixCredentialsDTO second = credentials("@other:matrix", "password");
-
+    second.setMatrixUserId("@other:matrix");
     assertThat(first).isNotEqualTo(second);
-  }
-
-  @Test
-  void toString_Should_containFieldValues() {
-    AgencyMatrixCredentialsDTO dto = credentials("@user:matrix", "password");
-
-    assertThat(dto.toString()).contains("@user:matrix").contains("password");
-  }
-
-  private static AgencyMatrixCredentialsDTO credentials(String matrixUserId, String password) {
-    AgencyMatrixCredentialsDTO dto = new AgencyMatrixCredentialsDTO();
-    dto.setMatrixUserId(matrixUserId);
-    dto.setMatrixPassword(password);
-    return dto;
   }
 }

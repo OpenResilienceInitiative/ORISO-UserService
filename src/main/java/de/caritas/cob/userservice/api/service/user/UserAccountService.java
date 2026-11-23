@@ -1,5 +1,6 @@
 package de.caritas.cob.userservice.api.service.user;
 
+import com.neovisionaries.i18n.LanguageCode;
 import de.caritas.cob.userservice.api.adapters.web.dto.NotificationsSettingsDTO;
 import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
 import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException;
@@ -12,8 +13,10 @@ import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
 import de.caritas.cob.userservice.api.port.out.IdentityDeactivator;
 import de.caritas.cob.userservice.api.port.out.IdentityEmailAddressUpdater;
+import de.caritas.cob.userservice.api.service.AskerEmailCollectionPolicy;
 import de.caritas.cob.userservice.api.service.ConsultantService;
-import de.caritas.cob.userservice.api.service.appointment.AppointmentService;
+import de.caritas.cob.userservice.api.service.email.OrisoEmailRenderer;
+import de.caritas.cob.userservice.api.service.notification.AskerNotificationChannelPolicy;
 import de.caritas.cob.userservice.api.service.notification.SupervisorAddedEmailNotificationService;
 import de.caritas.cob.userservice.api.service.statistics.StatisticsService;
 import de.caritas.cob.userservice.api.service.statistics.event.DeleteAccountStatisticsEvent;
@@ -33,10 +36,12 @@ import org.springframework.stereotype.Service;
 @RequiredArgsConstructor
 @Slf4j
 public class UserAccountService {
+  private final @NonNull de.caritas.cob.userservice.api.service.livechat.LiveChatAccountClaimService
+      liveChatClaims;
 
   private final @NonNull UserService userService;
+  private final @NonNull AskerEmailCollectionPolicy emailCollectionPolicy;
   private final @NonNull ConsultantService consultantService;
-  private final @NonNull AppointmentService appointmentService;
   private final @NonNull AuthenticatedUser authenticatedUser;
   private final @NonNull IdentityClient identityClient;
   private final @NonNull IdentityEmailAddressUpdater identityEmailAddressUpdater;
@@ -49,6 +54,8 @@ public class UserAccountService {
   private final @NonNull SupervisorAddedEmailNotificationService
       supervisorAddedEmailNotificationService;
   private final @NonNull DeletionLifecycleService deletionLifecycleService;
+  private final @NonNull de.caritas.cob.userservice.api.workflow.delete.service.AskerEnquiryCloser
+      askerEnquiryCloser;
 
   public Optional<User> findUserByEmail(String email) {
     return this.userService.findUserByEmail(email);
@@ -133,28 +140,38 @@ public class UserAccountService {
    */
   public void changeUserAccountEmailAddress(Optional<String> optionalEmail) {
     ensureCurrentAccountIsWritable();
+    if (optionalEmail.isPresent() && authenticatedUser.isAnonymous()) {
+      throw new ForbiddenException("Anonymous live-chat accounts cannot add an email address");
+    }
+    var userId = authenticatedUser.getUserId();
+    var email = optionalEmail.orElseGet(() -> userHelper.getDummyEmail(userId));
+    Optional<Consultant> consultantOpt = consultantService.getConsultant(userId);
+    Optional<User> userOpt = userService.getUser(userId);
+    if (optionalEmail.isPresent()
+        && userOpt.isPresent()
+        && !AskerEmailCollectionPolicy.sameAddress(userOpt.get().getEmail(), optionalEmail.get())) {
+      emailCollectionPolicy.requireForAccount(userOpt.get());
+    }
+    LanguageCode notificationLanguage =
+        userOpt
+            .map(User::getLanguageCode)
+            .orElseGet(() -> consultantOpt.map(Consultant::getLanguageCode).orElse(null));
+    if (optionalEmail.isPresent()) {
+      try {
+        OrisoEmailRenderer.Tone.of(notificationLanguage);
+      } catch (IllegalArgumentException unsupportedLanguage) {
+        log.warn(
+            "Email-change language is missing or unsupported; using the German product default");
+        notificationLanguage = LanguageCode.de;
+      }
+    }
+    LanguageCode validatedNotificationLanguage = notificationLanguage;
+
     optionalEmail.ifPresentOrElse(
         identityEmailAddressUpdater::updateCurrentUserEmail,
         identityEmailAddressUpdater::deleteCurrentUserEmail);
-
-    var userId = authenticatedUser.getUserId();
-    var email = optionalEmail.orElseGet(() -> userHelper.getDummyEmail(userId));
-    Optional<Consultant> consultantOpt =
-        consultantService
-            .getConsultant(userId)
-            .map(
-                consultant -> {
-                  updateConsultantEmail(consultant, email);
-                  return consultant;
-                });
-    Optional<User> userOpt =
-        userService
-            .getUser(userId)
-            .map(
-                user -> {
-                  updateUserEmail(user, email);
-                  return user;
-                });
+    consultantOpt.ifPresent(consultant -> updateConsultantEmail(consultant, email));
+    userOpt.ifPresent(user -> updateUserEmail(user, email));
 
     optionalEmail.ifPresent(
         updatedEmail -> {
@@ -171,7 +188,8 @@ public class UserAccountService {
               updatedEmail,
               tenantId,
               TenantContext.getCurrentTenantData(),
-              authenticatedUser.getAccessToken());
+              authenticatedUser.getAccessToken(),
+              validatedNotificationLanguage);
         });
   }
 
@@ -181,7 +199,6 @@ public class UserAccountService {
   }
 
   void updateUserEmail(User user, String email) {
-    this.appointmentService.updateAskerEmail(user.getUserId(), email);
     setInitialEmailNotificationsSettingsForNewEmailAddress(user, email);
     user.setEmail(email);
     this.userService.saveUser(user);
@@ -218,9 +235,11 @@ public class UserAccountService {
    */
   public void deactivateAndFlagUserAccountForDeletion() {
     User user = retrieveValidatedUser();
+    liveChatClaims.claimIntentionalDeletion(user.getUserId());
     this.identityDeactivator.deactivateUser(user.getUserId());
     deletionLifecycleService.beginUserDeletion(user, user.getUserId());
     userService.saveUser(user);
+    askerEnquiryCloser.closeOpenEnquiries(user);
     fireAccountDeletionStatisticsEvent(user);
   }
 
@@ -240,10 +259,14 @@ public class UserAccountService {
    *
    * @param mobileToken the new mobile device identifier token
    */
+  @org.springframework.transaction.annotation.Transactional
   public void updateUserMobileToken(String mobileToken) {
     ensureCurrentAccountIsWritable();
+    if (mobileToken != null && !mobileToken.isBlank()) ensurePushRegistrationAllowed();
+    // #1662: write to the row read under the lock "Konto behalten" takes. User has no version
+    // column; a copy read before a concurrent keep would merge temporary_account back.
     this.userService
-        .getUser(this.authenticatedUser.getUserId())
+        .getUserForUpdate(this.authenticatedUser.getUserId())
         .ifPresent(user -> updateMobileToken(user, mobileToken));
   }
 
@@ -259,32 +282,56 @@ public class UserAccountService {
    */
   public void addMobileAppToken(String mobileToken) {
     ensureCurrentAccountIsWritable();
+    ensurePushRegistrationAllowed();
     this.userService.addMobileAppToken(this.authenticatedUser.getUserId(), mobileToken);
     this.consultantService.addMobileAppToken(this.authenticatedUser.getUserId(), mobileToken);
   }
 
+  /** #1662: a temporary account cannot register a device or browser for push notifications. */
+  private void ensurePushRegistrationAllowed() {
+    this.userService
+        .getUser(this.authenticatedUser.getUserId())
+        .ifPresent(AskerNotificationChannelPolicy::requireNotificationOptInAllowed);
+  }
+
   private void ensureCurrentAccountIsWritable() {
-    this.userService.getUser(this.authenticatedUser.getUserId()).ifPresent(this::assertWritable);
+    String userId = this.authenticatedUser.getUserId();
+    // getUser filters deleteDate IS NULL, so on its own it can never return an account in a
+    // deletion lifecycle state — every branch of assertWritable(User) below would be unreachable.
+    // The soft-deleted account is exactly the one the safeguard exists to freeze, so fall back to
+    // the lookup that includes it.
+    this.userService
+        .getUser(userId)
+        .or(() -> this.userService.findDeletedById(userId))
+        .ifPresent(this::assertWritable);
+    // Same reasoning as for the user above: getConsultant filters deleteDate IS NULL, so the
+    // consultant in the safeguard window is only found by the lookup that includes deleted ones.
     this.consultantService
-        .getConsultant(this.authenticatedUser.getUserId())
+        .getConsultant(userId)
+        .or(() -> this.consultantService.findConsultantIncludingDeleted(userId))
         .ifPresent(this::assertWritable);
   }
 
   private void assertWritable(User user) {
-    if (user.getDeleteDate() == null) {
-      return;
-    }
-    if (user.getDeletionLifecycleState() == DeletionLifecycleState.READ_ONLY_SAFEGUARD) {
+    if (user.getDeleteDate() != null && isFrozen(user.getDeletionLifecycleState())) {
       throw new ForbiddenException("Account is in read-only safeguard mode.");
     }
   }
 
+  // The same frozen states as for an asker: a consultant claimed by the nightly purge
+  // (HARD_DELETE_IN_PROGRESS, then HARD_DELETE_PARTIAL_FAILURE on a failed run) must not write
+  // either.
   private void assertWritable(Consultant consultant) {
-    if (consultant.getDeleteDate() == null) {
-      return;
-    }
-    if (consultant.getDeletionLifecycleState() == DeletionLifecycleState.READ_ONLY_SAFEGUARD) {
+    if (consultant.getDeleteDate() != null && isFrozen(consultant.getDeletionLifecycleState())) {
       throw new ForbiddenException("Account is in read-only safeguard mode.");
     }
+  }
+
+  private static boolean isFrozen(DeletionLifecycleState state) {
+    return state == DeletionLifecycleState.READ_ONLY_SAFEGUARD
+        || state == DeletionLifecycleState.REACTIVATION_IN_PROGRESS
+        || state == DeletionLifecycleState.REACTIVATION_REPAIR_REQUIRED
+        || state == DeletionLifecycleState.HARD_DELETE_IN_PROGRESS
+        || state == DeletionLifecycleState.HARD_DELETE_PARTIAL_FAILURE;
   }
 }

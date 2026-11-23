@@ -1,10 +1,13 @@
 package de.caritas.cob.userservice.api.port.out;
 
+import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.neovisionaries.i18n.LanguageCode;
+import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.ConversationType;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.Session.RegistrationType;
@@ -13,19 +16,27 @@ import de.caritas.cob.userservice.api.model.SessionData;
 import de.caritas.cob.userservice.api.model.SessionData.SessionDataType;
 import de.caritas.cob.userservice.api.model.User;
 import jakarta.persistence.EntityManager;
+import jakarta.persistence.EntityManagerFactory;
+import java.util.Arrays;
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.stream.Collectors;
 import org.apache.commons.lang3.RandomStringUtils;
+import org.hibernate.SessionFactory;
 import org.jeasy.random.EasyRandom;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.data.jpa.test.autoconfigure.DataJpaTest;
 import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase;
 import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase.Replace;
 import org.springframework.test.context.TestPropertySource;
+import org.springframework.transaction.annotation.Propagation;
+import org.springframework.transaction.annotation.Transactional;
 
 @DataJpaTest
 @TestPropertySource(properties = "spring.profiles.active=testing")
@@ -38,7 +49,10 @@ class SessionRepositoryIT {
 
   @Autowired private UserRepository userRepository;
 
+  @Autowired private ConsultantRepository consultantRepository;
+
   @Autowired private EntityManager entityManager;
+  @Autowired private EntityManagerFactory entityManagerFactory;
 
   private User user;
 
@@ -51,6 +65,164 @@ class SessionRepositoryIT {
     }
     session = null;
     user = null;
+  }
+
+  @Test
+  @Transactional(propagation = Propagation.NOT_SUPPORTED)
+  void staleSessionUpdatesPreserveTheIndependentPreferenceAndUnrelatedData() {
+    givenAUser();
+    givenValidSession();
+    session = underTest.save(session);
+    Long id = session.getId();
+    try (var staleWriter = entityManagerFactory.createEntityManager()) {
+      var stale = staleWriter.find(Session.class, id);
+      underTest.updateAdditionalAccessPreference(id, true);
+      staleWriter.getTransaction().begin();
+      stale.setPostcode("54321");
+      staleWriter.getTransaction().commit();
+    }
+    var after = underTest.findById(id).orElseThrow();
+    assertTrue(after.isAlwaysAskBeforeAdditionalAccess());
+    assertEquals("54321", after.getPostcode());
+    try (var stalePreferenceWriter = entityManagerFactory.createEntityManager();
+        var unrelatedWriter = entityManagerFactory.createEntityManager()) {
+      var stale = stalePreferenceWriter.find(Session.class, id);
+      unrelatedWriter.getTransaction().begin();
+      unrelatedWriter.find(Session.class, id).setPostcode("12345");
+      unrelatedWriter.getTransaction().commit();
+      // Preference writes intentionally use the dedicated production boundary, not stale entities.
+      assertTrue(stale.isAlwaysAskBeforeAdditionalAccess());
+      underTest.updateAdditionalAccessPreference(id, false);
+    }
+    var finalState = underTest.findById(id).orElseThrow();
+    assertFalse(finalState.isAlwaysAskBeforeAdditionalAccess());
+    assertEquals("12345", finalState.getPostcode());
+    session = finalState;
+  }
+
+  /** ORISO-Frontend#2170: the name of the direct link is written once, like its medium. */
+  @Test
+  @Transactional(propagation = Propagation.NOT_SUPPORTED)
+  void directLinkNameIsWrittenOnceAndSurvivesStaleSaves() {
+    givenAUser();
+    givenValidSession();
+    session = underTest.save(session);
+    Long id = session.getId();
+    Session stale;
+    try (var detachedReader = entityManagerFactory.createEntityManager()) {
+      stale = detachedReader.find(Session.class, id);
+    }
+    var version = stale.getRowVersion();
+
+    assertEquals(1, underTest.recordDirectLinkName(id, "Flyer Schule"));
+    // A later link of another name does not rename the conversation.
+    assertEquals(0, underTest.recordDirectLinkName(id, "Plakat Bahnhof"));
+    assertEquals("Flyer Schule", underTest.findById(id).orElseThrow().getDirectLinkName());
+    assertEquals(version, underTest.findById(id).orElseThrow().getRowVersion());
+
+    // A whole-entity save from before the write must not erase it.
+    stale.setPostcode("54321");
+    underTest.save(stale);
+    var finalState = underTest.findById(id).orElseThrow();
+    session = finalState;
+    assertEquals("Flyer Schule", finalState.getDirectLinkName());
+    assertEquals("54321", finalState.getPostcode());
+  }
+
+  /** FE#1952: the medium of the direct link a conversation came from is written once. */
+  @Test
+  @Transactional(propagation = Propagation.NOT_SUPPORTED)
+  void directLinkOriginIsWrittenOnceAndSurvivesStaleSaves() {
+    givenAUser();
+    givenValidSession();
+    session = underTest.save(session);
+    Long id = session.getId();
+    Session stale;
+    try (var detachedReader = entityManagerFactory.createEntityManager()) {
+      stale = detachedReader.find(Session.class, id);
+    }
+    var version = stale.getRowVersion();
+
+    assertEquals(1, underTest.recordDirectLinkOrigin(id, "VIDEO"));
+    // A later link of another medium does not relabel the conversation.
+    assertEquals(0, underTest.recordDirectLinkOrigin(id, "AUDIO"));
+    assertEquals("VIDEO", underTest.findById(id).orElseThrow().getDirectLinkMedium());
+    assertEquals(version, underTest.findById(id).orElseThrow().getRowVersion());
+
+    // A whole-entity save from before the write must not erase it.
+    stale.setPostcode("54321");
+    underTest.save(stale);
+    var finalState = underTest.findById(id).orElseThrow();
+    session = finalState;
+    assertEquals("VIDEO", finalState.getDirectLinkMedium());
+    assertEquals("54321", finalState.getPostcode());
+  }
+
+  @Test
+  @Transactional(propagation = Propagation.NOT_SUPPORTED)
+  void detachedStaleSessionSaveCannotRevertAnIndependentPreferenceWrite() {
+    givenAUser();
+    givenValidSession();
+    session = underTest.save(session);
+    Long id = session.getId();
+    Session stale;
+    try (var detachedReader = entityManagerFactory.createEntityManager()) {
+      stale = detachedReader.find(Session.class, id);
+    }
+    var ownershipVersion = stale.getRowVersion();
+    underTest.updateAdditionalAccessPreference(id, true);
+    assertEquals(ownershipVersion, underTest.findById(id).orElseThrow().getRowVersion());
+    stale.setPostcode("54321");
+    underTest.save(stale);
+    var finalState = underTest.findById(id).orElseThrow();
+    session = finalState;
+    assertTrue(finalState.isAlwaysAskBeforeAdditionalAccess());
+    assertEquals("54321", finalState.getPostcode());
+    assertEquals(ownershipVersion + 1, finalState.getRowVersion());
+  }
+
+  @Test
+  @Transactional(propagation = Propagation.NOT_SUPPORTED)
+  void staleWholeSessionSaveStillRejectsAConcurrentStatusWrite() {
+    givenAUser();
+    givenValidSession();
+    session = underTest.save(session);
+    Long id = session.getId();
+    Session stale;
+    try (var reader = entityManagerFactory.createEntityManager()) {
+      stale = reader.find(Session.class, id);
+    }
+    var current = underTest.findById(id).orElseThrow();
+    current.setStatus(SessionStatus.DONE);
+    session = underTest.save(current);
+    stale.setPostcode("54321");
+    assertThrows(
+        org.springframework.orm.ObjectOptimisticLockingFailureException.class,
+        () -> underTest.save(stale));
+    var finalState = underTest.findById(id).orElseThrow();
+    assertEquals(SessionStatus.DONE, finalState.getStatus());
+    assertEquals(session.getPostcode(), finalState.getPostcode());
+    session = finalState;
+  }
+
+  @Test
+  void standingAdditionalAccessPreferenceSurvivesClearingThePersistenceContext() {
+    givenAUser();
+    givenValidSession();
+    var saved = underTest.save(session);
+    entityManager.flush();
+    Long id = saved.getId();
+    entityManager.clear();
+    assertFalse(underTest.findById(id).orElseThrow().isAlwaysAskBeforeAdditionalAccess());
+    underTest.updateAdditionalAccessPreference(id, true);
+    entityManager.flush();
+    entityManager.clear();
+    assertTrue(underTest.findById(id).orElseThrow().isAlwaysAskBeforeAdditionalAccess());
+    underTest.updateAdditionalAccessPreference(id, false);
+    entityManager.flush();
+    entityManager.clear();
+    assertFalse(underTest.findById(id).orElseThrow().isAlwaysAskBeforeAdditionalAccess());
+    session = underTest.findById(id).orElseThrow();
   }
 
   @Test
@@ -111,6 +283,148 @@ class SessionRepositoryIT {
     } finally {
       underTest.deleteAll(sessions);
     }
+  }
+
+  @Test
+  void countOpenCasesOfTenantCountsOnlyOpenCasesOfThatTenant() {
+    givenAUser();
+    var consultant = consultantRepository.findAll().iterator().next();
+    var id = consultant.getId();
+    var open = List.of(SessionStatus.NEW, SessionStatus.IN_PROGRESS);
+    // This consultant may already have seeded open cases, which count for tenant 1.
+    long seededInTenant1 = underTest.countOpenCasesOfTenant(id, open, 1L);
+    var sessions =
+        List.of(
+            sessionOf(consultant, SessionStatus.NEW, 11L),
+            sessionOf(consultant, SessionStatus.IN_PROGRESS, 11L),
+            sessionOf(consultant, SessionStatus.IN_PROGRESS, 22L),
+            sessionOf(consultant, SessionStatus.INITIAL, 11L),
+            sessionOf(consultant, SessionStatus.IN_PROGRESS, null));
+    underTest.saveAll(sessions);
+    entityManager.flush();
+
+    try {
+      assertEquals(2, underTest.countOpenCasesOfTenant(id, open, 11L));
+      assertEquals(1, underTest.countOpenCasesOfTenant(id, open, 22L));
+      assertEquals(0, underTest.countOpenCasesOfTenant(id, open, 33L));
+      // Cases without a tenant belong to the technical tenant 1, as in the room queries.
+      assertEquals(seededInTenant1 + 1, underTest.countOpenCasesOfTenant(id, open, 1L));
+      assertEquals(0, underTest.countOpenCasesOfTenant(id, open, null));
+    } finally {
+      underTest.deleteAll(sessions);
+    }
+  }
+
+  private Session sessionOf(Consultant consultant, SessionStatus status, Long tenantId) {
+    var result = validSession(null, 1);
+    result.setConsultant(consultant);
+    result.setStatus(status);
+    result.setTenantId(tenantId);
+    return result;
+  }
+
+  /**
+   * ORISO-Frontend#2252: the shared conversation of a direct invitation with an appointment is a
+   * session of the same counsellor, person and consulting type as their 1:1, and a person can have
+   * several. Looking up the 1:1 must neither return one of those nor fail on their number, also
+   * after the invitations were deleted (no link rows here at all).
+   */
+  @Test
+  void findOneToOneSessions_Should_LeaveOutSharedConversations_AlsoAfterTheirLinksAreGone() {
+    givenAUser();
+    var consultant = consultantRepository.findAll().iterator().next();
+    var oneToOne = validSession(null, 1);
+    oneToOne.setConsultant(consultant);
+    oneToOne = underTest.save(oneToOne);
+    // An ordinary appointment of the 1:1 ("Termin anlegen") keeps it the 1:1.
+    appointmentOf(oneToOne);
+    for (int i = 0; i < 2; i++) {
+      var shared = validSession(null, 1);
+      shared.setConsultant(consultant);
+      shared = underTest.save(shared);
+      appointmentOf(shared);
+      underTest.markDirectInvitationConversation(shared.getId());
+    }
+    entityManager.flush();
+    entityManager.clear();
+
+    var found = underTest.findOneToOneSessions(consultant, user, 1);
+
+    assertEquals(List.of(oneToOne.getId()), found.stream().map(Session::getId).toList());
+  }
+
+  @ParameterizedTest
+  @ValueSource(booleans = {true, false})
+  void handoverCandidateScanLoadsOnlyRequestedNamesWithoutLoadingPersonEntities(
+      boolean includeNames) {
+    givenAUser();
+    var consultants = consultantRepository.findAll();
+    var owner = consultants.get(0);
+    var requester = consultants.get(1);
+    var askerUsername = user.getUsername();
+    var consultantUsername = owner.getUsername();
+    owner.setDisplayName("Public Alias");
+    owner.setInternalDisplayName("Internal Alias");
+    owner.setFirstName("Given Name");
+    owner.setLastName("Family Name");
+    long agencyId = 98_765L;
+    var candidate = validSession(agencyId, 1);
+    candidate.setConsultant(owner);
+    candidate.setStatus(SessionStatus.IN_PROGRESS);
+    candidate = underTest.save(candidate);
+    entityManager.flush();
+    var candidateId = candidate.getId();
+    entityManager.clear();
+
+    var statistics = entityManagerFactory.unwrap(SessionFactory.class).getStatistics();
+    boolean enabled = statistics.isStatisticsEnabled();
+    statistics.setStatisticsEnabled(true);
+    statistics.clear();
+    try {
+      var results =
+          underTest.findHandoverCandidates(
+              List.of(agencyId), requester, List.of(SessionStatus.IN_PROGRESS), includeNames);
+      assertEquals(1, results.size());
+      var projected = results.getFirst();
+      assertEquals(candidateId, projected.getId());
+      var expectedNames =
+          includeNames
+              ? List.of(
+                  askerUsername,
+                  consultantUsername,
+                  "Public Alias",
+                  "Internal Alias",
+                  "Given Name",
+                  "Family Name")
+              : Collections.nCopies(6, null);
+      assertAll(
+          () ->
+              assertEquals(
+                  expectedNames,
+                  Arrays.asList(
+                      projected.getAskerUsername(),
+                      projected.getConsultantUsername(),
+                      projected.getConsultantDisplayName(),
+                      projected.getConsultantInternalDisplayName(),
+                      projected.getConsultantFirstName(),
+                      projected.getConsultantLastName())),
+          () ->
+              assertEquals(0, statistics.getEntityStatistics(User.class.getName()).getLoadCount()),
+          () ->
+              assertEquals(
+                  0, statistics.getEntityStatistics(Consultant.class.getName()).getLoadCount()));
+    } finally {
+      statistics.setStatisticsEnabled(enabled);
+    }
+  }
+
+  private void appointmentOf(Session session) {
+    var appointment = new de.caritas.cob.userservice.api.model.SessionAppointment();
+    appointment.setSession(session);
+    appointment.setStatus(de.caritas.cob.userservice.api.model.SessionAppointment.Status.SCHEDULED);
+    appointment.setStartTime(java.time.Instant.parse("2030-01-01T10:00:00Z"));
+    appointment.setEndTime(java.time.Instant.parse("2030-01-01T11:00:00Z"));
+    entityManager.persist(appointment);
   }
 
   private void givenValidSession() {

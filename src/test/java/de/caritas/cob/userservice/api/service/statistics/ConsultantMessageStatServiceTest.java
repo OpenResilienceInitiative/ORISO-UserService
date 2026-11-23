@@ -3,6 +3,7 @@ package de.caritas.cob.userservice.api.service.statistics;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -11,6 +12,7 @@ import de.caritas.cob.userservice.api.model.ConsultantMessageStat;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.port.out.ConsultantMessageStatRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
+import de.caritas.cob.userservice.api.service.statistics.settings.StatisticsSettingsService;
 import java.time.LocalDateTime;
 import java.util.Optional;
 import org.junit.jupiter.api.BeforeEach;
@@ -29,6 +31,8 @@ class ConsultantMessageStatServiceTest {
   @Mock private ConsultantMessageStatRepository consultantMessageStatRepository;
   @Mock private SessionRepository sessionRepository;
   @Mock private ConsultantIdentityHasher consultantIdentityHasher;
+  @Mock private StatisticsSettingsService statisticsSettingsService;
+  @Mock private StatisticsFeatureGate statisticsFeatureGate;
 
   private ConsultantMessageStatService service;
 
@@ -36,7 +40,13 @@ class ConsultantMessageStatServiceTest {
   void setUp() {
     service =
         new ConsultantMessageStatService(
-            consultantMessageStatRepository, sessionRepository, consultantIdentityHasher);
+            consultantMessageStatRepository,
+            sessionRepository,
+            consultantIdentityHasher,
+            statisticsSettingsService,
+            statisticsFeatureGate);
+    lenient().when(statisticsSettingsService.isMessageCountTrackingEnabled()).thenReturn(true);
+    lenient().when(statisticsFeatureGate.isEnabledForTenant(any())).thenReturn(true);
   }
 
   @Test
@@ -81,5 +91,46 @@ class ConsultantMessageStatServiceTest {
 
     assertThat(count).isEqualTo(4L);
     verifyNoInteractions(sessionRepository);
+  }
+
+  @Test
+  void recordMessageSentShouldRecordNothing_When_MessageCountTrackingIsSwitchedOff() {
+    when(statisticsSettingsService.isMessageCountTrackingEnabled()).thenReturn(false);
+
+    service.recordMessageSent(CONSULTANT_ID, 100L);
+
+    verifyNoInteractions(consultantMessageStatRepository, sessionRepository);
+  }
+
+  @Test
+  void recordMessageSentShouldRecordNothing_When_TheOrganisationSwitchIsOff() {
+    var session = new Session();
+    session.setTenantId(3L);
+    when(sessionRepository.findById(100L)).thenReturn(Optional.of(session));
+    when(statisticsFeatureGate.isEnabledForTenant(3L)).thenReturn(false);
+
+    service.recordMessageSent(CONSULTANT_ID, 100L);
+
+    verifyNoInteractions(consultantMessageStatRepository, consultantIdentityHasher);
+  }
+
+  @Test
+  void recordMessageSentShouldAskTheGateWithoutTenant_When_TheSessionIsUnknown() {
+    when(sessionRepository.findById(100L)).thenReturn(Optional.empty());
+    when(statisticsFeatureGate.isEnabledForTenant(null)).thenReturn(false);
+
+    service.recordMessageSent(CONSULTANT_ID, 100L);
+
+    verifyNoInteractions(consultantMessageStatRepository);
+  }
+
+  @Test
+  void deleteForConsultantShouldDeleteTheRowsOfTheHashedConsultant() {
+    when(consultantIdentityHasher.hash(CONSULTANT_ID)).thenReturn(CONSULTANT_HMAC);
+    when(consultantMessageStatRepository.deleteByConsultantHmac(CONSULTANT_HMAC)).thenReturn(7);
+
+    var deleted = service.deleteForConsultant(CONSULTANT_ID);
+
+    assertThat(deleted).isEqualTo(7);
   }
 }

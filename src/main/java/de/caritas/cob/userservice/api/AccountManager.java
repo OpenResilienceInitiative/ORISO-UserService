@@ -5,8 +5,12 @@ import static java.util.Objects.isNull;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import de.caritas.cob.userservice.api.adapters.web.dto.AgencyDTO;
+import de.caritas.cob.userservice.api.adapters.web.dto.EmailNotificationsDTO;
+import de.caritas.cob.userservice.api.admin.service.search.AccountSearch;
 import de.caritas.cob.userservice.api.admin.service.tenant.TenantService;
+import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
+import de.caritas.cob.userservice.api.helper.ConsultantDisplayNameResolver;
 import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
 import de.caritas.cob.userservice.api.model.Admin;
 import de.caritas.cob.userservice.api.model.Consultant;
@@ -16,10 +20,14 @@ import de.caritas.cob.userservice.api.port.in.AccountManaging;
 import de.caritas.cob.userservice.api.port.out.AdminRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantAgencyRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
+import de.caritas.cob.userservice.api.port.out.SearchFilter;
+import de.caritas.cob.userservice.api.port.out.SearchSort;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
+import de.caritas.cob.userservice.api.service.AskerEmailCollectionPolicy;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
-import de.caritas.cob.userservice.api.service.appointment.AppointmentService;
+import de.caritas.cob.userservice.api.service.matrix.ConsultantRenameSystemMessageService;
+import de.caritas.cob.userservice.api.service.notification.AskerNotificationChannelPolicy;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
@@ -28,6 +36,7 @@ import java.util.Collection;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Collectors;
@@ -35,8 +44,9 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
-import org.springframework.data.domain.Sort.Direction;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.web.client.RestClientException;
 
 @Slf4j
@@ -45,6 +55,10 @@ import org.springframework.web.client.RestClientException;
 public class AccountManager implements AccountManaging {
 
   private final ConsultantRepository consultantRepository;
+
+  private final PlatformTransactionManager transactionManager;
+
+  private final AccountSearch accountSearch;
 
   private final AdminRepository adminRepository;
 
@@ -64,9 +78,11 @@ public class AccountManager implements AccountManaging {
 
   private final SessionRepository sessionRepository;
 
-  private final AppointmentService appointmentService;
-
   private final PatchConsultantSaga patchConsultantSaga;
+
+  private final ConsultantDisplayNameResolver consultantDisplayNameResolver;
+
+  private final ConsultantRenameSystemMessageService consultantRenameSystemMessageService;
 
   private final ObjectMapper objectMapper = new ObjectMapper();
 
@@ -103,22 +119,16 @@ public class AccountManager implements AccountManaging {
       String infix,
       boolean shouldFilterByAgencies,
       Collection<Long> agenciesToFilterConsultants,
+      SearchFilter filter,
       int pageNumber,
       int pageSize,
       String fieldName,
       boolean isAscending) {
 
-    var direction = isAscending ? Direction.ASC : Direction.DESC;
-    var pageRequest = PageRequest.of(pageNumber, pageSize, direction, fieldName);
-    var effectiveTenantId = resolveEffectiveTenantId();
-    Page<ConsultantBase> consultantPage;
-    if (!shouldFilterByAgencies) {
-      consultantPage = consultantRepository.findAllByInfix(infix, effectiveTenantId, pageRequest);
-    } else {
-      consultantPage =
-          consultantRepository.findAllByInfixAndAgencyIds(
-              infix, agenciesToFilterConsultants, effectiveTenantId, pageRequest);
-    }
+    var pageRequest = SearchSort.pageRequestOf(pageNumber, pageSize, fieldName, isAscending);
+    var consultantPage =
+        findScopedConsultantsByInfix(
+            infix, shouldFilterByAgencies, agenciesToFilterConsultants, filter, pageRequest);
 
     var consultantIds =
         consultantPage.stream().map(ConsultantBase::getId).collect(Collectors.toList());
@@ -137,9 +147,12 @@ public class AccountManager implements AccountManaging {
                     Consultant::getTenantId,
                     consultant -> {
                       try {
-                        return tenantService
-                            .getRestrictedTenantData(consultant.getTenantId())
-                            .getName();
+                        // toMap rejects null values; a nameless tenant must not fail the list.
+                        return Objects.requireNonNullElse(
+                            tenantService
+                                .getRestrictedTenantData(consultant.getTenantId())
+                                .getName(),
+                            "Unknown Tenant");
                       } catch (Exception e) {
                         log.warn(
                             "Tenant data not found for tenantId: {}, using default name",
@@ -204,10 +217,21 @@ public class AccountManager implements AccountManaging {
     var id = (String) patchMap.get("id");
     var userMap = new HashMap<String, Object>();
 
-    userRepository
-        .findByUserIdAndDeleteDateIsNull(id)
+    // #1662: read the advice seeker under the row lock "Konto behalten" takes and save it in the
+    // same transaction. User has no version column; a copy read before a concurrent keep would
+    // otherwise merge temporary_account and the deletion snapshot back.
+    var patchedAdviceSeeker =
+        new TransactionTemplate(transactionManager)
+            .execute(
+                status ->
+                    userRepository
+                        .findByUserIdForUpdate(id)
+                        .filter(user -> user.getDeleteDate() == null)
+                        .map(user -> patchAdviceSeeker(user, patchMap)));
+    Optional.ofNullable(patchedAdviceSeeker)
+        .flatMap(java.util.function.Function.identity())
         .ifPresentOrElse(
-            user -> userMap.putAll(patchAdviceSeeker(user, patchMap)),
+            userMap::putAll,
             () ->
                 consultantRepository
                     .findByIdAndDeleteDateIsNull(id)
@@ -233,6 +257,17 @@ public class AccountManager implements AccountManaging {
   }
 
   private Map<String, Object> patchAdviceSeeker(User adviceSeeker, Map<String, Object> patchMap) {
+    if (patchMap.get("emailNotifications") instanceof EmailNotificationsDTO notifications
+        && Boolean.TRUE.equals(notifications.getEmailNotificationsEnabled())) {
+      AskerNotificationChannelPolicy.requireNotificationOptInAllowed(adviceSeeker);
+    }
+    // #1662: a temporary account never saves an e-mail address; clearing one stays possible.
+    if (adviceSeeker.isTemporaryAccount()
+        && patchMap.get("email") instanceof String email
+        && !email.isBlank()
+        && !AskerEmailCollectionPolicy.sameAddress(adviceSeeker.getEmail(), email)) {
+      throw new ForbiddenException("A temporary account cannot save an e-mail address");
+    }
     var patchedAdviceSeeker = userServiceMapper.adviceSeekerOf(adviceSeeker, patchMap);
     var savedAdviceSeeker = userRepository.save(patchedAdviceSeeker);
 
@@ -240,8 +275,17 @@ public class AccountManager implements AccountManaging {
   }
 
   private Map<String, Object> patchConsultant(Consultant consultant, Map<String, Object> patchMap) {
+    // Captured before the mapper mutates the entity (OBP 2.1 #119 / ORISO-UserService#1533).
+    var previousPublishedName = consultantDisplayNameResolver.resolveMatrixDisplayName(consultant);
     var patchedConsultant = userServiceMapper.consultantOf(consultant, patchMap);
-    return patchConsultantSaga.executeTransactional(patchedConsultant, patchMap);
+    var patched = patchConsultantSaga.executeTransactional(patchedConsultant, patchMap);
+    if (patchMap.containsKey("displayName")) {
+      consultantRenameSystemMessageService.postRenameMessagesAfterCommit(
+          patchedConsultant,
+          previousPublishedName,
+          consultantDisplayNameResolver.resolveMatrixDisplayName(patchedConsultant));
+    }
+    return patched;
   }
 
   private Map<String, Object> findByDbConsultant(Consultant dbConsultant) {
@@ -263,6 +307,38 @@ public class AccountManager implements AccountManaging {
           e);
       return List.of();
     }
+  }
+
+  /**
+   * The caller's own scope (token/request tenant, restricted admin's agencies) always wins; the
+   * Träger/Beratungsstelle filter (#1263) only narrows it. A tenant-bound caller asking for another
+   * tenant gets an empty page, and requested agencies are intersected with a restricted caller's.
+   */
+  private Page<ConsultantBase> findScopedConsultantsByInfix(
+      String infix,
+      boolean shouldFilterByAgencies,
+      Collection<Long> agenciesToFilterConsultants,
+      SearchFilter filter,
+      PageRequest pageRequest) {
+    var callerTenantId = resolveEffectiveTenantId();
+    var isTenantBound =
+        callerTenantId != null && !TenantContext.TECHNICAL_TENANT_ID.equals(callerTenantId);
+    if (isTenantBound && filter.isTenantOutside(callerTenantId)) {
+      return Page.empty(pageRequest);
+    }
+    var tenantId = isTenantBound ? callerTenantId : filter.tenantId();
+
+    Collection<Long> agencyIds;
+    if (shouldFilterByAgencies) {
+      agencyIds = filter.narrowAgencies(agenciesToFilterConsultants);
+    } else if (filter.hasAgencyIds()) {
+      agencyIds = filter.agencyIds();
+    } else {
+      return accountSearch.consultants(infix, tenantId, null, pageRequest);
+    }
+    return agencyIds.isEmpty()
+        ? Page.empty(pageRequest)
+        : accountSearch.consultants(infix, tenantId, agencyIds, pageRequest);
   }
 
   private Long resolveEffectiveTenantId() {

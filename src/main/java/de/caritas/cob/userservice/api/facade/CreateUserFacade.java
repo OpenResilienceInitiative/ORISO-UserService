@@ -2,6 +2,7 @@ package de.caritas.cob.userservice.api.facade;
 
 import static de.caritas.cob.userservice.api.service.provisioning.ProvisioningResource.CHAT_IDENTITY;
 import static de.caritas.cob.userservice.api.service.provisioning.ProvisioningResource.DATABASE_USER;
+import static de.caritas.cob.userservice.api.service.provisioning.ProvisioningResource.GROUP_CHAT_MEMBERSHIP;
 import static de.caritas.cob.userservice.api.service.provisioning.ProvisioningResource.IDENTITY_USER;
 import static de.caritas.cob.userservice.api.service.provisioning.ProvisioningResource.SESSION;
 import static java.util.Objects.isNull;
@@ -15,11 +16,14 @@ import de.caritas.cob.userservice.api.adapters.web.dto.NewRegistrationResponseDt
 import de.caritas.cob.userservice.api.adapters.web.dto.UserDTO;
 import de.caritas.cob.userservice.api.admin.service.tenant.TenantService;
 import de.caritas.cob.userservice.api.config.auth.UserRole;
+import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
 import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException;
 import de.caritas.cob.userservice.api.helper.AgencyVerifier;
 import de.caritas.cob.userservice.api.helper.UserVerifier;
 import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
 import de.caritas.cob.userservice.api.manager.consultingtype.ConsultingTypeManager;
+import de.caritas.cob.userservice.api.model.Chat;
+import de.caritas.cob.userservice.api.model.ConversationType;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.out.IdentityAccountRemover;
@@ -28,9 +32,17 @@ import de.caritas.cob.userservice.api.port.out.IdentityDummyEmailUpdate;
 import de.caritas.cob.userservice.api.port.out.IdentityDummyEmailUpdater;
 import de.caritas.cob.userservice.api.port.out.IdentityPasswordUpdater;
 import de.caritas.cob.userservice.api.port.out.identity.CreatedIdentity;
+import de.caritas.cob.userservice.api.service.AskerEmailCollectionPolicy;
+import de.caritas.cob.userservice.api.service.AskerIdentityPolicy;
+import de.caritas.cob.userservice.api.service.ChatRecoveryEnrollmentPolicyService;
+import de.caritas.cob.userservice.api.service.ChatRecoveryEnrollmentPolicyService.RecoveryPolicySnapshot;
+import de.caritas.cob.userservice.api.service.SessionDataService;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
+import de.caritas.cob.userservice.api.service.agencyinvitelink.InviteLinkKind;
 import de.caritas.cob.userservice.api.service.consultingtype.ApplicationSettingsService;
 import de.caritas.cob.userservice.api.service.consultingtype.TopicService;
+import de.caritas.cob.userservice.api.service.email.WelcomeEmailService;
+import de.caritas.cob.userservice.api.service.lifecycle.LifecycleEventPublisher;
 import de.caritas.cob.userservice.api.service.provisioning.CompensationResult;
 import de.caritas.cob.userservice.api.service.provisioning.ProvisioningAttempt;
 import de.caritas.cob.userservice.api.service.provisioning.ProvisioningCompensator;
@@ -59,6 +71,11 @@ import org.springframework.web.client.RestClientException;
 @RequiredArgsConstructor
 @Slf4j
 public class CreateUserFacade {
+  private final ChatRecoveryEnrollmentPolicyService chatRecoveryEnrollmentPolicyService;
+  private final de.caritas.cob.userservice.api.service.AccountInactivityEnrollmentService
+      inactivityEnrollment;
+  private final @NonNull de.caritas.cob.userservice.api.service.dpa.NewCounsellingDpaPolicy
+      dpaPolicy;
   private final @NonNull UserVerifier userVerifier;
   private final @NonNull IdentityClient identityClient;
   private final @NonNull IdentityAccountRemover identityAccountRemover;
@@ -70,6 +87,7 @@ public class CreateUserFacade {
   private final @NonNull CreateNewSessionFacade createNewSessionFacade;
   private final @NonNull StatisticsService statisticsService;
   private final @NonNull TopicService topicService;
+  private final @NonNull WelcomeEmailService welcomeEmailService;
   private final @NonNull MatrixSynapseService matrixSynapseService;
   private final @NonNull SessionService sessionService;
   private final @NonNull ProvisioningCompensator provisioningCompensator;
@@ -79,6 +97,20 @@ public class CreateUserFacade {
   private final @NonNull AgencyService agencyService;
 
   private final @NonNull ApplicationSettingsService applicationSettingsService;
+
+  private final @NonNull GroupInviteRegistration groupInviteRegistration;
+  private final @NonNull AskerEmailCollectionPolicy emailCollectionPolicy;
+  private final @NonNull SessionDataService sessionDataService;
+
+  private final @NonNull de.caritas.cob.userservice.api.service.agencyinvitelink
+          .TemporaryAccountLinkResolver
+      temporaryAccountLinkResolver;
+
+  private final @NonNull de.caritas.cob.userservice.api.service.temporaryaccount
+          .TemporaryAccountSettingsService
+      temporaryAccountSettings;
+
+  private final @NonNull LifecycleEventPublisher lifecycleEvents;
 
   @Value("${feature.multitenancy.with.single.domain.enabled:false}")
   private boolean multitenancyWithSingleDomain;
@@ -92,6 +124,11 @@ public class CreateUserFacade {
   public Long createUserAccountWithInitializedConsultingType(final UserDTO userDTO) {
 
     initializeTenantContextForRegistration(userDTO);
+    tenantService.requireOperationalTenant(TenantContext.getCurrentTenant());
+    if (userDTO.getEmail() != null && !userDTO.getEmail().isBlank()) {
+      AskerIdentityPolicy.requireEmailCollectionAllowed(
+          tenantService, TenantContext.getCurrentTenant());
+    }
 
     // MATRIX MIGRATION: Get plain credentials from ThreadLocal (captured during JSON
     // deserialization)
@@ -108,7 +145,58 @@ public class CreateUserFacade {
       userVerifier.checkIfAllRequiredAttributesAreCorrectlyFilled(userDTO);
       userVerifier.checkIfUsernameIsAvailable(userDTO);
       agencyVerifier.checkIfConsultingTypeMatchesToAgency(userDTO);
+      var consultingTypeSettings = obtainConsultingTypeSettings(userDTO);
+      var linkEntry = temporaryAccountLinkResolver.resolveEntry(userDTO);
+      var directLink =
+          linkEntry.map(
+              de.caritas.cob.userservice.api.service.agencyinvitelink.TemporaryAccountLinkResolver
+                      .Entry
+                  ::link);
+      boolean callGuest =
+          directLink
+              .filter(link -> InviteLinkKind.CALL.name().equals(link.getLinkKind()))
+              .isPresent();
+      if (callGuest
+          || consultingTypeSettings.getGroupChat() == null
+          || !isTrue(consultingTypeSettings.getGroupChat().getIsGroupChat())) {
+        dpaPolicy.requireForAgency(userDTO.getAgencyId());
+      }
+      var invitation = groupInviteRegistration.resolveInvitation(userDTO);
+      Optional<Chat> invitedGroup = invitation.map(GroupInviteRegistration.Invitation::group);
+      var registrationType =
+          invitedGroup.isPresent()
+              ? ConversationType.SELF_HELP
+              : ConversationType.AGENCY_COUNSELLING;
+      if (userDTO.isTemporary() && invitedGroup.isEmpty() && directLink.isEmpty()) {
+        // The deletion job removes temporary accounts; only a valid group invite or direct link
+        // may ask for one. Checked before the e-mail rule
+        // (#1662), so a form mistake stays a plain 400.
+        throw new BadRequestException(
+            "A temporary account requires a group invite or a direct link.");
+      }
+      Long tenantId = TenantContext.getCurrentTenant();
+      if (userDTO.getEmail() != null && !userDTO.getEmail().isBlank()) {
+        emailCollectionPolicy.requireForRegistration(
+            tenantId, registrationType, userDTO.isTemporary());
+      }
+      var displayName =
+          sessionDataService.validateRegistrationNames(
+              userDTO.getUsername(), userDTO.getDisplayName(), tenantId, registrationType);
+      if (invitedGroup.isEmpty() && directLink.isEmpty()) {
+        assertDisplayNameHoldsNoPassword(displayName, userDTO.getPassword());
+        userDTO.setDisplayName(displayName);
+      } else {
+        // Group/direct-link signup creates no personal Session here; no shared/global alias.
+        userDTO.setDisplayName(null);
+      }
 
+      RecoveryPolicySnapshot snapshot =
+          chatRecoveryEnrollmentPolicyService.forNewAsker(TenantContext.getCurrentTenant());
+      var inactivityPolicy =
+          inactivityEnrollment.capture(
+              TenantContext.getCurrentTenant(),
+              de.caritas.cob.userservice.api.service.AccountInactivityEnrollmentService.Group
+                  .ASKER);
       CreatedIdentity response = identityClient.createUser(userDTO);
       String identityUserId = CreatedIdentity.requireUserId(response);
       provisioningAttempt = provisioningCompensator.begin(ProvisioningWorkflow.REGISTERED_USER);
@@ -118,9 +206,40 @@ public class CreateUserFacade {
       activeAttempt.register(
           DATABASE_USER,
           identityUserId,
-          () -> deleteDatabaseUser(identityUserId, provisionedUser.get()));
+          () -> {
+            try {
+              deleteDatabaseUser(identityUserId, provisionedUser.get());
+            } finally {
+              inactivityEnrollment.discardUncompletedCreation(identityUserId, inactivityPolicy);
+            }
+          });
 
-      User user = updateIdentityAndCreateAccount(identityUserId, userDTO, UserRole.USER);
+      inactivityEnrollment.enroll(
+          identityUserId, TenantContext.getCurrentTenant(), inactivityPolicy);
+      User user = updateIdentityAndCreateAccount(identityUserId, userDTO, UserRole.USER, snapshot);
+      if (user != null) {
+        user.setTemporaryAccount(userDTO.isTemporary());
+        if (userDTO.isTemporary()) {
+          // #1662: "Konto behalten" is judged by the mode the guest entered under.
+          user.setGuestAccountModeAtEntry(
+              linkEntry
+                  .map(
+                      de.caritas.cob.userservice.api.service.agencyinvitelink
+                              .TemporaryAccountLinkResolver.Entry
+                          ::mode)
+                  .or(() -> invitation.map(GroupInviteRegistration.Invitation::mode))
+                  .orElse(null));
+        }
+        // ADR-029 §4: the account keeps the lifetimes valid at its creation (#1476).
+        if (directLink.isPresent() && userDTO.isTemporary()) {
+          var link = directLink.get();
+          user.setTemporaryAccountSnapshot(
+              temporaryAccountSettings.snapshotForNewAccount(
+                  de.caritas.cob.userservice.api.service.agencyinvitelink.InviteLinkChatType
+                      .valueOf(link.getChatType()),
+                  link.getId()));
+        }
+      }
       provisionedUser.set(user);
       User savedUser = userService.saveUser(user);
       if (savedUser != null) {
@@ -138,32 +257,69 @@ public class CreateUserFacade {
       }
       provisionMatrixUser(user, plainUsername, activeAttempt);
 
-      var consultingTypeSettings = obtainConsultingTypeSettings(userDTO);
-      activeAttempt.register(
-          SESSION, identityUserId, () -> deleteSessionsForUser(provisionedUser.get()));
-      NewRegistrationResponseDto registration =
-          createNewSessionFacade.initializeNewSession(userDTO, user, consultingTypeSettings);
+      Long sessionId;
+      if (invitedGroup.isPresent()) {
+        // Joining a self-help group is not a request for counselling: no enquiry (FE#1499).
+        Chat group = invitedGroup.get();
+        activeAttempt.register(
+            GROUP_CHAT_MEMBERSHIP,
+            identityUserId,
+            () -> groupInviteRegistration.leave(group, provisionedUser.get()));
+        groupInviteRegistration.join(group, user);
+        sessionId = null;
+      } else if (directLink.isPresent()) {
+        // Link redemption handles admission. Registration itself never creates an enquiry.
+        sessionId = null;
+      } else {
+        activeAttempt.register(
+            SESSION, identityUserId, () -> deleteSessionsForUser(provisionedUser.get()));
+        NewRegistrationResponseDto registration =
+            createNewSessionFacade.initializeNewSession(userDTO, user, consultingTypeSettings);
+        sessionId = registration.getSessionId();
+      }
 
-      try {
-        RegistrationStatisticsEvent registrationEvent =
-            new RegistrationStatisticsEvent(
-                userDTO,
-                user,
-                registration.getSessionId(),
-                topicService.findTopicInternalIdentifier(userDTO.getMainTopicId()),
-                topicService.findTopicsInternalAttributes(userDTO.getTopicIds()),
-                getTenantName(),
-                getAgencyName(userDTO));
-        statisticsService.fireEvent(registrationEvent);
-      } catch (Exception e) {
-        log.error("Could not create registration statistics event", e);
+      // The registration event contract requires a session id; a group join opens none.
+      if (sessionId != null) {
+        try {
+          RegistrationStatisticsEvent registrationEvent =
+              new RegistrationStatisticsEvent(
+                  userDTO,
+                  user,
+                  sessionId,
+                  topicService.findTopicInternalIdentifier(userDTO.getMainTopicId()),
+                  topicService.findTopicsInternalAttributes(userDTO.getTopicIds()),
+                  getTenantName(),
+                  getAgencyName(userDTO));
+          statisticsService.fireEvent(registrationEvent);
+        } catch (Exception e) {
+          log.error("Could not create registration statistics event", e);
+        }
       }
 
       activeAttempt.complete();
-      return registration.getSessionId();
+      announceRegistration(tenantId, user, userDTO.getRegistrationRef());
+
+      // The welcome mail carries the generated user name, which ORISO cannot
+      // recover. Sent after the attempt is marked complete and guarded here:
+      // @Async submission throws synchronously when the executor queue is
+      // full, and neither that nor a later bounce may undo a registration
+      // that has already succeeded.
+      try {
+        welcomeEmailService.sendWelcomeEmail(user, plainUsername);
+      } catch (Exception e) {
+        log.error("Could not schedule welcome mail", e);
+      }
+
+      return sessionId;
     } finally {
       compensateProvisioning(provisioningAttempt);
       de.caritas.cob.userservice.api.helper.PlainCredentialsHolder.clear();
+    }
+  }
+
+  private void announceRegistration(Long tenantId, User user, String registrationRef) {
+    if (registrationRef != null && user != null && user.getUserId() != null) {
+      lifecycleEvents.userRegistered(tenantId, user.getUserId(), registrationRef);
     }
   }
 
@@ -273,6 +429,22 @@ public class CreateUserFacade {
    * @return {@link User}
    */
   public User updateIdentityAndCreateAccount(String userId, UserDTO userDTO, UserRole role) {
+    return updateIdentityAndCreateAccount(
+        userId,
+        userDTO,
+        role,
+        shouldClearPrivacyConfirmations(role, userDTO)
+            ? chatRecoveryEnrollmentPolicyService.forNewAsker(TenantContext.getCurrentTenant())
+            : chatRecoveryEnrollmentPolicyService.forExistingIdentity(userId));
+  }
+
+  private User updateIdentityAndCreateAccount(
+      String userId, UserDTO userDTO, UserRole role, RecoveryPolicySnapshot snapshot) {
+
+    if (userDTO.getEmail() != null && !userDTO.getEmail().isBlank()) {
+      AskerIdentityPolicy.requireEmailCollectionAllowed(
+          tenantService, TenantContext.getCurrentTenant());
+    }
 
     try {
       updateKeycloakRoleAndPassword(userId, userDTO, role);
@@ -297,7 +469,8 @@ public class CreateUserFacade {
             userDTO.getUsername(),
             returnDummyEmailIfNoneGiven(userDTO, userId),
             isTrue(extendedConsultingTypeResponseDTO.getLanguageFormal()),
-            language);
+            language,
+            snapshot);
 
     if (shouldClearPrivacyConfirmations(role, userDTO) && nonNull(user)) {
       user.setTermsAndConditionsConfirmation(null);
@@ -314,10 +487,17 @@ public class CreateUserFacade {
     }
 
     // Anonymous chat currently registers through /users/askers/new with role USER.
-    // Detect that path by its synthetic postcode / username and clear confirmations
-    // so the first in-chat privacy gate is shown and persisted only after explicit acceptance.
-    return StringUtils.equals("00000", userDTO.getPostcode())
-        || StringUtils.startsWith(userDTO.getUsername(), "Anonymous-");
+    // Detect that path by its synthetic postcode, never by the User-ID text (#1697), and clear
+    // confirmations so the first in-chat privacy gate is shown and persisted only after explicit
+    // acceptance.
+    return StringUtils.equals("00000", userDTO.getPostcode());
+  }
+
+  /** The alias is stored and shown to counsellors in plain text, so it must not hold a secret. */
+  private void assertDisplayNameHoldsNoPassword(String displayName, String password) {
+    if (displayName != null && !isBlank(password) && displayName.contains(password.strip())) {
+      throw new BadRequestException("A session alias must not contain the password");
+    }
   }
 
   private ExtendedConsultingTypeResponseDTO obtainConsultingTypeSettings(UserDTO userDTO) {

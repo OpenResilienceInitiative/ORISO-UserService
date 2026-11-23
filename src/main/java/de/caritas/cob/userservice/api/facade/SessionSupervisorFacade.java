@@ -5,6 +5,7 @@ import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestExceptio
 import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
 import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException;
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
+import de.caritas.cob.userservice.api.exception.matrix.MatrixInviteRateLimitedException;
 import de.caritas.cob.userservice.api.exception.matrix.MatrixInviteUserException;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.model.Consultant;
@@ -16,6 +17,12 @@ import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.port.out.SessionSupervisorRepository;
+import de.caritas.cob.userservice.api.service.CaseHandoverMatrixRepairService;
+import de.caritas.cob.userservice.api.service.chat.MembersOnlyChatAccess;
+import de.caritas.cob.userservice.api.service.consultant.ConsultantChatIdentityService;
+import de.caritas.cob.userservice.api.service.conversationfeature.ConversationFeature;
+import de.caritas.cob.userservice.api.service.conversationfeature.ConversationFeatureGate;
+import de.caritas.cob.userservice.api.service.session.AnonymousSessionRegistration;
 import de.caritas.cob.userservice.api.service.user.UserAccountService;
 import de.caritas.cob.userservice.api.supervision.SupervisionConsent;
 import de.caritas.cob.userservice.api.supervision.SupervisionNotes;
@@ -29,6 +36,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
@@ -47,6 +55,9 @@ public class SessionSupervisorFacade {
   private final @NonNull MatrixSynapseService matrixSynapseService;
   private final @NonNull UserAccountService userAccountService;
   private final @NonNull IdentityClient identityClient;
+  private final @NonNull MembersOnlyChatAccess membersOnlyChatAccess;
+  private final @NonNull CaseHandoverMatrixRepairService matrixRepairService;
+  private final @NonNull ConversationFeatureGate conversationFeatureGate;
 
   /**
    * ADR-008 item 4: the current request's authenticated user, used to check the Berater-Admin
@@ -127,6 +138,15 @@ public class SessionSupervisorFacade {
             .findById(sessionId)
             .orElseThrow(() -> new NotFoundException("Session not found: " + sessionId));
 
+    // A members-only chat is managed by its participants alone: neither the assigned consultant,
+    // nor a colleague of the centre, nor an agency admin who is not in it. Asked first, so that a
+    // counsellor outside the chat is told the same thing whatever else is true of the session.
+    membersOnlyChatAccess.requireAccess(session, addedByConsultant);
+
+    if (isAnonymousForSupervision(session)) {
+      throw new BadRequestException("Anonymous sessions do not support supervision");
+    }
+
     // Client opt-out gate (grill 2026-07-13): the ratsuchende can switch supervision off for their
     // case; while it is off no supervisor may be attached and no Matrix access is provisioned.
     if (Boolean.TRUE.equals(session.getSupervisionOptedOut())) {
@@ -152,6 +172,11 @@ public class SessionSupervisorFacade {
         "Permission granted for consultant {} to add supervisor to session {}",
         addedByConsultant.getId(),
         sessionId);
+
+    // An admin who switched supervision off for the Träger or Beratungsstelle (#1564): the app
+    // hides the button, this is the server refusing it. After the permission check, so a person
+    // without access learns nothing about the settings.
+    conversationFeatureGate.require(ConversationFeature.SUPERVISION, session);
 
     // Get supervisor consultant
     Consultant supervisorConsultant =
@@ -190,16 +215,22 @@ public class SessionSupervisorFacade {
       throw new BadRequestException("Session does not have a Matrix room");
     }
 
+    // A members-only room holds exactly the selected colleagues. Supervision would add a reader
+    // who was not selected, so only one of its participants may be attached.
+    membersOnlyChatAccess.requireAccess(session, supervisorConsultant);
+
     // Get supervisor's Matrix user ID
     String supervisorMatrixUserId = supervisorConsultant.getMatrixUserId();
-    if (supervisorMatrixUserId == null || supervisorMatrixUserId.isEmpty()) {
-      throw new BadRequestException("Supervisor consultant does not have a Matrix user ID");
+    if (!ConsultantChatIdentityService.hasChatIdentity(supervisorConsultant)) {
+      throw new BadRequestException(
+          ConsultantChatIdentityService.missingChatIdentityMessage(
+              "Supervisor consultant", supervisorConsultant.getId()));
     }
 
-    if (addedByConsultant.getMatrixUserId() == null
-        || addedByConsultant.getMatrixUserId().isEmpty()) {
+    if (!ConsultantChatIdentityService.hasChatIdentity(addedByConsultant)) {
       throw new InternalServerErrorException(
-          "Consultant adding supervisor does not have Matrix credentials");
+          ConsultantChatIdentityService.missingChatIdentityMessage(
+              "Consultant adding the supervisor", addedByConsultant.getId()));
     }
 
     SessionSupervisor.SessionSupervisorBuilder builder =
@@ -214,11 +245,21 @@ public class SessionSupervisorFacade {
     // supervision proceeds by default for every reason; the ratsuchende's opt-out is the only
     // gate (checked above). So there is no PENDING park — every add provisions Matrix access
     // immediately.
-    String sideRoomId =
+    // A removal queued earlier must not kick the supervisor who is authorised again from now on.
+    matrixRepairService.cancelPendingRemovals(sessionId, supervisorMatrixUserId);
+    ProvisionedRooms rooms =
         provisionSupervisorRooms(
             session, addedByConsultant, supervisorConsultant, supervisorMatrixUserId, matrixRoomId);
     SessionSupervisor saved =
-        sessionSupervisorRepository.save(builder.isActive(true).matrixRoomId(sideRoomId).build());
+        sessionSupervisorRepository.save(
+            builder.isActive(true).matrixRoomId(rooms.sideRoomId()).build());
+    if (rooms.clientRoomInviteDeferred()) {
+      // ORISO-Frontend#2386: Synapse rate-limited the client-room invite. Queue it with the active
+      // supervision row (same transaction when there is one), so the repair worker can neither see
+      // the task before the row nor lose it if a later step fails.
+      matrixRepairService.enqueueSupervisorObservation(
+          matrixRoomId, supervisorMatrixUserId, sessionId, addedByConsultant.getMatrixUserId());
+    }
     log.info(
         "Added supervisor {} to session {} by consultant {}",
         supervisorConsultant.getUsername(),
@@ -234,7 +275,10 @@ public class SessionSupervisorFacade {
    *
    * @return the supervision side room id the supervisor was placed in
    */
-  private String provisionSupervisorRooms(
+  /** The side room the supervisor was placed in, and whether the client-room invite is deferred. */
+  private record ProvisionedRooms(String sideRoomId, boolean clientRoomInviteDeferred) {}
+
+  private ProvisionedRooms provisionSupervisorRooms(
       Session session,
       Consultant addedByConsultant,
       Consultant supervisorConsultant,
@@ -260,8 +304,15 @@ public class SessionSupervisorFacade {
             consultantToken);
 
     // Invite supervisor to the CLIENT room as a read-only observer.
-    inviteSupervisorToClientRoom(
-        matrixRoomId, supervisorMatrixUserId, consultantToken, supervisorConsultant, session);
+    boolean invited =
+        inviteSupervisorToClientRoom(
+            matrixRoomId, supervisorMatrixUserId, consultantToken, supervisorConsultant, session);
+    if (!invited) {
+      // ORISO-Frontend#2386: Synapse rate-limited the invite (typically for minutes after the
+      // agency holding room invited every counsellor). The side room already works; the caller
+      // queues the client-room invite once the supervision row is committed.
+      return new ProvisionedRooms(sideRoomId, true);
+    }
 
     // Set supervisor power level to 10 (read-only observer)
     boolean powerLevelSet =
@@ -290,7 +341,7 @@ public class SessionSupervisorFacade {
             matrixRoomId);
       }
     }
-    return sideRoomId;
+    return new ProvisionedRooms(sideRoomId, false);
   }
 
   /**
@@ -307,6 +358,8 @@ public class SessionSupervisorFacade {
         sessionRepository
             .findById(sessionId)
             .orElseThrow(() -> new NotFoundException("Session not found: " + sessionId));
+
+    membersOnlyChatAccess.requireAccess(session, removedByConsultant);
 
     // Verify removedByConsultant has permission
     if (!hasPermissionToManageSupervisors(session, removedByConsultant)) {
@@ -330,21 +383,18 @@ public class SessionSupervisorFacade {
 
     // Remove the supervisor from BOTH rooms: the supervision side room (stored in
     // supervisor.matrixRoomId, ADR-008) and the client room they observed
-    // (session.matrixRoomId).
+    // (session.matrixRoomId). In a members-only chat the main room is the chat itself and the
+    // supervisor is a selected participant: only the side room is left there.
     String sideRoomId = supervisor.getMatrixRoomId();
-    String clientRoomId = session.getMatrixRoomId();
+    String clientRoomId = observedRoomOf(session);
     String supervisorMatrixUserId = supervisor.getSupervisorConsultant().getMatrixUserId();
-    if (supervisorMatrixUserId != null
-        && !supervisorMatrixUserId.isEmpty()
-        && removedByConsultant.getMatrixUserId() != null) {
-      String consultantToken =
-          matrixSynapseService.loginAsUserAccessToken(removedByConsultant.getMatrixUserId());
-      if (consultantToken != null) {
-        removeFromRoomIfPresent(
-            sideRoomId, supervisorMatrixUserId, consultantToken, supervisor, "supervision side");
-        removeFromRoomIfPresent(
-            clientRoomId, supervisorMatrixUserId, consultantToken, supervisor, "client");
-      }
+    if (supervisorMatrixUserId != null && !supervisorMatrixUserId.isEmpty()) {
+      // Whoever asks, the kick must come from an account that has the power for it. In a private
+      // room an ordinary participant has none; the chat's creator has.
+      List<String> operators = kickOperatorsOf(session, removedByConsultant);
+      removeFromRoomOrQueue(
+          sideRoomId, supervisorMatrixUserId, operators, supervisor, "supervision side");
+      removeFromRoomOrQueue(clientRoomId, supervisorMatrixUserId, operators, supervisor, "client");
     }
 
     // Deactivate supervisor
@@ -370,6 +420,30 @@ public class SessionSupervisorFacade {
   }
 
   /**
+   * Returns active supervisors only when the requester participates as the assigned counsellor or
+   * an active supervisor. The tenant-filtered session lookup fails closed for cross-tenant ids.
+   */
+  public List<SessionSupervisor> getSupervisors(Long sessionId, Consultant requestingConsultant) {
+    Session session =
+        sessionRepository
+            .findById(sessionId)
+            .orElseThrow(() -> new NotFoundException("Session not found: " + sessionId));
+    boolean activeSupervisor =
+        sessionSupervisorRepository
+            .findBySessionIdAndSupervisorConsultantIdAndIsActiveTrue(
+                sessionId, requestingConsultant.getId())
+            .isPresent();
+    membersOnlyChatAccess.requireAccess(session, requestingConsultant);
+    if (!session.isAdvisedBy(requestingConsultant) && !activeSupervisor) {
+      throw new ForbiddenException("Consultant does not have access to this supervision session");
+    }
+    if (isAnonymousForSupervision(session)) {
+      return List.of();
+    }
+    return getSupervisors(sessionId);
+  }
+
+  /**
    * "Supervision (auto-assigned)" (grill 2026-07-13): attach the accepting counsellor's STANDING
    * supervisor to a case they just took, with no manual per-session step. Does nothing when the
    * counsellor has no standing supervisor ({@link Consultant#getAssignedSupervisorId()}
@@ -385,6 +459,26 @@ public class SessionSupervisorFacade {
    * @param sessionId the just-accepted session
    * @param acceptingConsultant the counsellor who accepted it (carries the standing assignment)
    */
+  /**
+   * Runs {@link #attachStandingSupervisorIfAssigned} inside a transaction of its own. For
+   * after-commit callers only.
+   *
+   * <p>During an {@code afterCommit} callback the just-committed transaction's resources are still
+   * bound to the thread. A repository write issued from there joins that transaction, which can no
+   * longer commit, so the {@code SessionSupervisor} row is silently lost — after {@code
+   * addSupervisor} has already provisioned Matrix access. {@code addSupervisor}'s own {@code
+   * &#64;Transactional} cannot save us either, because {@link #attachStandingSupervisorIfAssigned}
+   * self-invokes it and so never passes through the proxy.
+   *
+   * <p>REQUIRES_NEW on this externally proxied entry point gives the write a live transaction. The
+   * facade still swallows supervision failures, so this never undoes the caller's handover.
+   */
+  @Transactional(propagation = Propagation.REQUIRES_NEW)
+  public void attachStandingSupervisorInNewTransaction(
+      Long sessionId, Consultant acceptingConsultant) {
+    attachStandingSupervisorIfAssigned(sessionId, acceptingConsultant);
+  }
+
   public void attachStandingSupervisorIfAssigned(Long sessionId, Consultant acceptingConsultant) {
     String standingSupervisorId = acceptingConsultant.getAssignedSupervisorId();
     if (standingSupervisorId == null || standingSupervisorId.isBlank()) {
@@ -455,27 +549,23 @@ public class SessionSupervisorFacade {
     if (active.isEmpty()) {
       return;
     }
-    Consultant operator = session.getConsultant();
-    String operatorToken =
-        operator != null && operator.getMatrixUserId() != null
-            ? matrixSynapseService.loginAsUserAccessToken(operator.getMatrixUserId())
-            : null;
-    String clientRoomId = session.getMatrixRoomId();
+    List<String> operators = kickOperatorsOf(session, null);
+    String clientRoomId = observedRoomOf(session);
 
     for (SessionSupervisor supervisor : active) {
       String supervisorMatrixUserId =
           supervisor.getSupervisorConsultant() != null
               ? supervisor.getSupervisorConsultant().getMatrixUserId()
               : null;
-      if (operatorToken != null && supervisorMatrixUserId != null) {
-        removeFromRoomIfPresent(
+      if (supervisorMatrixUserId != null) {
+        removeFromRoomOrQueue(
             supervisor.getMatrixRoomId(),
             supervisorMatrixUserId,
-            operatorToken,
+            operators,
             supervisor,
             "supervision side");
-        removeFromRoomIfPresent(
-            clientRoomId, supervisorMatrixUserId, operatorToken, supervisor, "client");
+        removeFromRoomOrQueue(
+            clientRoomId, supervisorMatrixUserId, operators, supervisor, "client");
       }
       supervisor.setIsActive(false);
       supervisor.setRemovedDate(LocalDateTime.now());
@@ -576,7 +666,11 @@ public class SessionSupervisorFacade {
     matrixSynapseService.joinRoom(roomId, userToken);
   }
 
-  private void inviteSupervisorToClientRoom(
+  /**
+   * @return {@code false} when Synapse rate-limited the invite, so the caller defers it; any other
+   *     failure throws
+   */
+  private boolean inviteSupervisorToClientRoom(
       String matrixRoomId,
       String supervisorMatrixUserId,
       String consultantToken,
@@ -589,6 +683,16 @@ public class SessionSupervisorFacade {
           supervisorConsultant.getUsername(),
           matrixRoomId,
           session.getId());
+      return true;
+    } catch (MatrixInviteRateLimitedException e) {
+      log.warn(
+          "Invite of supervisor {} into Matrix room {} for session {} is rate limited (retry after"
+              + " {} ms); deferring it to the repair queue",
+          supervisorConsultant.getUsername(),
+          matrixRoomId,
+          session.getId(),
+          e.getRetryAfterMs());
+      return false;
     } catch (MatrixInviteUserException e) {
       if (e.getMessage() != null && e.getMessage().contains("already in the room")) {
         log.info(
@@ -596,7 +700,7 @@ public class SessionSupervisorFacade {
             supervisorConsultant.getUsername(),
             matrixRoomId,
             session.getId());
-        return;
+        return true;
       }
       log.error(
           "Failed to invite supervisor {} to Matrix room {}: {}",
@@ -616,31 +720,104 @@ public class SessionSupervisorFacade {
     }
   }
 
-  /** Remove a user from a room if a room id is present; log but never fail the removal flow. */
-  private void removeFromRoomIfPresent(
+  /**
+   * Whether the session is an anonymous one that supervision does not cover. The technical session
+   * of a members-only chat carries the dummy postcode 00000 that marks anonymous registrations, but
+   * it is an internal chat between colleagues, so it is never anonymous here.
+   */
+  private boolean isAnonymousForSupervision(Session session) {
+    return AnonymousSessionRegistration.matches(session)
+        && !membersOnlyChatAccess.concerns(session);
+  }
+
+  /**
+   * The room a supervisor observed and is taken out of when the supervision ends: the client room.
+   * A members-only chat has none, its main room belongs to the participants, so nothing here.
+   */
+  private String observedRoomOf(Session session) {
+    return membersOnlyChatAccess.concerns(session) ? null : session.getMatrixRoomId();
+  }
+
+  /**
+   * The Matrix accounts a kick is attempted as, best first, without duplicates. The chat's creator
+   * (the assigned consultant of its technical session) comes first: they hold the power in a
+   * private room, which an ordinary participant who removes the supervisor does not. The caller is
+   * the fallback, and the first operator of an ordinary session, as before.
+   */
+  private List<String> kickOperatorsOf(Session session, Consultant removedBy) {
+    String creator =
+        session.getConsultant() != null ? session.getConsultant().getMatrixUserId() : null;
+    String caller = removedBy != null ? removedBy.getMatrixUserId() : null;
+    var operators = new java.util.LinkedHashSet<String>();
+    if (membersOnlyChatAccess.concerns(session)) {
+      addIfKnown(operators, creator);
+      addIfKnown(operators, caller);
+    } else {
+      addIfKnown(operators, caller);
+      addIfKnown(operators, creator);
+    }
+    return List.copyOf(operators);
+  }
+
+  private static void addIfKnown(java.util.Set<String> operators, String matrixUserId) {
+    if (matrixUserId != null && !matrixUserId.isEmpty()) {
+      operators.add(matrixUserId);
+    }
+  }
+
+  /**
+   * Takes a former supervisor out of a room. The supervision ends and the counsellor carries on
+   * whatever Matrix answers, but a kick that did not happen is never silent. Order: kick as each
+   * operator in turn, then the supervisor leaves with their own token (always allowed, whatever
+   * power levels the room has), and only if all of that fails the removal is queued durably, in the
+   * caller's transaction, as the first operator, until it succeeds.
+   */
+  private void removeFromRoomOrQueue(
       String roomId,
       String supervisorMatrixUserId,
-      String consultantToken,
+      List<String> operatorMatrixUserIds,
       SessionSupervisor supervisor,
       String roomLabel) {
     if (roomId == null || roomId.isEmpty()) {
       return;
     }
-    boolean removed =
-        matrixSynapseService.removeUserFromRoom(roomId, supervisorMatrixUserId, consultantToken);
-    if (removed) {
-      log.info(
-          "Removed supervisor {} from {} room {}",
-          supervisor.getSupervisorConsultant().getUsername(),
-          roomLabel,
-          roomId);
-    } else {
-      log.warn(
-          "Failed to remove supervisor {} from {} room {}, but continuing",
-          supervisor.getSupervisorConsultant().getUsername(),
-          roomLabel,
-          roomId);
+    String supervisorName = supervisor.getSupervisorConsultant().getUsername();
+    boolean removed = false;
+    for (String operatorMatrixUserId : operatorMatrixUserIds) {
+      String operatorToken = matrixSynapseService.loginAsUserAccessToken(operatorMatrixUserId);
+      if (operatorToken != null
+          && matrixSynapseService.removeUserFromRoom(
+              roomId, supervisorMatrixUserId, operatorToken)) {
+        removed = true;
+        break;
+      }
     }
+    if (!removed) {
+      String supervisorToken = matrixSynapseService.loginAsUserAccessToken(supervisorMatrixUserId);
+      removed = supervisorToken != null && matrixSynapseService.leaveRoom(roomId, supervisorToken);
+    }
+    if (removed) {
+      log.info("Removed supervisor {} from {} room {}", supervisorName, roomLabel, roomId);
+      return;
+    }
+    if (operatorMatrixUserIds.isEmpty()) {
+      log.error(
+          "Could not remove supervisor {} from {} room {} and no operator is known to retry as",
+          supervisorName,
+          roomLabel,
+          roomId);
+      return;
+    }
+    log.error(
+        "Failed to remove supervisor {} from {} room {}; durable removal queued",
+        supervisorName,
+        roomLabel,
+        roomId);
+    matrixRepairService.enqueueRemovalInCurrentTransaction(
+        roomId,
+        supervisorMatrixUserId,
+        operatorMatrixUserIds.get(0),
+        supervisor.getSession().getId());
   }
 
   /**
@@ -714,14 +891,17 @@ public class SessionSupervisorFacade {
     if (session.getAgencyId() == null) {
       return false;
     }
-    // Check if consultant has agency relationship
-    // Note: getConsultantAgencies() might return null if not loaded, so handle that
+    // The standing-supervisor attach runs addSupervisor by self-invocation, outside any
+    // transaction, so the consultant here can be detached: touching its uninitialised lazy
+    // collection throws (ORISO-Frontend#2386 on Dev, 22 Nov 2026). Use the collection only when it
+    // is really loaded; otherwise ask the repository.
     Set<ConsultantAgency> consultantAgencies = consultant.getConsultantAgencies();
-    if (consultantAgencies == null || consultantAgencies.isEmpty()) {
+    if (consultantAgencies == null
+        || !org.hibernate.Hibernate.isInitialized(consultantAgencies)
+        || consultantAgencies.isEmpty()) {
       log.warn(
           "Consultant {} has no loaded ConsultantAgencies. Checking via repository.",
           consultant.getId());
-      // Fallback: Check via repository if relationship not loaded
       List<ConsultantAgency> agencies =
           consultantAgencyRepository.findByConsultantIdAndDeleteDateIsNull(consultant.getId());
       return agencies.stream().anyMatch(ca -> ca.getAgencyId().equals(session.getAgencyId()));

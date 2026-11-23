@@ -1,6 +1,7 @@
 package de.caritas.cob.userservice.api.service.email.layout;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.Assertions.within;
 
 import org.junit.jupiter.api.Test;
@@ -32,48 +33,48 @@ class EmailColorsTest {
     assertThat(EmailColors.firstValid("nope", "")).isNull();
   }
 
-  /**
-   * The platform fallback is the product's own dark accent {@code --oriso-app-accent-dark} (#914,
-   * final decision), and white text on it must clear AA — the layout paints the CTA label white on
-   * a deep tone, never a mid-tone on a mid-tone.
-   */
+  /** The web app's rule: white label only when the seed reaches 4.5:1 against white. */
   @Test
-  void platformAccent_Should_beTheProductDarkAccentAndCarryWhiteText() {
-    assertThat(EmailColors.PLATFORM_ACCENT_DARK).isEqualTo("#a5000a");
-    assertThat(EmailColors.readableTextColor(EmailColors.PLATFORM_ACCENT_DARK))
-        .isEqualTo(EmailColors.LIGHT_TEXT);
-    assertThat(EmailColors.contrastRatio(EmailColors.PLATFORM_ACCENT_DARK, EmailColors.LIGHT_TEXT))
-        .isGreaterThanOrEqualTo(4.5d);
-    assertThat(EmailColors.onLightBackground(EmailColors.PLATFORM_ACCENT_DARK))
-        .as("the product accent is already dark enough to be link text on the white card")
-        .isEqualTo(EmailColors.PLATFORM_ACCENT_DARK);
+  void onPrimary_Should_beWhiteOnADarkBrandColour() {
+    assertThat(EmailColors.onPrimary("#1c4f8f")).isEqualTo("#ffffff");
+    assertThat(EmailColors.onPrimary("#a5000a")).isEqualTo("#ffffff");
   }
 
-  /**
-   * A light tenant primary colour (the real Pre-Dev theme colour {@code #f8e71c} is a yellow) would
-   * render white button text unreadable, so the layout must flip to dark text.
-   */
+  /** A light brand colour (the real Pre-Dev colour #f8e71c is a yellow) gets a dark label. */
   @Test
-  void readableTextColor_Should_returnDarkText_When_BackgroundIsLight() {
-    assertThat(EmailColors.readableTextColor("#f8e71c")).isEqualTo(EmailColors.DARK_TEXT);
-    assertThat(EmailColors.readableTextColor("#ffffff")).isEqualTo(EmailColors.DARK_TEXT);
+  void onPrimary_Should_beADarkToneOfTheSameHueOnALightBrandColour() {
+    String label = EmailColors.onPrimary("#f8e71c");
+
+    assertThat(label).isEqualTo("#1f1c00");
+    assertThat(EmailColors.contrastRatio("#f8e71c", label)).isGreaterThanOrEqualTo(4.5d);
   }
 
   @Test
-  void readableTextColor_Should_returnWhite_When_BackgroundIsDark() {
-    assertThat(EmailColors.readableTextColor("#a5000a")).isEqualTo(EmailColors.LIGHT_TEXT);
-    assertThat(EmailColors.readableTextColor("#000000")).isEqualTo(EmailColors.LIGHT_TEXT);
-  }
-
-  @Test
-  void readableTextColor_Should_alwaysReachAaContrast() {
-    for (String accent :
-        new String[] {"#f8e71c", "#ffffff", "#a5000a", "#7f7f7f", "#00ff00", "#123456"}) {
-      String text = EmailColors.readableTextColor(accent);
-      assertThat(EmailColors.contrastRatio(accent, text))
-          .as("contrast of %s on %s", text, accent)
-          .isGreaterThanOrEqualTo(3.0d);
+  void onPrimary_Should_alwaysReachAaContrastOnTheBrandColour() {
+    for (String seed :
+        new String[] {
+          "#f8e71c", "#ffff00", "#a5000a", "#00ff00", "#123456", "#1e88e5", "#d32f2f"
+        }) {
+      assertThat(EmailColors.contrastRatio(seed, EmailColors.onPrimary(seed)))
+          .as("label contrast on %s", seed)
+          .isGreaterThanOrEqualTo(4.5d);
     }
+  }
+
+  @Test
+  void onPrimary_Should_rejectANonColour() {
+    assertThatThrownBy(() -> EmailColors.onPrimary("nonsense"))
+        .isInstanceOf(IllegalArgumentException.class);
+  }
+
+  @Test
+  void usablePrimary_Should_keepLightChromaticColoursAndIgnoreNearGreyOnes() {
+    assertThat(EmailColors.usablePrimary("#F8E71C")).isEqualTo("#f8e71c");
+    assertThat(EmailColors.usablePrimary("#fc0")).isEqualTo("#ffcc00");
+    assertThat(EmailColors.usablePrimary("#808080")).isNull();
+    assertThat(EmailColors.usablePrimary("#000000")).isNull();
+    assertThat(EmailColors.usablePrimary(null)).isNull();
+    assertThat(EmailColors.usablePrimary("red")).isNull();
   }
 
   /** Link text and the wordmark sit on the white content card and must stay legible there. */
@@ -92,13 +93,6 @@ class EmailColorsTest {
   @Test
   void onLightBackground_Should_returnDarkText_When_ColorIsInvalid() {
     assertThat(EmailColors.onLightBackground("nonsense")).isEqualTo(EmailColors.DARK_TEXT);
-  }
-
-  /** A near-white accent would make the filled button vanish on the white card. */
-  @Test
-  void borderColor_Should_darkenNearWhiteAccentsOnly() {
-    assertThat(EmailColors.borderColor("#a5000a")).isEqualTo("#a5000a");
-    assertThat(EmailColors.borderColor("#fffdf5")).isNotEqualTo("#fffdf5");
   }
 
   @Test

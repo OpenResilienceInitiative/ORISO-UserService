@@ -373,7 +373,7 @@ Expected negative case:
 
 ## 5. Redeem Invite Link
 
-Use the `token` returned by a create request.
+Use the `token` returned when creating a registered invitation.
 
 Request:
 
@@ -404,11 +404,11 @@ Example shape:
 }
 ```
 
-Current branch behavior:
+Redemption behavior:
 
 - A `LIVE_CHAT` redeem creates an anonymous counselling session and returns its authentication
   fields together with the route metadata.
-- Other supported invite types return route metadata without creating a session.
+- A registered invitation returns route metadata without creating a session.
 - The response contains no chat-provider identifier or Matrix access token. The frontend starts
   Matrix through its normal host-owned bootstrap.
 - Redeem does not mark an active link as `USED`; published links are reusable until expiry.

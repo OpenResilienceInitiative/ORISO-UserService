@@ -40,9 +40,9 @@ import org.springframework.data.domain.Pageable;
 @ExtendWith(MockitoExtension.class)
 class DeleteMatrixDeletionWorkflowTest {
 
-  private static final String MATRIX_USER_ID = "@user:oriso.org";
-  private static final String MATRIX_ROOM_ID = "!counselling:oriso.org";
-  private static final String GROUP_CHAT_ROOM_ID = "!group:oriso.org";
+  private static final String MATRIX_USER_ID = "@user:example.org";
+  private static final String MATRIX_ROOM_ID = "!counselling:example.org";
+  private static final String GROUP_CHAT_ROOM_ID = "!group:example.org";
 
   @Mock private MatrixSynapseService matrixSynapseService;
   @Mock private SessionRepository sessionRepository;
@@ -107,7 +107,12 @@ class DeleteMatrixDeletionWorkflowTest {
     when(matrixSynapseService.deactivateUser(MATRIX_USER_ID)).thenReturn(true);
 
     var workflowDTO = new ConsultantDeletionWorkflowDTO(consultant, new ArrayList<>());
-    new DeleteMatrixConsultantAction(matrixSynapseService, sessionRepository).execute(workflowDTO);
+    new DeleteMatrixConsultantAction(
+            matrixSynapseService,
+            sessionRepository,
+            org.mockito.Mockito.mock(
+                de.caritas.cob.userservice.api.port.out.ConsultantRepository.class))
+        .execute(workflowDTO);
 
     var order = inOrder(matrixSynapseService);
     order.verify(matrixSynapseService).purgeRoom(MATRIX_ROOM_ID);
@@ -125,7 +130,14 @@ class DeleteMatrixDeletionWorkflowTest {
     when(matrixSynapseService.purgeRoom(GROUP_CHAT_ROOM_ID)).thenReturn(true);
 
     var workflowDTO = new ConsultantDeletionWorkflowDTO(consultant, new ArrayList<>());
-    new DeleteChatAction(chatRepository, matrixSynapseService).execute(workflowDTO);
+    new DeleteChatAction(
+            chatRepository,
+            matrixSynapseService,
+            org.mockito.Mockito.mock(de.caritas.cob.userservice.api.service.ChatService.class),
+            org.mockito.Mockito.mock(
+                de.caritas.cob.userservice.api.service.matrixgroup.GroupMatrixLifecycleCleanup
+                    .class))
+        .execute(workflowDTO);
 
     verify(matrixSynapseService, times(1)).purgeRoom(GROUP_CHAT_ROOM_ID);
     assertThat(workflowDTO.getDeletionWorkflowErrors(), hasSize(0));

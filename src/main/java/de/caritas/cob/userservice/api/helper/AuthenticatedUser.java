@@ -78,6 +78,28 @@ public class AuthenticatedUser {
     return nonNull(roles) && roles.contains(UserRole.TENANT_ADMIN.getValue());
   }
 
+  /**
+   * Tenant-level admin access: tenant admins (single-tenant or tenant super admin) and platform
+   * admins (which always hold the tenant-admin role). Restricted agency admins never qualify. Used
+   * as the gate for consultant {@code adminRemarks} (#994).
+   */
+  @JsonIgnore
+  public boolean hasTenantLevelAdminRole() {
+    return isSingleTenantAdmin() || isTenantSuperAdmin();
+  }
+
+  /** Read-only platform statistics account (ORISO-UserService#1666). */
+  @JsonIgnore
+  public boolean isStatisticsReader() {
+    return nonNull(roles) && roles.contains(UserRole.STATISTICS_READER.getValue());
+  }
+
+  /** A statistics reader on the platform tenant 0: reads the platform statistics, nothing else. */
+  @JsonIgnore
+  public boolean isPlatformStatisticsReader() {
+    return Long.valueOf(0L).equals(tenantId) && isStatisticsReader();
+  }
+
   @JsonIgnore
   public boolean isPlatformAdmin() {
     return Long.valueOf(0L).equals(tenantId) && isAgencySuperAdmin() && isTenantSuperAdmin();

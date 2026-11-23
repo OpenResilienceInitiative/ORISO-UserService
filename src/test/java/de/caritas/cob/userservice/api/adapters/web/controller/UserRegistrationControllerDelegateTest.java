@@ -6,6 +6,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
@@ -51,8 +52,16 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.aop.framework.ProxyFactory;
 import org.springframework.http.HttpStatus;
+import org.springframework.jdbc.datasource.DataSourceTransactionManager;
+import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import org.springframework.test.util.ReflectionTestUtils;
+import org.springframework.transaction.IllegalTransactionStateException;
+import org.springframework.transaction.annotation.AnnotationTransactionAttributeSource;
+import org.springframework.transaction.interceptor.TransactionInterceptor;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
+import org.springframework.transaction.support.TransactionTemplate;
 
 @ExtendWith(MockitoExtension.class)
 class UserRegistrationControllerDelegateTest {
@@ -201,7 +210,7 @@ class UserRegistrationControllerDelegateTest {
 
   @Test
   void acceptEnquiryShouldReturnInternalServerErrorWhenSessionIsMissing() {
-    when(sessionService.getSessionForUpdate(SESSION_ID)).thenReturn(Optional.empty());
+    when(sessionService.getSession(SESSION_ID)).thenReturn(Optional.empty());
 
     var response = delegate.acceptEnquiry(SESSION_ID);
 
@@ -210,16 +219,82 @@ class UserRegistrationControllerDelegateTest {
   }
 
   @Test
-  void acceptEnquiryShouldAssignRegisteredEnquiry() {
+  void acceptEnquiryShouldAssignRegisteredEnquiryWithoutAnOuterTransaction() {
     var session = new Session();
     var consultant = new Consultant();
-    when(sessionService.getSessionForUpdate(SESSION_ID)).thenReturn(Optional.of(session));
+    when(sessionService.getSession(SESSION_ID)).thenReturn(Optional.of(session));
     when(userAccountProvider.retrieveValidatedConsultant()).thenReturn(consultant);
+    doAnswer(
+            invocation -> {
+              assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+              return null;
+            })
+        .when(assignEnquiryFacade)
+        .assignRegisteredEnquiry(session, consultant);
 
-    var response = delegate.acceptEnquiry(SESSION_ID);
+    var dataSource = new DriverManagerDataSource("jdbc:h2:mem:enquiry-acceptance-boundary");
+    var transactionAdvice = new TransactionInterceptor();
+    var transactions = new DataSourceTransactionManager(dataSource);
+    transactionAdvice.setTransactionManager(transactions);
+    transactionAdvice.setTransactionAttributeSource(
+        new AnnotationTransactionAttributeSource(false));
+    var factory = new ProxyFactory(delegate);
+    factory.setProxyTargetClass(true);
+    factory.addAdvice(transactionAdvice);
+    var transactionAwareDelegate = (UserRegistrationControllerDelegate) factory.getProxy();
+
+    var response = transactionAwareDelegate.acceptEnquiry(SESSION_ID);
 
     assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+    assertThatThrownBy(
+            () ->
+                new TransactionTemplate(transactions)
+                    .executeWithoutResult(
+                        status -> transactionAwareDelegate.acceptEnquiry(SESSION_ID)))
+        .isInstanceOf(IllegalTransactionStateException.class);
     verify(assignEnquiryFacade).assignRegisteredEnquiry(session, consultant);
+  }
+
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.ValueSource(
+      strings = {"de", "de@informal", "en", "fr", "ru", "tr", "ti"})
+  void enquiryCreationPreservesUiLocaleSeparatelyFromCounsellingLanguage(String locale) {
+    var request = new org.springframework.mock.web.MockHttpServletRequest();
+    request.setCookies(new jakarta.servlet.http.Cookie("lang", locale));
+    org.springframework.web.context.request.RequestContextHolder.setRequestAttributes(
+        new org.springframework.web.context.request.ServletRequestAttributes(request));
+    try {
+      when(userAccountProvider.retrieveValidatedUser()).thenReturn(newUser());
+      var message = org.mockito.Mockito.mock(EnquiryMessageDTO.class);
+      when(message.getLanguage()).thenReturn(LanguageCode.EN);
+      when(consultantDtoMapper.languageOf(LanguageCode.EN)).thenReturn("en");
+      delegate.createEnquiryMessage(SESSION_ID, message);
+      var captor = ArgumentCaptor.forClass(EnquiryData.class);
+      verify(createEnquiryMessageFacade).createEnquiryMessage(captor.capture());
+      assertThat(captor.getValue().getUiLocale()).isEqualTo(locale);
+      assertThat(captor.getValue().getLanguage()).isEqualTo("en");
+    } finally {
+      org.springframework.web.context.request.RequestContextHolder.resetRequestAttributes();
+    }
+  }
+
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.ValueSource(
+      strings = {"../emails", "es", "en-US", "<script>", ""})
+  void enquiryCreationIgnoresUnsupportedUiLocale(String locale) {
+    var request = new org.springframework.mock.web.MockHttpServletRequest();
+    request.setCookies(new jakarta.servlet.http.Cookie("lang", locale));
+    org.springframework.web.context.request.RequestContextHolder.setRequestAttributes(
+        new org.springframework.web.context.request.ServletRequestAttributes(request));
+    try {
+      when(userAccountProvider.retrieveValidatedUser()).thenReturn(newUser());
+      delegate.createEnquiryMessage(SESSION_ID, org.mockito.Mockito.mock(EnquiryMessageDTO.class));
+      var captor = ArgumentCaptor.forClass(EnquiryData.class);
+      verify(createEnquiryMessageFacade).createEnquiryMessage(captor.capture());
+      assertThat(captor.getValue().getUiLocale()).isNull();
+    } finally {
+      org.springframework.web.context.request.RequestContextHolder.resetRequestAttributes();
+    }
   }
 
   @Test

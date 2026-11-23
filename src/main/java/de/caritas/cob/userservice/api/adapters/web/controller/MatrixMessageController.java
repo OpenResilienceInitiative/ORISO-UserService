@@ -1,6 +1,9 @@
 package de.caritas.cob.userservice.api.adapters.web.controller;
 
+import de.caritas.cob.userservice.api.adapters.matrix.MatrixMediaClient;
 import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
+import de.caritas.cob.userservice.api.adapters.web.dto.MatrixBrowserTokenResponseDTO;
+import de.caritas.cob.userservice.api.exception.matrix.MatrixBrowserLoginRateLimitedException;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.helper.ChatPermissionVerifier;
 import de.caritas.cob.userservice.api.helper.MatrixIds;
@@ -9,15 +12,19 @@ import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.service.ChatService;
 import de.caritas.cob.userservice.api.service.ConsultantService;
 import de.caritas.cob.userservice.api.service.agency.AgencyMatrixCredentialClient;
+import de.caritas.cob.userservice.api.service.conversationfeature.ConversationFeature;
+import de.caritas.cob.userservice.api.service.conversationfeature.ConversationFeatureGate;
 import de.caritas.cob.userservice.api.service.matrix.RedisMessageMirrorService;
 import de.caritas.cob.userservice.api.service.session.SessionService;
 import de.caritas.cob.userservice.api.service.user.UserService;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.CacheControl;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -40,15 +47,15 @@ public class MatrixMessageController {
   private final @NonNull UserService userService;
   private final @NonNull AgencyMatrixCredentialClient matrixCredentialClient;
   private final @NonNull ChatPermissionVerifier chatPermissionVerifier;
+  private final @NonNull ConversationFeatureGate conversationFeatureGate;
   private final Optional<RedisMessageMirrorService> redisMessageMirrorService;
 
   /**
-   * Mint a short-lived Matrix access token for the currently authenticated platform user.
+   * Create a device-bound Matrix login for the currently authenticated platform user.
    *
-   * <p>The browser needs a user-scoped Matrix token for sync, sending, typing, and calls, but the
-   * platform must not persist or reuse the user's Matrix password. Synapse admin login-as-user
-   * keeps the token scoped to the mapped Matrix user while avoiding a reversible credential in
-   * MariaDB.
+   * <p>The browser receives a user-scoped token and a stable account credential for interactive
+   * authentication during encryption setup/reset. The credential stays in browser memory. A second
+   * device's login keeps the first device's credential valid; no credential is stored in MariaDB.
    */
   @GetMapping("/me/token")
   public ResponseEntity<?> getCurrentUserMatrixToken(
@@ -69,14 +76,22 @@ public class MatrixMessageController {
             .body(Map.of("error", "Matrix token unavailable"));
       }
 
-      var response = new java.util.HashMap<String, Object>();
-      response.put("accessToken", tokenResponse.get("access_token"));
-      response.put("userId", tokenResponse.getOrDefault("user_id", matrixUserId));
-      response.put("deviceId", tokenResponse.getOrDefault("device_id", ""));
-      response.put("uiaPassword", tokenResponse.getOrDefault("interactive_auth_password", ""));
-      response.put("expiresInMs", MATRIX_BROWSER_TOKEN_TTL_MS);
+      var response =
+          new MatrixBrowserTokenResponseDTO(
+              (String) tokenResponse.get("access_token"),
+              (String) tokenResponse.getOrDefault("user_id", matrixUserId),
+              (String) tokenResponse.getOrDefault("device_id", ""),
+              (String) tokenResponse.getOrDefault("interactive_auth_password", ""),
+              MATRIX_BROWSER_TOKEN_TTL_MS);
 
       return ResponseEntity.ok().cacheControl(CacheControl.noStore()).body(response);
+    } catch (MatrixBrowserLoginRateLimitedException ex) {
+      var response =
+          ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS).cacheControl(CacheControl.noStore());
+      ex.getRetryAfterSeconds()
+          .ifPresent(
+              seconds -> response.header(HttpHeaders.RETRY_AFTER, Integer.toString(seconds)));
+      return response.body(Map.of("error", "Matrix token unavailable"));
     } catch (Exception ex) {
       log.error("Could not create Matrix token for current user", ex);
       return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
@@ -120,6 +135,10 @@ public class MatrixMessageController {
       @PathVariable Long sessionId, @RequestBody Map<String, Object> messageRequest) {
 
     var session = sessionService.assertUserHasAccess(sessionId, authenticatedUser);
+    if (session.getStatus() == Session.SessionStatus.REJECTED) {
+      return ResponseEntity.status(HttpStatus.CONFLICT)
+          .body(Map.of("error", "Rejected conversation is read-only"));
+    }
 
     try {
       if (session.getMatrixRoomId() == null) {
@@ -209,22 +228,20 @@ public class MatrixMessageController {
           var agencyCredentials = matrixCredentialClient.fetchMatrixCredentials(agencyId);
           if (agencyCredentials.isEmpty()) {
             log.warn("No Matrix credentials for agency {}", agencyId);
-            return ResponseEntity.ok(Map.of("messages", new Object[0]));
+            return ResponseEntity.status(HttpStatus.BAD_GATEWAY)
+                .body(Map.of("error", "Agency Matrix identity unavailable"));
           }
 
           String agencyMatrixId = agencyCredentials.get().getMatrixUserId();
-          String matrixUsername;
-          if (agencyMatrixId != null && agencyMatrixId.startsWith("@")) {
-            matrixUsername = MatrixIds.localpart(agencyMatrixId);
-          } else {
-            return ResponseEntity.ok(Map.of("messages", new Object[0]));
+          if (!MatrixIds.isUserId(agencyMatrixId)) {
+            return ResponseEntity.status(HttpStatus.BAD_GATEWAY)
+                .body(Map.of("error", "Agency Matrix identity unavailable"));
           }
-
-          String password = agencyCredentials.get().getMatrixPassword();
-          if (password == null) {
-            return ResponseEntity.ok(Map.of("messages", new Object[0]));
+          accessToken = matrixSynapseService.loginAsUserAccessToken(agencyMatrixId);
+          if (accessToken == null || accessToken.isBlank()) {
+            return ResponseEntity.status(HttpStatus.BAD_GATEWAY)
+                .body(Map.of("error", "Matrix authentication unavailable"));
           }
-          accessToken = matrixSynapseService.loginUser(matrixUsername, password);
         } else {
           accessToken = createCurrentMatrixAccessToken();
         }
@@ -302,6 +319,8 @@ public class MatrixMessageController {
       @PathVariable Long sessionId, @RequestParam("file") MultipartFile file) {
 
     var roomAccess = resolveAuthorizedMatrixRoom(sessionId);
+    // Outside the try below: its catch-all would turn the refusal into a 500.
+    roomAccess.ifPresent(room -> requireMediaUploadAllowed(room, file));
 
     try {
       log.info("📤 Upload request for session {}, file: {}", sessionId, file.getOriginalFilename());
@@ -312,6 +331,11 @@ public class MatrixMessageController {
             .body(Map.of("error", "Session not found or has no Matrix room"));
       }
       var authorizedRoom = roomAccess.get();
+      if (authorizedRoom.isSession()
+          && authorizedRoom.getSession().getStatus() == Session.SessionStatus.REJECTED) {
+        return ResponseEntity.status(HttpStatus.CONFLICT)
+            .body(Map.of("error", "Rejected conversation is read-only"));
+      }
       log.info("📤 Upload: Found authorized Matrix room: {}", authorizedRoom.getMatrixRoomId());
 
       String keycloakUsername = authenticatedUser.getUsername();
@@ -340,6 +364,22 @@ public class MatrixMessageController {
     }
   }
 
+  /**
+   * An admin who switched attachments off for the Träger or Beratungsstelle (#1564). A file that is
+   * posted as audio is a voice message and must pass the voice switch as well.
+   */
+  private void requireMediaUploadAllowed(MatrixRoomAccess room, MultipartFile file) {
+    var features =
+        MatrixMediaClient.isAudio(file.getContentType())
+            ? List.of(ConversationFeature.MEDIA_UPLOAD, ConversationFeature.VOICE_MESSAGES)
+            : List.of(ConversationFeature.MEDIA_UPLOAD);
+    if (room.isSession()) {
+      conversationFeatureGate.require(features, room.getSession());
+    } else {
+      conversationFeatureGate.require(features, room.getChat());
+    }
+  }
+
   private Optional<MatrixRoomAccess> resolveAuthorizedMatrixRoom(Long sessionId) {
     var session = sessionService.getSession(sessionId);
     if (session.isPresent() && session.get().getMatrixRoomId() != null) {
@@ -361,18 +401,24 @@ public class MatrixMessageController {
 
     private final String matrixRoomId;
     private final Session session;
+    private final Chat chat;
 
-    private MatrixRoomAccess(String matrixRoomId, Session session) {
+    private MatrixRoomAccess(String matrixRoomId, Session session, Chat chat) {
       this.matrixRoomId = matrixRoomId;
       this.session = session;
+      this.chat = chat;
     }
 
     static MatrixRoomAccess forSession(Session session) {
-      return new MatrixRoomAccess(session.getMatrixRoomId(), session);
+      return new MatrixRoomAccess(session.getMatrixRoomId(), session, null);
     }
 
     static MatrixRoomAccess forChat(Chat chat) {
-      return new MatrixRoomAccess(chat.getMatrixRoomId(), null);
+      return new MatrixRoomAccess(chat.getMatrixRoomId(), null, chat);
+    }
+
+    Chat getChat() {
+      return chat;
     }
 
     String getMatrixRoomId() {
