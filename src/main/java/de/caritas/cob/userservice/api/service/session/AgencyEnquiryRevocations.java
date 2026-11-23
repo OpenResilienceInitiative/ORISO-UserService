@@ -197,6 +197,12 @@ public class AgencyEnquiryRevocations {
             failure.getClass().getSimpleName());
       }
     }
+    try {
+      roomDecisions.purgeErasedBatch(BATCH_SIZE);
+    } catch (RuntimeException failure) {
+      log.warn(
+          "Could not purge erased enquiry room decisions ({})", failure.getClass().getSimpleName());
+    }
   }
 
   private void attemptSafely(Long taskId, Map<Long, Optional<String>> agencyTokens) {

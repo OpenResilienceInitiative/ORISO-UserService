@@ -15,6 +15,7 @@ import de.caritas.cob.userservice.api.port.out.AgencyEnquiryRoomDecisionReposito
 import java.time.Clock;
 import java.time.Duration;
 import java.time.LocalDateTime;
+import java.util.Collections;
 import java.util.List;
 import java.util.Optional;
 import lombok.RequiredArgsConstructor;
@@ -22,6 +23,7 @@ import org.springframework.data.domain.PageRequest;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.lang.Nullable;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Isolation;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -33,6 +35,21 @@ public class AgencyEnquiryRoomDecisions {
 
   static final int SWEEP_TRANSACTION_TIMEOUT_SECONDS = 5;
   private static final Duration PREPARATION_LEASE = Duration.ofMinutes(2);
+  // Departures that already have an event order can still use REPLACED or REOPENED decisions.
+  // REUSED deliberately keeps silent membership, so such a departure cannot select it.
+  private static final String ERASABLE =
+      """
+      outcome = 'REUSED'
+      AND resolved_order IS NOT NULL
+      AND prepared_until IS NULL
+      AND NOT EXISTS (
+        SELECT 1 FROM session s WHERE s.id = agency_enquiry_room_decision.session_id
+      )
+      AND NOT EXISTS (
+        SELECT 1 FROM agency_enquiry_revocation_task t
+        WHERE t.room_decision_id = agency_enquiry_room_decision.id
+      )
+      """;
 
   private final AgencyEnquiryRoomDecisionRepository decisions;
   private final AgencyEnquiryRevocationTaskRepository tasks;
@@ -82,6 +99,37 @@ public class AgencyEnquiryRoomDecisions {
   List<AgencyEnquiryRoomDecision> expiredPreparations(int limit) {
     return decisions.findByPreparedUntilLessThanEqualOrderByPreparedUntilAscIdAsc(
         LocalDateTime.now(clock), PageRequest.of(0, limit));
+  }
+
+  /** Remove reused-room decisions only after physical erasure and dependent task completion. */
+  @Transactional(
+      propagation = Propagation.REQUIRES_NEW,
+      isolation = Isolation.READ_COMMITTED,
+      timeout = SWEEP_TRANSACTION_TIMEOUT_SECONDS)
+  void purgeErasedBatch(int limit) {
+    var candidates =
+        jdbc.queryForList(
+            "SELECT id FROM agency_enquiry_room_decision WHERE "
+                + ERASABLE
+                + " ORDER BY id LIMIT ?",
+            Long.class,
+            limit);
+    if (candidates.isEmpty()) {
+      return;
+    }
+
+    var selectedIds =
+        "id IN (" + String.join(", ", Collections.nCopies(candidates.size(), "?")) + ")";
+    var ids = candidates.toArray();
+    // A departure holds a shared decision lock until any dependent task is committed.
+    jdbc.queryForList(
+        "SELECT id FROM agency_enquiry_room_decision WHERE "
+            + selectedIds
+            + " ORDER BY id FOR UPDATE",
+        Long.class,
+        ids);
+    jdbc.update(
+        "DELETE FROM agency_enquiry_room_decision WHERE " + selectedIds + " AND " + ERASABLE, ids);
   }
 
   /** Lock decision after session, the same order used by the foreground room decision. */
