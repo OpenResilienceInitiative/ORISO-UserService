@@ -70,7 +70,7 @@ class SupportRoomLifecycle {
     // A confirmation holds the handshake lock across the last Matrix step and activation.
     rooms
         .findHandshakeIdByRoomIdAndStatus(roomId, PROVISIONING)
-        .ifPresent(handshakes::findByIdForUpdate);
+        .ifPresent(handshakes::lockForSupportCleanup);
     var room = rooms.lockById(roomId).orElse(null);
     if (room == null || room.getStatus() == CLOSED) {
       return Optional.empty();

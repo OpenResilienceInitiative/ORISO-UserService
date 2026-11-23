@@ -111,8 +111,7 @@ public class SupportRoomService {
       if (!matrixSynapseService.ensureSupportRoomModeration(matrixRoomId, supportAdminToken)) {
         throw new ServiceUnavailableException("Support room restrictions could not be verified");
       }
-      confirmParticipants(
-          matrixRoomId, supportAdminMatrixId, consultantMatrixId, supportAdminToken);
+      confirmParticipants(matrixRoomId, intent, supportAdminToken);
       var room = lifecycle.activate(intent.getId(), roomTtlHours);
       provisioning.forgetConfirmed(session.getId());
       return room;
@@ -161,11 +160,10 @@ public class SupportRoomService {
   }
 
   private void confirmParticipants(
-      String matrixRoomId,
-      String supportAdminMatrixId,
-      String consultantMatrixId,
-      String supportAdminToken)
+      String matrixRoomId, SupportRoomCreationIntent intent, String supportAdminToken)
       throws Exception {
+    var supportAdminMatrixId = intent.getSupportAdminMatrixId();
+    var consultantMatrixId = intent.getConsultantMatrixId();
     var expected = Set.of(supportAdminMatrixId, consultantMatrixId);
     var before = matrixSynapseService.getRoomMembers(matrixRoomId).map(HashSet::new);
     if (before.filter(expected::equals).isPresent()) {
@@ -175,8 +173,10 @@ public class SupportRoomService {
       throw new ServiceUnavailableException(
           "Matrix did not confirm the expected support membership");
     }
+    requireAdmissionWindow(intent);
     matrixSynapseService.inviteUserToRoom(matrixRoomId, consultantMatrixId, supportAdminToken);
     var consultantToken = matrixSynapseService.loginAsUserAccessToken(consultantMatrixId);
+    requireAdmissionWindow(intent);
     if (isBlank(consultantToken) || !matrixSynapseService.joinRoom(matrixRoomId, consultantToken)) {
       throw new IllegalStateException(
           "Matrix did not confirm the consultant joined the support room");
@@ -187,6 +187,12 @@ public class SupportRoomService {
         .filter(expected::equals)
         .isEmpty()) {
       throw new IllegalStateException("Matrix did not confirm both support room participants");
+    }
+  }
+
+  private void requireAdmissionWindow(SupportRoomCreationIntent intent) {
+    if (!SupportRoomProvisioningLedger.canAdmit(intent, nowInUtc())) {
+      throw new IllegalStateException("Support room provisioning grace has expired");
     }
   }
 
@@ -224,13 +230,24 @@ public class SupportRoomService {
       if (System.nanoTime() - startedAt >= SWEEP_BUDGET.toNanos()) {
         return;
       }
-      lifecycle.claimClosure(roomId).ifPresent(this::withdrawAndConfirm);
+      try {
+        lifecycle.claimClosure(roomId).ifPresent(this::withdrawAndConfirm);
+      } catch (RuntimeException failure) {
+        log.warn(
+            "Could not claim a support room withdrawal ({})", failure.getClass().getSimpleName());
+      }
     }
     for (var handshakeId : provisioning.expiredIds(nowInUtc(), sweepBatchSize)) {
       if (System.nanoTime() - startedAt >= SWEEP_BUDGET.toNanos()) {
         return;
       }
-      provisioning.claimExpired(handshakeId).ifPresent(this::recoverExpiredIntent);
+      try {
+        provisioning.claimExpired(handshakeId).ifPresent(this::recoverExpiredIntent);
+      } catch (RuntimeException failure) {
+        log.warn(
+            "Could not claim an expired support room intent ({})",
+            failure.getClass().getSimpleName());
+      }
     }
   }
 

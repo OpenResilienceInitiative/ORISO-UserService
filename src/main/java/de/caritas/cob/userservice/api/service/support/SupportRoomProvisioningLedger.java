@@ -97,11 +97,16 @@ class SupportRoomProvisioningLedger {
   public boolean bindForConfirmation(SupportRoomCreationIntent proof, String matrixRoomId) {
     var intent = requireCurrent(proof);
     var now = LocalDateTime.now(clock);
-    if (!intent.getExpiresAt().isAfter(now)) {
-      throw new IllegalStateException("Support room creation is no longer current");
+    if (!intent.getExpiresAt().isAfter(now) && intent.getRetryAt().isAfter(now)) {
+      throw new IllegalStateException("Support room creation is already reserved for recovery");
     }
     var room = bindRoom(intent, matrixRoomId, now);
-    return room.getExpiryDate().isAfter(now);
+    return canAdmit(intent, now) && room.getExpiryDate().isAfter(now);
+  }
+
+  static boolean canAdmit(SupportRoomCreationIntent intent, LocalDateTime now) {
+    var deadline = intent.getProvisioningDeadline();
+    return deadline != null && deadline.isAfter(now) && intent.getExpiresAt().isAfter(now);
   }
 
   @Transactional(readOnly = true)

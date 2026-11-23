@@ -254,7 +254,7 @@ class MatrixRoomClientTest {
             "missing create", List.of(Map.of("type", "org.oriso.other", "content", origin))),
         Arguments.of("duplicate create", List.of(create, create)),
         Arguments.of(
-            "malformed state key", List.of(create, supportCreationEvent("other", USER_ID, origin))),
+            "malformed state key", List.of(supportCreationEvent("other", USER_ID, origin))),
         Arguments.of(
             "different creator",
             List.of(supportCreationEvent("", "@another:matrix.example", origin))),

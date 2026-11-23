@@ -148,10 +148,21 @@ class SupportRoomMigrationConvergenceIT {
         .containsEntry("uk_support_room_creation_id", List.of("id"))
         .containsEntry("idx_support_room_creation_retry", List.of("retry_at", "handshake_id"));
     try (Connection connection = openConnection();
-        Statement statement = connection.createStatement();
-        ResultSet result =
-            statement.executeQuery(
-                """
+        Statement statement = connection.createStatement()) {
+      try (ResultSet uniqueness =
+          statement.executeQuery(
+              """
+          SELECT non_unique FROM information_schema.statistics
+          WHERE table_schema = 'userservice'
+            AND table_name = 'support_room_creation_intent'
+            AND index_name = 'uk_support_room_creation_id'
+          """)) {
+        assertThat(uniqueness.next()).isTrue();
+        assertThat(uniqueness.getInt("non_unique")).isZero();
+      }
+      try (ResultSet result =
+          statement.executeQuery(
+              """
                 SELECT column_name, datetime_precision, is_nullable
                 FROM information_schema.columns
                 WHERE table_schema = 'userservice'
@@ -159,12 +170,13 @@ class SupportRoomMigrationConvergenceIT {
                   AND column_name IN ('expires_at', 'provisioning_deadline', 'retry_at')
                 ORDER BY column_name
                 """)) {
-      for (var column : List.of("expires_at", "provisioning_deadline", "retry_at")) {
-        assertThat(result.next()).as("%s column exists", column).isTrue();
-        assertThat(result.getString("column_name")).isEqualTo(column);
-        assertThat(result.getInt("datetime_precision")).isEqualTo(6);
-        assertThat(result.getString("is_nullable"))
-            .isEqualTo(column.equals("provisioning_deadline") ? "YES" : "NO");
+        for (var column : List.of("expires_at", "provisioning_deadline", "retry_at")) {
+          assertThat(result.next()).as("%s column exists", column).isTrue();
+          assertThat(result.getString("column_name")).isEqualTo(column);
+          assertThat(result.getInt("datetime_precision")).isEqualTo(6);
+          assertThat(result.getString("is_nullable"))
+              .isEqualTo(column.equals("provisioning_deadline") ? "YES" : "NO");
+        }
       }
     }
   }

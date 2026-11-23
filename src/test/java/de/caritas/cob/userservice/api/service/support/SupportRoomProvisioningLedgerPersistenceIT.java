@@ -31,12 +31,14 @@ import java.util.concurrent.TimeoutException;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.data.jpa.test.autoconfigure.DataJpaTest;
 import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase;
 import org.springframework.context.annotation.Import;
+import org.springframework.dao.PessimisticLockingFailureException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
@@ -238,6 +240,62 @@ class SupportRoomProvisioningLedgerPersistenceIT {
     }
   }
 
+  @Test
+  @EnabledIfEnvironmentVariable(named = "LIQUIBASE_IT_DB_URL", matches = ".+")
+  void cleanupClaimSkipsAHandshakeLockedByAnOngoingConfirmation() throws Exception {
+    handshakes.save(
+        HandshakeSession.builder()
+            .id(handshakeId)
+            .purpose(HandshakePurpose.SUPPORT_ACCESS)
+            .initiatorId(SUPPORT_ADMIN)
+            .counterpartId(CONSULTANT)
+            .status(HandshakeStatus.PENDING)
+            .createDate(LocalDateTime.now(clock))
+            .expiryDate(DEADLINE)
+            .tenantId(1L)
+            .build());
+    var attempt = reserve().intent();
+    roomId = attempt.getId();
+    assertThat(ledger.bindForConfirmation(attempt, ROOM)).isTrue();
+    when(clock.instant()).thenReturn(DEADLINE.plusSeconds(1).toInstant(ZoneOffset.UTC));
+    var locked = new CountDownLatch(1);
+    var release = new CountDownLatch(1);
+    var tx = new TransactionTemplate(transactionManager);
+    tx.setTimeout(8);
+    var workers = Executors.newFixedThreadPool(2, Thread.ofPlatform().daemon().factory());
+    var confirmation =
+        workers.submit(
+            () ->
+                tx.executeWithoutResult(
+                    status -> {
+                      handshakes.findByIdForUpdate(handshakeId).orElseThrow();
+                      locked.countDown();
+                      await(release);
+                    }));
+    try {
+      await(locked);
+      var attemptedCleanup =
+          workers.submit(
+              () -> {
+                try {
+                  return lifecycle.claimClosure(roomId).isEmpty();
+                } catch (PessimisticLockingFailureException conflict) {
+                  return true;
+                }
+              });
+      assertThat(attemptedCleanup.get(3, TimeUnit.SECONDS)).isTrue();
+      assertThat(rooms.findById(roomId).orElseThrow().getStatus())
+          .isEqualTo(SupportRoomStatus.PROVISIONING);
+      release.countDown();
+      confirmation.get(5, TimeUnit.SECONDS);
+      assertThat(lifecycle.claimClosure(roomId)).isPresent();
+    } finally {
+      release.countDown();
+      workers.shutdownNow();
+      assertThat(workers.awaitTermination(9, TimeUnit.SECONDS)).isTrue();
+    }
+  }
+
   private static void await(CountDownLatch latch) {
     try {
       assertThat(latch.await(5, TimeUnit.SECONDS)).isTrue();
@@ -294,6 +352,20 @@ class SupportRoomProvisioningLedgerPersistenceIT {
 
     var room = rooms.findById(roomId).orElseThrow();
     assertThat(room.getStatus()).isEqualTo(SupportRoomStatus.PROVISIONING);
+    assertThat(room.getExpiryDate()).isEqualTo(DEADLINE);
+  }
+
+  @Test
+  void roomVerifiedAfterHandshakeDeadlineIsPersistedForWithdrawal() {
+    var created = reserve().intent();
+    roomId = created.getId();
+    when(clock.instant()).thenReturn(DEADLINE.plusSeconds(1).toInstant(ZoneOffset.UTC));
+
+    assertThat(ledger.bindForConfirmation(created, ROOM)).isFalse();
+
+    var room = rooms.findById(roomId).orElseThrow();
+    assertThat(room.getStatus()).isEqualTo(SupportRoomStatus.PROVISIONING);
+    assertThat(room.getMatrixRoomId()).isEqualTo(ROOM);
     assertThat(room.getExpiryDate()).isEqualTo(DEADLINE);
   }
 

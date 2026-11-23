@@ -90,6 +90,9 @@ class SupportRoomServiceTest {
     lenient().when(intent.getRoomAlias()).thenReturn(LOCAL_ALIAS);
     lenient().when(intent.getNonce()).thenReturn(NONCE);
     lenient().when(intent.getSupportAdminMatrixId()).thenReturn(GSA_MXID);
+    lenient().when(intent.getConsultantMatrixId()).thenReturn(CONSULTANT_MXID);
+    lenient().when(intent.getProvisioningDeadline()).thenReturn(nowInUtc().plusMinutes(3));
+    lenient().when(intent.getExpiresAt()).thenReturn(nowInUtc().plusMinutes(5));
   }
 
   private HandshakeSession confirmedSession() {
@@ -169,7 +172,9 @@ class SupportRoomServiceTest {
     when(matrixSynapseService.joinRoom(ROOM_ID, "consultant-token")).thenReturn(true);
     stubProvisionalRoom();
 
+    var beforeActivation = nowInUtc();
     var room = supportRoomService.createForConfirmedHandshake(confirmedSession());
+    var afterActivation = nowInUtc();
 
     var ordered = inOrder(provisioning, matrixSynapseService, supportRoomRepository);
     ordered
@@ -194,7 +199,8 @@ class SupportRoomServiceTest {
     ordered.verify(provisioning).forgetConfirmed("hs-1");
     assertThat(room.getMatrixRoomId()).isEqualTo(ROOM_ID);
     assertThat(room.getStatus()).isEqualTo(SupportRoom.SupportRoomStatus.ACTIVE);
-    assertThat(room.getExpiryDate()).isBetween(nowInUtc().plusHours(3), nowInUtc().plusHours(5));
+    assertThat(room.getExpiryDate())
+        .isBetween(beforeActivation.plusHours(4), afterActivation.plusHours(4));
     verify(handshakeAuditEventRepository).save(any());
   }
 
@@ -207,14 +213,20 @@ class SupportRoomServiceTest {
         .thenReturn(new MatrixSynapseService.RoomAliasLookup(true, ROOM_ID));
     stubVerifiedRoom();
     when(matrixSynapseService.getRoomMembers(ROOM_ID))
-        .thenReturn(Optional.of(List.of(GSA_MXID, CONSULTANT_MXID)));
+        .thenReturn(
+            Optional.of(List.of(GSA_MXID)), Optional.of(List.of(GSA_MXID, CONSULTANT_MXID)));
+    when(matrixSynapseService.loginAsUserAccessToken(CONSULTANT_MXID))
+        .thenReturn("consultant-token");
+    when(matrixSynapseService.joinRoom(ROOM_ID, "consultant-token")).thenReturn(true);
     stubProvisionalRoom();
 
     assertThat(supportRoomService.createForConfirmedHandshake(confirmedSession()).getMatrixRoomId())
         .isEqualTo(ROOM_ID);
     verify(matrixSynapseService).createSupportRoom(LOCAL_ALIAS, NONCE, "gsa-token");
-    verify(matrixSynapseService, never()).inviteUserToRoom(any(), any(), any());
-    verify(provisioning).bindForConfirmation(intent, ROOM_ID);
+    var ordered = inOrder(provisioning, matrixSynapseService);
+    ordered.verify(provisioning).bindForConfirmation(intent, ROOM_ID);
+    ordered.verify(matrixSynapseService).inviteUserToRoom(ROOM_ID, CONSULTANT_MXID, "gsa-token");
+    ordered.verify(matrixSynapseService).joinRoom(ROOM_ID, "consultant-token");
   }
 
   @Test
@@ -297,6 +309,24 @@ class SupportRoomServiceTest {
   }
 
   @Test
+  void graceExpiryDuringVerificationPreventsConsultantAdmission() throws Exception {
+    stubAuthorizedReservation(true);
+    when(matrixSynapseService.createSupportRoom(LOCAL_ALIAS, NONCE, "gsa-token"))
+        .thenReturn(ROOM_ID);
+    stubVerifiedRoom();
+    var deadline = nowInUtc().minusSeconds(1);
+    when(intent.getProvisioningDeadline()).thenReturn(deadline);
+    when(matrixSynapseService.getRoomMembers(ROOM_ID)).thenReturn(Optional.of(List.of(GSA_MXID)));
+
+    assertThatThrownBy(() -> supportRoomService.createForConfirmedHandshake(confirmedSession()))
+        .hasMessage("Support room provisioning grace has expired");
+
+    verify(provisioning).bindForConfirmation(intent, ROOM_ID);
+    verify(matrixSynapseService, never()).inviteUserToRoom(any(), any(), any());
+    verify(provisioning, never()).forgetConfirmed(any());
+  }
+
+  @Test
   void closureClaimRechecksDueTimeAndStartsTheLeaseAfterLocking() {
     var beforeLock = nowInUtc();
     var afterLock = beforeLock.plusSeconds(25);
@@ -323,7 +353,7 @@ class SupportRoomServiceTest {
 
     assertThat(lifecycle.claimClosure(room.getId())).isPresent();
 
-    verify(handshakeSessionRepository).findByIdForUpdate(room.getHandshakeId());
+    verify(handshakeSessionRepository).lockForSupportCleanup(room.getHandshakeId());
     assertThat(room.getRetryAt()).isEqualTo(afterLock.plusMinutes(1));
   }
 
@@ -470,6 +500,31 @@ class SupportRoomServiceTest {
     assertThat(room.getStatus()).isEqualTo(SupportRoom.SupportRoomStatus.REVOCATION_PENDING);
     assertThat(room.getClosedDate()).isNull();
     verifyNoInteractions(handshakeAuditEventRepository);
+  }
+
+  @Test
+  void cleanupSweepContinuesAfterFailuresToClaimIndividualRecords() {
+    var room = activeRoom();
+    room.setExpiryDate(nowInUtc().minusMinutes(1));
+    when(supportRoomRepository.findClosureDue(any(), any(), any(), any()))
+        .thenReturn(List.of("locked-room", room.getId()));
+    when(supportRoomRepository.lockById("locked-room"))
+        .thenThrow(
+            new org.springframework.dao.CannotAcquireLockException("synthetic lock timeout"));
+    lenient().when(supportRoomRepository.lockById(room.getId())).thenReturn(Optional.of(room));
+    lenient()
+        .when(provisioning.expiredIds(any(), eq(200)))
+        .thenReturn(List.of("locked-intent", "due-intent"));
+    lenient()
+        .when(provisioning.claimExpired("locked-intent"))
+        .thenThrow(
+            new org.springframework.dao.CannotAcquireLockException("synthetic lock timeout"));
+    lenient().when(provisioning.claimExpired("due-intent")).thenReturn(Optional.of(intent));
+
+    supportRoomService.sweepExpired();
+
+    assertThat(room.getStatus()).isEqualTo(SupportRoom.SupportRoomStatus.REVOCATION_PENDING);
+    verify(provisioning).deferUnresolvedRecovery(intent);
   }
 
   private void stubDue(SupportRoom room) {
