@@ -21,6 +21,8 @@ public interface IdReservationReleaseTaskRepository
   @Query(
       "SELECT task FROM IdReservationReleaseTask task"
           + " WHERE task.attemptCount < :maxAttempts"
+          + " AND task.allocationType ="
+          + " de.caritas.cob.userservice.api.service.accountinvite.allocation.IdReservationReleaseType.AGENCY"
           + " AND (task.lastAttemptAt IS NULL OR task.lastAttemptAt < :retryBefore)"
           + " ORDER BY task.createDate ASC")
   List<IdReservationReleaseTask> findRetryable(

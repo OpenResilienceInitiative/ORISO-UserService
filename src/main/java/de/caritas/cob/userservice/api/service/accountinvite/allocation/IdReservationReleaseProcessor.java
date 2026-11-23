@@ -2,6 +2,7 @@ package de.caritas.cob.userservice.api.service.accountinvite.allocation;
 
 import de.caritas.cob.userservice.api.model.IdReservationReleaseTask;
 import de.caritas.cob.userservice.api.port.out.IdReservationReleaseTaskRepository;
+import de.caritas.cob.userservice.api.port.out.TenantReservationReleaseTaskRepository;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
 import de.caritas.cob.userservice.api.tenant.TenantData;
 import java.time.Duration;
@@ -23,6 +24,7 @@ import org.springframework.transaction.annotation.Transactional;
 public class IdReservationReleaseProcessor {
 
   private final @NonNull IdReservationReleaseTaskRepository taskRepository;
+  private final @NonNull TenantReservationReleaseTaskRepository tenantTaskRepository;
   private final @NonNull TenantIdAllocationClient tenantIdAllocationClient;
   private final @NonNull AgencyIdAllocationClient agencyIdAllocationClient;
 
@@ -49,6 +51,10 @@ public class IdReservationReleaseProcessor {
     }
 
     IdReservationReleaseTask pending = task.get();
+    if (pending.getAllocationType() != IdReservationReleaseType.AGENCY) {
+      // A legacy tenant task has no proof of which reservation it was created for.
+      return false;
+    }
     boolean released = attemptRelease(pending);
     if (released) {
       taskRepository.delete(pending);
@@ -58,6 +64,28 @@ public class IdReservationReleaseProcessor {
       taskRepository.save(pending);
     }
     return released;
+  }
+
+  @Transactional(readOnly = true)
+  public List<Long> pendingTenantTaskIds() {
+    // The receiver can be absent during a rollout. Back off and keep selecting the task later.
+    return tenantTaskRepository.findRetryable(
+        LocalDateTime.now().minus(retryBackoff), PageRequest.of(0, 100));
+  }
+
+  @Transactional(propagation = Propagation.REQUIRES_NEW)
+  public void processTenant(Long taskId) {
+    tenantTaskRepository
+        .findByIdForUpdate(taskId)
+        .ifPresent(
+            task -> {
+              if (tenantIdAllocationClient.release(
+                  task.getTenantId(), task.getReservationToken())) {
+                tenantTaskRepository.delete(task);
+              } else {
+                task.recordFailedAttempt(LocalDateTime.now());
+              }
+            });
   }
 
   private boolean attemptRelease(IdReservationReleaseTask task) {
@@ -70,10 +98,7 @@ public class IdReservationReleaseProcessor {
       if (task.getTenantContextId() != null) {
         TenantContext.setCurrentTenant(task.getTenantContextId());
       }
-      return switch (task.getAllocationType()) {
-        case TENANT -> tenantIdAllocationClient.release(task.getReservedId());
-        case AGENCY -> agencyIdAllocationClient.release(task.getReservedId());
-      };
+      return agencyIdAllocationClient.release(task.getReservedId());
     } catch (RuntimeException exception) {
       log.warn(
           "Reservation release task {} could not reach {} allocation ledger",

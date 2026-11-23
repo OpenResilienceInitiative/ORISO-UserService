@@ -3,6 +3,7 @@ package de.caritas.cob.userservice.api.service.accountinvite;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -22,13 +23,13 @@ import de.caritas.cob.userservice.api.port.out.IdReservationReleaseTaskRepositor
 import de.caritas.cob.userservice.api.port.out.IdentityEmailOwnerLookup;
 import de.caritas.cob.userservice.api.port.out.InviteEmailDeliveryRepository;
 import de.caritas.cob.userservice.api.port.out.InviteEmailTemplateRepository;
+import de.caritas.cob.userservice.api.port.out.TenantReservationReleaseTaskRepository;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteService.CreateAccountInviteCommand;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteService.InviteSendResult;
 import de.caritas.cob.userservice.api.service.accountinvite.allocation.AgencyIdAllocationClient;
 import de.caritas.cob.userservice.api.service.accountinvite.allocation.IdAllocationMode;
 import de.caritas.cob.userservice.api.service.accountinvite.allocation.IdAllocationStatus;
 import de.caritas.cob.userservice.api.service.accountinvite.allocation.IdReservationReleaseProcessor;
-import de.caritas.cob.userservice.api.service.accountinvite.allocation.IdReservationReleaseType;
 import de.caritas.cob.userservice.api.service.accountinvite.allocation.TenantIdAllocationClient;
 import de.caritas.cob.userservice.api.service.accountinvite.allocation.TenantIdReservation;
 import de.caritas.cob.userservice.api.service.accountinvite.mail.InviteMailDispatchService;
@@ -80,11 +81,13 @@ import org.springframework.transaction.annotation.Transactional;
 class AccountInviteDirectSendAtomicIT {
 
   private static final String RECIPIENT = "owner@example.org";
+  private static final String TENANT_RESERVATION_PROOF = "reservation-17";
 
   @Autowired private AccountInviteService service;
   @MockitoSpyBean private AccountInviteRepository accountInviteRepository;
   @Autowired private InviteEmailTemplateRepository templateRepository;
   @Autowired private IdReservationReleaseTaskRepository reservationReleaseTaskRepository;
+  @Autowired private TenantReservationReleaseTaskRepository tenantReleaseTaskRepository;
   @MockitoSpyBean private InviteEmailDeliveryRepository deliveryRepository;
 
   @MockitoBean(answers = Answers.CALLS_REAL_METHODS)
@@ -116,9 +119,9 @@ class AccountInviteDirectSendAtomicIT {
     authenticatedUser.setUsername("admin@example.org");
     when(identityEmailOwnerLookup.findByEmail(RECIPIENT)).thenReturn(Optional.empty());
     when(tenantIdAllocationClient.reserve(null))
-        .thenReturn(new TenantIdReservation(17L, "reservation-17"));
+        .thenReturn(new TenantIdReservation(17L, TENANT_RESERVATION_PROOF));
     when(tenantIdAllocationClient.getAvailability(17L)).thenReturn(IdAllocationStatus.RESERVED);
-    when(tenantIdAllocationClient.release(17L)).thenReturn(true);
+    when(tenantIdAllocationClient.release(17L, TENANT_RESERVATION_PROOF)).thenReturn(true);
     when(agencyIdAllocationClient.release(23L)).thenReturn(true);
     templateId =
         templateRepository
@@ -137,6 +140,7 @@ class AccountInviteDirectSendAtomicIT {
   @AfterEach
   void cleanUp() {
     reservationReleaseTaskRepository.deleteAll();
+    tenantReleaseTaskRepository.deleteAll();
     deliveryRepository.deleteAll();
     accountInviteRepository.deleteAll();
     templateRepository.deleteAll();
@@ -157,7 +161,7 @@ class AccountInviteDirectSendAtomicIT {
         .isInstanceOf(SmtpSendException.class);
 
     assertThat(accountInviteRepository.count()).isZero();
-    verify(tenantIdAllocationClient).release(17L);
+    verify(tenantIdAllocationClient).release(17L, TENANT_RESERVATION_PROOF);
     verifyNoInteractions(deliveryFailureRecorder);
 
     service.createAndSendInvite(tenantAdminInvite(), templateId);
@@ -186,7 +190,7 @@ class AccountInviteDirectSendAtomicIT {
         .isSameAs(failure);
 
     assertThat(accountInviteRepository.count()).isZero();
-    verify(tenantIdAllocationClient).release(17L);
+    verify(tenantIdAllocationClient).release(17L, TENANT_RESERVATION_PROOF);
     verify(agencyIdAllocationClient).release(23L);
   }
 
@@ -207,7 +211,7 @@ class AccountInviteDirectSendAtomicIT {
         .satisfies(exception -> assertThat(exception.getSuppressed()).hasSize(1));
 
     assertThat(accountInviteRepository.findAll()).hasSize(1);
-    verify(tenantIdAllocationClient, never()).release(17L);
+    verify(tenantIdAllocationClient, never()).release(anyLong(), any());
   }
 
   @Test
@@ -220,18 +224,19 @@ class AccountInviteDirectSendAtomicIT {
     doThrow(failure)
         .when(inviteMailDispatchService)
         .send(any(), any(), any(), any(), any(), any(), any());
-    when(tenantIdAllocationClient.release(17L)).thenReturn(false);
+    when(tenantIdAllocationClient.release(17L, TENANT_RESERVATION_PROOF)).thenReturn(false);
 
     assertThatThrownBy(() -> service.createAndSendInvite(tenantAdminAgencyInvite(), templateId))
         .isSameAs(failure);
 
     verify(agencyIdAllocationClient).release(23L);
-    assertThat(reservationReleaseTaskRepository.findAll())
+    assertThat(reservationReleaseTaskRepository.count()).isZero();
+    assertThat(tenantReleaseTaskRepository.findAll())
         .singleElement()
         .satisfies(
             task -> {
-              assertThat(task.getAllocationType()).isEqualTo(IdReservationReleaseType.TENANT);
-              assertThat(task.getReservedId()).isEqualTo(17L);
+              assertThat(task.getTenantId()).isEqualTo(17L);
+              assertThat(task.getReservationToken()).isEqualTo(TENANT_RESERVATION_PROOF);
               assertThat(task.getAttemptCount()).isEqualTo(1);
               assertThat(task.getLastAttemptAt()).isNotNull();
             });
@@ -268,7 +273,7 @@ class AccountInviteDirectSendAtomicIT {
             org.mockito.ArgumentMatchers.any(),
             org.mockito.ArgumentMatchers.any(),
             org.mockito.ArgumentMatchers.any());
-    verify(tenantIdAllocationClient, never()).release(17L);
+    verify(tenantIdAllocationClient, never()).release(anyLong(), any());
 
     assertThatThrownBy(() -> service.createAndSendInvite(tenantAdminInvite(), templateId))
         .isInstanceOf(

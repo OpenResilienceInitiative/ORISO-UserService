@@ -10,6 +10,7 @@ import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import de.caritas.cob.userservice.api.model.AgencyEnquiryRevocationTask;
+import de.caritas.cob.userservice.api.model.AgencyEnquiryRoomDecision;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.ConsultantAgency;
 import de.caritas.cob.userservice.api.model.Session;
@@ -60,6 +61,7 @@ class AgencyEnquiryRevocationsTest {
   @Mock private SessionRepository sessions;
   @Mock private AgencyEnquiryRoomRetirements retiredRooms;
   @Mock private AgencyEnquiryRoomDecisions roomDecisions;
+  @Mock private SessionOwnershipService ownership;
   @Mock private AgencyMatrixCredentialClient agencyCredentials;
   @Mock private SessionRoomGateway rooms;
   @Mock private PlatformTransactionManager transactionManager;
@@ -77,6 +79,7 @@ class AgencyEnquiryRevocationsTest {
             sessions,
             retiredRooms,
             roomDecisions,
+            ownership,
             agencyCredentials,
             rooms,
             transactionManager,
@@ -117,6 +120,52 @@ class AgencyEnquiryRevocationsTest {
         .extracting(AgencyEnquiryRevocationTask::getMemberId)
         .containsOnly(MEMBER_ID);
     verifyNoInteractions(rooms, agencyCredentials);
+  }
+
+  @Test
+  void stagesASeparateWaitingDecisionForAnotherRoomOfTheSameEnquiry() {
+    var consultant = new Consultant();
+    consultant.setId(CONSULTANT_ID);
+    consultant.setMatrixUserId(MEMBER_ID);
+    var relation =
+        ConsultantAgency.builder()
+            .id(RELATION_ID)
+            .tenantId(11L)
+            .consultant(consultant)
+            .agencyId(AGENCY_ID)
+            .build();
+    String decisionRoom = "!prepared:example.org";
+    var decision = org.mockito.Mockito.mock(AgencyEnquiryRoomDecision.class);
+    when(decision.getId()).thenReturn(70L);
+    when(decision.getSessionId()).thenReturn(SESSION_ID);
+    when(decision.getRoomId()).thenReturn(decisionRoom);
+    when(decision.getOutcome()).thenReturn(AgencyEnquiryRoomDecision.Outcome.PENDING);
+    when(roomDecisions.nextEvent()).thenReturn(90L);
+    when(roomDecisions.affectedBy(relation, 90L)).thenReturn(List.of(decision));
+    var currentBinding = roomBinding(SESSION_ID, ROOM);
+    when(sessions.lockOpenEnquiryBindings(AGENCY_ID, AgencyOpenEnquiryMembership.OPEN_STATUSES))
+        .thenReturn(List.of(currentBinding));
+
+    revocations.stage(relation);
+
+    var boundary = inOrder(roomDecisions, sessions);
+    boundary.verify(roomDecisions).nextEvent();
+    boundary
+        .verify(sessions)
+        .lockOpenEnquiryBindings(AGENCY_ID, AgencyOpenEnquiryMembership.OPEN_STATUSES);
+    verify(tasks).saveAll(staged.capture());
+    assertThat(staged.getValue())
+        .satisfiesExactly(
+            task -> {
+              assertThat(task.getRoomId()).isEqualTo(ROOM);
+              assertThat(task.getRoomDecisionId()).isNull();
+            },
+            task -> {
+              assertThat(task.getRoomId()).isEqualTo(decisionRoom);
+              assertThat(task.getRoomDecisionId()).isEqualTo(70L);
+              assertThat(task.getRetryAt())
+                  .isEqualTo(AgencyEnquiryRevocationTask.WAITING_FOR_ROOM_DECISION);
+            });
   }
 
   private SessionRepository.OpenEnquiryRoomBinding roomBinding(Long sessionId, String roomId) {

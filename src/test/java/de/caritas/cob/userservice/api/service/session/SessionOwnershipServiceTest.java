@@ -59,9 +59,9 @@ class SessionOwnershipServiceTest {
     ownershipService.updateOwnerAndStatus(expected, consultant("a"), IN_PROGRESS);
     assertThat(current.getConversationType()).isEqualTo(type);
     if (type == de.caritas.cob.userservice.api.model.ConversationType.AGENCY_COUNSELLING) {
-      verify(roomDecisions).begin(current);
+      verify(roomDecisions).begin(current, NEW);
     } else {
-      verify(roomDecisions, never()).begin(current);
+      verify(roomDecisions, never()).begin(current, NEW);
     }
   }
 

@@ -1,7 +1,11 @@
 package de.caritas.cob.userservice.api.service.accountinvite.allocation;
 
+import static de.caritas.cob.userservice.api.tenant.TenantResolverService.TECHNICAL_TENANT_ID;
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -89,12 +93,59 @@ class IdReservationReleaseSchedulerTest {
               assertThat(TechnicalAccessTokenContext.get()).contains("token");
               return true;
             });
+    when(processor.pendingTenantTaskIds()).thenReturn(List.of(3L));
+    doAnswer(
+            invocation -> {
+              assertThat(TechnicalAccessTokenContext.get()).contains("token");
+              return null;
+            })
+        .when(processor)
+        .processTenant(3L);
 
     scheduler.retryPendingReleases();
 
     verify(tenantContextProvider).setTechnicalContextIfMultiTenancyIsEnabled();
     verify(processor).process(1L);
     verify(processor).process(2L);
+    verify(processor).processTenant(3L);
+    verify(taskClaimService).release(lease);
+    assertThat(TechnicalAccessTokenContext.get()).isEmpty();
+    assertThat(TenantContext.contextIsSet()).isFalse();
+  }
+
+  @Test
+  void retryPendingReleases_ShouldAuthenticateAndProcessTenantWork_WhenAgencyQueueIsEmpty() {
+    TechnicalUserConfig technicalUser = new TechnicalUserConfig();
+    technicalUser.setClientId("technical");
+    technicalUser.setClientSecret("secret");
+    when(taskClaimService.tryClaimLease(IdReservationReleaseScheduler.TASK_NAME, claimDuration))
+        .thenReturn(Optional.of(lease));
+    when(identityClientConfig.getTechnicalUser()).thenReturn(technicalUser);
+    when(identityAuthentication.loginService("technical", "secret"))
+        .thenReturn(new IdentityLogin("token", 60, 60, "refresh"));
+    when(processor.pendingTaskIds()).thenReturn(List.of());
+    when(processor.pendingTenantTaskIds()).thenReturn(List.of(3L));
+    doAnswer(
+            invocation -> {
+              TenantContext.setCurrentTenant(TECHNICAL_TENANT_ID);
+              return null;
+            })
+        .when(tenantContextProvider)
+        .setTechnicalContextIfMultiTenancyIsEnabled();
+    doAnswer(
+            invocation -> {
+              assertThat(TechnicalAccessTokenContext.get()).contains("token");
+              assertThat(TenantContext.getCurrentTenant()).isEqualTo(TECHNICAL_TENANT_ID);
+              return null;
+            })
+        .when(processor)
+        .processTenant(3L);
+
+    scheduler.retryPendingReleases();
+
+    verify(identityAuthentication).loginService("technical", "secret");
+    verify(processor).processTenant(3L);
+    verify(processor, never()).process(any());
     verify(taskClaimService).release(lease);
     assertThat(TechnicalAccessTokenContext.get()).isEmpty();
     assertThat(TenantContext.contextIsSet()).isFalse();
