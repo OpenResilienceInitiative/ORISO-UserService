@@ -6,7 +6,14 @@
     ORISO-Frontend#2491 (D4): a team discussion belongs to the case AND its Beratungsstelle. When
     the case moves to another Beratungsstelle, the old discussion is archived and the new
     Beratungsstelle may start its own, so uniqueness moves from (session_id) to
-    (session_id, agency_id). Existing rows take the case's current Beratungsstelle.
+    (session_id, agency_id).
+    Backfill of existing rows: a row whose creator belongs (or belonged) to the case's current
+    Beratungsstelle stays with it. A row whose creator never belonged to it was started before a
+    move: it goes to the creator's Beratungsstelle and is archived (read-only switch pending), so
+    the move rule hides it from the new Beratungsstelle. A row without a known creator keeps the
+    case's current Beratungsstelle, as no source records the creating one.
+    Rollback restores the single-discussion schema; it stops (the old unique key cannot be added)
+    while any case already holds discussions of more than one Beratungsstelle.
   -->
   <changeSet id="20261123-team-discussion-agency-column-2491" author="oriso">
     <preConditions onFail="MARK_RAN" onError="HALT">
@@ -15,11 +22,16 @@
     <addColumn tableName="team_discussion">
       <column name="agency_id" type="BIGINT"/>
     </addColumn>
-    <rollback><sql>SELECT 1</sql></rollback>
+    <rollback>
+      <dropColumn tableName="team_discussion" columnName="agency_id"/>
+    </rollback>
   </changeSet>
   <changeSet id="20261123-team-discussion-agency-backfill-2491" author="oriso" dbms="mariadb,mysql">
+    <sql>UPDATE team_discussion td JOIN session s ON s.id = td.session_id SET td.agency_id = s.agency_id WHERE td.agency_id IS NULL AND (td.created_by_consultant_id IS NULL OR EXISTS (SELECT 1 FROM consultant_agency ca WHERE ca.consultant_id = td.created_by_consultant_id AND ca.agency_id = s.agency_id))</sql>
+    <sql>UPDATE team_discussion td JOIN (SELECT ca.consultant_id, MIN(ca.agency_id) AS agency_id FROM consultant_agency ca GROUP BY ca.consultant_id) creator ON creator.consultant_id = td.created_by_consultant_id SET td.agency_id = creator.agency_id, td.discussion_status = 'ARCHIVED', td.archive_date = COALESCE(td.archive_date, NOW()), td.is_read_only_applied = 0 WHERE td.agency_id IS NULL</sql>
     <sql>UPDATE team_discussion td JOIN session s ON s.id = td.session_id SET td.agency_id = s.agency_id WHERE td.agency_id IS NULL</sql>
-    <rollback><sql>SELECT 1</sql></rollback>
+    <!-- The column itself is dropped by the rollback of the column changeset. -->
+    <rollback/>
   </changeSet>
   <changeSet id="20261123-team-discussion-session-agency-unique-2491" author="oriso">
     <preConditions onFail="MARK_RAN" onError="HALT">
@@ -35,6 +47,10 @@
       <indexExists tableName="team_discussion" indexName="uk_team_discussion_session"/>
     </preConditions>
     <dropUniqueConstraint tableName="team_discussion" constraintName="uk_team_discussion_session"/>
-    <rollback><sql>SELECT 1</sql></rollback>
+    <rollback>
+      <!-- Fails, and so stops the rollback before the composite key is dropped, while a case holds
+           discussions of more than one Beratungsstelle: those need a data-preserving downgrade. -->
+      <addUniqueConstraint tableName="team_discussion" columnNames="session_id" constraintName="uk_team_discussion_session"/>
+    </rollback>
   </changeSet>
 </databaseChangeLog>

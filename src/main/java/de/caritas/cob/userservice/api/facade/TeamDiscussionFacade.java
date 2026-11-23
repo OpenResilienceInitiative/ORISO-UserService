@@ -103,19 +103,29 @@ public class TeamDiscussionFacade {
       if (existing.get().getStatus() == TeamDiscussion.Status.CLOSED) {
         // Switching on again commits on its own before the join: a failed join must not roll back
         // OPEN while the room is already writable.
-        accessTransactions.read(
-            sessionId,
-            existing.get().getId(),
-            consultantId,
-            access -> {
-              var discussion = reconcileOnAccess(access.discussion(), access.session());
-              if (discussion.getStatus() == TeamDiscussion.Status.CLOSED) {
-                // Still CLOSED after reconciliation: an open enquiry, or an accepted case whose
-                // team chat continues after acceptance.
-                reopenClosedDiscussion(access.session(), discussion);
-              }
-              return discussion.getStatus();
-            });
+        Boolean reopened;
+        try {
+          reopened =
+              accessTransactions.read(
+                  sessionId,
+                  existing.get().getId(),
+                  consultantId,
+                  access -> {
+                    var discussion = reconcileOnAccess(access.discussion(), access.session());
+                    // Still CLOSED after reconciliation: an open enquiry, or an accepted case
+                    // whose team chat continues after acceptance.
+                    return discussion.getStatus() != TeamDiscussion.Status.CLOSED
+                        || reopenClosedDiscussion(access.session(), discussion);
+                  });
+        } catch (ReopenCompensationFailed failed) {
+          markReadOnlyAfterFailedReopen(existing.get().getId());
+          throw (RuntimeException) failed.getCause();
+        }
+        if (!Boolean.TRUE.equals(reopened)) {
+          // Raised after the transaction, so the CLOSED row's read-only marker is committed.
+          throw new ResponseStatusException(
+              HttpStatus.BAD_GATEWAY, "Could not switch the team discussion on again");
+        }
       }
       return joinAndView(sessionId, existing.get().getId(), consultantId);
     }
@@ -240,26 +250,32 @@ public class TeamDiscussionFacade {
   }
 
   private TeamDiscussionView joinAndView(Long sessionId, Long discussionId, String consultantId) {
-    return accessTransactions.join(
-        sessionId,
-        discussionId,
-        consultantId,
-        access -> {
-          var discussion = reconcileOnAccess(access.discussion(), access.session());
-          if (access.session().getStatus() == SessionStatus.REJECTED
-              && !discussion.isReadOnlyApplied()) {
-            // An existing joined reader may keep reading while verified closure is pending.
-            // Rejoining a departed reader must wait until the room is confirmed read-only.
-            if (!isJoinedMember(
-                discussion.getMatrixRoomId(), access.consultant().getMatrixUserId())) {
-              throw new ResponseStatusException(
-                  HttpStatus.SERVICE_UNAVAILABLE, "Team closure is pending");
-            }
-          } else {
-            joinConsultant(discussion, access.session(), access.consultant());
-          }
-          return toView(discussion);
-        });
+    // Refusal is raised after the transaction: a lazy archive or close recorded by the
+    // reconciliation must commit with its pending marker, so the next access retries the switch.
+    Optional<TeamDiscussionView> joined =
+        accessTransactions.join(
+            sessionId,
+            discussionId,
+            consultantId,
+            access -> {
+              var discussion = reconcileOnAccess(access.discussion(), access.session());
+              if (discussion.getStatus() != TeamDiscussion.Status.OPEN
+                  && !discussion.isReadOnlyApplied()) {
+                // An existing joined reader may keep reading while the read-only switch (or the
+                // rejection's verified closure) is pending. A new reader of a CLOSED or ARCHIVED
+                // chat must wait until the room is confirmed read-only.
+                if (!isJoinedMember(
+                    discussion.getMatrixRoomId(), access.consultant().getMatrixUserId())) {
+                  return Optional.empty();
+                }
+              } else {
+                joinConsultant(discussion, access.session(), access.consultant());
+              }
+              return Optional.of(toView(discussion));
+            });
+    return joined.orElseThrow(
+        () ->
+            new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE, "Team closure is pending"));
   }
 
   /**
@@ -333,14 +349,14 @@ public class TeamDiscussionFacade {
         return;
       }
       archiveMovedDiscussions(session);
-      Optional<TeamDiscussion> discussionOpt =
-          teamDiscussionRepository
-              .findBySessionId(session.getId())
-              .filter(discussion -> !movedAway(discussion, session));
+      Optional<TeamDiscussion> discussionOpt = currentDiscussion(session);
       if (discussionOpt.isEmpty()) {
         return;
       }
-      if (discussionOpt.get().getStatus() == TeamDiscussion.Status.ARCHIVED) {
+      if (discussionOpt.get().getStatus() == TeamDiscussion.Status.ARCHIVED
+          || session.getStatus() == SessionStatus.REJECTED) {
+        // A rejected case never continues: its rejection-owned closure archives the row without
+        // certifying the default-only read-only switch.
         reconcileOnAccess(discussionOpt.get(), session);
         return;
       }
@@ -349,7 +365,12 @@ public class TeamDiscussionFacade {
           decisionsOfThisSweep.computeIfAbsent(
               session.getTenantId() + ":" + session.getAgencyId(),
               pair -> continuesAfterAcceptOrUnknown(session));
-      if (continues.isEmpty() || continues.get()) {
+      if (continues.isEmpty()) {
+        return;
+      }
+      if (continues.get()) {
+        // A continuing CLOSED chat whose read-only switch is unconfirmed is retried here too.
+        retryReadOnlyIfPending(session, discussionOpt.get());
         return;
       }
       archiveDiscussion(session, discussionOpt.get());
@@ -550,7 +571,7 @@ public class TeamDiscussionFacade {
    * The room is made writable first; only then is the discussion OPEN again. A failed Matrix call
    * leaves it CLOSED and answers 502, so status and room never disagree towards "open".
    */
-  private void reopenClosedDiscussion(Session session, TeamDiscussion discussion) {
+  private boolean reopenClosedDiscussion(Session session, TeamDiscussion discussion) {
     boolean writable;
     try {
       writable =
@@ -566,20 +587,26 @@ public class TeamDiscussionFacade {
       writable = false;
     }
     if (!writable) {
-      throw new ResponseStatusException(
-          HttpStatus.BAD_GATEWAY, "Could not switch the team discussion on again");
+      // Unconfirmed is not "rejected": Synapse may have applied the write before a timeout. Put
+      // the room back to read-only; if that is unconfirmed too, the row stays CLOSED with
+      // readOnlyApplied=false and the next access or sweep retries the switch.
+      discussion.setReadOnlyApplied(makeRoomReadOnlyBestEffort(session, discussion));
+      teamDiscussionRepository.save(discussion);
+      return false;
     }
     try {
       discussion.setStatus(TeamDiscussion.Status.OPEN);
       discussion.setReadOnlyApplied(false);
       teamDiscussionRepository.saveAndFlush(discussion);
     } catch (RuntimeException failed) {
-      // The row stays CLOSED (rollback): put the room back to read-only so both agree.
+      // The row stays CLOSED (rollback): put the room back to read-only so both agree. Whether
+      // that worked is recorded after the rollback by the caller (markReadOnlyAfterFailedReopen).
       discussion.setStatus(TeamDiscussion.Status.CLOSED);
       if (!makeRoomReadOnlyBestEffort(session, discussion)) {
         log.error(
             "Team discussion room {} is writable while its row stays CLOSED",
             discussion.getMatrixRoomId());
+        throw new ReopenCompensationFailed(failed);
       }
       throw failed;
     }
@@ -587,6 +614,50 @@ public class TeamDiscussionFacade {
         "Reopened team discussion for session {} (room {})",
         session.getId(),
         discussion.getMatrixRoomId());
+    return true;
+  }
+
+  /** The room may be writable although the row says CLOSED and read-only (FE#2491). */
+  private static final class ReopenCompensationFailed extends RuntimeException {
+    ReopenCompensationFailed(RuntimeException cause) {
+      super(cause.getMessage(), cause);
+    }
+  }
+
+  /**
+   * After a reopen whose transaction rolled back and whose compensating read-only switch was not
+   * confirmed, the committed row still claims readOnlyApplied=true. A fresh write clears that claim
+   * so the next access or repair sweep retries the switch. If the database is still failing, the
+   * marker cannot be written: that is logged as an error for operators, and the room stays as it is
+   * until the next switch-off or switch-on.
+   */
+  private void markReadOnlyAfterFailedReopen(Long discussionId) {
+    try {
+      teamDiscussionRepository
+          .findById(discussionId)
+          .filter(discussion -> discussion.getStatus() == TeamDiscussion.Status.CLOSED)
+          .ifPresent(
+              discussion -> {
+                discussion.setReadOnlyApplied(false);
+                teamDiscussionRepository.save(discussion);
+              });
+    } catch (RuntimeException stillFailing) {
+      log.error(
+          "Team discussion {} may be writable while CLOSED; the retry marker could not be"
+              + " written: {}",
+          discussionId,
+          stillFailing.getMessage());
+    }
+  }
+
+  /** Retries the read-only switch of a CLOSED or ARCHIVED row whose switch is unconfirmed. */
+  private void retryReadOnlyIfPending(Session session, TeamDiscussion discussion) {
+    if (discussion.getStatus() != TeamDiscussion.Status.OPEN
+        && !discussion.isReadOnlyApplied()
+        && makeRoomReadOnlyBestEffort(session, discussion)) {
+      discussion.setReadOnlyApplied(true);
+      teamDiscussionRepository.save(discussion);
+    }
   }
 
   private boolean makeRoomReadOnlyBestEffort(Session session, TeamDiscussion discussion) {
@@ -658,16 +729,25 @@ public class TeamDiscussionFacade {
     if (session.getAgencyId() != null && isMember(consultant.getId(), session.getAgencyId())) {
       featureGate.requireEnabled(session);
       archiveMovedDiscussions(session);
-      var current =
-          teamDiscussionRepository
-              .findBySessionId(session.getId())
-              .filter(discussion -> !movedAway(discussion, session));
-      return new Target(consultant, current, false);
+      return new Target(consultant, currentDiscussion(session), false);
     }
-    var former =
+    var formerDiscussions =
         teamDiscussionRepository.findAllBySessionIdOrderByIdDesc(session.getId()).stream()
             .filter(discussion -> movedAway(discussion, session))
-            .filter(discussion -> isMember(consultant.getId(), discussion.getAgencyId()))
+            .toList();
+    // One membership read for all former Beratungsstellen, not one per former discussion.
+    var activeAgencies =
+        formerDiscussions.isEmpty()
+            ? java.util.Set.<Long>of()
+            : consultantAgencyRepository
+                .findByConsultantIdAndDeleteDateIsNull(consultant.getId())
+                .stream()
+                .map(de.caritas.cob.userservice.api.model.ConsultantAgency::getAgencyId)
+                .filter(java.util.Objects::nonNull)
+                .collect(java.util.stream.Collectors.toSet());
+    var former =
+        formerDiscussions.stream()
+            .filter(discussion -> activeAgencies.contains(discussion.getAgencyId()))
             .findFirst();
     if (former.isEmpty()) {
       throw new ForbiddenException(
@@ -676,6 +756,24 @@ public class TeamDiscussionFacade {
     }
     featureGate.requireEnabled(session.getTenantId(), former.get().getAgencyId());
     return new Target(consultant, former, true);
+  }
+
+  /**
+   * The discussion of the case's current Beratungsstelle. After a move back (A → B → A) the newest
+   * row is B's, so A's own row is looked up explicitly; a legacy row without a Beratungsstelle
+   * counts only when no row of the current one exists.
+   */
+  private Optional<TeamDiscussion> currentDiscussion(Session session) {
+    var newest = teamDiscussionRepository.findBySessionId(session.getId());
+    if (newest.isEmpty() || !movedAway(newest.get(), session)) {
+      return newest;
+    }
+    var all = teamDiscussionRepository.findAllBySessionIdOrderByIdDesc(session.getId());
+    return all.stream()
+        .filter(
+            discussion -> java.util.Objects.equals(discussion.getAgencyId(), session.getAgencyId()))
+        .findFirst()
+        .or(() -> all.stream().filter(discussion -> discussion.getAgencyId() == null).findFirst());
   }
 
   private boolean isMember(String consultantId, Long agencyId) {
@@ -690,7 +788,12 @@ public class TeamDiscussionFacade {
         teamDiscussionRepository.findAllBySessionIdOrderByIdDesc(session.getId())) {
       if (movedAway(discussion, session)
           && discussion.getStatus() != TeamDiscussion.Status.ARCHIVED) {
-        archiveDiscussion(session, discussion);
+        if (session.getStatus() == SessionStatus.REJECTED) {
+          // Rejection owns a verified closure: archive without the default-only switch.
+          reconcileOnAccess(discussion, session);
+        } else {
+          archiveDiscussion(session, discussion);
+        }
       }
     }
   }

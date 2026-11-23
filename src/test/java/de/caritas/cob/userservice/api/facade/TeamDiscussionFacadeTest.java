@@ -31,6 +31,7 @@ import de.caritas.cob.userservice.api.exception.httpresponses.ConflictException;
 import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.model.Consultant;
+import de.caritas.cob.userservice.api.model.ConsultantAgency;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.Session.RegistrationType;
 import de.caritas.cob.userservice.api.model.Session.SessionStatus;
@@ -1330,6 +1331,7 @@ class TeamDiscussionFacadeTest {
                     .sessionId(43L)
                     .matrixRoomId("!other:oriso")
                     .status(TeamDiscussion.Status.CLOSED)
+                    .readOnlyApplied(true)
                     .build()));
     var sweep = new java.util.HashMap<String, Optional<Boolean>>();
 
@@ -1441,7 +1443,167 @@ class TeamDiscussionFacadeTest {
     when(consultantAgencyRepository.existsByConsultantIdAndAgencyIdAndDeleteDateIsNull(
             CONSULTANT_ID, NEW_AGENCY_ID))
         .thenReturn(callerInNew);
+    var memberships = new java.util.ArrayList<ConsultantAgency>();
+    if (callerInOld) memberships.add(ConsultantAgency.builder().agencyId(AGENCY_ID).build());
+    if (callerInNew) memberships.add(ConsultantAgency.builder().agencyId(NEW_AGENCY_ID).build());
+    org.mockito.Mockito.lenient()
+        .when(consultantAgencyRepository.findByConsultantIdAndDeleteDateIsNull(CONSULTANT_ID))
+        .thenReturn(memberships);
     return old;
+  }
+
+  @Test
+  void move_formerMembershipIsReadOnceForAllFormerDiscussions() {
+    movedCase(TeamDiscussion.Status.ARCHIVED, true, false);
+
+    facade.getDiscussion(SESSION_ID, CONSULTANT_ID);
+
+    // One read in the facade; the transaction re-checks the found Beratungsstelle once.
+    verify(consultantAgencyRepository).findByConsultantIdAndDeleteDateIsNull(CONSULTANT_ID);
+    verify(consultantAgencyRepository)
+        .existsByConsultantIdAndAgencyIdAndDeleteDateIsNull(CONSULTANT_ID, AGENCY_ID);
+  }
+
+  @Test
+  void moveBack_theReturningBeratungsstelleSeesItsOwnArchiveAgain() {
+    // A → B → A: B's discussion is the newest row, A's archive must still be found.
+    var ownArchive =
+        TeamDiscussion.builder()
+            .id(40L)
+            .sessionId(SESSION_ID)
+            .agencyId(AGENCY_ID)
+            .matrixRoomId(ROOM_ID)
+            .status(TeamDiscussion.Status.ARCHIVED)
+            .readOnlyApplied(true)
+            .build();
+    var other =
+        TeamDiscussion.builder()
+            .id(60L)
+            .sessionId(SESSION_ID)
+            .agencyId(NEW_AGENCY_ID)
+            .matrixRoomId("!b:oriso")
+            .status(TeamDiscussion.Status.ARCHIVED)
+            .readOnlyApplied(true)
+            .build();
+    accepted();
+    when(teamDiscussionRepository.findBySessionId(SESSION_ID)).thenReturn(Optional.of(other));
+    when(teamDiscussionRepository.findAllBySessionIdOrderByIdDesc(SESSION_ID))
+        .thenReturn(List.of(other, ownArchive));
+    when(teamDiscussionRepository.findById(40L)).thenReturn(Optional.of(ownArchive));
+
+    var view = facade.getDiscussion(SESSION_ID, CONSULTANT_ID);
+
+    assertThat(view).isPresent();
+    assertThat(view.get().matrixRoomId()).isEqualTo(ROOM_ID);
+    assertThat(view.get().status()).isEqualTo(TeamDiscussion.Status.ARCHIVED);
+  }
+
+  @Test
+  void move_ofARejectedCaseIsNotCertifiedByTheDefaultOnlyWrite() {
+    var old = movedCase(TeamDiscussion.Status.OPEN, false, true);
+    session.setStatus(SessionStatus.REJECTED);
+    org.mockito.Mockito.lenient()
+        .when(
+            matrixSynapseService.setRoomEventsDefaultPowerLevel(anyString(), anyInt(), anyString()))
+        .thenReturn(true);
+
+    facade.archiveDiscussionIfPresent(session);
+
+    assertThat(old.getStatus()).isEqualTo(TeamDiscussion.Status.ARCHIVED);
+    assertThat(old.isReadOnlyApplied()).isFalse();
+  }
+
+  @Test
+  void repairSweep_archivesARejectedCaseEvenWhenTheChatContinuesAfterAcceptance() {
+    var discussion = existing(TeamDiscussion.Status.OPEN);
+    session.setStatus(SessionStatus.REJECTED);
+    when(featureGate.continuesAfterAccept(any())).thenReturn(true);
+
+    facade.archiveDiscussionIfPresent(session, new java.util.HashMap<>());
+
+    assertThat(discussion.getStatus()).isEqualTo(TeamDiscussion.Status.ARCHIVED);
+    assertThat(discussion.isReadOnlyApplied()).isFalse();
+  }
+
+  @Test
+  void repairSweep_retriesTheReadOnlySwitchOfAContinuingClosedChat() {
+    var discussion = existing(TeamDiscussion.Status.CLOSED);
+    discussion.setReadOnlyApplied(false);
+    accepted();
+    when(featureGate.continuesAfterAccept(any())).thenReturn(true);
+    when(matrixSynapseService.setRoomEventsDefaultPowerLevel(anyString(), anyInt(), anyString()))
+        .thenReturn(true);
+
+    facade.archiveDiscussionIfPresent(session, new java.util.HashMap<>());
+
+    assertThat(discussion.getStatus()).isEqualTo(TeamDiscussion.Status.CLOSED);
+    assertThat(discussion.isReadOnlyApplied()).isTrue();
+  }
+
+  @Test
+  void join_aNewReaderWaitsWhileAClosedRoomIsNotConfirmedReadOnly() {
+    var discussion = existing(TeamDiscussion.Status.CLOSED);
+    discussion.setReadOnlyApplied(false);
+    when(matrixSynapseService.setRoomEventsDefaultPowerLevel(anyString(), anyInt(), anyString()))
+        .thenReturn(false);
+    when(matrixSynapseService.getRoomMembers(ROOM_ID)).thenReturn(Optional.of(List.of()));
+
+    assertThatThrownBy(() -> facade.joinDiscussion(SESSION_ID, CONSULTANT_ID))
+        .isInstanceOf(ResponseStatusException.class)
+        .hasMessageContaining("503");
+    assertThat(discussion.isReadOnlyApplied()).isFalse();
+    verify(matrixSynapseService, never()).joinRoom(anyString(), anyString());
+
+    // Once Matrix confirms the switch, the reader is admitted.
+    when(matrixSynapseService.setRoomEventsDefaultPowerLevel(anyString(), anyInt(), anyString()))
+        .thenReturn(true);
+    assertThat(facade.joinDiscussion(SESSION_ID, CONSULTANT_ID).get().readOnly()).isTrue();
+    verify(matrixSynapseService).joinRoom(ROOM_ID, "consultant-token");
+  }
+
+  @Test
+  void reopen_anUnconfirmedWritableSwitchIsUndoneAndAnUnconfirmedUndoIsMarkedForRetry() {
+    var discussion = existing(TeamDiscussion.Status.CLOSED);
+    when(matrixSynapseService.setRoomEventsDefaultPowerLevel(anyString(), anyInt(), anyString()))
+        .thenReturn(false);
+
+    assertThatThrownBy(() -> facade.getOrCreateDiscussion(SESSION_ID, CONSULTANT_ID))
+        .isInstanceOf(ResponseStatusException.class)
+        .hasMessageContaining("502");
+
+    assertThat(discussion.getStatus()).isEqualTo(TeamDiscussion.Status.CLOSED);
+    assertThat(discussion.isReadOnlyApplied()).isFalse();
+    verify(matrixSynapseService)
+        .setRoomEventsDefaultPowerLevel(
+            ROOM_ID, TeamDiscussionFacade.ARCHIVED_EVENTS_DEFAULT_POWER_LEVEL, "agency-token");
+    verify(matrixSynapseService, never()).joinRoom(anyString(), anyString());
+  }
+
+  @Test
+  void reopen_whenSavingAndTheCompensationFail_theRowIsMarkedForTheReadOnlyRetry() {
+    var discussion = existing(TeamDiscussion.Status.CLOSED);
+    when(matrixSynapseService.setRoomEventsDefaultPowerLevel(
+            ROOM_ID, TeamDiscussionFacade.OPEN_EVENTS_DEFAULT_POWER_LEVEL, "agency-token"))
+        .thenReturn(true);
+    when(matrixSynapseService.setRoomEventsDefaultPowerLevel(
+            ROOM_ID, TeamDiscussionFacade.ARCHIVED_EVENTS_DEFAULT_POWER_LEVEL, "agency-token"))
+        .thenReturn(false);
+    when(teamDiscussionRepository.saveAndFlush(discussion))
+        .thenThrow(new org.springframework.dao.QueryTimeoutException("db"));
+
+    assertThatThrownBy(() -> facade.getOrCreateDiscussion(SESSION_ID, CONSULTANT_ID))
+        .isInstanceOf(org.springframework.dao.QueryTimeoutException.class);
+
+    assertThat(discussion.getStatus()).isEqualTo(TeamDiscussion.Status.CLOSED);
+    assertThat(discussion.isReadOnlyApplied()).isFalse();
+    verify(teamDiscussionRepository).save(discussion);
+
+    // The next access retries the read-only switch and certifies it only when confirmed.
+    when(matrixSynapseService.setRoomEventsDefaultPowerLevel(
+            ROOM_ID, TeamDiscussionFacade.ARCHIVED_EVENTS_DEFAULT_POWER_LEVEL, "agency-token"))
+        .thenReturn(true);
+    assertThat(facade.getDiscussion(SESSION_ID, CONSULTANT_ID).get().readOnly()).isTrue();
+    assertThat(discussion.isReadOnlyApplied()).isTrue();
   }
 
   @Test

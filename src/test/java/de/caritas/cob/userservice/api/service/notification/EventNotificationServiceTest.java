@@ -2711,11 +2711,7 @@ class EventNotificationServiceTest {
             de.caritas.cob.userservice.api.workflow.accountinactivity.AccountInactivityService
                 .class),
         // Team chat switched on, not continuing after acceptance.
-        org.mockito.Mockito.mock(
-            de.caritas.cob.userservice.api.service.teamdiscussion.TeamDiscussionFeatureGate.class,
-            call ->
-                "isEnabled".equals(call.getMethod().getName())
-                    || org.mockito.Answers.RETURNS_DEFAULTS.answer(call) != null));
+        teamChatSwitchedOnGate());
   }
 
   @Test
@@ -2787,5 +2783,15 @@ class EventNotificationServiceTest {
               assertThat(row.getEventType()).isEqualTo("team.discussion.new");
               assertThat(row.getParams()).contains("\"mentioned\":true");
             });
+  }
+
+  /** Team chat switched on; continuation after acceptance stays off (plain mock default). */
+  private static de.caritas.cob.userservice.api.service.teamdiscussion.TeamDiscussionFeatureGate
+      teamChatSwitchedOnGate() {
+    var gate =
+        org.mockito.Mockito.mock(
+            de.caritas.cob.userservice.api.service.teamdiscussion.TeamDiscussionFeatureGate.class);
+    org.mockito.Mockito.when(gate.isEnabled(org.mockito.ArgumentMatchers.any())).thenReturn(true);
+    return gate;
   }
 }
