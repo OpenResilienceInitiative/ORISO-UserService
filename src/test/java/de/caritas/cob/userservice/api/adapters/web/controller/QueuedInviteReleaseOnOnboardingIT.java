@@ -37,6 +37,7 @@ import de.caritas.cob.userservice.api.service.accountinvite.InviteUnitType;
 import de.caritas.cob.userservice.api.service.accountinvite.TwoFactorGateStatus;
 import de.caritas.cob.userservice.api.service.accountinvite.allocation.AgencyIdAllocationClient;
 import de.caritas.cob.userservice.api.service.accountinvite.allocation.IdAllocationMode;
+import de.caritas.cob.userservice.api.service.accountinvite.allocation.TenantIdAllocationClient;
 import de.caritas.cob.userservice.api.service.accountinvite.mail.InviteMailDispatchService;
 import de.caritas.cob.userservice.api.service.accountinvite.mail.InviteMailSendReceipt;
 import de.caritas.cob.userservice.api.service.accountinvite.onboarding.AgencyCreationClient;
@@ -112,6 +113,7 @@ class QueuedInviteReleaseOnOnboardingIT
   @MockitoBean private AgencyIdAllocationClient agencyIdAllocationClient;
   @MockitoBean private InviteMailDispatchService inviteMailDispatchService;
   @MockitoBean private TenantCreationClient tenantCreationClient;
+  @MockitoBean private TenantIdAllocationClient tenantIdAllocationClient;
   @MockitoBean private OperatorDpaContentClient operatorDpaContentClient;
 
   /** The founding admin gives the new agency one of these topics. */
@@ -216,14 +218,18 @@ class QueuedInviteReleaseOnOnboardingIT
   @Test
   void tenantAdminFinishingOnboarding_Should_ReleaseTheAgencyAdminsWaitingForTheNewTenant()
       throws Exception {
-    String adminToken = seedSentInvite(newTenantAdminInvite("reservation-4242"));
-    AccountInvite waitingAgencyAdmin = seed(waitingAgencyAdminForTheTenant());
+    String reservation = "reservation-4242";
+    when(tenantIdAllocationClient.hasAssignmentProof(NEW_TENANT, reservation)).thenReturn(true);
+    String adminToken = seedSentInvite(newTenantAdminInvite(reservation));
+    AccountInvite waitingAgencyAdmin = seed(waitingAgencyAdminForTheTenant(reservation));
+    AccountInvite legacyInvite = seed(waitingAgencyAdminForTheTenant(null));
 
-    registerNewTenant(adminToken, "reservation-4242").andExpect(status().isOk());
+    registerNewTenant(adminToken, reservation).andExpect(status().isOk());
 
     AccountInvite released = reload(waitingAgencyAdmin);
     assertThat(released.getStatus()).isEqualTo(AccountInviteStatus.DRAFT);
     assertThat(released.getAgencyId()).isEqualTo(1777L);
+    assertThat(reload(legacyInvite).getStatus()).isEqualTo(AccountInviteStatus.WAITING_FOR_UNIT);
     verify(agencyIdAllocationClient).reserve(null, NEW_TENANT);
   }
 
@@ -252,6 +258,7 @@ class QueuedInviteReleaseOnOnboardingIT
 
   @Test
   void secondTenantAdmin_Should_JoinTheTenantTheFirstOneCreated() throws Exception {
+    when(tenantCreationClient.hasAssignmentProof(NEW_TENANT, "shared-token")).thenReturn(true);
     AccountInvite first = newTenantAdminInvite("shared-token");
     first.setStatus(AccountInviteStatus.ACCEPTED);
     first.setActiveRecipientKey(null);
@@ -387,7 +394,7 @@ class QueuedInviteReleaseOnOnboardingIT
         .build();
   }
 
-  private static AccountInvite waitingAgencyAdminForTheTenant() {
+  private static AccountInvite waitingAgencyAdminForTheTenant(String reservation) {
     return base(AccountInviteTargetRole.AGENCY_ADMIN)
         .tenantId(NEW_TENANT)
         .tenantIdAllocationMode(IdAllocationMode.MANUAL)
@@ -395,6 +402,7 @@ class QueuedInviteReleaseOnOnboardingIT
         .alsoCounsellor(true)
         .status(AccountInviteStatus.WAITING_FOR_UNIT)
         .waitingForUnit(InviteUnitType.TENANT)
+        .waitingTenantReservationToken(reservation)
         .queuedExpiryDays(30L)
         .build();
   }

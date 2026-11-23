@@ -1,6 +1,7 @@
 package de.caritas.cob.userservice.api.service.accountinvite.allocation;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.header;
@@ -10,6 +11,7 @@ import static org.springframework.test.web.client.response.MockRestResponseCreat
 
 import de.caritas.cob.userservice.api.config.apiclient.TenantAdminServiceApiControllerFactory;
 import de.caritas.cob.userservice.api.service.httpheader.SecurityHeaderSupplier;
+import de.caritas.cob.userservice.api.service.httpheader.TechnicalAccessTokenContext;
 import de.caritas.cob.userservice.testutils.LogbackCaptor;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -21,6 +23,7 @@ import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
 import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.test.web.client.MockRestServiceServer;
+import org.springframework.web.client.RestClientException;
 import org.springframework.web.client.RestTemplate;
 
 class TenantIdAllocationClientTest {
@@ -29,6 +32,7 @@ class TenantIdAllocationClientTest {
   private static final String RELEASE_URL =
       BASE_URL + "/tenantadmin/tenant-ids/reservations/21/release";
   private static final String PROOF_URL = BASE_URL + "/tenantadmin/tenant-ids/reservations/21";
+  private static final String ASSIGNMENT_URL = PROOF_URL + "/assignment";
   private static final String PROOF = "synthetic-reservation-proof";
 
   private final RestTemplate rest = new RestTemplate();
@@ -93,6 +97,49 @@ class TenantIdAllocationClientTest {
         .andRespond(withStatus(HttpStatus.valueOf(status)));
 
     assertThat(client.hasReservationProof(21L, PROOF)).isEqualTo(status == 204);
+    server.verify();
+  }
+
+  @ParameterizedTest
+  @ValueSource(ints = {200, 204, 404, 405})
+  void assignmentProofRequiresExactConfirmationFromTheProvider(int status) {
+    var scopedHeaders = new HttpHeaders();
+    scopedHeaders.setBearerAuth("synthetic-scoped-token");
+    when(headers.getKeycloakAndCsrfHttpHeaders("synthetic-scoped-token")).thenReturn(scopedHeaders);
+    server
+        .expect(requestTo(ASSIGNMENT_URL))
+        .andExpect(method(HttpMethod.GET))
+        .andExpect(header("Authorization", "Bearer synthetic-scoped-token"))
+        .andExpect(header("X-Reservation-Token", PROOF))
+        .andRespond(withStatus(HttpStatus.valueOf(status)));
+
+    assertThat(
+            TechnicalAccessTokenContext.offerDuring(
+                "synthetic-scoped-token", () -> client.hasAssignmentProof(21L, PROOF)))
+        .isEqualTo(status == 204);
+    server.verify();
+  }
+
+  @ParameterizedTest
+  @ValueSource(ints = {403, 502})
+  void assignmentProofFailureDoesNotExposeAnEchoedProof(int status) {
+    server
+        .expect(requestTo(ASSIGNMENT_URL))
+        .andExpect(method(HttpMethod.GET))
+        .andRespond(withStatus(HttpStatus.valueOf(status)).body(PROOF));
+
+    assertThatThrownBy(() -> client.hasAssignmentProof(21L, PROOF))
+        .isInstanceOf(RestClientException.class)
+        .hasMessageNotContaining(PROOF)
+        .hasNoCause();
+    server.verify();
+  }
+
+  @ParameterizedTest
+  @NullAndEmptySource
+  @ValueSource(strings = {" "})
+  void assignmentCheckWithoutAProofDoesNotReachTheProvider(String proof) {
+    assertThat(client.hasAssignmentProof(21L, proof)).isFalse();
     server.verify();
   }
 
