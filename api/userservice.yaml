@@ -4395,6 +4395,28 @@ components:
           $ref: '#/components/schemas/AgencyDTO'
         latestMessage:
           $ref: '#/components/schemas/Date'
+        caseHandoverStatus:
+          allOf:
+            - $ref: '#/components/schemas/CaseHandoverListStatusDTO'
+          x-field-extra-annotation: "@com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_NULL)"
+
+    CaseHandoverListStatusDTO:
+      description: >-
+        Snapshot for the authenticated counsellor on an eligible case-handover candidate row.
+        Other session lists may omit it. Check the dedicated status endpoint before opening
+        protected content or submitting a handover action.
+      type: object
+      required: [status, canViewContent, hasRequest]
+      properties:
+        status:
+          type: string
+          description: Existing case-handover status, or NOT_REQUESTED if the counsellor has no visible request.
+        canViewContent:
+          type: boolean
+          description: Whether the counsellor could view the case at the time of this read.
+        hasRequest:
+          type: boolean
+          description: Whether the status comes from a request for this counsellor.
 
     GroupSessionListResponseDTO:
       type: object
