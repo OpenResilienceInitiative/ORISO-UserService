@@ -25,6 +25,7 @@ public class AgencyEnquiryRoomRetirements {
   private final AgencyEnquiryRoomRetirementRepository retirements;
   private final OrisoRoomRegistry roomRegistry;
   private final AgencyEnquiryRoomDecisions roomDecisions;
+  private final SessionOwnershipService ownership;
 
   public static boolean isInitialHoldingRoom(Session session) {
     var kind = session.getConversationType();
@@ -34,6 +35,24 @@ public class AgencyEnquiryRoomRetirements {
             || kind == ConversationType.AGENCY_COUNSELLING
             || kind == ConversationType.LIVE_CHAT)
         && AgencyOpenEnquiryMembership.isOpenToDepartment(session, session.getAgencyId());
+  }
+
+  /** Start external work only while the same committed acceptance remains current. */
+  @Transactional(noRollbackFor = ReopenedPreparationConflict.class)
+  public void startExternalWork(Session accepted, OwnershipChange assignment) {
+    if (AgencyEnquiryRoomDecisions.tracksRegistration(accepted)
+        && !ownership.startEnquiryRoomWork(lockAcceptance(accepted, assignment))) {
+      // Commit the reopened case and released work while the request reports the original conflict.
+      throw new ReopenedPreparationConflict();
+    }
+  }
+
+  private static final class ReopenedPreparationConflict extends ConflictException {
+    private static final long serialVersionUID = 1L;
+
+    private ReopenedPreparationConflict() {
+      super("Enquiry room preparation is no longer current");
+    }
   }
 
   /** Records an initial holding-room retirement in the transaction that binds its replacement. */

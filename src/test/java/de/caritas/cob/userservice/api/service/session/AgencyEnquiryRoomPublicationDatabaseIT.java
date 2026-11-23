@@ -83,6 +83,7 @@ class AgencyEnquiryRoomPublicationDatabaseIT {
   @MockitoBean private SessionService sessionService;
   @MockitoBean private AgencyEnquiryRoomRetirements retiredRooms;
   @MockitoBean private AgencyEnquiryRoomDecisions roomDecisions;
+  @MockitoBean private SessionOwnershipService ownership;
   @MockitoBean private AgencyMatrixCredentialClient agencyCredentials;
   @MockitoBean private SessionRoomGateway matrix;
 

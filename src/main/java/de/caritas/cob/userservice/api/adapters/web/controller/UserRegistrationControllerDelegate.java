@@ -37,7 +37,7 @@ import org.springframework.http.CacheControl;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Component;
-import org.springframework.transaction.annotation.Isolation;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 @Slf4j
@@ -160,9 +160,10 @@ class UserRegistrationControllerDelegate {
     return new ResponseEntity<>(response, response.getStatus());
   }
 
-  @Transactional(isolation = Isolation.READ_COMMITTED)
+  // The assignment and room preparation commit in their own transactions before Matrix work.
+  @Transactional(propagation = Propagation.NEVER)
   ResponseEntity<Void> acceptEnquiry(Long sessionId) {
-    var session = sessionService.getSessionForUpdate(sessionId);
+    var session = sessionService.getSession(sessionId);
 
     // The session id is invalid when no persisted session can be loaded.
     if (session.isEmpty()) {
