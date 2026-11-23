@@ -46,7 +46,7 @@ The full local setup — Java version, run script, frontend pairing — is in
 
 ## Help and Documentation
 In the project [documentation](https://onlineberatung.github.io/documentation/docs/setup/setup-backend) you'll find information for setting up and running the project.
-You can find some detailled information of the service architecture and its processes in the repository [documentation](https://github.com/Onlineberatung/onlineBeratung-userService/tree/master/documentation).
+The [UserService documentation index](documentation/README.md) links to the current Matrix architecture, operational contracts and local testing guides.
 
 ## License
 The project is licensed under the AGPLv3 which you'll find [here](https://github.com/Onlineberatung/onlineBeratung-userService/blob/master/LICENSE).

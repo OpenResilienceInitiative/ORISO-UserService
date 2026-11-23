@@ -59,6 +59,8 @@ public class ChatReCreator {
   private final SessionRepository sessionRepository;
   private final GroupChatMatrixCleanupService matrixCleanup;
   private final MatrixIdentifierRedactor redactor;
+  private final de.caritas.cob.userservice.api.service.matrix.GroupModeratorPowerService
+      moderatorPower;
 
   /**
    * Resets the given chat to its next occurrence: the new Matrix room id becomes the canonical room
@@ -106,6 +108,8 @@ public class ChatReCreator {
       if (carriedOver.isPresent()
           && roomHistory.membersWereCarried(chat, carriedOver.get())
           && matrixSynapseService.isRoomConfirmedGone(oldRoomId)) {
+        // That room becomes the current one: nobody may keep a level from a former role there.
+        moderatorPower.grantModeratorsOf(chat, carriedOver.get());
         return carriedOver.get();
       }
       throw new InternalServerErrorException(
@@ -137,6 +141,9 @@ public class ChatReCreator {
       }
     }
     reconcileNextRoom(chat, oldRoomId, newRoomId, humanMembers);
+    // The new room starts with its creator as the only moderator, and a room prepared by a failed
+    // stop may still hold a former moderator's level (ORISO-Frontend#2229).
+    moderatorPower.grantModeratorsOf(chat, newRoomId);
     if (ChatConverter.conversationTypeOf(chat) == ConversationType.SELF_HELP) {
       roomHistory.markMembersCarried(
           chat.getId(),

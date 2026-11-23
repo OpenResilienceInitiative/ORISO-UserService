@@ -1,8 +1,10 @@
 package de.caritas.cob.userservice.api.service.accountinvite;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import de.caritas.cob.userservice.api.config.auth.TaskPurpose;
 import de.caritas.cob.userservice.api.config.auth.TechnicalUserConfig;
 import de.caritas.cob.userservice.api.port.out.IdentityAuthentication;
 import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
@@ -41,8 +43,9 @@ class QueuedInviteReleaseListenerTest {
     when(identityClientConfig.getTechnicalUser()).thenReturn(technicalUser);
     when(identityAuthentication.loginService("technical", "secret"))
         .thenReturn(new IdentityLogin("token", 60, 60, "refresh"));
+    var event = new InviteUnitCreatedEvent(InviteUnitType.AGENCY, 7L, 3L);
     var ambientDuringRelease = new AtomicReference<Object>("not called");
-    when(unitQueue.release(InviteUnitType.AGENCY, 7L, 3L))
+    when(unitQueue.release(event))
         .thenAnswer(
             invocation -> {
               // Local writes and SMTP run without the service token.
@@ -51,9 +54,30 @@ class QueuedInviteReleaseListenerTest {
               return List.of();
             });
 
-    listener.onUnitCreated(new InviteUnitCreatedEvent(InviteUnitType.AGENCY, 7L, 3L));
+    listener.onUnitCreated(event);
 
     assertThat(ambientDuringRelease.get()).isEqualTo(java.util.Optional.empty());
     assertThat(TechnicalAccessTokenContext.get()).isEmpty();
+  }
+
+  @Test
+  void onTenantCreated_Should_PassTheOriginalProofUnderTheScopedTaskToken() {
+    var event = new InviteUnitCreatedEvent(InviteUnitType.TENANT, 9L, 9L, "synthetic-proof");
+    when(identityClientConfig.isFiveActorMode()).thenReturn(true);
+    when(identityClientConfig.taskAccessToken(TaskPurpose.INVITE_RESERVATIONS))
+        .thenReturn("scoped-token");
+    when(unitQueue.release(event))
+        .thenAnswer(
+            invocation -> {
+              assertThat(TechnicalAccessTokenContext.offered()).contains("scoped-token");
+              assertThat(TechnicalAccessTokenContext.get()).isEmpty();
+              return List.of();
+            });
+
+    listener.onUnitCreated(event);
+
+    verify(unitQueue).release(event);
+    assertThat(TechnicalAccessTokenContext.offered()).isEmpty();
+    assertThat(event.toString()).doesNotContain(event.reservationProof());
   }
 }

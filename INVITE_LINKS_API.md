@@ -1,8 +1,8 @@
 # Invite Links API — for the Frontend Developer
 
-> Backend branch: `backend-of-invite-link` (off `Rebuild`)
 > Service: `ORISO-UserService`
-> Status of redesign: agency removed from invite links — topic is the core identifier.
+> Live Chat links route by topic. Registered invitations can target an agency.
+> Runtime contract: `AgencyInviteLinkController.RedeemResponseDTO` on `dev`.
 
 This document is the **contract**. You can build the UI against it without reading any backend
 code. If something here disagrees with what the backend does, that's a backend bug — file an
@@ -151,43 +151,50 @@ without a valid positive tenant ID receives `403`.
 
 `POST /users/invitelinks/{token}/redeem`
 
-**No** `Authorization`, **no** `X-Tenant-Id`. This is the endpoint the end-user (anonymous visitor) hits when they open the link.
+The visitor calls this endpoint without `Authorization` or `X-Tenant-Id`. For Live Chat, an
+optional JSON body can supply the rolled `username`. If absent, the service chooses the handle.
 
-**Response `200 OK`:**
+**Live Chat response `200 OK`:**
 
 ```json
 {
   "sessionId": 9012,
   "userName": "Anonymous-x9k",
-  "accessToken": "eyJhbGciOi...",
-  "refreshToken": "eyJhbGciOi...",
+  "accessToken": "<oriso-access-token>",
+  "refreshToken": "<oriso-refresh-token>",
   "expiresIn": 3600,
   "refreshExpiresIn": 1800,
-  "rcUserId": "rcUser-9012",
-  "rcToken": "rc-token-...",
-  "rcGroupId": "rc-group-..."
+  "tenantId": 12,
+  "agencyId": null,
+  "consultingTypeId": 3,
+  "topicId": 17
 }
 ```
 
-This is the `CreateAnonymousEnquiryResponseDTO` shape. (The former public
-`POST /conversations/askers/anonymous/new` returned it too; it had no caller and was removed in
-ORISO-UserService#1697.) The visitor is now a logged-in anonymous user with a
-live-chat session ready — drop them straight into the chat UI; no second registration call.
+The example shows `RedeemResponseDTO` for a `LIVE_CHAT` link. It contains ORISO session credentials
+and invite routing fields. The frontend initializes Matrix through its normal host bootstrap.
+There are no chat-provider credentials or Matrix identifiers in the response.
+
+A successful `LIVE_CHAT` redeem creates an anonymous session without a second registration call.
+For a registered invitation, the session and authentication fields are null and the routing fields
+guide registration. A call share link is handled by the separate call entry flow. The former public
+`POST /conversations/askers/anonymous/new` route was removed in ORISO-UserService#1697.
 
 **Errors:**
 
 | Code | Reason |
 |---|---|
-| 400 | link already used / expired / never had a topic |
+| 400 | link inactive / expired / missing required routing metadata |
 | 404 | token doesn't exist |
-| 410 | paused live-chat link with body `{"reason":"INVITE_LINK_PAUSED"}` |
+| 410 | paused live-chat link (`INVITE_LINK_PAUSED`), switched-off direct link (`DIRECT_LINK_INACTIVE`), or expired or replaced scheduled direct link (`DIRECT_LINK_EXPIRED`) |
 
 The public `GET /users/invitelinks/{token}/context` returns the same paused-link reason before
 providing entry metadata. Neither route creates an account or conversation while the link is paused.
 A switched-off direct link retains `{"reason":"DIRECT_LINK_INACTIVE"}`.
 
-The token lookup uses a pessimistic lock; double-clicks and parallel calls cannot redeem the same
-link twice.
+The token lookup uses a pessimistic lock, but a successful redeem deliberately leaves the link
+`ACTIVE`. Published links are reusable until expiry so multiple visitors can enter through the
+same link. A `LIVE_CHAT` request creates a new anonymous session for each successful redeem.
 
 ---
 

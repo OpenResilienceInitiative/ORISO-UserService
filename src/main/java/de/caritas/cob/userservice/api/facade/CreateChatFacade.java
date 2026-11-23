@@ -57,6 +57,8 @@ public class CreateChatFacade {
   private final @NonNull GroupCounsellingDpaPolicy groupCounsellingDpaPolicy;
   private final @NonNull GroupChatMatrixCleanupService matrixCleanup;
   private final @NonNull org.springframework.transaction.PlatformTransactionManager transactions;
+  private final @NonNull de.caritas.cob.userservice.api.service.matrix.GroupModeratorPowerService
+      moderatorPower;
 
   /**
    * Creates a group chat in MariaDB and Matrix.
@@ -340,9 +342,11 @@ public class CreateChatFacade {
       log.info("Added creator consultant {} to group_chat_participant", consultant.getId());
 
       int assignedParticipants = 1;
+      var moderatorMatrixUserIds = new java.util.ArrayList<String>();
       if (membersOnly) {
         for (Consultant colleague : membersOnlyColleagues) {
           addColleagueStrictly(matrixRoomId, consultantToken, colleague);
+          moderatorMatrixUserIds.add(colleague.getMatrixUserId());
           GroupChatParticipant member = new GroupChatParticipant();
           member.setChatId(sessionId);
           member.setSeriesId(chatId);
@@ -370,6 +374,7 @@ public class CreateChatFacade {
           throw new InternalServerErrorException(
               "Selected consultant could not join the group chat");
         }
+        moderatorMatrixUserIds.add(participant.getMatrixUserId());
         GroupChatParticipant gcp = new GroupChatParticipant();
         gcp.setChatId(sessionId);
         gcp.setSeriesId(chatId);
@@ -379,6 +384,9 @@ public class CreateChatFacade {
         assignedParticipants++;
       }
 
+      // Selected colleagues are co-moderators and may blur passages (ORISO-Frontend#2229).
+      // Self-help colleagues are invited after the commit; their level holds once they join.
+      moderatorPower.grantModerators(matrixRoomId, ownerMatrixUserId, moderatorMatrixUserIds);
       if (selfHelp && !participants.isEmpty())
         inviteAfterCommit(chat, participants, consultantToken);
       appointmentEvents.recordCreated(chat);

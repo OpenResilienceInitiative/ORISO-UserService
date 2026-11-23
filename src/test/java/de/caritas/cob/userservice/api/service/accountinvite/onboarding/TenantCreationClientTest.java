@@ -7,6 +7,8 @@ import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.header;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.method;
+import static org.springframework.test.web.client.match.MockRestRequestMatchers.requestTo;
+import static org.springframework.test.web.client.response.MockRestResponseCreators.withStatus;
 import static org.springframework.test.web.client.response.MockRestResponseCreators.withSuccess;
 
 import de.caritas.cob.userservice.api.config.apiclient.TenantAdminServiceApiControllerFactory;
@@ -24,6 +26,7 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.NullAndEmptySource;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.http.HttpMethod;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.mock.http.client.MockClientHttpRequest;
 import org.springframework.test.util.ReflectionTestUtils;
@@ -84,6 +87,21 @@ class TenantCreationClientTest {
     var body = JsonMapper.builder().build().readTree(sentBody.get());
     assertThat(body.path("id").asLong()).isEqualTo(88L);
     assertThat(body.path("tenantIdReservationToken").asText()).isEqualTo("synthetic-reservation");
+  }
+
+  @Test
+  void checksTheCurrentAssignmentUnderTheConfigurationIdentity() {
+    server
+        .expect(
+            requestTo(
+                "https://tenant.example.org/tenantadmin/tenant-ids/reservations/88/assignment"))
+        .andExpect(method(HttpMethod.GET))
+        .andExpect(header("Authorization", "Bearer synthetic-token"))
+        .andExpect(header("X-Reservation-Token", "synthetic-reservation"))
+        .andRespond(withStatus(HttpStatus.NO_CONTENT));
+
+    assertThat(client.hasAssignmentProof(88L, "synthetic-reservation")).isTrue();
+    server.verify();
   }
 
   @ParameterizedTest

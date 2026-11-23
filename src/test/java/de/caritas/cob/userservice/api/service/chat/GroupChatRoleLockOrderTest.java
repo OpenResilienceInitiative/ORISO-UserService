@@ -31,6 +31,7 @@ class GroupChatRoleLockOrderTest {
   @Mock ConsultantRepository consultants;
   @Mock GroupChatMembershipService membership;
   @Mock MembersOnlyRevocation revocation;
+  @Mock de.caritas.cob.userservice.api.service.matrix.GroupModeratorPowerService moderatorPower;
   @Mock GroupChatMatrixCleanupService cleanup;
   @Mock EntityManager entityManager;
   @InjectMocks GroupChatRoleService service;

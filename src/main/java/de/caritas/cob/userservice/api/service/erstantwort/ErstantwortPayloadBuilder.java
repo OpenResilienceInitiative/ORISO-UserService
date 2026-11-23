@@ -234,6 +234,7 @@ public class ErstantwortPayloadBuilder {
                 : "Bis bald — wir melden uns bei Ihnen."));
 
     ErstantwortTranslations.localizePlatformDefaults(bausteine, context);
+    ErstantwortTranslations.applyPlatformTexts(bausteine, context);
     return bausteine;
   }
 
