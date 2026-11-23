@@ -5,6 +5,7 @@ import static org.apache.commons.lang3.StringUtils.isBlank;
 import com.google.common.collect.Lists;
 import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
 import de.caritas.cob.userservice.api.adapters.web.dto.AgencyDTO;
+import de.caritas.cob.userservice.api.adapters.web.dto.CaseHandoverListStatusDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantSessionListResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantSessionResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.SessionConsultantForConsultantDTO;
@@ -40,6 +41,7 @@ import de.caritas.cob.userservice.api.model.SessionTopic;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.out.CaseHandoverReasonPolicyRepository;
 import de.caritas.cob.userservice.api.port.out.CaseHandoverRequestRepository;
+import de.caritas.cob.userservice.api.port.out.CaseHandoverRequestRepository.CandidateStatusRequest;
 import de.caritas.cob.userservice.api.port.out.ConsultantAgencyRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
@@ -859,9 +861,23 @@ public class CaseHandoverService {
     }
     List<Session> pageSessions = loadCandidatePage(pageIds);
     Map<Long, String> agencyNames = candidateAgencyNames(pageSessions);
+    List<Long> authorizedPageIds = pageSessions.stream().map(Session::getId).toList();
+    Map<Long, CandidateStatusRequest> requestsBySession =
+        authorizedPageIds.isEmpty()
+            ? Map.of()
+            : caseHandoverRequestRepository
+                .findLatestCandidateStatusRequests(authorizedPageIds, requester.getId())
+                .stream()
+                .collect(
+                    Collectors.toMap(CandidateStatusRequest::getSessionId, Function.identity()));
+    LocalDateTime now = LocalDateTime.now(clock);
     List<ConsultantSessionResponseDTO> page =
         pageSessions.stream()
-            .map(candidate -> toCandidateDto(candidate, agencyNames))
+            .map(
+                candidate ->
+                    toCandidateDto(candidate, agencyNames)
+                        .caseHandoverStatus(
+                            candidateStatus(requestsBySession.get(candidate.getId()), now)))
             .collect(Collectors.toList());
 
     return new ConsultantSessionListResponseDTO()
@@ -869,6 +885,25 @@ public class CaseHandoverService {
         .offset(safeOffset)
         .count(page.size())
         .total(total);
+  }
+
+  private CaseHandoverListStatusDTO candidateStatus(
+      CandidateStatusRequest request, LocalDateTime now) {
+    if (request == null) {
+      return new CaseHandoverListStatusDTO()
+          .status(OUTCOME_NOT_REQUESTED)
+          .canViewContent(false)
+          .hasRequest(false);
+    }
+    Status status = request.getStatus();
+    AccessType accessType = effectiveAccessType(request.getAccessType(), request.getReasonCode());
+    boolean expired = isExpired(status, accessType, request.getExpiresAt(), now);
+    // The candidate page excludes cases the requester already owns.
+    boolean canView = hasGrantedAccess(status) && accessType == AccessType.CO_ACCESS && !expired;
+    return new CaseHandoverListStatusDTO()
+        .status(expired ? Status.EXPIRED.name() : status.name())
+        .canViewContent(canView)
+        .hasRequest(true);
   }
 
   private List<Session> loadCandidatePage(List<Long> pageIds) {
@@ -1664,9 +1699,7 @@ public class CaseHandoverService {
     }
 
     LocalDateTime now = LocalDateTime.now(clock);
-    session.setConsultant(original);
-    session.setUpdateDate(now);
-    sessionRepository.save(session);
+    sessionOwnershipService.updateOwner(session, original, session.getStatus(), now);
     takeover.setStatus(Status.RECLAIMED);
     takeover.setAuditOutcome(OUTCOME_RECLAIMED);
     takeover.setResolvedAt(now);
@@ -2534,9 +2567,11 @@ public class CaseHandoverService {
   }
 
   private AccessType effectiveAccessType(CaseHandoverRequest request) {
-    return request.getAccessType() != null
-        ? request.getAccessType()
-        : accessType(request.getReasonCode());
+    return effectiveAccessType(request.getAccessType(), request.getReasonCode());
+  }
+
+  private AccessType effectiveAccessType(AccessType recordedType, String reasonCode) {
+    return recordedType != null ? recordedType : accessType(reasonCode);
   }
 
   private Integer maxAccessDurationMinutes(CaseHandoverReason reason) {
@@ -2599,10 +2634,19 @@ public class CaseHandoverService {
   }
 
   private boolean isExpired(CaseHandoverRequest request) {
-    return hasGrantedAccess(request.getStatus())
-        && effectiveAccessType(request) == AccessType.CO_ACCESS
-        && request.getExpiresAt() != null
-        && !request.getExpiresAt().isAfter(LocalDateTime.now(clock));
+    return isExpired(
+        request.getStatus(),
+        effectiveAccessType(request),
+        request.getExpiresAt(),
+        LocalDateTime.now(clock));
+  }
+
+  private boolean isExpired(
+      Status status, AccessType accessType, LocalDateTime expiresAt, LocalDateTime now) {
+    return hasGrantedAccess(status)
+        && accessType == AccessType.CO_ACCESS
+        && expiresAt != null
+        && !expiresAt.isAfter(now);
   }
 
   /**

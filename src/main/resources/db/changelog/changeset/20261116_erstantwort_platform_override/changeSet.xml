@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+  xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-3.2.xsd">
+  <!-- ADR-018 §6: Erstantwort texts authored above or beside the Träger level. Today the platform
+       admin's override of the built-in Caritas default (scope PLATFORM, scope_id 0); a
+       Beratungsstelle (ORISO-Admin#601) can use scope AGENCY with its agency id. No row means the
+       built-in default, so an install without rows behaves exactly as before. -->
+  <changeSet id="20261116-erstantwort-text-override" author="oriso">
+    <preConditions onFail="MARK_RAN">
+      <not>
+        <tableExists tableName="erstantwort_text_override"/>
+      </not>
+    </preConditions>
+    <createTable tableName="erstantwort_text_override">
+      <column name="scope" type="VARCHAR(16)"><constraints nullable="false"/></column>
+      <column name="scope_id" type="BIGINT"><constraints nullable="false"/></column>
+      <column name="baustein" type="VARCHAR(40)"><constraints nullable="false"/></column>
+      <column name="texts" type="LONGTEXT"><constraints nullable="false"/></column>
+      <column name="updated_by" type="VARCHAR(255)"/>
+      <column name="update_date" type="DATETIME"/>
+    </createTable>
+    <addPrimaryKey tableName="erstantwort_text_override" columnNames="scope, scope_id, baustein"
+      constraintName="pk_erstantwort_text_override"/>
+    <rollback><dropTable tableName="erstantwort_text_override"/></rollback>
+  </changeSet>
+</databaseChangeLog>

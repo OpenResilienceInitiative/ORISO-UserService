@@ -56,6 +56,14 @@ public class ErstantwortContext {
   String closingByAgency;
   String closingByTenant;
 
+  /**
+   * The platform admin's texts, already resolved to the reader's language and reduced to plain
+   * text, keyed by Baustein id ({@code greeting}, {@code closing}, {@code emergencyNumbers}). They
+   * replace the built-in Caritas default and nothing else: every Träger, Beratungsstelle or topic
+   * text still wins. {@code null} or a missing key means the built-in default.
+   */
+  java.util.Map<String, String> platformTexts;
+
   /** Live Chat is the safe default only for what is *absent*, never for what is asserted. */
   public ErstantwortModality modalityOrDefault() {
     return modality == null ? ErstantwortModality.AGENCY_COUNSELLING : modality;

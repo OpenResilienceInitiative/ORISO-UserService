@@ -68,6 +68,25 @@ public class TenantIdAllocationClient {
     }
   }
 
+  /** Checks whether the original reservation became the current assignment. */
+  public boolean hasAssignmentProof(long tenantId, String reservationToken) {
+    if (!StringUtils.hasText(reservationToken)) {
+      return false;
+    }
+    try {
+      return HttpStatus.NO_CONTENT.equals(
+          createControllerApi()
+              .checkTenantIdAssignmentProofWithHttpInfo(tenantId, reservationToken)
+              .getStatusCode());
+    } catch (HttpClientErrorException.NotFound | HttpClientErrorException.MethodNotAllowed e) {
+      return false;
+    } catch (RestClientException exception) {
+      // An upstream response can echo the reservation proof in its body.
+      throw new RestClientException(
+          "Tenant assignment proof check failed (" + exception.getClass().getSimpleName() + ")");
+    }
+  }
+
   /**
    * Releases the specific reservation using its original proof. An old provider or a transport
    * failure leaves the task retryable.
