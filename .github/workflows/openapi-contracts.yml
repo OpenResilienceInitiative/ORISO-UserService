@@ -61,8 +61,8 @@ jobs:
       with:
         repository: OpenResilienceInitiative/ORISO-TenantService
         # TenantService #405 head (featureTeamDiscussionAfterAcceptEnabled, ORISO-Frontend#2491) includes
-        # the previous provider (#393). Merge the provider first so post-merge validation against dev
-        # also includes it.
+        # the landed dev revision (proof-bound release and assignment confirmation). Merge the provider
+        # first so post-merge validation against dev also includes it.
         ref: ${{ github.event_name != 'push' && 'bd15fe30ced95362a3eeaeae1303831588d07c98' || 'dev' }}
         path: .providers/tenant
         persist-credentials: false

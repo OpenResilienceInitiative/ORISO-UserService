@@ -1,16 +1,23 @@
 package de.caritas.cob.userservice.api.service.accountinvite;
 
+import de.caritas.cob.userservice.api.config.auth.RoutineTaskAuthentication;
+import de.caritas.cob.userservice.api.config.auth.TaskPurpose;
 import de.caritas.cob.userservice.api.exception.SmtpSendException;
 import de.caritas.cob.userservice.api.exception.httpresponses.ConflictException;
 import de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHttpStatusException;
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
+import de.caritas.cob.userservice.api.exception.httpresponses.ServiceUnavailableException;
 import de.caritas.cob.userservice.api.exception.httpresponses.customheader.HttpStatusExceptionReason;
 import de.caritas.cob.userservice.api.model.AccountInvite;
 import de.caritas.cob.userservice.api.model.InviteEmailTemplate;
 import de.caritas.cob.userservice.api.port.out.AccountInviteRepository;
+import de.caritas.cob.userservice.api.port.out.IdentityAuthentication;
+import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
 import de.caritas.cob.userservice.api.port.out.InviteEmailTemplateRepository;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteService.InviteSendResult;
 import de.caritas.cob.userservice.api.service.accountinvite.InviteDelivery.Prepared;
+import de.caritas.cob.userservice.api.service.accountinvite.allocation.TenantIdAllocationClient;
+import de.caritas.cob.userservice.api.service.httpheader.TechnicalAccessTokenContext;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Collection;
@@ -24,11 +31,13 @@ import java.util.stream.Collectors;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.support.TransactionTemplate;
+import org.springframework.util.StringUtils;
 
 /**
  * Invites into a Träger or Beratungsstelle that does not exist yet. They wait unsent, without a
@@ -44,6 +53,9 @@ public class UnitQueue {
   private final @NonNull ReservationLedger ledger;
   private final @NonNull InviteDelivery delivery;
   private final @NonNull PlatformTransactionManager transactionManager;
+  private final @NonNull TenantIdAllocationClient tenantIdAllocationClient;
+  private final @NonNull ObjectProvider<IdentityClientConfig> identityClientConfig;
+  private final @NonNull ObjectProvider<IdentityAuthentication> identityAuthentication;
 
   /** Without a pending admin invite for the unit the invite would never leave: 409 instead. */
   public AccountInvite enqueue(AccountInvite invite, InviteTarget target, Long expiresInDays) {
@@ -130,14 +142,17 @@ public class UnitQueue {
           unitId == null
               ? List.of()
               : (agency ? agencyAdmins : tenantAdmins).getOrDefault(unitId, List.of());
+      String waitingProof = invite.getWaitingTenantReservationToken();
       boolean hasAdmin =
           admins.stream()
               .anyMatch(
                   admin ->
                       !Objects.equals(admin.getId(), invite.getId())
-                          && (!agency
-                              || invite.getTenantId() == null
-                              || invite.getTenantId().equals(admin.getTenantId())));
+                          && (agency
+                              ? invite.getTenantId() == null
+                                  || invite.getTenantId().equals(admin.getTenantId())
+                              : StringUtils.hasText(waitingProof)
+                                  && waitingProof.equals(admin.getTenantIdReservationToken())));
       if (!hasAdmin) {
         problems.put(invite.getId(), InviteQueueProblem.NO_UNIT_ADMIN);
       }
@@ -164,13 +179,13 @@ public class UnitQueue {
         .collect(Collectors.toSet());
   }
 
-  /**
-   * Sends each invite of {@code tenantId} waiting for the now existing unit with its queued
-   * template, or leaves a DRAFT. One failure does not hold up the others. Returns the IDs this call
-   * released.
-   */
-  public List<Long> release(InviteUnitType unitType, Long unitId, Long tenantId) {
-    if (unitType == null || unitId == null) {
+  /** Sends matching waiting invites with their queued templates, or leaves them in DRAFT. */
+  public List<Long> release(InviteUnitCreatedEvent event) {
+    InviteUnitType unitType = event.unitType();
+    Long unitId = event.unitId();
+    if (unitType == null
+        || unitId == null
+        || (unitType == InviteUnitType.TENANT && !hasTenantAssignment(event))) {
       return List.of();
     }
     List<Long> waitingIds =
@@ -179,13 +194,15 @@ public class UnitQueue {
                 transaction ->
                     unitType == InviteUnitType.AGENCY
                         ? accountInviteRepository.findIdsWaitingForAgency(
-                            AccountInviteStatus.WAITING_FOR_UNIT, unitId, tenantId)
+                            AccountInviteStatus.WAITING_FOR_UNIT, unitId, event.tenantId())
                         : accountInviteRepository.findIdsWaitingForTenant(
-                            AccountInviteStatus.WAITING_FOR_UNIT, unitId));
+                            AccountInviteStatus.WAITING_FOR_UNIT,
+                            unitId,
+                            event.reservationProof()));
     List<Long> released = new ArrayList<>();
     for (Long inviteId : waitingIds == null ? List.<Long>of() : waitingIds) {
       try {
-        if (releaseOne(inviteId, null, false).isPresent()) {
+        if (releaseOne(inviteId, event, null, false).isPresent()) {
           released.add(inviteId);
         }
       } catch (RuntimeException exception) {
@@ -207,19 +224,62 @@ public class UnitQueue {
     return released;
   }
 
-  /** A send by hand is the release, but only once the unit exists (409 UNIT_NOT_CREATED). */
+  /** A send by hand requires the same assignment as an automatic release. */
   public InviteSendResult sendByHand(AccountInvite invite, InviteEmailTemplate template) {
     InviteUnitType unit =
         invite.getWaitingForUnit() == InviteUnitType.TENANT
             ? InviteUnitType.TENANT
             : InviteUnitType.AGENCY;
     Long unitId = unit == InviteUnitType.TENANT ? invite.getTenantId() : invite.getAgencyId();
-    if (!ledger.unitExists(unit, unitId)) {
-      throw new CustomValidationHttpStatusException(
-          HttpStatusExceptionReason.UNIT_NOT_CREATED, HttpStatus.CONFLICT);
+    var event =
+        new InviteUnitCreatedEvent(
+            unit, unitId, invite.getTenantId(), invite.getWaitingTenantReservationToken());
+    boolean unitReady =
+        unit == InviteUnitType.TENANT
+            ? verifyManualAssignment(event)
+            : ledger.unitExists(unit, unitId);
+    if (!unitReady) {
+      throw unitNotCreated();
     }
-    return releaseOne(invite.getId(), template, true)
-        .orElseGet(() -> new InviteSendResult(findInvite(invite.getId()), null, null, null));
+    return releaseOne(invite.getId(), event, template, true)
+        .orElseGet(
+            () -> {
+              AccountInvite current = findInvite(invite.getId());
+              if (unit == InviteUnitType.TENANT && waits(current)) {
+                throw unitNotCreated();
+              }
+              return new InviteSendResult(current, null, null, null);
+            });
+  }
+
+  private boolean hasTenantAssignment(InviteUnitCreatedEvent event) {
+    return event.unitId() != null
+        && Objects.equals(event.unitId(), event.tenantId())
+        && StringUtils.hasText(event.reservationProof())
+        && tenantIdAllocationClient.hasAssignmentProof(event.unitId(), event.reservationProof());
+  }
+
+  private boolean verifyManualAssignment(InviteUnitCreatedEvent event) {
+    if (event.unitId() == null || !StringUtils.hasText(event.reservationProof())) {
+      return false;
+    }
+    try {
+      if (TechnicalAccessTokenContext.offered().isPresent()) {
+        return hasTenantAssignment(event);
+      }
+      String token =
+          RoutineTaskAuthentication.accessToken(
+              TaskPurpose.INVITE_RESERVATIONS,
+              identityClientConfig.getObject(),
+              identityAuthentication.getObject());
+      return TechnicalAccessTokenContext.offerDuring(token, () -> hasTenantAssignment(event));
+    } catch (RuntimeException exception) {
+      log.warn(
+          "Tenant assignment check for {} failed ({})",
+          event.unitId(),
+          exception.getClass().getSimpleName());
+      throw new ServiceUnavailableException("Tenant assignment could not be verified");
+    }
   }
 
   /**
@@ -227,8 +287,12 @@ public class UnitQueue {
    * is the stored one. Empty when another release claimed the invite first.
    */
   private Optional<InviteSendResult> releaseOne(
-      Long inviteId, InviteEmailTemplate manualTemplate, boolean rethrowSendFailure) {
-    Prepared prepared = newTransaction().execute(transaction -> claim(inviteId, manualTemplate));
+      Long inviteId,
+      InviteUnitCreatedEvent event,
+      InviteEmailTemplate manualTemplate,
+      boolean rethrowSendFailure) {
+    Prepared prepared =
+        newTransaction().execute(transaction -> claim(inviteId, event, manualTemplate));
     if (prepared == null) {
       return Optional.empty();
     }
@@ -251,22 +315,33 @@ public class UnitQueue {
     }
   }
 
-  private Prepared claim(Long inviteId, InviteEmailTemplate manualTemplate) {
+  private Prepared claim(
+      Long inviteId, InviteUnitCreatedEvent event, InviteEmailTemplate manualTemplate) {
     AccountInvite waiting = findInvite(inviteId);
-    if (waiting.getStatus() != AccountInviteStatus.WAITING_FOR_UNIT) {
+    if (waiting.getStatus() != AccountInviteStatus.WAITING_FOR_UNIT
+        || (event.unitType() == InviteUnitType.TENANT
+            && !Objects.equals(
+                waiting.getWaitingTenantReservationToken(), event.reservationProof()))) {
       return null;
     }
-    InviteUnitType unit = waiting.getWaitingForUnit();
     LocalDateTime now = LocalDateTime.now();
     long days =
         waiting.getQueuedExpiryDays() == null
             ? AccountInviteService.DEFAULT_EXPIRY_DAYS
             : waiting.getQueuedExpiryDays();
-    if (accountInviteRepository.claimWaitingInvite(inviteId, now.plusDays(days), now) != 1) {
+    if (accountInviteRepository.claimWaitingInvite(
+            inviteId,
+            event.unitType(),
+            event.unitId(),
+            event.tenantId(),
+            event.reservationProof(),
+            now.plusDays(days),
+            now)
+        != 1) {
       return null;
     }
     AccountInvite invite = findInvite(inviteId);
-    if (unit == InviteUnitType.TENANT) {
+    if (event.unitType() == InviteUnitType.TENANT) {
       invite.setAgencyId(ledger.reserveAgencyOnRelease(invite));
     }
     InviteEmailTemplate template =
@@ -353,5 +428,10 @@ public class UnitQueue {
   private static CustomValidationHttpStatusException noPendingUnitAdmin() {
     return new CustomValidationHttpStatusException(
         HttpStatusExceptionReason.NO_PENDING_UNIT_ADMIN, HttpStatus.CONFLICT);
+  }
+
+  private static CustomValidationHttpStatusException unitNotCreated() {
+    return new CustomValidationHttpStatusException(
+        HttpStatusExceptionReason.UNIT_NOT_CREATED, HttpStatus.CONFLICT);
   }
 }
