@@ -169,7 +169,7 @@ public class AgencyLateJoinerMembershipService {
     }
 
     var roomIds =
-        Stream.of(TeamDiscussion.Status.OPEN, TeamDiscussion.Status.ARCHIVED)
+        Stream.of(TeamDiscussion.Status.values())
             .flatMap(
                 status ->
                     teamDiscussionRepository

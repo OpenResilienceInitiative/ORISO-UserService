@@ -73,7 +73,8 @@ public class TeamDiscussionNotificationService {
       return;
     }
     TeamDiscussion discussion = discussionOpt.get();
-    if (discussion.getStatus() == TeamDiscussion.Status.ARCHIVED) {
+    if (discussion.getStatus() != TeamDiscussion.Status.OPEN) {
+      // ARCHIVED, or CLOSED (switched off): nobody can post, nothing to notify.
       return;
     }
     Optional<Session> sessionOpt = sessionRepository.findById(discussion.getSessionId());

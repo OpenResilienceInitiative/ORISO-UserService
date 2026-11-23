@@ -2,6 +2,7 @@ package de.caritas.cob.userservice.api.facade;
 
 import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
+import de.caritas.cob.userservice.api.exception.httpresponses.ConflictException;
 import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
 import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException;
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
@@ -39,6 +40,11 @@ import org.springframework.web.server.ResponseStatusException;
  * permanently at acceptance ({@link #archiveDiscussionIfPresent(Session)}) and stays reachable
  * read-only. Participation right = enquiry visibility right — exactly the consultants of the
  * enquiry's agency, no separate permission layer.
+ *
+ * <p>ORISO-Frontend#2491: while the enquiry is still open, a counsellor can switch the team chat
+ * off ({@link #closeDiscussion}, status CLOSED, room read-only like an archive) and on again
+ * ({@link #getOrCreateDiscussion} reopens a CLOSED discussion). The switch is gated like
+ * Supervision: Träger AND Beratungsstelle ({@link TeamDiscussionFeatureGate}).
  */
 @Slf4j
 @Service
@@ -47,6 +53,9 @@ public class TeamDiscussionFacade {
 
   /** events_default above the member level (0) — nobody but the operator can post any more. */
   static final int ARCHIVED_EVENTS_DEFAULT_POWER_LEVEL = 50;
+
+  /** events_default of a writable room (Matrix default): every member can post again. */
+  static final int OPEN_EVENTS_DEFAULT_POWER_LEVEL = 0;
 
   private final @NonNull SessionRepository sessionRepository;
   private final @NonNull ConsultantRepository consultantRepository;
@@ -64,21 +73,25 @@ public class TeamDiscussionFacade {
 
   /** Read model returned to the controller. */
   public record TeamDiscussionView(
-      String matrixRoomId, TeamDiscussion.Status status, LocalDateTime archiveDate) {}
+      String matrixRoomId,
+      TeamDiscussion.Status status,
+      LocalDateTime archiveDate,
+      LocalDateTime closedDate) {}
 
   /**
    * Returns the enquiry's Team-Besprechung, creating room + record on first use. Joining the caller
    * into the room happens on every call so a colleague opening the panel later gets access. Only
-   * OPEN discussions can be created; an ARCHIVED one is returned read-only.
+   * OPEN discussions can be created; an ARCHIVED one is returned read-only. A CLOSED one (switched
+   * off on a still open enquiry) is switched on again: room writable, status OPEN.
    */
   public TeamDiscussionView getOrCreateDiscussion(Long sessionId, String consultantId) {
     Session session = loadSession(sessionId);
-    featureGate.requireEnabled(session.getTenantId());
+    featureGate.requireEnabled(session);
     Consultant consultant = requireEligibleConsultant(session, consultantId);
 
     Optional<TeamDiscussion> existing = teamDiscussionRepository.findBySessionId(sessionId);
     if (existing.isPresent()) {
-      return joinAndView(sessionId, existing.get().getId(), consultantId);
+      return joinAndView(sessionId, existing.get().getId(), consultantId, true);
     }
 
     requireOpenEnquiry(session);
@@ -127,7 +140,43 @@ public class TeamDiscussionFacade {
     // Create/accept race: re-read the assignment state after committing the row — if the case
     // was accepted while we were creating the room, archive immediately instead of leaving an
     // OPEN discussion on an assigned case.
-    return joinAndView(sessionId, discussion.getId(), consultantId);
+    return joinAndView(sessionId, discussion.getId(), consultantId, true);
+  }
+
+  /**
+   * ORISO-Frontend#2491: switches the team chat of a still open enquiry off. The room becomes
+   * read-only for everyone like an archive (participants keep read access); switching on again
+   * ({@link #getOrCreateDiscussion}) reopens it. No discussion yet: nothing to do. Already CLOSED:
+   * nothing to do.
+   *
+   * @throws ConflictException 409 when the discussion is ARCHIVED (enquiry accepted or rejected,
+   *     ADR-016 hard close)
+   */
+  public void closeDiscussion(Long sessionId, String consultantId) {
+    Session session = loadSession(sessionId);
+    featureGate.requireEnabled(session);
+    requireEligibleConsultant(session, consultantId);
+    Optional<TeamDiscussion> existing = teamDiscussionRepository.findBySessionId(sessionId);
+    if (existing.isEmpty()) {
+      return;
+    }
+    // The conflict is raised after the transaction: a lazy archive done on the way must commit.
+    var status =
+        accessTransactions.read(
+            sessionId,
+            existing.get().getId(),
+            consultantId,
+            access -> {
+              var discussion = reconcileOnAccess(access.discussion(), access.session());
+              if (discussion.getStatus() == TeamDiscussion.Status.OPEN) {
+                closeOpenDiscussion(access.session(), discussion);
+              }
+              return discussion.getStatus();
+            });
+    if (status == TeamDiscussion.Status.ARCHIVED) {
+      throw new ConflictException(
+          "The team discussion is archived since the enquiry was accepted or rejected");
+    }
   }
 
   /** Repairs access only to an existing room; never creates a replacement. */
@@ -135,14 +184,14 @@ public class TeamDiscussionFacade {
     var discussion = teamDiscussionRepository.findById(discussionId).orElse(null);
     if (discussion == null) return;
     var session = loadSession(discussion.getSessionId());
-    featureGate.requireEnabled(session.getTenantId());
-    joinAndView(session.getId(), discussion.getId(), consultantId);
+    featureGate.requireEnabled(session);
+    joinAndView(session.getId(), discussion.getId(), consultantId, false);
   }
 
   /** Returns the discussion if one exists — also ARCHIVED ones (read-only archive access). */
   public Optional<TeamDiscussionView> getDiscussion(Long sessionId, String consultantId) {
     Session session = loadSession(sessionId);
-    featureGate.requireEnabled(session.getTenantId());
+    featureGate.requireEnabled(session);
     requireEligibleConsultant(session, consultantId);
     return teamDiscussionRepository
         .findBySessionId(sessionId)
@@ -155,13 +204,18 @@ public class TeamDiscussionFacade {
                     access -> toView(reconcileOnAccess(access.discussion(), access.session()))));
   }
 
-  private TeamDiscussionView joinAndView(Long sessionId, Long discussionId, String consultantId) {
+  private TeamDiscussionView joinAndView(
+      Long sessionId, Long discussionId, String consultantId, boolean reopenClosed) {
     return accessTransactions.join(
         sessionId,
         discussionId,
         consultantId,
         access -> {
           var discussion = reconcileOnAccess(access.discussion(), access.session());
+          if (reopenClosed && discussion.getStatus() == TeamDiscussion.Status.CLOSED) {
+            // Still CLOSED after reconciliation means the enquiry is still open.
+            reopenClosedDiscussion(access.session(), discussion);
+          }
           if (access.session().getStatus() == SessionStatus.REJECTED
               && !discussion.isReadOnlyApplied()) {
             // An existing joined reader may keep reading while verified closure is pending.
@@ -187,7 +241,7 @@ public class TeamDiscussionFacade {
     if (session.getStatus() == SessionStatus.REJECTED) {
       // Rejection owns a durable, verified primary+team closure. The legacy default-only
       // switch must neither downgrade its permissions nor certify an incomplete readback.
-      if (discussion.getStatus() == TeamDiscussion.Status.OPEN) {
+      if (discussion.getStatus() != TeamDiscussion.Status.ARCHIVED) {
         discussion.setStatus(TeamDiscussion.Status.ARCHIVED);
         discussion.setArchiveDate(LocalDateTime.now());
         discussion.setReadOnlyApplied(false);
@@ -197,12 +251,12 @@ public class TeamDiscussionFacade {
     }
     boolean sessionAccepted =
         session.getConsultant() != null || session.getStatus() != SessionStatus.NEW;
-    if (discussion.getStatus() == TeamDiscussion.Status.OPEN && sessionAccepted) {
+    if (discussion.getStatus() != TeamDiscussion.Status.ARCHIVED && sessionAccepted) {
+      // Also a CLOSED discussion: acceptance is the permanent hard close (ADR-016).
       archiveDiscussion(session, discussion);
       return discussion;
     }
-    if (discussion.getStatus() == TeamDiscussion.Status.ARCHIVED
-        && !discussion.isReadOnlyApplied()) {
+    if (discussion.getStatus() != TeamDiscussion.Status.OPEN && !discussion.isReadOnlyApplied()) {
       if (makeRoomReadOnlyBestEffort(session, discussion)) {
         discussion.setReadOnlyApplied(true);
         teamDiscussionRepository.save(discussion);
@@ -384,6 +438,58 @@ public class TeamDiscussionFacade {
         discussion.isReadOnlyApplied());
   }
 
+  /**
+   * CLOSED is persisted first, then the read-only switch is attempted like for an archive; a
+   * failure is tracked via {@code readOnlyApplied=false} and retried on next access.
+   */
+  private void closeOpenDiscussion(Session session, TeamDiscussion discussion) {
+    discussion.setStatus(TeamDiscussion.Status.CLOSED);
+    discussion.setClosedDate(LocalDateTime.now());
+    discussion.setReadOnlyApplied(false);
+    teamDiscussionRepository.save(discussion);
+    if (makeRoomReadOnlyBestEffort(session, discussion)) {
+      discussion.setReadOnlyApplied(true);
+      teamDiscussionRepository.save(discussion);
+    }
+    log.info(
+        "Closed team discussion for session {} (room {}, readOnlyApplied={})",
+        session.getId(),
+        discussion.getMatrixRoomId(),
+        discussion.isReadOnlyApplied());
+  }
+
+  /**
+   * The room is made writable first; only then is the discussion OPEN again. A failed Matrix call
+   * leaves it CLOSED and answers 502, so status and room never disagree towards "open".
+   */
+  private void reopenClosedDiscussion(Session session, TeamDiscussion discussion) {
+    boolean writable;
+    try {
+      writable =
+          matrixSynapseService.setRoomEventsDefaultPowerLevel(
+              discussion.getMatrixRoomId(),
+              OPEN_EVENTS_DEFAULT_POWER_LEVEL,
+              loginAgencyOperator(session));
+    } catch (Exception ex) {
+      log.warn(
+          "Could not make team discussion room {} writable again: {}",
+          discussion.getMatrixRoomId(),
+          ex.getMessage());
+      writable = false;
+    }
+    if (!writable) {
+      throw new ResponseStatusException(
+          HttpStatus.BAD_GATEWAY, "Could not switch the team discussion on again");
+    }
+    discussion.setStatus(TeamDiscussion.Status.OPEN);
+    discussion.setReadOnlyApplied(false);
+    teamDiscussionRepository.save(discussion);
+    log.info(
+        "Reopened team discussion for session {} (room {})",
+        session.getId(),
+        discussion.getMatrixRoomId());
+  }
+
   private boolean makeRoomReadOnlyBestEffort(Session session, TeamDiscussion discussion) {
     try {
       String agencyToken = loginAgencyOperator(session);
@@ -420,6 +526,9 @@ public class TeamDiscussionFacade {
 
   private TeamDiscussionView toView(TeamDiscussion discussion) {
     return new TeamDiscussionView(
-        discussion.getMatrixRoomId(), discussion.getStatus(), discussion.getArchiveDate());
+        discussion.getMatrixRoomId(),
+        discussion.getStatus(),
+        discussion.getArchiveDate(),
+        discussion.getClosedDate());
   }
 }

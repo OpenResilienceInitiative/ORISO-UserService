@@ -107,7 +107,12 @@ public class ConversationFeatureGate {
                           ::getFeatureVoiceMessagesOneOnOneChatsEnabled,
                       ConversationKind.GROUP,
                       de.caritas.cob.userservice.tenantservice.generated.web.model.Settings
-                          ::getFeatureVoiceMessagesGroupChatsEnabled)));
+                          ::getFeatureVoiceMessagesGroupChatsEnabled)),
+              ConversationFeature.TEAM_DISCUSSION,
+              new Flags<>(
+                  de.caritas.cob.userservice.tenantservice.generated.web.model.Settings
+                      ::getFeatureTeamDiscussionEnabled,
+                  Map.of()));
 
   private static final Map<ConversationFeature, Flags<Settings>> AGENCY =
       Map.of(
@@ -133,7 +138,9 @@ public class ConversationFeatureGate {
                       Settings::getFeatureVoiceMessagesAnonymousChatsEnabled,
                   ConversationKind.ONE_ON_ONE,
                       Settings::getFeatureVoiceMessagesOneOnOneChatsEnabled,
-                  ConversationKind.GROUP, Settings::getFeatureVoiceMessagesGroupChatsEnabled)));
+                  ConversationKind.GROUP, Settings::getFeatureVoiceMessagesGroupChatsEnabled)),
+          ConversationFeature.TEAM_DISCUSSION,
+          new Flags<>(Settings::getFeatureTeamDiscussionEnabled, Map.of()));
 
   private final @NonNull TenantService tenantService;
   private final @NonNull EffectiveAgencySettingsLookup effectiveAgencySettingsLookup;

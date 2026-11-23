@@ -27,6 +27,7 @@ import de.caritas.cob.userservice.api.config.auth.IdentityConfig;
 import de.caritas.cob.userservice.api.config.auth.RoleAuthorizationAuthorityMapper;
 import de.caritas.cob.userservice.api.config.auth.SecurityConfig;
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
+import de.caritas.cob.userservice.api.exception.httpresponses.ConflictException;
 import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.model.Consultant;
@@ -259,6 +260,54 @@ class TeamDiscussionFacadeTest {
                               new SimpleGrantedAuthority(AuthorityValue.CONSULTANT_DEFAULT))))
           .andExpect(status().isOk())
           .andExpect(jsonPath("$.matrixRoomId").value(ROOM_ID));
+      // FE#2491: switching the team chat off follows the same rights as switching it on.
+      http.perform(
+              MockMvcRequestBuilders.delete(path)
+                  .cookie(new jakarta.servlet.http.Cookie("test-csrf", "matching-token"))
+                  .header("X-Test-CSRF", "matching-token")
+                  .with(
+                      SecurityMockMvcRequestPostProcessors.user("asker")
+                          .authorities(new SimpleGrantedAuthority(AuthorityValue.USER_DEFAULT))))
+          .andExpect(status().isForbidden());
+      var open =
+          TeamDiscussion.builder()
+              .id(99L)
+              .sessionId(SESSION_ID)
+              .matrixRoomId(ROOM_ID)
+              .status(TeamDiscussion.Status.OPEN)
+              .build();
+      when(teamDiscussionRepository.findBySessionId(SESSION_ID)).thenReturn(Optional.of(open));
+      when(matrixSynapseService.setRoomEventsDefaultPowerLevel(anyString(), anyInt(), anyString()))
+          .thenReturn(true);
+      http.perform(
+              MockMvcRequestBuilders.delete(path)
+                  .cookie(new jakarta.servlet.http.Cookie("test-csrf", "matching-token"))
+                  .header("X-Test-CSRF", "matching-token")
+                  .with(
+                      SecurityMockMvcRequestPostProcessors.user("colleague")
+                          .authorities(
+                              new SimpleGrantedAuthority(AuthorityValue.CONSULTANT_DEFAULT))))
+          .andExpect(status().isNoContent());
+      http.perform(
+              MockMvcRequestBuilders.get(path)
+                  .with(
+                      SecurityMockMvcRequestPostProcessors.user("colleague")
+                          .authorities(
+                              new SimpleGrantedAuthority(AuthorityValue.CONSULTANT_DEFAULT))))
+          .andExpect(status().isOk())
+          .andExpect(jsonPath("$.status").value("CLOSED"))
+          .andExpect(jsonPath("$.closedDate").exists());
+      session.setConsultant(consultant);
+      session.setStatus(SessionStatus.IN_PROGRESS);
+      http.perform(
+              MockMvcRequestBuilders.delete(path)
+                  .cookie(new jakarta.servlet.http.Cookie("test-csrf", "matching-token"))
+                  .header("X-Test-CSRF", "matching-token")
+                  .with(
+                      SecurityMockMvcRequestPostProcessors.user("colleague")
+                          .authorities(
+                              new SimpleGrantedAuthority(AuthorityValue.CONSULTANT_DEFAULT))))
+          .andExpect(status().isConflict());
       when(consultantAgencyRepository.existsByConsultantIdAndAgencyIdAndDeleteDateIsNull(
               CONSULTANT_ID, AGENCY_ID))
           .thenReturn(false);
@@ -808,5 +857,194 @@ class TeamDiscussionFacadeTest {
 
     verify(matrixSynapseService, never())
         .setRoomEventsDefaultPowerLevel(anyString(), anyInt(), anyString());
+  }
+
+  // ---- ORISO-Frontend#2491: switch the team chat off and on per open enquiry ----
+
+  private TeamDiscussion existing(TeamDiscussion.Status status) {
+    var discussion =
+        TeamDiscussion.builder()
+            .id(99L)
+            .sessionId(SESSION_ID)
+            .matrixRoomId(ROOM_ID)
+            .status(status)
+            .readOnlyApplied(status != TeamDiscussion.Status.OPEN)
+            .build();
+    when(teamDiscussionRepository.findBySessionId(SESSION_ID)).thenReturn(Optional.of(discussion));
+    return discussion;
+  }
+
+  @Test
+  void closeDiscussion_shouldMakeTheRoomReadOnlyAndMarkItClosed() {
+    var discussion = existing(TeamDiscussion.Status.OPEN);
+    when(matrixSynapseService.setRoomEventsDefaultPowerLevel(anyString(), anyInt(), anyString()))
+        .thenReturn(true);
+
+    facade.closeDiscussion(SESSION_ID, CONSULTANT_ID);
+
+    assertThat(discussion.getStatus()).isEqualTo(TeamDiscussion.Status.CLOSED);
+    assertThat(discussion.getClosedDate()).isNotNull();
+    assertThat(discussion.getArchiveDate()).isNull();
+    assertThat(discussion.isReadOnlyApplied()).isTrue();
+    verify(matrixSynapseService)
+        .setRoomEventsDefaultPowerLevel(
+            ROOM_ID, TeamDiscussionFacade.ARCHIVED_EVENTS_DEFAULT_POWER_LEVEL, "agency-token");
+    var view = facade.getDiscussion(SESSION_ID, CONSULTANT_ID);
+    assertThat(view.get().status()).isEqualTo(TeamDiscussion.Status.CLOSED);
+    assertThat(view.get().closedDate()).isNotNull();
+  }
+
+  @Test
+  void closeDiscussion_shouldTrackAFailedReadOnlySwitchForRetry() {
+    var discussion = existing(TeamDiscussion.Status.OPEN);
+    when(matrixSynapseService.setRoomEventsDefaultPowerLevel(anyString(), anyInt(), anyString()))
+        .thenReturn(false);
+
+    facade.closeDiscussion(SESSION_ID, CONSULTANT_ID);
+
+    assertThat(discussion.getStatus()).isEqualTo(TeamDiscussion.Status.CLOSED);
+    assertThat(discussion.isReadOnlyApplied()).isFalse();
+  }
+
+  @Test
+  void closeDiscussion_withoutADiscussion_isANoOp() {
+    facade.closeDiscussion(SESSION_ID, CONSULTANT_ID);
+
+    verify(teamDiscussionRepository, never()).save(any());
+    verify(matrixSynapseService, never())
+        .setRoomEventsDefaultPowerLevel(anyString(), anyInt(), anyString());
+  }
+
+  @Test
+  void closeDiscussion_alreadyClosed_isANoOp() {
+    var discussion = existing(TeamDiscussion.Status.CLOSED);
+
+    facade.closeDiscussion(SESSION_ID, CONSULTANT_ID);
+
+    assertThat(discussion.getStatus()).isEqualTo(TeamDiscussion.Status.CLOSED);
+    verify(matrixSynapseService, never())
+        .setRoomEventsDefaultPowerLevel(anyString(), anyInt(), anyString());
+  }
+
+  @Test
+  void closeDiscussion_afterAccept_isAConflict() {
+    existing(TeamDiscussion.Status.ARCHIVED);
+    session.setConsultant(consultant);
+    session.setStatus(SessionStatus.IN_PROGRESS);
+
+    assertThatThrownBy(() -> facade.closeDiscussion(SESSION_ID, CONSULTANT_ID))
+        .isInstanceOf(ConflictException.class);
+  }
+
+  @Test
+  void closeDiscussion_onAnAcceptedCaseWithAnOpenRow_archivesAndIsAConflict() {
+    var discussion = existing(TeamDiscussion.Status.OPEN);
+    session.setConsultant(consultant);
+    session.setStatus(SessionStatus.IN_PROGRESS);
+    when(matrixSynapseService.setRoomEventsDefaultPowerLevel(anyString(), anyInt(), anyString()))
+        .thenReturn(true);
+
+    assertThatThrownBy(() -> facade.closeDiscussion(SESSION_ID, CONSULTANT_ID))
+        .isInstanceOf(ConflictException.class);
+    assertThat(discussion.getStatus()).isEqualTo(TeamDiscussion.Status.ARCHIVED);
+  }
+
+  @Test
+  void closeDiscussion_shouldRespectFeatureGate() {
+    existing(TeamDiscussion.Status.OPEN);
+    doThrow(new ForbiddenException("Team discussion is disabled"))
+        .when(featureGate)
+        .requireEnabled(org.mockito.ArgumentMatchers.any());
+
+    assertThatThrownBy(() -> facade.closeDiscussion(SESSION_ID, CONSULTANT_ID))
+        .isInstanceOf(ForbiddenException.class);
+    verify(teamDiscussionRepository, never()).save(any());
+  }
+
+  @Test
+  void closeDiscussion_shouldRejectForeignAgencyConsultant() {
+    existing(TeamDiscussion.Status.OPEN);
+    when(consultantAgencyRepository.existsByConsultantIdAndAgencyIdAndDeleteDateIsNull(
+            CONSULTANT_ID, AGENCY_ID))
+        .thenReturn(false);
+
+    assertThatThrownBy(() -> facade.closeDiscussion(SESSION_ID, CONSULTANT_ID))
+        .isInstanceOf(ForbiddenException.class);
+  }
+
+  @Test
+  void getOrCreateDiscussion_onAClosedDiscussion_reopensTheRoomAndJoinsTheCaller()
+      throws Exception {
+    var discussion = existing(TeamDiscussion.Status.CLOSED);
+    when(matrixSynapseService.setRoomEventsDefaultPowerLevel(anyString(), anyInt(), anyString()))
+        .thenReturn(true);
+
+    var view = facade.getOrCreateDiscussion(SESSION_ID, CONSULTANT_ID);
+
+    assertThat(view.status()).isEqualTo(TeamDiscussion.Status.OPEN);
+    assertThat(discussion.getStatus()).isEqualTo(TeamDiscussion.Status.OPEN);
+    verify(matrixSynapseService)
+        .setRoomEventsDefaultPowerLevel(
+            ROOM_ID, TeamDiscussionFacade.OPEN_EVENTS_DEFAULT_POWER_LEVEL, "agency-token");
+    verify(matrixSynapseService).joinRoom(ROOM_ID, "consultant-token");
+    verify(matrixSynapseService, never()).createRoom(anyString(), anyString(), anyString());
+  }
+
+  @Test
+  void getOrCreateDiscussion_whenTheRoomCannotBeMadeWritable_staysClosed() {
+    var discussion = existing(TeamDiscussion.Status.CLOSED);
+    when(matrixSynapseService.setRoomEventsDefaultPowerLevel(
+            ROOM_ID, TeamDiscussionFacade.OPEN_EVENTS_DEFAULT_POWER_LEVEL, "agency-token"))
+        .thenReturn(false);
+
+    assertThatThrownBy(() -> facade.getOrCreateDiscussion(SESSION_ID, CONSULTANT_ID))
+        .isInstanceOfSatisfying(
+            ResponseStatusException.class,
+            ex -> assertThat(ex.getStatusCode()).isEqualTo(HttpStatus.BAD_GATEWAY));
+    assertThat(discussion.getStatus()).isEqualTo(TeamDiscussion.Status.CLOSED);
+  }
+
+  @Test
+  void getOrCreateDiscussion_onAClosedDiscussionOfAnAcceptedCase_archivesInsteadOfReopening() {
+    var discussion = existing(TeamDiscussion.Status.CLOSED);
+    session.setConsultant(consultant);
+    session.setStatus(SessionStatus.IN_PROGRESS);
+    when(matrixSynapseService.setRoomEventsDefaultPowerLevel(anyString(), anyInt(), anyString()))
+        .thenReturn(true);
+
+    var view = facade.getOrCreateDiscussion(SESSION_ID, CONSULTANT_ID);
+
+    assertThat(view.status()).isEqualTo(TeamDiscussion.Status.ARCHIVED);
+    assertThat(discussion.getStatus()).isEqualTo(TeamDiscussion.Status.ARCHIVED);
+    verify(matrixSynapseService, never())
+        .setRoomEventsDefaultPowerLevel(
+            anyString(), eq(TeamDiscussionFacade.OPEN_EVENTS_DEFAULT_POWER_LEVEL), anyString());
+  }
+
+  @Test
+  void archiveDiscussionIfPresent_afterSwitchOff_archivesTheClosedDiscussion() {
+    var discussion = existing(TeamDiscussion.Status.CLOSED);
+    session.setConsultant(consultant);
+    session.setStatus(SessionStatus.IN_PROGRESS);
+    when(matrixSynapseService.setRoomEventsDefaultPowerLevel(anyString(), anyInt(), anyString()))
+        .thenReturn(true);
+
+    facade.archiveDiscussionIfPresent(session);
+
+    assertThat(discussion.getStatus()).isEqualTo(TeamDiscussion.Status.ARCHIVED);
+    assertThat(discussion.getArchiveDate()).isNotNull();
+    assertThat(discussion.isReadOnlyApplied()).isTrue();
+  }
+
+  @Test
+  void restoringMembership_neverReopensAClosedDiscussion() {
+    var discussion = existing(TeamDiscussion.Status.CLOSED);
+
+    facade.restoreExistingDiscussionMembership(99L, CONSULTANT_ID);
+
+    assertThat(discussion.getStatus()).isEqualTo(TeamDiscussion.Status.CLOSED);
+    verify(matrixSynapseService, never())
+        .setRoomEventsDefaultPowerLevel(
+            anyString(), eq(TeamDiscussionFacade.OPEN_EVENTS_DEFAULT_POWER_LEVEL), anyString());
   }
 }

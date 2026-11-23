@@ -35,6 +35,11 @@ public class TeamDiscussion implements TenantAware {
 
   public enum Status {
     OPEN,
+    /**
+     * Switched off by a counsellor while the enquiry is still open (ORISO-Frontend#2491): the room
+     * is read-only like an archive, but switching on again reopens it. Never purged by retention.
+     */
+    CLOSED,
     ARCHIVED
   }
 
@@ -59,6 +64,10 @@ public class TeamDiscussion implements TenantAware {
 
   @Column(name = "archive_date")
   private LocalDateTime archiveDate;
+
+  /** When the team chat was last switched off for its open enquiry; null while never closed. */
+  @Column(name = "closed_date")
+  private LocalDateTime closedDate;
 
   @Column(name = "created_by_consultant_id", length = 36)
   private String createdByConsultantId;

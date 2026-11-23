@@ -62,6 +62,13 @@ class EnquiryRejectionControllerIT {
   @Autowired private EventNotificationRepository events;
   @MockitoBean private de.caritas.cob.userservice.api.service.agency.AgencyService agencyMetadata;
   @MockitoBean private TenantDpaGateReadClient dpaGate;
+
+  // Rejection is under test here, not the Team-Chat switch (Träger AND Beratungsstelle, FE#2491,
+  // covered by TeamDiscussionFeatureGateTest): the gate lets every team-discussion call through.
+  @MockitoBean
+  private de.caritas.cob.userservice.api.service.teamdiscussion.TeamDiscussionFeatureGate
+      teamDiscussionGate;
+
   private MockMvc mvc;
   private String seekerId;
   private String actorId;

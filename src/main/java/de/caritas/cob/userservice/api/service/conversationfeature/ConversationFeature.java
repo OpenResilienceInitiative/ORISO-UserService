@@ -7,5 +7,10 @@ public enum ConversationFeature {
   /** "Dateianhänge": putting a file into a conversation. */
   MEDIA_UPLOAD,
   /** "Sprachnachrichten": an audio file becomes a voice message (an {@code m.audio} event). */
-  VOICE_MESSAGES
+  VOICE_MESSAGES,
+  /**
+   * "Team-Chat": the team-only side room on an open enquiry (ADR-016, ORISO-Frontend#2491). A
+   * master switch only; it has no switch per kind of conversation.
+   */
+  TEAM_DISCUSSION
 }

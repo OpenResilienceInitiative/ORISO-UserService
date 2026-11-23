@@ -550,6 +550,10 @@ components:
           type: boolean
           example: true
           description: Master toggle for supervision functionality (adding/removing supervisors, supervision views).
+        featureTeamDiscussionEnabled:
+          type: boolean
+          example: true
+          description: "Team-Chat on an open enquiry (ADR-016, ORISO-Frontend#2491): the Beratungsstelle's own value. Effective value is Traeger AND Beratungsstelle; unset means on."
         featureSupervisionAnonymousChatsEnabled:
           type: boolean
           example: true
