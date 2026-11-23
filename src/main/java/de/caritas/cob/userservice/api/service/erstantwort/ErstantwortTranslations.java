@@ -52,6 +52,22 @@ public final class ErstantwortTranslations {
     return result;
   }
 
+  /**
+   * The built-in Caritas wording of every platform-editable Baustein in all seven language
+   * versions, for the platform editor to show what applies while a field stays empty.
+   */
+  public static Map<String, Map<String, String>> builtInDefaults() {
+    var result = new java.util.LinkedHashMap<String, Map<String, String>>();
+    for (var id : PLATFORM_EDITABLE) {
+      var perLanguage = new java.util.LinkedHashMap<String, String>();
+      for (var locale : List.of("de", "de@informal", "en", "fr", "ru", "tr", "ti")) {
+        perLanguage.put(locale, catalogue(locale).path(id).path("body").asText(""));
+      }
+      result.put(id, perLanguage);
+    }
+    return result;
+  }
+
   static void localizePlatformDefaults(
       List<Map<String, Object>> blocks, ErstantwortContext context) {
     var locale = validLocale(context.getLocale());
@@ -97,6 +113,26 @@ public final class ErstantwortTranslations {
                     })
                 .toList());
       }
+    }
+  }
+
+  /** The Bausteine a platform admin may reword (ADR-018 §6, platform level). */
+  public static final List<String> PLATFORM_EDITABLE =
+      List.of("greeting", "closing", "emergencyNumbers");
+
+  /**
+   * Last step before freezing: the platform admin's wording replaces the built-in default of the
+   * editable Bausteine, unless a more specific level authored the text. Headlines, actions and
+   * links stay as localized above.
+   */
+  static void applyPlatformTexts(List<Map<String, Object>> blocks, ErstantwortContext context) {
+    var platform = context.getPlatformTexts();
+    if (platform == null || platform.isEmpty()) return;
+    for (var block : blocks) {
+      var id = String.valueOf(block.get("id"));
+      if (!PLATFORM_EDITABLE.contains(id) || hasAuthoredBody(id, context)) continue;
+      var text = platform.get(id);
+      if (ErstantwortText.hasText(text)) block.put("body", text.trim());
     }
   }
 
