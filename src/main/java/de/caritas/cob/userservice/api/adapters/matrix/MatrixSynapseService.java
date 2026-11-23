@@ -19,6 +19,7 @@ import de.caritas.cob.userservice.api.exception.matrix.MatrixBrowserLoginRateLim
 import de.caritas.cob.userservice.api.exception.matrix.MatrixCreateRoomException;
 import de.caritas.cob.userservice.api.exception.matrix.MatrixCreateUserException;
 import de.caritas.cob.userservice.api.exception.matrix.MatrixInviteUserException;
+import de.caritas.cob.userservice.api.exception.matrix.MatrixRoomRuleException;
 import de.caritas.cob.userservice.api.helper.MatrixIds;
 import de.caritas.cob.userservice.api.port.out.MatrixRoomMembershipLookup;
 import de.caritas.cob.userservice.api.port.out.MatrixUserClient;
@@ -1663,8 +1664,12 @@ public class MatrixSynapseService implements MatrixUserClient, MatrixRoomMembers
       throw new MatrixCreateRoomException("Could not obtain access token for Matrix user");
     }
 
-    return matrixRoomClient.createMembersOnlyRoom(
-        roomName, roomAlias, accessToken, matrixConfig.isEncryptionEnabled());
+    try {
+      return matrixRoomClient.createMembersOnlyRoom(
+          roomName, roomAlias, accessToken, matrixConfig.isEncryptionEnabled());
+    } catch (MatrixRoomRuleException failure) {
+      throw removeRoomWithoutRules(failure);
+    }
   }
 
   /**
@@ -1679,8 +1684,25 @@ public class MatrixSynapseService implements MatrixUserClient, MatrixRoomMembers
   public ResponseEntity<MatrixCreateRoomResponseDTO> createRoom(
       String roomName, String roomAlias, String accessToken) throws MatrixCreateRoomException {
 
-    return matrixRoomClient.createRoom(
-        roomName, roomAlias, accessToken, matrixConfig.isEncryptionEnabled());
+    try {
+      return matrixRoomClient.createRoom(
+          roomName, roomAlias, accessToken, matrixConfig.isEncryptionEnabled());
+    } catch (MatrixRoomRuleException failure) {
+      throw removeRoomWithoutRules(failure);
+    }
+  }
+
+  /**
+   * A room that was created but could not get its moderation rules is never handed out. It is
+   * purged here, so neither the room nor its alias stays on Synapse without a record. When the
+   * purge fails as well, the failure is logged with the room ID for manual cleanup.
+   */
+  private MatrixRoomRuleException removeRoomWithoutRules(MatrixRoomRuleException failure) {
+    if (!purgeRoom(failure.getRoomId())) {
+      log.error(
+          "Matrix room {} without its moderation rules could not be purged", failure.getRoomId());
+    }
+    return failure;
   }
 
   /**
@@ -2025,6 +2047,164 @@ public class MatrixSynapseService implements MatrixUserClient, MatrixRoomMembers
     return matrixRoomClient.raiseUserPowerLevel(
             roomId, adminMatrixId, memberMatrixUserId, ROOM_OWNER_POWER_LEVEL, memberToken)
         != MatrixRoomClient.PowerRaise.FAILED;
+  }
+
+  /**
+   * Gives the room's named moderators the Matrix moderator level and takes it back from former
+   * ones, as {@link MatrixRoomClient#syncModeratorPower} describes (ORISO-Frontend#2229).
+   *
+   * <p>Only a joined member above the moderator level may write it. {@code preferredHolderId} (the
+   * group's current owner) is tried first; when they may not, every joined member who holds the
+   * owner level (100) is tried: the room creator after a transfer of primary ownership, or the
+   * technical admin after the creator left (#1421). The room state is read as the technical admin
+   * first, so a room that is already right is not written and nobody is impersonated for it.
+   *
+   * <p>Never throws and logs no Matrix user ID.
+   *
+   * @param moderators Matrix user ID to whether the user is a moderator of the room
+   * @return true when the room holds the levels afterwards (or nothing was to be done)
+   */
+  public boolean syncModeratorPower(
+      String roomId, java.util.Map<String, Boolean> moderators, String preferredHolderId) {
+    if (moderators == null || moderators.isEmpty()) {
+      return true;
+    }
+    if (roomId == null || roomId.isBlank()) {
+      return false;
+    }
+    var holders = new java.util.LinkedHashSet<String>();
+    if (preferredHolderId != null && !preferredHolderId.isBlank()) {
+      holders.add(preferredHolderId);
+    }
+    var state = readRoomState(roomId);
+    java.util.Set<String> creators = java.util.Set.of();
+    if (state.isPresent()) {
+      try {
+        creators = MatrixRoomClient.unlimitedCreators(state.get());
+        var power = powerLevelsOf(state.get());
+        if (MatrixRoomClient.moderatorPowerChanges(power, moderators, creators).isEmpty()) {
+          return true;
+        }
+        holders.addAll(joinedRoomOwners(state.get(), power, creators));
+      } catch (RuntimeException unreadableState) {
+        // Power levels Synapse would not accept: the room cannot be judged, so report failure.
+        log.warn(
+            "The power levels of room {} could not be read ({})",
+            roomId,
+            unreadableState.getClass().getSimpleName());
+        return false;
+      }
+    }
+    for (var holder : holders) {
+      var token = loginAsUserAccessToken(holder);
+      if (token == null) {
+        continue;
+      }
+      var result = matrixRoomClient.syncModeratorPower(roomId, moderators, holder, token, creators);
+      if (result == MatrixRoomClient.ModeratorPowerSync.UNCHANGED
+          || result == MatrixRoomClient.ModeratorPowerSync.WRITTEN) {
+        return true;
+      }
+    }
+    log.warn("Nobody could write the Matrix moderator level in room {}", roomId);
+    return false;
+  }
+
+  @SuppressWarnings("unchecked")
+  private static java.util.Map<String, Object> powerLevelsOf(
+      java.util.List<java.util.Map<?, ?>> state) {
+    return state.stream()
+        .filter(event -> "m.room.power_levels".equals(event.get("type")))
+        // Only the event with the empty state key is the room's power levels; any other is not.
+        .filter(event -> "".equals(event.get("state_key")))
+        .map(event -> event.get("content"))
+        .filter(java.util.Map.class::isInstance)
+        .map(content -> new java.util.HashMap<>((java.util.Map<String, Object>) content))
+        .reduce((first, second) -> second)
+        .orElseGet(java.util.HashMap::new);
+  }
+
+  /**
+   * Joined members who may stand in as holder: creators with unlimited power (room version 12)
+   * first, then members who hold the owner level, highest first.
+   */
+  private static java.util.List<String> joinedRoomOwners(
+      java.util.List<java.util.Map<?, ?>> state,
+      java.util.Map<String, Object> power,
+      java.util.Set<String> creators) {
+    var joined = new java.util.HashMap<String, String>();
+    state.stream()
+        .filter(event -> "m.room.member".equals(event.get("type")))
+        .filter(event -> event.get("state_key") instanceof String)
+        .filter(event -> event.get("content") instanceof java.util.Map<?, ?>)
+        .forEach(
+            event ->
+                joined.put(
+                    (String) event.get("state_key"),
+                    String.valueOf(
+                        ((java.util.Map<?, ?>) event.get("content")).get("membership"))));
+    var unlimited = creators.stream().filter(id -> "join".equals(joined.get(id))).sorted().toList();
+    if (!(power.get("users") instanceof java.util.Map<?, ?> users)) {
+      return unlimited;
+    }
+    var owners = new java.util.HashMap<String, Long>();
+    users.forEach(
+        (user, raw) -> {
+          if (user instanceof String id && "join".equals(joined.get(id))) {
+            try {
+              long level = MatrixRoomClient.powerLevel(raw, 0);
+              if (level >= ROOM_OWNER_POWER_LEVEL) {
+                owners.put(id, level);
+              }
+            } catch (RuntimeException unreadableLevel) {
+              // Not a level Matrix would accept either: this member cannot stand in.
+            }
+          }
+        });
+    var holders = new java.util.ArrayList<>(unlimited);
+    owners.entrySet().stream()
+        .sorted(java.util.Map.Entry.<String, Long>comparingByValue().reversed())
+        .map(java.util.Map.Entry::getKey)
+        .forEach(holders::add);
+    return holders;
+  }
+
+  /**
+   * Who holds exactly the Matrix moderator level (50) in the room, read as the technical admin: the
+   * entries a full reconciliation of a group's moderators checks against its roles.
+   *
+   * @return the holders, an empty set when nobody holds the level; {@link
+   *     java.util.Optional#empty()} when the room state cannot be read, so a caller can tell
+   *     "unknown" from "nobody"
+   */
+  public java.util.Optional<java.util.Set<String>> moderatorLevelHolders(String roomId) {
+    if (roomId == null || roomId.isBlank()) {
+      return java.util.Optional.empty();
+    }
+    try {
+      var state = readRoomState(roomId);
+      if (state.isEmpty()) {
+        return java.util.Optional.empty();
+      }
+      var holders = new java.util.HashSet<String>();
+      if (powerLevelsOf(state.get()).get("users") instanceof java.util.Map<?, ?> users) {
+        users.forEach(
+            (user, raw) -> {
+              if (user instanceof String id
+                  && MatrixRoomClient.powerLevel(raw, 0)
+                      == MatrixRoomClient.MODERATOR_POWER_LEVEL) {
+                holders.add(id);
+              }
+            });
+      }
+      return java.util.Optional.of(java.util.Set.copyOf(holders));
+    } catch (RuntimeException unreadableState) {
+      log.warn(
+          "The moderators of room {} could not be read ({})",
+          roomId,
+          unreadableState.getClass().getSimpleName());
+      return java.util.Optional.empty();
+    }
   }
 
   /**

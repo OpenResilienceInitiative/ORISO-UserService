@@ -34,8 +34,9 @@ import org.testcontainers.utility.MountableFile;
  * ORISO-Frontend#2229: blurring a passage ({@code org.oriso.passage_blur}) is a moderator act, and
  * lifting a blur redacts it. A real Synapse decides who may send and redact, for each kind of room
  * UserService creates. Moderators (product owner, 12 Nov 2026): the assigned counsellor in a
- * one-to-one or live chat (power 100), the owner of a group (the room creator, 100). Advice seekers
- * (0) and supervisors (10) never can.
+ * one-to-one or live chat (power 100), the owner of a group (the room creator, 100) and its named
+ * moderators (co-moderators and owners who did not create the room, raised to 50). Advice seekers
+ * (0), supervisors (10) and plain participants never can.
  */
 @Testcontainers
 @Timeout(120)
@@ -169,6 +170,93 @@ class PassageBlurPowerLevelSynapseIT {
     assertRefused(() -> redact(roomId, participant, ownersBlur));
     redact(roomId, moderator, ownersBlur);
     send(roomId, moderator, PASSAGE_BLUR, blurOf(message));
+  }
+
+  /**
+   * A named moderator of a group sits at 0 until UserService raises them. Raised, they blur and
+   * lift the owner's blur; demoted again, they can no longer blur.
+   */
+  @Test
+  void namedGroupModeratorBlursAndLiftsTheOwnersBlurUntilDemoted() throws Exception {
+    var owner = user("cm-owner");
+    var coModerator = user("cm-moderator");
+    var participant = user("cm-participant");
+    var roomId = createdRoomId(roomClient.createRoom("Group", alias(), owner.token(), false));
+    join(roomId, owner, coModerator, participant);
+    var message =
+        send(
+            roomId,
+            participant,
+            "m.room.message",
+            Map.of("msgtype", "m.text", "body", "Call me at 0151 1234"));
+    assertRefused(() -> send(roomId, coModerator, PASSAGE_BLUR, blurOf(message)));
+
+    assertThat(
+            roomClient.syncModeratorPower(
+                roomId, Map.of(coModerator.id(), true), owner.id(), owner.token()))
+        .isEqualTo(MatrixRoomClient.ModeratorPowerSync.WRITTEN);
+    var ownersBlur = send(roomId, owner, PASSAGE_BLUR, blurOf(message));
+    redact(roomId, coModerator, ownersBlur);
+    var moderatorsBlur = send(roomId, coModerator, PASSAGE_BLUR, blurOf(message));
+    assertRefused(() -> redact(roomId, participant, moderatorsBlur));
+
+    assertThat(
+            roomClient.syncModeratorPower(
+                roomId, Map.of(coModerator.id(), false), owner.id(), owner.token()))
+        .isEqualTo(MatrixRoomClient.ModeratorPowerSync.WRITTEN);
+    assertRefused(() -> send(roomId, coModerator, PASSAGE_BLUR, blurOf(message)));
+    // Matrix lets everyone redact their own events; someone else's blur is out of reach again.
+    var ownersSecondBlur = send(roomId, owner, PASSAGE_BLUR, blurOf(message));
+    assertRefused(() -> redact(roomId, coModerator, ownersSecondBlur));
+  }
+
+  /**
+   * Selected self-help moderators are invited after the group is created and join later: the level
+   * written before they joined holds once they are in.
+   */
+  @Test
+  void moderatorLevelWrittenBeforeTheJoinHoldsAfterIt() throws Exception {
+    var owner = user("pre-owner");
+    var coModerator = user("pre-moderator");
+    var roomId = createdRoomId(roomClient.createRoom("Self-help", alias(), owner.token(), false));
+
+    assertThat(
+            roomClient.syncModeratorPower(
+                roomId, Map.of(coModerator.id(), true), owner.id(), owner.token()))
+        .isEqualTo(MatrixRoomClient.ModeratorPowerSync.WRITTEN);
+    join(roomId, owner, coModerator);
+    var message =
+        send(roomId, owner, "m.room.message", Map.of("msgtype", "m.text", "body", "Hello"));
+
+    send(roomId, coModerator, PASSAGE_BLUR, blurOf(message));
+  }
+
+  /**
+   * Demotion only takes back exactly the moderator level: the room creator keeps 100. A moderator
+   * cannot demote another moderator, as Synapse would refuse it.
+   */
+  @Test
+  void demotionLeavesTheCreatorAloneAndNeedsSomeoneAboveTheModerator() throws Exception {
+    var owner = user("dm-owner");
+    var first = user("dm-first");
+    var second = user("dm-second");
+    var roomId = createdRoomId(roomClient.createRoom("Group", alias(), owner.token(), false));
+    join(roomId, owner, first, second);
+    roomClient.syncModeratorPower(
+        roomId, Map.of(first.id(), true, second.id(), true), owner.id(), owner.token());
+
+    assertThat(
+            roomClient.syncModeratorPower(
+                roomId, Map.of(first.id(), false), second.id(), second.token()))
+        .isEqualTo(MatrixRoomClient.ModeratorPowerSync.NOT_PERMITTED);
+    assertThat(
+            roomClient.syncModeratorPower(
+                roomId, Map.of(owner.id(), false), owner.id(), owner.token()))
+        .isEqualTo(MatrixRoomClient.ModeratorPowerSync.UNCHANGED);
+
+    var power = roomClient.getPowerLevels(roomId, owner.token()).orElseThrow();
+    assertThat(power.get("users"))
+        .isEqualTo(Map.of(owner.id(), 100, first.id(), 50, second.id(), 50));
   }
 
   /** The rule is added on top of Synapse's defaults, which a create-room override would replace. */

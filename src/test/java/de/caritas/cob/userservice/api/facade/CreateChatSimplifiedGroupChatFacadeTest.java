@@ -73,6 +73,9 @@ class CreateChatSimplifiedGroupChatFacadeTest {
   @Mock
   private de.caritas.cob.userservice.api.service.chat.GroupChatMatrixCleanupService matrixCleanup;
 
+  @Mock
+  private de.caritas.cob.userservice.api.service.matrix.GroupModeratorPowerService moderatorPower;
+
   @SuppressWarnings("unused")
   @Spy
   private ChatConverter chatConverter;
@@ -102,7 +105,8 @@ class CreateChatSimplifiedGroupChatFacadeTest {
             consultantMembership,
             groupPolicy,
             matrixCleanup,
-            mock(org.springframework.transaction.PlatformTransactionManager.class));
+            mock(org.springframework.transaction.PlatformTransactionManager.class),
+            moderatorPower);
     consultant = mock(Consultant.class);
     when(consultant.getId()).thenReturn("creator-consultant-id");
     when(consultant.getMatrixUserId()).thenReturn("@creator:matrix.org");
@@ -173,6 +177,56 @@ class CreateChatSimplifiedGroupChatFacadeTest {
     verify(consultantRepository, never()).findByIdAndDeleteDateIsNull(any());
     verify(consultantMembership).joinConsultantIntoRoom(first, "!room:matrix", "token");
     verify(consultantMembership).joinConsultantIntoRoom(second, "!room:matrix", "token");
+  }
+
+  /** ORISO-Frontend#2229: the colleagues selected at creation are co-moderators of the group. */
+  @SuppressWarnings("unchecked")
+  @Test
+  void creationRaisesTheSelectedColleaguesToTheMatrixModeratorLevel() throws Exception {
+    var first = new Consultant();
+    first.setId("first");
+    first.setTenantId(41L);
+    first.setMatrixUserId("@first:matrix");
+    var second = new Consultant();
+    second.setId("second");
+    second.setTenantId(41L);
+    second.setMatrixUserId("@second:matrix");
+    when(consultantRepository.findByIdInAndDeleteDateIsNull(List.of("first", "second")))
+        .thenReturn(List.of(second, first));
+    when(matrixSynapseService.createRoomAsMatrixUser(any(), any(), any()))
+        .thenReturn(matrixRoomResponse("!room:matrix"));
+    when(matrixSynapseService.loginAsUserAccessToken(any())).thenReturn("token");
+    doReturn(mock(Chat.class)).when(chatConverter).convertToEntity(any(), any(), any());
+
+    createChatFacade.createChatV2(chatDtoWithConsultantIds(List.of("first", "second")), consultant);
+
+    ArgumentCaptor<java.util.Collection<String>> raised =
+        ArgumentCaptor.forClass(java.util.Collection.class);
+    verify(moderatorPower)
+        .grantModerators(eq("!room:matrix"), eq("@creator:matrix.org"), raised.capture());
+    assertThat(raised.getValue()).containsExactlyInAnyOrder("@first:matrix", "@second:matrix");
+  }
+
+  @SuppressWarnings("unchecked")
+  @Test
+  void membersOnlyCreationRaisesTheColleaguesToTheMatrixModeratorLevel() throws Exception {
+    when(matrixSynapseService.createMembersOnlyRoomAsMatrixUser(any(), any(), any()))
+        .thenReturn(matrixRoomResponse("!room:matrix.org"));
+    when(matrixSynapseService.loginAsUserAccessToken(any())).thenReturn("token");
+    when(matrixSynapseService.joinRoom("!room:matrix.org", "token")).thenReturn(true);
+    doReturn(mock(Chat.class)).when(chatConverter).convertToEntity(any(), any(), any());
+    var colleague = new Consultant();
+    colleague.setId("colleague-id");
+    colleague.setMatrixUserId("@colleague:matrix.org");
+
+    createChatFacade.createMembersOnlyChat(
+        chatDtoWithConsultantIds(List.of()), consultant, List.of(colleague));
+
+    ArgumentCaptor<java.util.Collection<String>> raised =
+        ArgumentCaptor.forClass(java.util.Collection.class);
+    verify(moderatorPower)
+        .grantModerators(eq("!room:matrix.org"), eq("@creator:matrix.org"), raised.capture());
+    assertThat(raised.getValue()).containsExactly("@colleague:matrix.org");
   }
 
   @org.junit.jupiter.params.ParameterizedTest

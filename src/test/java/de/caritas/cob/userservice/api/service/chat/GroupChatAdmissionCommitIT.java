@@ -33,6 +33,7 @@ import de.caritas.cob.userservice.api.port.out.GroupChatParticipantRepository;
 import de.caritas.cob.userservice.api.service.ChatService;
 import de.caritas.cob.userservice.api.service.dpa.TenantDpaGateReadClient;
 import de.caritas.cob.userservice.api.service.matrix.GroupChatMembershipService;
+import de.caritas.cob.userservice.api.service.matrix.GroupModeratorPowerService;
 import de.caritas.cob.userservice.api.service.notification.GroupAppointmentMailQueue;
 import de.caritas.cob.userservice.api.service.notification.GroupAppointmentSeriesEventProducer;
 import de.caritas.cob.userservice.tenantservice.generated.web.model.DpaGateStatusDTO;
@@ -80,6 +81,8 @@ class GroupChatAdmissionCommitIT {
   @MockitoBean private GroupChatMembershipService membership;
   @MockitoBean private GroupAppointmentSeriesEventProducer appointmentEvents;
   @MockitoBean private TenantDpaGateReadClient dpaOwner;
+  // Matrix power levels are an external boundary: a participant admission takes the level back.
+  @MockitoBean private GroupModeratorPowerService moderatorPower;
 
   private Chat series;
   private Consultant owner;
@@ -428,6 +431,9 @@ class GroupChatAdmissionCommitIT {
         .recordMemberJoined(any(Chat.class), eq(RecipientRole.COUNSELOR), eq(requester.getId()));
     verify(membership, org.mockito.Mockito.times(2))
         .addMemberToRoom(any(Chat.class), eq("@admission-test:matrix.test"));
+    verify(moderatorPower)
+        .reconcileOrFail(
+            any(Chat.class), eq("@admission-test:matrix.test"), eq(ParticipantRole.PARTICIPANT));
   }
 
   @Test

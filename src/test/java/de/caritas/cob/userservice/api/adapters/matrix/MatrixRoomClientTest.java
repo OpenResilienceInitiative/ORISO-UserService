@@ -140,6 +140,30 @@ class MatrixRoomClientTest {
     verify(diagnosticMetrics).recordRoomCreation(false, LiveChatDiagnosticMetrics.Outcome.SUCCESS);
   }
 
+  /** The room exists once the rule fails: its ID must reach the caller, so it can be removed. */
+  @Test
+  void createRoom_ShouldHandOnTheRoomId_WhenTheModerationRuleCannotBeApplied() {
+    var responseBody = new MatrixCreateRoomResponseDTO();
+    responseBody.setRoomId(ROOM_ID);
+    when(restTemplate.postForEntity(
+            eq(uri(API_URL + "/_matrix/client/r0/createRoom")),
+            org.mockito.ArgumentMatchers.any(),
+            eq(MatrixCreateRoomResponseDTO.class)))
+        .thenReturn(ResponseEntity.ok(responseBody));
+    when(restTemplate.exchange(
+            org.mockito.ArgumentMatchers.any(URI.class),
+            eq(HttpMethod.GET),
+            org.mockito.ArgumentMatchers.any(HttpEntity.class),
+            eq(Map.class)))
+        .thenThrow(new org.springframework.web.client.ResourceAccessException("timeout"));
+
+    assertThatThrownBy(() -> matrixRoomClient.createRoom("Room name", "room-alias", ACCESS_TOKEN))
+        .isInstanceOfSatisfying(
+            de.caritas.cob.userservice.api.exception.matrix.MatrixRoomRuleException.class,
+            failure -> assertThat(failure.getRoomId()).isEqualTo(ROOM_ID));
+    verify(diagnosticMetrics).recordRoomCreation(false, LiveChatDiagnosticMetrics.Outcome.FAILURE);
+  }
+
   @Test
   void createRoom_WhenEncryptionEnabled_ShouldSendMegolmInitialState() throws Exception {
     var responseBody = new MatrixCreateRoomResponseDTO();
@@ -395,6 +419,140 @@ class MatrixRoomClientTest {
   @SuppressWarnings("unchecked")
   private static Map<String, Object> objectMapOf(Object value) {
     return (Map<String, Object>) value;
+  }
+
+  // ── ORISO-Frontend#2229: named group moderators hold the moderator level ──
+
+  /** In a version 12 room the creator is not in {@code users}, yet may write every level. */
+  @Test
+  void aCreatorWithUnlimitedPowerMayRaiseAModerator() {
+    var power = synapseDefaultPowerLevels();
+    power.put("users", Map.of());
+    stubPowerLevels(power);
+
+    var result =
+        matrixRoomClient.syncModeratorPower(
+            ROOM_ID,
+            Map.of(USER_ID, true),
+            "@creator:matrix.example",
+            ACCESS_TOKEN,
+            java.util.Set.of("@creator:matrix.example"));
+
+    assertThat(result).isEqualTo(MatrixRoomClient.ModeratorPowerSync.WRITTEN);
+    assertThat(objectMapOf(writtenPowerLevels().get("users")))
+        .containsEntry(USER_ID, 50)
+        .doesNotContainKey("@creator:matrix.example");
+  }
+
+  private static final String HOLDER_ID = USER_ID;
+  private static final String CO_MODERATOR_ID = "@comoderator:matrix.example";
+  private static final String OTHER_ID = "@other:matrix.example";
+
+  private static Map<String, Object> powerLevelsWithUsers(Map<String, Object> users) {
+    var content = synapseDefaultPowerLevels();
+    content.put("users", new HashMap<>(users));
+    return content;
+  }
+
+  private void verifyNoPowerLevelWrite() {
+    verify(restTemplate, org.mockito.Mockito.never())
+        .put(
+            eq(
+                uri(
+                    API_URL
+                        + "/_matrix/client/r0/rooms/"
+                        + ENCODED_ROOM_ID
+                        + "/state/m.room.power_levels")),
+            org.mockito.ArgumentMatchers.any(HttpEntity.class));
+  }
+
+  @Test
+  void syncModeratorPower_ShouldRaiseANamedModeratorToTheModeratorLevel() {
+    stubPowerLevels(powerLevelsWithUsers(Map.of(HOLDER_ID, 100, OTHER_ID, 10)));
+
+    var result =
+        matrixRoomClient.syncModeratorPower(
+            ROOM_ID, Map.of(CO_MODERATOR_ID, true), HOLDER_ID, ACCESS_TOKEN);
+
+    assertThat(result).isEqualTo(MatrixRoomClient.ModeratorPowerSync.WRITTEN);
+    var written = writtenPowerLevels();
+    assertThat(written.get("users"))
+        .isEqualTo(Map.of(HOLDER_ID, 100, OTHER_ID, 10, CO_MODERATOR_ID, 50));
+    assertThat(written).containsEntry("redact", 50).containsEntry("state_default", 50);
+    assertThat(mapRequestCaptor.getValue().getHeaders().getFirst("Authorization"))
+        .isEqualTo("Bearer " + ACCESS_TOKEN);
+  }
+
+  @Test
+  void syncModeratorPower_ShouldWriteNothing_WhenTheModeratorAlreadyHoldsTheLevelOrMore() {
+    stubPowerLevels(powerLevelsWithUsers(Map.of(HOLDER_ID, 100, CO_MODERATOR_ID, 75)));
+
+    var result =
+        matrixRoomClient.syncModeratorPower(
+            ROOM_ID, Map.of(CO_MODERATOR_ID, true, HOLDER_ID, true), HOLDER_ID, ACCESS_TOKEN);
+
+    assertThat(result).isEqualTo(MatrixRoomClient.ModeratorPowerSync.UNCHANGED);
+    verifyNoPowerLevelWrite();
+  }
+
+  @Test
+  void syncModeratorPower_ShouldTakeTheModeratorLevelBack_OnlyFromSomeoneWhoHoldsExactlyIt() {
+    stubPowerLevels(
+        powerLevelsWithUsers(Map.of(HOLDER_ID, 100, CO_MODERATOR_ID, 50, OTHER_ID, 75)));
+
+    var result =
+        matrixRoomClient.syncModeratorPower(
+            ROOM_ID, Map.of(CO_MODERATOR_ID, false, OTHER_ID, false), HOLDER_ID, ACCESS_TOKEN);
+
+    assertThat(result).isEqualTo(MatrixRoomClient.ModeratorPowerSync.WRITTEN);
+    assertThat(writtenPowerLevels().get("users"))
+        .isEqualTo(Map.of(HOLDER_ID, 100, CO_MODERATOR_ID, 0, OTHER_ID, 75));
+  }
+
+  @Test
+  void syncModeratorPower_ShouldNeverLowerTheRoomCreator() {
+    stubPowerLevels(powerLevelsWithUsers(Map.of(HOLDER_ID, 100)));
+
+    var result =
+        matrixRoomClient.syncModeratorPower(
+            ROOM_ID, Map.of(HOLDER_ID, false), HOLDER_ID, ACCESS_TOKEN);
+
+    assertThat(result).isEqualTo(MatrixRoomClient.ModeratorPowerSync.UNCHANGED);
+    verifyNoPowerLevelWrite();
+  }
+
+  /** Synapse refuses a power-level change from below 100 (the m.room.power_levels level). */
+  @Test
+  void syncModeratorPower_ShouldNotWrite_WhenTheHolderMayNotChangePowerLevels() {
+    stubPowerLevels(powerLevelsWithUsers(Map.of(OTHER_ID, 100, HOLDER_ID, 50)));
+
+    var result =
+        matrixRoomClient.syncModeratorPower(
+            ROOM_ID, Map.of(CO_MODERATOR_ID, true), HOLDER_ID, ACCESS_TOKEN);
+
+    assertThat(result).isEqualTo(MatrixRoomClient.ModeratorPowerSync.NOT_PERMITTED);
+    verifyNoPowerLevelWrite();
+  }
+
+  @Test
+  void syncModeratorPower_ShouldReportFailure_WhenThePowerLevelsCannotBeRead() {
+    when(restTemplate.exchange(
+            eq(
+                uri(
+                    API_URL
+                        + "/_matrix/client/r0/rooms/"
+                        + ENCODED_ROOM_ID
+                        + "/state/m.room.power_levels")),
+            eq(HttpMethod.GET),
+            org.mockito.ArgumentMatchers.any(HttpEntity.class),
+            eq(Map.class)))
+        .thenThrow(new org.springframework.web.client.ResourceAccessException("timeout"));
+
+    var result =
+        matrixRoomClient.syncModeratorPower(
+            ROOM_ID, Map.of(CO_MODERATOR_ID, true), HOLDER_ID, ACCESS_TOKEN);
+
+    assertThat(result).isEqualTo(MatrixRoomClient.ModeratorPowerSync.FAILED);
   }
 
   @Test
