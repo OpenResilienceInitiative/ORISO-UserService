@@ -18,9 +18,6 @@ public class AdminSearchResultBuilder
   private final long totalCount;
 
   private AdminSearchResultBuilder(List<Admin> admins, long totalCount) {
-    // Admin search paginates through Spring Data, not Hibernate Search, so there is no
-    // FullTextQuery to hand to the base class. hasNextPage() is overridden accordingly.
-    super();
     this.admins = admins;
     this.totalCount = totalCount;
   }
@@ -73,8 +70,7 @@ public class AdminSearchResultBuilder
    *       the count comparison below, which widens to {@code long} before multiplying.
    * </ul>
    */
-  @Override
-  protected boolean hasNextPage() {
+  private boolean hasNextPage() {
     if (page == null || perPage == null || page < 1 || perPage < 1 || page == Integer.MAX_VALUE) {
       return false;
     }

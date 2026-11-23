@@ -23,7 +23,6 @@ public class ConsultantSearchResultBuilder
   private final long totalCount;
 
   private ConsultantSearchResultBuilder(List<Consultant> consultants, long totalCount) {
-    super(null);
     this.consultants = consultants;
     this.totalCount = totalCount;
   }
