@@ -6,6 +6,7 @@ import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.service.conversationfeature.ConversationFeature;
 import de.caritas.cob.userservice.api.service.conversationfeature.ConversationFeatureGate;
 import de.caritas.cob.userservice.api.service.conversationfeature.ConversationKind;
+import java.util.List;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
@@ -23,6 +24,10 @@ import org.springframework.stereotype.Service;
  *
  * <p>The deploy property {@code team-discussion.enabled} (default true) stays as a global kill
  * switch: false refuses the team chat on every Träger before any setting is read.
+ *
+ * <p>Whether the team chat continues after acceptance ({@code
+ * featureTeamDiscussionAfterAcceptEnabled}) is read the same way, but unset counts as off, and it
+ * only counts while the master switch is on.
  */
 @Service
 @RequiredArgsConstructor
@@ -50,5 +55,31 @@ public class TeamDiscussionFeatureGate {
         ConversationKind.ONE_ON_ONE,
         session.getTenantId(),
         session.getAgencyId());
+  }
+
+  /**
+   * Whether the enquiry's team chat continues after acceptance instead of being archived: master
+   * switch AND {@code featureTeamDiscussionAfterAcceptEnabled}, each Träger AND Beratungsstelle.
+   * Switched off, unset or not readable answers false (archive as before).
+   *
+   * @throws de.caritas.cob.userservice.api.exception.httpresponses.ServiceUnavailableException 503
+   *     when the settings cannot be reached: the caller must not archive on an outage
+   */
+  public boolean continuesAfterAccept(Session session) {
+    if (!teamDiscussionEnabled) {
+      return false;
+    }
+    try {
+      conversationFeatureGate.require(
+          List.of(
+              ConversationFeature.TEAM_DISCUSSION,
+              ConversationFeature.TEAM_DISCUSSION_AFTER_ACCEPT),
+          ConversationKind.ONE_ON_ONE,
+          session.getTenantId(),
+          session.getAgencyId());
+      return true;
+    } catch (CustomValidationHttpStatusException off) {
+      return false;
+    }
   }
 }

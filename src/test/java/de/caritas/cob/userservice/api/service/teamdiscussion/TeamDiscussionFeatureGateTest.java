@@ -146,4 +146,68 @@ class TeamDiscussionFeatureGateTest {
     assertForbidden(() -> withKillSwitch(false).requireEnabled(enquiry()));
     verifyNoInteractions(tenantService, agencySettings);
   }
+
+  // ---- featureTeamDiscussionAfterAcceptEnabled: unset = off, master must be on ----
+
+  private void afterAccept(Boolean traegerValue, Boolean agencyValue) {
+    when(tenantService.getRestrictedTenantDataFresh(TENANT_ID))
+        .thenReturn(
+            new RestrictedTenantDTO()
+                .id(TENANT_ID)
+                .name("Traeger")
+                .settings(
+                    new de.caritas.cob.userservice.tenantservice.generated.web.model.Settings()
+                        .featureTeamDiscussionAfterAcceptEnabled(traegerValue)));
+    when(agencySettings.findEffectiveSettings(AGENCY_ID, TENANT_ID))
+        .thenReturn(
+            Optional.of(new Settings().featureTeamDiscussionAfterAcceptEnabled(agencyValue)));
+  }
+
+  @Test
+  void afterAccept_unsetIsOff() {
+    afterAccept(null, null);
+    assertThat(withKillSwitch(true).continuesAfterAccept(enquiry())).isFalse();
+  }
+
+  @Test
+  void afterAccept_onForTraegerAndBeratungsstelle_continues() {
+    afterAccept(true, true);
+    assertThat(withKillSwitch(true).continuesAfterAccept(enquiry())).isTrue();
+  }
+
+  @Test
+  void afterAccept_beratungsstelleUnset_isOff() {
+    afterAccept(true, null);
+    assertThat(withKillSwitch(true).continuesAfterAccept(enquiry())).isFalse();
+  }
+
+  @Test
+  void afterAccept_traegerOff_isOff() {
+    afterAccept(false, true);
+    assertThat(withKillSwitch(true).continuesAfterAccept(enquiry())).isFalse();
+  }
+
+  @Test
+  void afterAccept_onlyWhileTheMasterIsOn() {
+    when(tenantService.getRestrictedTenantDataFresh(TENANT_ID))
+        .thenReturn(
+            new RestrictedTenantDTO()
+                .id(TENANT_ID)
+                .name("Traeger")
+                .settings(
+                    new de.caritas.cob.userservice.tenantservice.generated.web.model.Settings()
+                        .featureTeamDiscussionEnabled(false)
+                        .featureTeamDiscussionAfterAcceptEnabled(true)));
+    assertThat(withKillSwitch(true).continuesAfterAccept(enquiry())).isFalse();
+    assertThat(withKillSwitch(false).continuesAfterAccept(enquiry())).isFalse();
+  }
+
+  @Test
+  void afterAccept_outageIsNotAnAnswer() {
+    afterAccept(true, true);
+    when(agencySettings.findEffectiveSettings(AGENCY_ID, TENANT_ID))
+        .thenThrow(new ResourceAccessException("down"));
+    assertThatThrownBy(() -> withKillSwitch(true).continuesAfterAccept(enquiry()))
+        .isInstanceOf(ServiceUnavailableException.class);
+  }
 }

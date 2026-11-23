@@ -73,9 +73,13 @@ public class TeamDiscussionAccessTransactions {
             .findById(consultantId)
             .filter(row -> row.getDeleteDate() == null)
             .orElseThrow(() -> new ForbiddenException("Current consultant required"));
-    if (session.getAgencyId() == null
-        || !agencies.existsByConsultantIdAndAgencyIdAndDeleteDateIsNull(
-            consultantId, session.getAgencyId())) {
+    // FE#2491: after acceptance the assigned counsellor takes part as well as the agency's team.
+    boolean assigned =
+        session.getConsultant() != null && consultantId.equals(session.getConsultant().getId());
+    if (!assigned
+        && (session.getAgencyId() == null
+            || !agencies.existsByConsultantIdAndAgencyIdAndDeleteDateIsNull(
+                consultantId, session.getAgencyId()))) {
       throw new ForbiddenException("Current owning agency membership required");
     }
     if (session.getStatus() == Session.SessionStatus.REJECTED

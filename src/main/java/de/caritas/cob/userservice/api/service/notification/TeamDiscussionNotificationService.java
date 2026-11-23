@@ -55,6 +55,9 @@ public class TeamDiscussionNotificationService {
   private final @NonNull SessionRepository sessionRepository;
   private final @NonNull EventNotificationService eventNotificationService;
   private final @NonNull AccountInactivityService accountLifecycle;
+  private final @NonNull de.caritas.cob.userservice.api.service.teamdiscussion
+          .TeamDiscussionFeatureGate
+      teamDiscussionGate;
   private final ObjectMapper paramsObjectMapper = new ObjectMapper();
 
   /**
@@ -82,9 +85,11 @@ public class TeamDiscussionNotificationService {
       return;
     }
     Session session = sessionOpt.get();
-    if (session.getConsultant() != null || session.getStatus() == Session.SessionStatus.REJECTED) {
+    if (session.getStatus() == Session.SessionStatus.REJECTED
+        || (session.getConsultant() != null && !continuesAfterAccept(session))) {
       // Create/accept race guard: once the case is accepted, an OPEN row must not keep
-      // notifying — the facade lazily archives it on next access.
+      // notifying — the facade lazily archives it on next access — unless the team chat
+      // continues after acceptance (FE#2491).
       return;
     }
 
@@ -255,5 +260,18 @@ public class TeamDiscussionNotificationService {
         + session.getId()
         + "&teamDiscussion=1&roomId="
         + discussion.getMatrixRoomId();
+  }
+
+  /** Settings that cannot be read: no notification rather than a failed message fan-out. */
+  private boolean continuesAfterAccept(Session session) {
+    try {
+      return teamDiscussionGate.continuesAfterAccept(session);
+    } catch (RuntimeException unavailable) {
+      log.warn(
+          "Team discussion notification for session {} skipped: {}",
+          session.getId(),
+          unavailable.getClass().getSimpleName());
+      return false;
+    }
   }
 }

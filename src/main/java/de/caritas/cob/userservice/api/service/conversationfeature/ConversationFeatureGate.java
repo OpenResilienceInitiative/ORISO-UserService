@@ -112,6 +112,12 @@ public class ConversationFeatureGate {
               new Flags<>(
                   de.caritas.cob.userservice.tenantservice.generated.web.model.Settings
                       ::getFeatureTeamDiscussionEnabled,
+                  Map.of()),
+              ConversationFeature.TEAM_DISCUSSION_AFTER_ACCEPT,
+              new Flags<>(
+                  (de.caritas.cob.userservice.tenantservice.generated.web.model.Settings
+                          settings) ->
+                      Boolean.TRUE.equals(settings.getFeatureTeamDiscussionAfterAcceptEnabled()),
                   Map.of()));
 
   private static final Map<ConversationFeature, Flags<Settings>> AGENCY =
@@ -140,7 +146,13 @@ public class ConversationFeatureGate {
                       Settings::getFeatureVoiceMessagesOneOnOneChatsEnabled,
                   ConversationKind.GROUP, Settings::getFeatureVoiceMessagesGroupChatsEnabled)),
           ConversationFeature.TEAM_DISCUSSION,
-          new Flags<>(Settings::getFeatureTeamDiscussionEnabled, Map.of()));
+          new Flags<>(Settings::getFeatureTeamDiscussionEnabled, Map.of()),
+          ConversationFeature.TEAM_DISCUSSION_AFTER_ACCEPT,
+          // Unset is off for this switch only (see ConversationFeature).
+          new Flags<>(
+              (Settings settings) ->
+                  Boolean.TRUE.equals(settings.getFeatureTeamDiscussionAfterAcceptEnabled()),
+              Map.of()));
 
   private final @NonNull TenantService tenantService;
   private final @NonNull EffectiveAgencySettingsLookup effectiveAgencySettingsLookup;
@@ -196,6 +208,16 @@ public class ConversationFeatureGate {
       ConversationFeature feature, ConversationKind kind, Long tenantId, Long agencyId) {
     requireAll(
         List.of(feature), kind, tenantId, agencyId == null ? List.<Long>of() : List.of(agencyId));
+  }
+
+  /**
+   * Refuses unless every one of the features is on for this Träger and Beratungsstelle.
+   *
+   * @see #require(ConversationFeature, ConversationKind, Long, Long)
+   */
+  public void require(
+      List<ConversationFeature> features, ConversationKind kind, Long tenantId, Long agencyId) {
+    requireAll(features, kind, tenantId, agencyId == null ? List.<Long>of() : List.of(agencyId));
   }
 
   private void requireAll(

@@ -554,6 +554,10 @@ components:
           type: boolean
           example: true
           description: "Team-Chat on an open enquiry (ADR-016, ORISO-Frontend#2491): the Beratungsstelle's own value. Effective value is Traeger AND Beratungsstelle; unset means on."
+        featureTeamDiscussionAfterAcceptEnabled:
+          type: boolean
+          example: false
+          description: "May the team chat on an enquiry continue after the enquiry is accepted (ORISO-Frontend#2491)? Effective value is Traeger AND Beratungsstelle; unset means off (archived read-only at accept, ADR-016)."
         featureSupervisionAnonymousChatsEnabled:
           type: boolean
           example: true

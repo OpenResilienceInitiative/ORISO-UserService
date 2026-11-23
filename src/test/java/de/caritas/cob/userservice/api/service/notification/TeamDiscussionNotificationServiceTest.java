@@ -57,6 +57,11 @@ class TeamDiscussionNotificationServiceTest {
   @Mock private ConsultantAgencyRepository consultantAgencyRepository;
   @Mock private SessionRepository sessionRepository;
   @Mock private EventNotificationService eventNotificationService;
+
+  @Mock
+  private de.caritas.cob.userservice.api.service.teamdiscussion.TeamDiscussionFeatureGate
+      teamDiscussionGate;
+
   @Mock private de.caritas.cob.userservice.api.port.out.ConsultantRepository consultantRepository;
 
   private TeamDiscussion discussion;

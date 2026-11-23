@@ -117,6 +117,12 @@ class TeamDiscussionNotificationIT {
   @Autowired private MessageMentionNotificationService mentions;
   @Autowired private EventNotificationService eventNotifications;
   @MockitoBean private AuthenticatedUser authenticatedUser;
+
+  // Off (mock default): accepted cases stop notifying, as before FE#2491.
+  @MockitoBean
+  private de.caritas.cob.userservice.api.service.teamdiscussion.TeamDiscussionFeatureGate
+      teamDiscussionGate;
+
   @MockitoBean private IdentityTombstoneService tombstones;
   @MockitoBean private MatrixFeedUpdateSignalService feedSignals;
   @MockitoBean private FeedbackMessageEmailService feedbackMail;

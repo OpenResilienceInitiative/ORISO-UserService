@@ -2709,7 +2709,9 @@ class EventNotificationServiceTest {
         eventNotificationService,
         mock(
             de.caritas.cob.userservice.api.workflow.accountinactivity.AccountInactivityService
-                .class));
+                .class),
+        mock(
+            de.caritas.cob.userservice.api.service.teamdiscussion.TeamDiscussionFeatureGate.class));
   }
 
   @Test

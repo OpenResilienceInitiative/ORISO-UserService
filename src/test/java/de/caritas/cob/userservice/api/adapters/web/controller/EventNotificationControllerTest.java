@@ -874,6 +874,9 @@ class EventNotificationControllerTest {
             s6RealService,
             mock(
                 de.caritas.cob.userservice.api.workflow.accountinactivity.AccountInactivityService
+                    .class),
+            mock(
+                de.caritas.cob.userservice.api.service.teamdiscussion.TeamDiscussionFeatureGate
                     .class));
     var controller = s6Controller(realTeamService);
 
