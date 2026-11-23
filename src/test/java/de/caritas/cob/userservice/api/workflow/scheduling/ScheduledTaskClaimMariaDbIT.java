@@ -20,10 +20,13 @@ import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabas
 import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Import;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
+import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 
 /**
  * Proves the scheduled-task lease with the locking and constraint semantics used in PreDev.
@@ -49,6 +52,8 @@ class ScheduledTaskClaimMariaDbIT {
 
   @Autowired private ScheduledTaskClaimService claimService;
   @Autowired private ScheduledTaskClaimRepository claimRepository;
+  @Autowired private PlatformTransactionManager transactionManager;
+  @Autowired private JdbcTemplate jdbc;
 
   @Autowired
   private de.caritas.cob.userservice.api.port.out.TeamDiscussionParticipantRepository participants;
@@ -131,6 +136,58 @@ class ScheduledTaskClaimMariaDbIT {
       finish.countDown();
       executor.shutdownNow();
     }
+  }
+
+  @Test
+  void releasingAnOldLeaseDoesNotDeleteARenewalItWaitedFor() throws Exception {
+    var oldLease = claimService.tryClaimLease(TASK_NAME, CLAIM_DURATION).orElseThrow();
+    var renewedUntil = oldLease.claimedUntil().plusMinutes(1);
+    var renewal = new TransactionTemplate(transactionManager);
+
+    try (var executor = Executors.newSingleThreadExecutor()) {
+      var release =
+          renewal.execute(
+              transaction -> {
+                var claim = claimRepository.findByTaskNameForUpdate(TASK_NAME).orElseThrow();
+                claim.setClaimedUntil(renewedUntil);
+                claimRepository.saveAndFlush(claim);
+
+                var pending = executor.submit(() -> claimService.release(oldLease));
+                awaitReleaseWaitingForTheRenewal();
+                return pending;
+              });
+
+      assertThat(release.get(10, TimeUnit.SECONDS)).isFalse();
+      assertThat(claimRepository.findById(TASK_NAME).orElseThrow().getClaimedUntil())
+          .isEqualTo(renewedUntil);
+    }
+  }
+
+  private void awaitReleaseWaitingForTheRenewal() {
+    var deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+    while (System.nanoTime() < deadline) {
+      var waiting =
+          jdbc.queryForObject(
+              """
+              SELECT COUNT(*) FROM information_schema.PROCESSLIST p
+              WHERE p.ID <> CONNECTION_ID() AND p.COMMAND = 'Query'
+                AND LOWER(p.INFO) LIKE 'delete%scheduled_task_claim%'
+                AND (SELECT CAST(s.VARIABLE_VALUE AS UNSIGNED)
+                     FROM information_schema.GLOBAL_STATUS s
+                     WHERE s.VARIABLE_NAME = 'INNODB_ROW_LOCK_CURRENT_WAITS') > 0
+              """,
+              Integer.class);
+      if (waiting != null && waiting > 0) {
+        return;
+      }
+      try {
+        Thread.sleep(200);
+      } catch (InterruptedException interruption) {
+        Thread.currentThread().interrupt();
+        throw new IllegalStateException(interruption);
+      }
+    }
+    throw new AssertionError("Lease release did not wait for the renewing transaction");
   }
 
   @Test
