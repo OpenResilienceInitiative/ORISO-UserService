@@ -39,6 +39,7 @@ import de.caritas.cob.userservice.api.service.session.AgencyDepartmentMembership
 import de.caritas.cob.userservice.api.service.session.AgencyEnquiryRevocations;
 import de.caritas.cob.userservice.api.service.session.AgencyEnquiryRoomAttempts;
 import de.caritas.cob.userservice.api.service.session.AgencyEnquiryRoomAttempts.RequesterJoinClaim;
+import de.caritas.cob.userservice.api.service.session.AgencyEnquiryRoomAttempts.RequesterJoinRecovery;
 import de.caritas.cob.userservice.api.service.session.AgencyEnquiryRoomPublication;
 import de.caritas.cob.userservice.api.service.session.AgencyLateJoinerMembershipService;
 import de.caritas.cob.userservice.api.service.session.AgencyOpenEnquiryMembership;
@@ -467,6 +468,8 @@ class AgencyPasswordFreeSynapseIT {
   private void holdingRoom() {
     var pause = new MatrixRateLimitPause();
     var roomAttempts = mock(AgencyEnquiryRoomAttempts.class);
+    when(roomAttempts.claimRequesterJoin(session, session.getUser()))
+        .thenReturn(new RequesterJoinRecovery(false, Optional.empty()));
     var preparedRoom = new java.util.concurrent.atomic.AtomicReference<String>();
     when(roomAttempts.recordCreated(any(), anyString()))
         .thenAnswer(
