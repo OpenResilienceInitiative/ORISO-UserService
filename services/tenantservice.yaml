@@ -1608,6 +1608,10 @@ components:
         featureTeamDiscussionEnabled:
           type: boolean
           example: 'false'
+        featureTeamDiscussionAfterAcceptEnabled:
+          type: boolean
+          example: 'false'
+          description: "May the team chat on an enquiry continue after the enquiry is accepted? Off or unset = archived read-only at accept (ADR-016). ORISO-Frontend#2491."
         featureToolsEnabled:
           type: boolean
           example: 'false'
