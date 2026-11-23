@@ -22,8 +22,12 @@ import org.springframework.transaction.annotation.Transactional;
 public class AgencyEnquiryRoomAttempts {
 
   private static final Duration JOIN_LEASE = Duration.ofSeconds(30);
-  private static final LocalDateTime LATEST_JOIN_READY_AT =
-      LocalDateTime.of(9999, 12, 31, 23, 59, 59, 999_999_000);
+
+  /**
+   * Upper bound for a server-requested join delay. A malformed or very large Retry-After must not
+   * park the only candidate room, because a pending attempt suppresses the legacy room fallback.
+   */
+  static final Duration MAX_JOIN_RESUME_DELAY = Duration.ofMinutes(15);
 
   private final AgencyEnquiryRoomAttemptRepository attempts;
   private final SessionRepository sessions;
@@ -65,8 +69,10 @@ public class AgencyEnquiryRoomAttempts {
   @Transactional(propagation = Propagation.REQUIRES_NEW)
   public RequesterJoinRecovery claimRequesterJoin(Session expected, User requester) {
     var current = sessions.lockFresh(expected.getId()).orElse(null);
+    if (current != null && current.getMatrixRoomId() != null) {
+      return RequesterJoinRecovery.bound(current.getMatrixRoomId());
+    }
     if (current == null
-        || current.getMatrixRoomId() != null
         || (current.getStatus() != Session.SessionStatus.INITIAL
             && current.getStatus() != Session.SessionStatus.NEW)
         || current.getOwnershipRevision() != expected.getOwnershipRevision()
@@ -93,8 +99,12 @@ public class AgencyEnquiryRoomAttempts {
     var now = LocalDateTime.now(clock);
     if (!Objects.equals(plan.requesterId(), requester.getUserId())
         || !Objects.equals(plan.requesterMatrixUserId(), requester.getMatrixUserId())
-        || plan.directlyAssigned() != Boolean.TRUE.equals(current.getIsConsultantDirectlySet())
-        || attempt.getRequesterJoinReadyAt().isAfter(now)) {
+        || plan.directlyAssigned() != Boolean.TRUE.equals(current.getIsConsultantDirectlySet())) {
+      // The plan can never match this case again; waiting would block a new room for good.
+      attempt.finishRequesterJoin();
+      return RequesterJoinRecovery.NONE;
+    }
+    if (attempt.getRequesterJoinReadyAt().isAfter(now)) {
       return RequesterJoinRecovery.WAITING;
     }
 
@@ -112,14 +122,10 @@ public class AgencyEnquiryRoomAttempts {
         .filter(attempt -> claim.token().equals(attempt.getRequesterJoinClaim()))
         .ifPresent(
             attempt -> {
-              var now = LocalDateTime.now(clock);
-              var delay = Duration.ofMillis(serverDelayMs);
-              // Keep the same room pending when the wait exceeds the DATETIME(6) range.
-              var readyAt =
-                  delay.compareTo(Duration.between(now, LATEST_JOIN_READY_AT)) > 0
-                      ? LATEST_JOIN_READY_AT
-                      : now.plus(delay);
-              attempt.deferRequesterJoin(readyAt);
+              var delay =
+                  Duration.ofMillis(
+                      Math.clamp(serverDelayMs, 0L, MAX_JOIN_RESUME_DELAY.toMillis()));
+              attempt.deferRequesterJoin(LocalDateTime.now(clock).plus(delay));
             });
   }
 
@@ -148,11 +154,24 @@ public class AgencyEnquiryRoomAttempts {
   public record RequesterJoinClaim(
       Long attemptId, String roomId, String token, RequesterJoinPlan plan) {}
 
-  public record RequesterJoinRecovery(boolean pending, Optional<RequesterJoinClaim> claim) {
+  /**
+   * Outcome of a reopen. {@code boundRoomId} is set when the case already has a room, so a caller
+   * holding an older session copy adopts that binding instead of reporting no room.
+   */
+  public record RequesterJoinRecovery(
+      boolean pending, Optional<RequesterJoinClaim> claim, Optional<String> boundRoomId) {
     private static final RequesterJoinRecovery NONE =
         new RequesterJoinRecovery(false, Optional.empty());
     private static final RequesterJoinRecovery WAITING =
         new RequesterJoinRecovery(true, Optional.empty());
+
+    public RequesterJoinRecovery(boolean pending, Optional<RequesterJoinClaim> claim) {
+      this(pending, claim, Optional.empty());
+    }
+
+    static RequesterJoinRecovery bound(String roomId) {
+      return new RequesterJoinRecovery(true, Optional.empty(), Optional.of(roomId));
+    }
   }
 
   /** Retire only the exact attempt in the transaction that confirms its binding. */

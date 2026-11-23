@@ -191,6 +191,20 @@ class AgencyPreAssignmentRoomServiceTest {
   }
 
   @Test
+  void ensureHoldingRoomAdoptsARoomBoundSinceTheCallerReadTheSession() throws Exception {
+    when(roomAttempts.claimRequesterJoin(session, user))
+        .thenReturn(
+            new RequesterJoinRecovery(
+                true, Optional.empty(), Optional.of("!bound-meanwhile:example.org")));
+
+    underTest.ensureHoldingRoom(session, user);
+
+    assertEquals("!bound-meanwhile:example.org", session.getMatrixRoomId());
+    verifyNoInteractions(matrixCredentialClient, publication);
+    verify(sessionRoomGateway, never()).createRoom(anyString(), anyString(), anyString());
+  }
+
+  @Test
   @DisplayName("ensureHoldingRoom skips provisioning when the session has no agency")
   void ensureHoldingRoom_skips_whenNoAgency() {
     session.setAgencyId(null);

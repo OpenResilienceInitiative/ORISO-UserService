@@ -134,6 +134,7 @@ public class AgencyPreAssignmentRoomService {
 
   private boolean resumePreparedRoom(Session session, User user) {
     var recovery = roomAttempts.claimRequesterJoin(session, user);
+    recovery.boundRoomId().ifPresent(session::setMatrixRoomId);
     recovery.claim().ifPresent(claim -> joinPreparedRoom(session, user, claim, false, 0));
     return recovery.pending();
   }
@@ -351,10 +352,9 @@ public class AgencyPreAssignmentRoomService {
           && waitMs <= MAX_WAIT_BEFORE_REQUESTER_JOIN_RETRY_MS
           && System.nanoTime() - started <= LATEST_INLINE_JOIN.minusMillis(waitMs).toNanos()
           && rateLimitPause.pause(waitMs)) {
-        roomAttempts
-            .claimRequesterJoin(session, user)
-            .claim()
-            .ifPresent(nextClaim -> joinPreparedRoom(session, user, nextClaim, false, 0));
+        var retry = roomAttempts.claimRequesterJoin(session, user);
+        retry.boundRoomId().ifPresent(session::setMatrixRoomId);
+        retry.claim().ifPresent(nextClaim -> joinPreparedRoom(session, user, nextClaim, false, 0));
       }
       return;
     } catch (MatrixJoinTemporarilyUnavailableException e) {

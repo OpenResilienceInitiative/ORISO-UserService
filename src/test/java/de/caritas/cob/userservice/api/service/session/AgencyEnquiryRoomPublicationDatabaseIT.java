@@ -299,30 +299,83 @@ class AgencyEnquiryRoomPublicationDatabaseIT {
   }
 
   @Test
-  void aDelayOutsideTheDatabaseDateRangeKeepsTheSameRoomWaiting() {
+  void anOversizedServerDelayIsCappedSoTheSameRoomResumes() {
     var attemptId = recordInvitationAttempt(ROOM);
     var requester = enquiry.getUser();
-    var plan =
-        new RequesterJoinPlan(
-            requester.getUserId(),
-            requester.getMatrixUserId(),
-            "@agency:example.invalid",
-            false,
-            List.of(),
-            List.of());
+    var plan = planFor(requester, false);
     var first = roomAttempts.recordConfirmedInvitation(attemptId, plan);
 
     roomAttempts.deferRequesterJoin(first, Long.MAX_VALUE);
 
     var stored = attempts.findById(attemptId).orElseThrow();
     assertThat(stored.getRequesterJoinReadyAt())
-        .isEqualTo(LocalDateTime.of(9999, 12, 31, 23, 59, 59, 999_999_000));
+        .isEqualTo(LocalDateTime.of(2026, 11, 19, 12, 15, 0));
     assertThat(stored.getRequesterJoinClaim()).isNull();
     assertThat(stored.getRequesterJoinPlan()).isEqualTo(plan);
-    assertThat(stored.getRoomId()).isEqualTo(ROOM);
+    var beforeCap = roomAttempts.claimRequesterJoin(enquiry, requester);
+    assertThat(beforeCap.pending()).isTrue();
+    assertThat(beforeCap.claim()).isEmpty();
+
+    when(clock.instant()).thenReturn(Instant.parse("2026-11-19T12:15:00Z"));
+    var resumed = roomAttempts.claimRequesterJoin(enquiry, requester).claim().orElseThrow();
+    assertThat(resumed.roomId()).isEqualTo(ROOM);
+  }
+
+  @Test
+  void aPlanThatCanNoLongerMatchIsRetiredInsteadOfWaitingForever() {
+    var attemptId = recordInvitationAttempt(ROOM);
+    var requester = enquiry.getUser();
+    // Prepared for a directly assigned case; the stored session is not directly assigned.
+    roomAttempts.recordConfirmedInvitation(attemptId, planFor(requester, true));
+    when(clock.instant()).thenReturn(Instant.parse("2026-11-19T12:00:31Z"));
+
     var recovery = roomAttempts.claimRequesterJoin(enquiry, requester);
+
+    assertThat(recovery.pending()).isFalse();
+    assertThat(recovery.claim()).isEmpty();
+    var stored = attempts.findById(attemptId).orElseThrow();
+    assertThat(stored.getRequesterJoinPlan()).isNull();
+    assertThat(stored.getRequesterJoinClaim()).isNull();
+    assertThat(roomAttempts.claimRequesterJoin(enquiry, requester).pending()).isFalse();
+  }
+
+  @Test
+  void anOlderSessionCopyLearnsTheRoomThatIsAlreadyBound() {
+    var staleCopy = sessions.findById(enquiry.getId()).orElseThrow();
+    assertThat(publication.publish(enquiry, ROOM, contacts())).contains(ROOM);
+
+    var recovery = roomAttempts.claimRequesterJoin(staleCopy, enquiry.getUser());
+
     assertThat(recovery.pending()).isTrue();
     assertThat(recovery.claim()).isEmpty();
+    assertThat(recovery.boundRoomId()).contains(ROOM);
+  }
+
+  @Test
+  @EnabledIfEnvironmentVariable(named = "LIQUIBASE_IT_DB_URL", matches = ".+")
+  void erasingTheSessionRemovesItsStoredJoinPlan() {
+    var attemptId = recordInvitationAttempt(ROOM);
+    roomAttempts.recordConfirmedInvitation(attemptId, planFor(enquiry.getUser(), false));
+
+    sessions.deleteById(enquiry.getId());
+
+    assertThat(attempts.findById(attemptId)).isEmpty();
+    assertThat(
+            jdbc.queryForObject(
+                "select count(*) from agency_enquiry_room_attempt where session_id = ?",
+                Long.class,
+                enquiry.getId()))
+        .isZero();
+  }
+
+  private RequesterJoinPlan planFor(User requester, boolean directlyAssigned) {
+    return new RequesterJoinPlan(
+        requester.getUserId(),
+        requester.getMatrixUserId(),
+        "@agency:example.invalid",
+        directlyAssigned,
+        List.of(),
+        List.of());
   }
 
   @Test
