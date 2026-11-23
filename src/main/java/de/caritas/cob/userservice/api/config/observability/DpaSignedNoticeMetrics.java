@@ -43,6 +43,14 @@ public class DpaSignedNoticeMetrics {
     counter(DISPATCH, "outcome", "claim_stuck");
   }
 
+  /**
+   * An administrator claim left automatic recovery because its recorded recipient kept disagreeing
+   * with the current one. It is unsent and needs an operator to reconcile it.
+   */
+  public void recordRecipientMismatchParked() {
+    counter(DISPATCH, "outcome", "parked_recipient_mismatch");
+  }
+
   private String tagOf(DeliveryDisposition disposition) {
     if (disposition == null) {
       return "unknown";
