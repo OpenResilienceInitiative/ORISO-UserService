@@ -59,9 +59,9 @@ jobs:
       uses: actions/checkout@v6
       with:
         repository: OpenResilienceInitiative/ORISO-TenantService
-        # TenantService#368 head (dev including #357 + the nine featureGuestAccount* caps of
-        # UserService#1662). Merge TenantService#368 first; then repin to the dev commit with it.
-        ref: ${{ github.event_name != 'push' && 'b9e4036bf8924e49a0b033af1f85670dc4ca998a' || 'dev' }}
+        # TenantService #393 head includes the previous provider and both reservation operations.
+        # Merge the provider first so post-merge validation against dev also includes them.
+        ref: ${{ github.event_name != 'push' && '4a608517d60d8be0a8f7b63e87a167a94c6e7508' || 'dev' }}
         path: .providers/tenant
         persist-credentials: false
 
