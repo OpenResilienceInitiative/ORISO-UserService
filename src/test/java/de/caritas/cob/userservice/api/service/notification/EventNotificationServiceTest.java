@@ -2710,8 +2710,12 @@ class EventNotificationServiceTest {
         mock(
             de.caritas.cob.userservice.api.workflow.accountinactivity.AccountInactivityService
                 .class),
-        mock(
-            de.caritas.cob.userservice.api.service.teamdiscussion.TeamDiscussionFeatureGate.class));
+        // Team chat switched on, not continuing after acceptance.
+        org.mockito.Mockito.mock(
+            de.caritas.cob.userservice.api.service.teamdiscussion.TeamDiscussionFeatureGate.class,
+            call ->
+                "isEnabled".equals(call.getMethod().getName())
+                    || org.mockito.Answers.RETURNS_DEFAULTS.answer(call) != null));
   }
 
   @Test

@@ -58,6 +58,22 @@ public class TeamDiscussionFeatureGate {
   }
 
   /**
+   * Whether the team chat is switched on for this case (kill switch, Träger AND Beratungsstelle).
+   * Switched off or not readable answers false.
+   *
+   * @throws de.caritas.cob.userservice.api.exception.httpresponses.ServiceUnavailableException 503
+   *     when the settings cannot be reached
+   */
+  public boolean isEnabled(Session session) {
+    try {
+      requireEnabled(session);
+      return true;
+    } catch (CustomValidationHttpStatusException off) {
+      return false;
+    }
+  }
+
+  /**
    * Whether the enquiry's team chat continues after acceptance instead of being archived: master
    * switch AND {@code featureTeamDiscussionAfterAcceptEnabled}, each Träger AND Beratungsstelle.
    * Switched off, unset or not readable answers false (archive as before).

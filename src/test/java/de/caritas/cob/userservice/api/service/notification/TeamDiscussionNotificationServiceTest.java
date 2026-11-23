@@ -95,6 +95,7 @@ class TeamDiscussionNotificationServiceTest {
         .thenReturn(Optional.empty());
     when(eventNotificationService.isNotificationSuppressed(anyString(), anyString()))
         .thenReturn(false);
+    when(teamDiscussionGate.isEnabled(session)).thenReturn(true);
   }
 
   private ConsultantAgency consultantAgency(String consultantId) {
@@ -412,5 +413,106 @@ class TeamDiscussionNotificationServiceTest {
             anyString(),
             any(),
             any());
+  }
+
+  // ---- ORISO-Frontend#2491: switched off, closed, and after acceptance ----
+
+  private void verifyNothingNotified() {
+    verify(eventNotificationService, never())
+        .createEvent(
+            anyString(),
+            anyString(),
+            anyString(),
+            anyString(),
+            anyString(),
+            anyString(),
+            anyString(),
+            any(),
+            any());
+    verify(teamDiscussionRepository, never()).save(any());
+    assertThat(discussion.isFirstNotified()).isFalse();
+  }
+
+  @Test
+  void closedDiscussion_notifiesNobody() {
+    discussion.setStatus(TeamDiscussion.Status.CLOSED);
+
+    service.createTeamDiscussionNotification(ROOM_ID, SENDER, "Kim", List.of(COLLEAGUE_A));
+
+    verifyNothingNotified();
+  }
+
+  @Test
+  void openEnquiry_withTheTeamChatSwitchedOff_notifiesNobody() {
+    when(teamDiscussionGate.isEnabled(session)).thenReturn(false);
+
+    service.createTeamDiscussionNotification(ROOM_ID, SENDER, "Kim", null);
+
+    verifyNothingNotified();
+  }
+
+  @Test
+  void openEnquiry_whenTheSwitchCannotBeRead_notifiesNobody() {
+    when(teamDiscussionGate.isEnabled(session))
+        .thenThrow(
+            new de.caritas.cob.userservice.api.exception.httpresponses.ServiceUnavailableException(
+                "down"));
+
+    service.createTeamDiscussionNotification(ROOM_ID, SENDER, "Kim", null);
+
+    verifyNothingNotified();
+  }
+
+  @Test
+  void acceptedCase_continuingAfterAcceptance_notifiesTheCircle() {
+    var assignee = new Consultant();
+    assignee.setId(COLLEAGUE_A);
+    session.setConsultant(assignee);
+    session.setStatus(Session.SessionStatus.IN_PROGRESS);
+    when(teamDiscussionGate.continuesAfterAccept(session)).thenReturn(true);
+
+    service.createTeamDiscussionNotification(ROOM_ID, SENDER, "Kim", null);
+
+    verify(eventNotificationService)
+        .createEvent(
+            eq(COLLEAGUE_A),
+            eq("team.discussion.new"),
+            anyString(),
+            anyString(),
+            anyString(),
+            anyString(),
+            anyString(),
+            any(),
+            any());
+    assertThat(discussion.isFirstNotified()).isTrue();
+  }
+
+  @Test
+  void acceptedCase_notContinuing_notifiesNobody() {
+    var assignee = new Consultant();
+    assignee.setId(COLLEAGUE_A);
+    session.setConsultant(assignee);
+    session.setStatus(Session.SessionStatus.IN_PROGRESS);
+    when(teamDiscussionGate.continuesAfterAccept(session)).thenReturn(false);
+
+    service.createTeamDiscussionNotification(ROOM_ID, SENDER, "Kim", null);
+
+    verifyNothingNotified();
+  }
+
+  @Test
+  void acceptedCase_whenTheSettingCannotBeRead_notifiesNobodyAndDoesNotThrow() {
+    var assignee = new Consultant();
+    assignee.setId(COLLEAGUE_A);
+    session.setConsultant(assignee);
+    session.setStatus(Session.SessionStatus.IN_PROGRESS);
+    when(teamDiscussionGate.continuesAfterAccept(session))
+        .thenThrow(
+            new de.caritas.cob.userservice.api.exception.httpresponses.ServiceUnavailableException(
+                "down"));
+
+    service.createTeamDiscussionNotification(ROOM_ID, SENDER, "Kim", null);
+
+    verifyNothingNotified();
   }
 }

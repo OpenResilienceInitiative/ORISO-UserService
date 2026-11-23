@@ -118,7 +118,7 @@ class TeamDiscussionNotificationIT {
   @Autowired private EventNotificationService eventNotifications;
   @MockitoBean private AuthenticatedUser authenticatedUser;
 
-  // Off (mock default): accepted cases stop notifying, as before FE#2491.
+  // Switched on for open enquiries; not continuing after acceptance, as before FE#2491.
   @MockitoBean
   private de.caritas.cob.userservice.api.service.teamdiscussion.TeamDiscussionFeatureGate
       teamDiscussionGate;
@@ -135,6 +135,12 @@ class TeamDiscussionNotificationIT {
 
   private MockMvc mvc;
   private Long discussionId;
+
+  @BeforeEach
+  void teamChatSwitchedOn() {
+    org.mockito.Mockito.when(teamDiscussionGate.isEnabled(org.mockito.ArgumentMatchers.any()))
+        .thenReturn(true);
+  }
 
   @BeforeEach
   void seedCurrentMembership() {

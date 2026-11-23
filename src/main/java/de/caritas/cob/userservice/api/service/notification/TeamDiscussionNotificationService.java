@@ -85,11 +85,10 @@ public class TeamDiscussionNotificationService {
       return;
     }
     Session session = sessionOpt.get();
-    if (session.getStatus() == Session.SessionStatus.REJECTED
-        || (session.getConsultant() != null && !continuesAfterAccept(session))) {
+    if (session.getStatus() == Session.SessionStatus.REJECTED || !teamChatSwitchedOn(session)) {
       // Create/accept race guard: once the case is accepted, an OPEN row must not keep
       // notifying — the facade lazily archives it on next access — unless the team chat
-      // continues after acceptance (FE#2491).
+      // continues after acceptance (FE#2491). A switched-off team chat never notifies.
       return;
     }
 
@@ -262,10 +261,16 @@ public class TeamDiscussionNotificationService {
         + discussion.getMatrixRoomId();
   }
 
-  /** Settings that cannot be read: no notification rather than a failed message fan-out. */
-  private boolean continuesAfterAccept(Session session) {
+  /**
+   * Open enquiry: the team chat switch (FE#2491); accepted case: the switch to continue after
+   * acceptance, which includes it. Settings that cannot be read: no notification rather than a
+   * failed message fan-out.
+   */
+  private boolean teamChatSwitchedOn(Session session) {
     try {
-      return teamDiscussionGate.continuesAfterAccept(session);
+      return session.getConsultant() == null
+          ? teamDiscussionGate.isEnabled(session)
+          : teamDiscussionGate.continuesAfterAccept(session);
     } catch (RuntimeException unavailable) {
       log.warn(
           "Team discussion notification for session {} skipped: {}",

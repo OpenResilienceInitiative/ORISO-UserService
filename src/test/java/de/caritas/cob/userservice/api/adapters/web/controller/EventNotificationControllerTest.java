@@ -875,9 +875,12 @@ class EventNotificationControllerTest {
             mock(
                 de.caritas.cob.userservice.api.workflow.accountinactivity.AccountInactivityService
                     .class),
-            mock(
+            org.mockito.Mockito.mock(
                 de.caritas.cob.userservice.api.service.teamdiscussion.TeamDiscussionFeatureGate
-                    .class));
+                    .class,
+                call ->
+                    "isEnabled".equals(call.getMethod().getName())
+                        || org.mockito.Answers.RETURNS_DEFAULTS.answer(call) != null));
     var controller = s6Controller(realTeamService);
 
     // Colleague A reads the enquiry's own room, colleague B reads the team discussion.
