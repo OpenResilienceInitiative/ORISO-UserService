@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -15,11 +16,16 @@ import static org.mockito.Mockito.when;
 import de.caritas.cob.userservice.api.exception.matrix.MatrixCreateRoomException;
 import de.caritas.cob.userservice.api.exception.matrix.MatrixCreateRoomRateLimitedException;
 import de.caritas.cob.userservice.api.exception.matrix.MatrixInviteUserException;
+import de.caritas.cob.userservice.api.exception.matrix.MatrixJoinRateLimitedException;
+import de.caritas.cob.userservice.api.exception.matrix.MatrixJoinTemporarilyUnavailableException;
+import de.caritas.cob.userservice.api.model.AgencyEnquiryRoomAttempt.RequesterJoinPlan;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.out.SessionRoomGateway;
 import de.caritas.cob.userservice.api.service.agency.AgencyMatrixCredentialClient;
 import de.caritas.cob.userservice.api.service.agency.dto.AgencyMatrixCredentialsDTO;
+import de.caritas.cob.userservice.api.service.session.AgencyEnquiryRoomAttempts.RequesterJoinClaim;
+import de.caritas.cob.userservice.api.service.session.AgencyEnquiryRoomAttempts.RequesterJoinRecovery;
 import de.caritas.cob.userservice.api.service.session.AgencySilentMembershipService.InitialRoomContact;
 import java.util.List;
 import java.util.Optional;
@@ -87,6 +93,15 @@ class AgencyPreAssignmentRoomServiceTest {
     session.setId(SESSION_ID);
     session.setAgencyId(AGENCY_ID);
     session.setMatrixRoomId(null);
+    lenient()
+        .when(roomAttempts.recordConfirmedInvitation(any(), any()))
+        .thenAnswer(
+            call ->
+                new RequesterJoinClaim(
+                    call.getArgument(0), NEW_ROOM_ID, "first-claim", call.getArgument(1)));
+    lenient()
+        .when(roomAttempts.claimRequesterJoin(session, user))
+        .thenReturn(new RequesterJoinRecovery(false, Optional.empty()));
   }
 
   private AgencyMatrixCredentialsDTO validCredentials() {
@@ -104,7 +119,8 @@ class AgencyPreAssignmentRoomServiceTest {
   }
 
   private void stubPublishedRoom(List<InitialRoomContact> contacts) {
-    when(publication.publish(session, NEW_ROOM_ID, contacts)).thenReturn(Optional.of(NEW_ROOM_ID));
+    when(publication.publishPrepared(eq(session), any(), eq(contacts)))
+        .thenReturn(Optional.of(NEW_ROOM_ID));
   }
 
   @Test
@@ -117,14 +133,14 @@ class AgencyPreAssignmentRoomServiceTest {
     when(sessionRoomGateway.createRoom(anyString(), anyString(), eq(AGENCY_TOKEN)))
         .thenReturn(NEW_ROOM_ID);
     when(sessionRoomGateway.loginAsUser(USER_MATRIX_ID)).thenReturn(USER_TOKEN);
-    when(sessionRoomGateway.joinRoom(NEW_ROOM_ID, USER_TOKEN)).thenReturn(true);
+    when(sessionRoomGateway.joinRoomOnce(NEW_ROOM_ID, USER_TOKEN)).thenReturn(true);
 
     stubPublishedRoom(List.of());
 
     underTest.ensureHoldingRoom(session, user);
 
     assertEquals(NEW_ROOM_ID, session.getMatrixRoomId());
-    verify(publication).publish(session, NEW_ROOM_ID, List.of());
+    verify(publication).publishPrepared(eq(session), any(), eq(List.of()));
     verify(sessionRoomGateway, never()).loginUser(anyString(), anyString());
   }
 
@@ -134,7 +150,7 @@ class AgencyPreAssignmentRoomServiceTest {
   void ensureHoldingRoom_provisionsRoomInviteMembershipAndPersists() throws Exception {
     stubHappyPathUntilRoomCreation();
     when(sessionRoomGateway.loginAsUser(USER_MATRIX_ID)).thenReturn(USER_TOKEN);
-    when(sessionRoomGateway.joinRoom(NEW_ROOM_ID, USER_TOKEN)).thenReturn(true);
+    when(sessionRoomGateway.joinRoomOnce(NEW_ROOM_ID, USER_TOKEN)).thenReturn(true);
 
     stubPublishedRoom(List.of());
 
@@ -156,10 +172,10 @@ class AgencyPreAssignmentRoomServiceTest {
     // user invited to the new room and membership established via join
     verify(sessionRoomGateway).inviteUser(NEW_ROOM_ID, USER_MATRIX_ID, AGENCY_TOKEN);
     verify(sessionRoomGateway).loginAsUser(USER_MATRIX_ID);
-    verify(sessionRoomGateway).joinRoom(NEW_ROOM_ID, USER_TOKEN);
+    verify(sessionRoomGateway).joinRoomOnce(NEW_ROOM_ID, USER_TOKEN);
 
     // room id persisted on the session
-    verify(publication).publish(session, NEW_ROOM_ID, List.of());
+    verify(publication).publishPrepared(eq(session), any(), eq(List.of()));
     assertEquals(NEW_ROOM_ID, session.getMatrixRoomId());
   }
 
@@ -172,6 +188,20 @@ class AgencyPreAssignmentRoomServiceTest {
 
     verifyNoInteractions(matrixCredentialClient, sessionRoomGateway, publication);
     assertEquals("!existing:example.org", session.getMatrixRoomId());
+  }
+
+  @Test
+  void ensureHoldingRoomAdoptsARoomBoundSinceTheCallerReadTheSession() throws Exception {
+    when(roomAttempts.claimRequesterJoin(session, user))
+        .thenReturn(
+            new RequesterJoinRecovery(
+                true, Optional.empty(), Optional.of("!bound-meanwhile:example.org")));
+
+    underTest.ensureHoldingRoom(session, user);
+
+    assertEquals("!bound-meanwhile:example.org", session.getMatrixRoomId());
+    verifyNoInteractions(matrixCredentialClient, publication);
+    verify(sessionRoomGateway, never()).createRoom(anyString(), anyString(), anyString());
   }
 
   @Test
@@ -276,7 +306,7 @@ class AgencyPreAssignmentRoomServiceTest {
         .thenReturn(NEW_ROOM_ID);
     when(rateLimitPause.pause(3_256L)).thenReturn(true);
     when(sessionRoomGateway.loginAsUser(USER_MATRIX_ID)).thenReturn(USER_TOKEN);
-    when(sessionRoomGateway.joinRoom(NEW_ROOM_ID, USER_TOKEN)).thenReturn(true);
+    when(sessionRoomGateway.joinRoomOnce(NEW_ROOM_ID, USER_TOKEN)).thenReturn(true);
     stubPublishedRoom(List.of());
 
     underTest.ensureHoldingRoom(session, user);
@@ -284,7 +314,7 @@ class AgencyPreAssignmentRoomServiceTest {
     verify(rateLimitPause).pause(3_256L);
     verify(sessionRoomGateway, times(2)).createRoom(anyString(), anyString(), eq(AGENCY_TOKEN));
     assertEquals(NEW_ROOM_ID, session.getMatrixRoomId());
-    verify(publication).publish(session, NEW_ROOM_ID, List.of());
+    verify(publication).publishPrepared(eq(session), any(), eq(List.of()));
   }
 
   @Test
@@ -314,13 +344,13 @@ class AgencyPreAssignmentRoomServiceTest {
     when(sessionService.getSession(SESSION_ID)).thenReturn(Optional.of(new Session()));
     stubHappyPathUntilRoomCreation();
     when(sessionRoomGateway.loginAsUser(USER_MATRIX_ID)).thenReturn(USER_TOKEN);
-    when(sessionRoomGateway.joinRoom(NEW_ROOM_ID, USER_TOKEN)).thenReturn(true);
+    when(sessionRoomGateway.joinRoomOnce(NEW_ROOM_ID, USER_TOKEN)).thenReturn(true);
     stubPublishedRoom(List.of());
 
     underTest.repairHoldingRoom(session, user);
 
     assertEquals(NEW_ROOM_ID, session.getMatrixRoomId());
-    verify(publication).publish(session, NEW_ROOM_ID, List.of());
+    verify(publication).publishPrepared(eq(session), any(), eq(List.of()));
   }
 
   @Test
@@ -435,7 +465,7 @@ class AgencyPreAssignmentRoomServiceTest {
             new AgencySilentMembershipService.DepartmentFanOut(
                 1, java.util.List.of(), 0L, contacts));
     when(sessionRoomGateway.loginAsUser(USER_MATRIX_ID)).thenReturn(USER_TOKEN);
-    when(sessionRoomGateway.joinRoom(NEW_ROOM_ID, USER_TOKEN)).thenReturn(true);
+    when(sessionRoomGateway.joinRoomOnce(NEW_ROOM_ID, USER_TOKEN)).thenReturn(true);
 
     stubPublishedRoom(contacts);
 
@@ -453,8 +483,8 @@ class AgencyPreAssignmentRoomServiceTest {
         .joinAgencyConsultantsWithoutWaiting(
             eq(AGENCY_ID), eq(NEW_ROOM_ID), eq(AGENCY_TOKEN), any());
     inOrder.verify(sessionRoomGateway).inviteUser(NEW_ROOM_ID, USER_MATRIX_ID, AGENCY_TOKEN);
-    inOrder.verify(sessionRoomGateway).joinRoom(NEW_ROOM_ID, USER_TOKEN);
-    inOrder.verify(publication).publish(session, NEW_ROOM_ID, contacts);
+    inOrder.verify(sessionRoomGateway).joinRoomOnce(NEW_ROOM_ID, USER_TOKEN);
+    inOrder.verify(publication).publishPrepared(eq(session), any(), eq(contacts));
   }
 
   @Test
@@ -466,15 +496,15 @@ class AgencyPreAssignmentRoomServiceTest {
             eq(AGENCY_ID), eq(NEW_ROOM_ID), eq(AGENCY_TOKEN), any()))
         .thenReturn(AgencySilentMembershipService.DepartmentFanOut.NONE);
     when(sessionRoomGateway.loginAsUser(USER_MATRIX_ID)).thenReturn(USER_TOKEN);
-    when(sessionRoomGateway.joinRoom(NEW_ROOM_ID, USER_TOKEN)).thenReturn(true);
+    when(sessionRoomGateway.joinRoomOnce(NEW_ROOM_ID, USER_TOKEN)).thenReturn(true);
 
     stubPublishedRoom(List.of());
 
     underTest.ensureHoldingRoom(session, user);
 
     verify(sessionRoomGateway).inviteUser(NEW_ROOM_ID, USER_MATRIX_ID, AGENCY_TOKEN);
-    verify(sessionRoomGateway).joinRoom(NEW_ROOM_ID, USER_TOKEN);
-    verify(publication).publish(session, NEW_ROOM_ID, List.of());
+    verify(sessionRoomGateway).joinRoomOnce(NEW_ROOM_ID, USER_TOKEN);
+    verify(publication).publishPrepared(eq(session), any(), eq(List.of()));
     assertEquals(NEW_ROOM_ID, session.getMatrixRoomId());
   }
 
@@ -488,15 +518,15 @@ class AgencyPreAssignmentRoomServiceTest {
             eq(AGENCY_ID), eq(NEW_ROOM_ID), eq(AGENCY_TOKEN), any()))
         .thenThrow(new RuntimeException("consultant lookup failed"));
     when(sessionRoomGateway.loginAsUser(USER_MATRIX_ID)).thenReturn(USER_TOKEN);
-    when(sessionRoomGateway.joinRoom(NEW_ROOM_ID, USER_TOKEN)).thenReturn(true);
+    when(sessionRoomGateway.joinRoomOnce(NEW_ROOM_ID, USER_TOKEN)).thenReturn(true);
 
     stubPublishedRoom(List.of());
 
     underTest.ensureHoldingRoom(session, user);
 
     verify(sessionRoomGateway).inviteUser(NEW_ROOM_ID, USER_MATRIX_ID, AGENCY_TOKEN);
-    verify(sessionRoomGateway).joinRoom(NEW_ROOM_ID, USER_TOKEN);
-    verify(publication).publish(session, NEW_ROOM_ID, List.of());
+    verify(sessionRoomGateway).joinRoomOnce(NEW_ROOM_ID, USER_TOKEN);
+    verify(publication).publishPrepared(eq(session), any(), eq(List.of()));
     assertEquals(NEW_ROOM_ID, session.getMatrixRoomId());
   }
 
@@ -519,7 +549,7 @@ class AgencyPreAssignmentRoomServiceTest {
   void ensureHoldingRoom_doesNotPersist_whenAskerJoinFails() throws Exception {
     stubHappyPathUntilRoomCreation();
     when(sessionRoomGateway.loginAsUser(USER_MATRIX_ID)).thenReturn(USER_TOKEN);
-    when(sessionRoomGateway.joinRoom(NEW_ROOM_ID, USER_TOKEN)).thenReturn(false);
+    when(sessionRoomGateway.joinRoomOnce(NEW_ROOM_ID, USER_TOKEN)).thenReturn(false);
 
     underTest.ensureHoldingRoom(session, user);
 
@@ -528,12 +558,119 @@ class AgencyPreAssignmentRoomServiceTest {
   }
 
   @Test
+  void shortJoinThrottleWaitsInFullThenJoinsTheSameRoom() throws Exception {
+    stubHappyPathUntilRoomCreation();
+    when(sessionRoomGateway.loginAsUser(USER_MATRIX_ID)).thenReturn(USER_TOKEN);
+    when(sessionRoomGateway.joinRoomOnce(NEW_ROOM_ID, USER_TOKEN))
+        .thenThrow(new MatrixJoinRateLimitedException("fixture", 1800L))
+        .thenReturn(true);
+    var claim = recoveryClaim();
+    when(roomAttempts.recordCreated(session, NEW_ROOM_ID)).thenReturn(claim.attemptId());
+    var initialClaim =
+        new RequesterJoinClaim(claim.attemptId(), claim.roomId(), "first-claim", claim.plan());
+    when(roomAttempts.claimRequesterJoin(session, user))
+        .thenReturn(
+            new RequesterJoinRecovery(false, Optional.empty()),
+            new RequesterJoinRecovery(true, Optional.of(claim)));
+    when(rateLimitPause.pause(1800L)).thenReturn(true);
+    stubPublishedRoom(List.of());
+
+    underTest.ensureHoldingRoom(session, user);
+
+    var order =
+        org.mockito.Mockito.inOrder(sessionRoomGateway, roomAttempts, rateLimitPause, publication);
+    order.verify(sessionRoomGateway).joinRoomOnce(NEW_ROOM_ID, USER_TOKEN);
+    order.verify(roomAttempts).deferRequesterJoin(initialClaim, 1800L);
+    order.verify(rateLimitPause).pause(1800L);
+    order.verify(roomAttempts).claimRequesterJoin(session, user);
+    order.verify(sessionRoomGateway).joinRoomOnce(NEW_ROOM_ID, USER_TOKEN);
+    order.verify(publication).publishPrepared(session, claim, List.of());
+    verify(sessionRoomGateway).createRoom(anyString(), anyString(), eq(AGENCY_TOKEN));
+    verify(sessionRoomGateway).inviteUser(NEW_ROOM_ID, USER_MATRIX_ID, AGENCY_TOKEN);
+  }
+
+  @Test
+  void longJoinThrottleDefersAndReopenResumesTheOriginalRoom() throws Exception {
+    stubHappyPathUntilRoomCreation();
+    when(sessionRoomGateway.loginAsUser(USER_MATRIX_ID)).thenReturn(USER_TOKEN);
+    when(sessionRoomGateway.joinRoomOnce(NEW_ROOM_ID, USER_TOKEN))
+        .thenThrow(new MatrixJoinRateLimitedException("fixture", 19_000L))
+        .thenReturn(true);
+    var claim = recoveryClaim();
+    when(roomAttempts.recordCreated(session, NEW_ROOM_ID)).thenReturn(claim.attemptId());
+    var initialClaim =
+        new RequesterJoinClaim(claim.attemptId(), claim.roomId(), "first-claim", claim.plan());
+    when(roomAttempts.claimRequesterJoin(session, user))
+        .thenReturn(
+            new RequesterJoinRecovery(false, Optional.empty()),
+            new RequesterJoinRecovery(true, Optional.empty()),
+            new RequesterJoinRecovery(true, Optional.of(claim)));
+    stubPublishedRoom(List.of());
+
+    underTest.ensureHoldingRoom(session, user);
+    underTest.repairHoldingRoom(session, user);
+
+    verify(roomAttempts).deferRequesterJoin(initialClaim, 19_000L);
+    verify(sessionRoomGateway, times(1)).joinRoomOnce(NEW_ROOM_ID, USER_TOKEN);
+    verifyNoInteractions(publication, rateLimitPause);
+    assertNull(session.getMatrixRoomId());
+
+    underTest.repairHoldingRoom(session, user);
+
+    verify(publication).publishPrepared(session, claim, List.of());
+    verify(sessionRoomGateway, times(2)).joinRoomOnce(NEW_ROOM_ID, USER_TOKEN);
+    verify(sessionRoomGateway).createRoom(anyString(), anyString(), eq(AGENCY_TOKEN));
+    verify(sessionRoomGateway).inviteUser(NEW_ROOM_ID, USER_MATRIX_ID, AGENCY_TOKEN);
+    assertEquals(NEW_ROOM_ID, session.getMatrixRoomId());
+  }
+
+  @Test
+  void temporaryFailureOfResumedJoinKeepsTheExactRoomAndClaim() throws Exception {
+    var claim = recoveryClaim();
+    var nextClaim =
+        new RequesterJoinClaim(claim.attemptId(), claim.roomId(), "next-claim", claim.plan());
+    when(roomAttempts.claimRequesterJoin(session, user))
+        .thenReturn(
+            new RequesterJoinRecovery(true, Optional.of(claim)),
+            new RequesterJoinRecovery(true, Optional.of(nextClaim)));
+    when(sessionRoomGateway.loginAsUser(USER_MATRIX_ID)).thenReturn(USER_TOKEN);
+    when(sessionRoomGateway.joinRoomOnce(NEW_ROOM_ID, USER_TOKEN))
+        .thenThrow(new MatrixJoinTemporarilyUnavailableException())
+        .thenReturn(true);
+    stubPublishedRoom(List.of());
+
+    underTest.ensureHoldingRoom(session, user);
+
+    verify(roomAttempts)
+        .deferRequesterJoin(claim, AgencyPreAssignmentRoomService.REPAIR_COOLDOWN.toMillis());
+    verify(roomAttempts, never()).finishRequesterJoin(any());
+    verifyNoInteractions(matrixCredentialClient, publication, rateLimitPause);
+    assertNull(session.getMatrixRoomId());
+
+    underTest.ensureHoldingRoom(session, user);
+
+    verify(publication).publishPrepared(session, nextClaim, List.of());
+    verify(sessionRoomGateway, times(2)).joinRoomOnce(NEW_ROOM_ID, USER_TOKEN);
+    verifyNoInteractions(matrixCredentialClient);
+    assertEquals(NEW_ROOM_ID, session.getMatrixRoomId());
+  }
+
+  private RequesterJoinClaim recoveryClaim() {
+    return new RequesterJoinClaim(
+        81L,
+        NEW_ROOM_ID,
+        "retry-claim",
+        new RequesterJoinPlan(
+            "user-1", USER_MATRIX_ID, AGENCY_MATRIX_ID, false, List.of(), List.of()));
+  }
+
+  @Test
   @DisplayName("a directly addressed enquiry is not fanned out to the whole department")
   void ensureHoldingRoom_skipsDepartment_whenConsultantDirectlySet() throws Exception {
     stubHappyPathUntilRoomCreation();
     session.setIsConsultantDirectlySet(true);
     when(sessionRoomGateway.loginAsUser(USER_MATRIX_ID)).thenReturn(USER_TOKEN);
-    when(sessionRoomGateway.joinRoom(NEW_ROOM_ID, USER_TOKEN)).thenReturn(true);
+    when(sessionRoomGateway.joinRoomOnce(NEW_ROOM_ID, USER_TOKEN)).thenReturn(true);
 
     stubPublishedRoom(List.of());
 
@@ -578,7 +715,7 @@ class AgencyPreAssignmentRoomServiceTest {
         .thenReturn(
             new AgencySilentMembershipService.DepartmentFanOut(10, deferred, 3_300L, contacts));
     when(sessionRoomGateway.loginAsUser(USER_MATRIX_ID)).thenReturn(USER_TOKEN);
-    when(sessionRoomGateway.joinRoom(NEW_ROOM_ID, USER_TOKEN)).thenReturn(true);
+    when(sessionRoomGateway.joinRoomOnce(NEW_ROOM_ID, USER_TOKEN)).thenReturn(true);
 
     stubPublishedRoom(contacts);
 
@@ -590,10 +727,15 @@ class AgencyPreAssignmentRoomServiceTest {
     var inOrder =
         org.mockito.Mockito.inOrder(sessionRoomGateway, publication, departmentMembershipBackfill);
     inOrder.verify(sessionRoomGateway).inviteUser(NEW_ROOM_ID, USER_MATRIX_ID, AGENCY_TOKEN);
-    inOrder.verify(publication).publish(session, NEW_ROOM_ID, contacts);
+    inOrder.verify(publication).publishPrepared(eq(session), any(), eq(contacts));
     inOrder
         .verify(departmentMembershipBackfill)
-        .schedule(AGENCY_ID, SESSION_ID, NEW_ROOM_ID, AGENCY_MATRIX_ID, deferred);
+        .scheduleConsultantIds(
+            AGENCY_ID,
+            SESSION_ID,
+            NEW_ROOM_ID,
+            AGENCY_MATRIX_ID,
+            deferred.stream().map(de.caritas.cob.userservice.api.model.Consultant::getId).toList());
     assertEquals(NEW_ROOM_ID, session.getMatrixRoomId());
   }
 
@@ -606,8 +748,8 @@ class AgencyPreAssignmentRoomServiceTest {
     stubHappyPathUntilRoomCreation();
     when(roomAttempts.recordCreated(session, NEW_ROOM_ID)).thenReturn(81L);
     when(sessionRoomGateway.loginAsUser(USER_MATRIX_ID)).thenReturn(USER_TOKEN);
-    when(sessionRoomGateway.joinRoom(NEW_ROOM_ID, USER_TOKEN)).thenReturn(true);
-    when(publication.publish(session, NEW_ROOM_ID, List.of()))
+    when(sessionRoomGateway.joinRoomOnce(NEW_ROOM_ID, USER_TOKEN)).thenReturn(true);
+    when(publication.publishPrepared(eq(session), any(), eq(List.of())))
         .thenReturn(Optional.ofNullable(confirmedRoomId));
 
     underTest.ensureHoldingRoom(session, user);
@@ -626,31 +768,35 @@ class AgencyPreAssignmentRoomServiceTest {
             AgencyPreAssignmentRoomService.DEPARTMENT_IN_REQUEST_BUDGET);
     order.verify(roomAttempts).markRequesterInvitationStarted(81L);
     order.verify(sessionRoomGateway).inviteUser(NEW_ROOM_ID, USER_MATRIX_ID, AGENCY_TOKEN);
-    order.verify(sessionRoomGateway).joinRoom(NEW_ROOM_ID, USER_TOKEN);
-    order.verify(publication).publish(session, NEW_ROOM_ID, List.of());
+    order.verify(roomAttempts).recordConfirmedInvitation(eq(81L), any());
+    order.verify(sessionRoomGateway).joinRoomOnce(NEW_ROOM_ID, USER_TOKEN);
+    order.verify(publication).publishPrepared(eq(session), any(), eq(List.of()));
     verifyNoInteractions(departmentMembershipBackfill);
     assertThat(output)
-        .contains("Matrix holding room " + NEW_ROOM_ID + " was not bound to session " + SESSION_ID)
         .contains(
-            confirmedRoomId == null
-                ? "publication was refused"
-                : "confirmed room " + confirmedRoomId);
+            (confirmedRoomId == null
+                    ? "Publication of the prepared holding room was refused for session "
+                    : "An existing room binding superseded the prepared room for session ")
+                + SESSION_ID)
+        .doesNotContain(NEW_ROOM_ID);
+    if (confirmedRoomId != null) {
+      assertThat(output).doesNotContain(confirmedRoomId);
+    }
   }
 
   @Test
   @DisplayName("the wait before the asker's invite is capped, whatever delay Synapse asks for")
   void ensureHoldingRoom_capsWaitBeforeAskerInvite() throws Exception {
     stubHappyPathUntilRoomCreation();
+    var deferred = new de.caritas.cob.userservice.api.model.Consultant();
+    deferred.setId("deferred-consultant");
     when(agencySilentMembershipService.joinAgencyConsultantsWithoutWaiting(
             eq(AGENCY_ID), eq(NEW_ROOM_ID), eq(AGENCY_TOKEN), any()))
         .thenReturn(
             new AgencySilentMembershipService.DepartmentFanOut(
-                0,
-                java.util.List.of(new de.caritas.cob.userservice.api.model.Consultant()),
-                300_000L,
-                java.util.List.of()));
+                0, List.of(deferred), 300_000L, java.util.List.of()));
     when(sessionRoomGateway.loginAsUser(USER_MATRIX_ID)).thenReturn(USER_TOKEN);
-    when(sessionRoomGateway.joinRoom(NEW_ROOM_ID, USER_TOKEN)).thenReturn(true);
+    when(sessionRoomGateway.joinRoomOnce(NEW_ROOM_ID, USER_TOKEN)).thenReturn(true);
 
     stubPublishedRoom(List.of());
 

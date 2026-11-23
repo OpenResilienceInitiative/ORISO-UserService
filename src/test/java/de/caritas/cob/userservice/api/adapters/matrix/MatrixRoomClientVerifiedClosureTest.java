@@ -21,7 +21,11 @@ class MatrixRoomClientVerifiedClosureTest {
   private final MockRestServiceServer server = MockRestServiceServer.createServer(http);
   private final MatrixConfig config = mock(MatrixConfig.class);
   private final MatrixRoomClient rooms =
-      new MatrixRoomClient(config, http, mock(LiveChatDiagnosticMetrics.class));
+      new MatrixRoomClient(
+          config,
+          http,
+          mock(LiveChatDiagnosticMetrics.class),
+          MatrixIdentifierRedactor.withKey("synthetic-closure-fixture"));
   private static final String BASE = "https://matrix.synthetic.test";
   private static final String ROOM = "!case:synthetic.test";
   private static final String OPERATOR = "@operator:synthetic.test";

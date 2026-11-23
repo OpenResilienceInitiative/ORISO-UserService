@@ -1,6 +1,8 @@
 package de.caritas.cob.userservice.api.facade;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.same;
@@ -13,6 +15,8 @@ import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
 import de.caritas.cob.userservice.api.adapters.matrix.config.MatrixConfig;
 import de.caritas.cob.userservice.api.adapters.matrix.dto.MatrixCreateRoomResponseDTO;
 import de.caritas.cob.userservice.api.adapters.matrix.dto.MatrixInviteUserResponseDTO;
+import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException;
+import de.caritas.cob.userservice.api.exception.matrix.MatrixJoinRateLimitedException;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.ConsultantAgency;
 import de.caritas.cob.userservice.api.model.EnquiryData;
@@ -25,6 +29,8 @@ import de.caritas.cob.userservice.api.service.agency.AgencyMatrixCredentialClien
 import de.caritas.cob.userservice.api.service.agency.dto.AgencyMatrixCredentialsDTO;
 import de.caritas.cob.userservice.api.service.consultingtype.TopicConsultantRoutingService;
 import de.caritas.cob.userservice.api.service.session.AgencyEnquiryRoomAttempts;
+import de.caritas.cob.userservice.api.service.session.AgencyEnquiryRoomAttempts.RequesterJoinClaim;
+import de.caritas.cob.userservice.api.service.session.AgencyEnquiryRoomAttempts.RequesterJoinRecovery;
 import de.caritas.cob.userservice.api.service.session.AgencyPreAssignmentRoomService;
 import de.caritas.cob.userservice.api.service.session.SessionService;
 import jakarta.servlet.http.HttpServletRequest;
@@ -82,6 +88,7 @@ class CreateEnquiryMessageFacadeMatrixRoomProvisioningTest {
   @Mock private SessionService sessionService;
   @Mock private MatrixSynapseService matrixSynapseService;
   @Mock private MatrixConfig matrixConfig;
+  @Mock private AgencyEnquiryRoomAttempts roomAttempts;
   @Mock private ConsultantAgencyService consultantAgencyService;
   @Mock private TopicConsultantRoutingService topicConsultantRoutingService;
 
@@ -152,7 +159,15 @@ class CreateEnquiryMessageFacadeMatrixRoomProvisioningTest {
     var pause = new de.caritas.cob.userservice.api.service.session.MatrixRateLimitPause();
     var publicationSessions =
         org.mockito.Mockito.mock(de.caritas.cob.userservice.api.port.out.SessionRepository.class);
-    var roomAttempts = Mockito.mock(AgencyEnquiryRoomAttempts.class);
+    Mockito.lenient()
+        .when(roomAttempts.recordConfirmedInvitation(any(), any()))
+        .thenAnswer(
+            call ->
+                new RequesterJoinClaim(
+                    call.getArgument(0), NEW_ROOM_ID, "fixture-claim", call.getArgument(1)));
+    Mockito.lenient()
+        .when(roomAttempts.ownsRequesterJoin(any(), eq(NEW_ROOM_ID), any()))
+        .thenReturn(true);
     var realRoomService =
         new AgencyPreAssignmentRoomService(
             matrixCredentialClient,
@@ -187,9 +202,15 @@ class CreateEnquiryMessageFacadeMatrixRoomProvisioningTest {
     user.setMatrixUserId(USER_MATRIX_ID);
 
     session = unboundSession();
+    Mockito.lenient()
+        .when(roomAttempts.claimRequesterJoin(session, user))
+        .thenReturn(new RequesterJoinRecovery(false, Optional.empty()));
     persistedSession = unboundSession();
-    when(publicationSessions.lockFresh(SESSION_ID)).thenReturn(Optional.of(persistedSession));
-    when(sessionService.finalizeEnquiry(session, null, NEW_ROOM_ID))
+    Mockito.lenient()
+        .when(publicationSessions.lockFresh(SESSION_ID))
+        .thenReturn(Optional.of(persistedSession));
+    Mockito.lenient()
+        .when(sessionService.finalizeEnquiry(session, null, NEW_ROOM_ID))
         .thenAnswer(
             invocation -> {
               session.setStatus(SessionStatus.NEW);
@@ -243,7 +264,7 @@ class CreateEnquiryMessageFacadeMatrixRoomProvisioningTest {
 
     // Enquiry-event validation + membership use the user's own token.
     when(matrixSynapseService.loginAsUserAccessToken(USER_MATRIX_ID)).thenReturn(USER_TOKEN);
-    when(matrixSynapseService.joinRoom(NEW_ROOM_ID, USER_TOKEN)).thenReturn(true);
+    when(matrixSynapseService.joinRoomOnce(NEW_ROOM_ID, USER_TOKEN)).thenReturn(true);
     when(matrixSynapseService.getRoomEvent(NEW_ROOM_ID, MATRIX_EVENT_ID, USER_TOKEN))
         .thenReturn(
             Optional.of(
@@ -259,7 +280,7 @@ class CreateEnquiryMessageFacadeMatrixRoomProvisioningTest {
     // Room provisioned: create -> invite -> membership.
     verify(matrixSynapseService).createRoom(anyString(), anyString(), eq(AGENCY_TOKEN));
     verify(matrixSynapseService).inviteUserToRoom(NEW_ROOM_ID, USER_MATRIX_ID, AGENCY_TOKEN);
-    verify(matrixSynapseService).joinRoom(NEW_ROOM_ID, USER_TOKEN);
+    verify(matrixSynapseService).joinRoomOnce(NEW_ROOM_ID, USER_TOKEN);
 
     // The already browser-encrypted event is validated in the provisioned room.
     verify(matrixSynapseService).getRoomEvent(NEW_ROOM_ID, MATRIX_EVENT_ID, USER_TOKEN);
@@ -276,6 +297,43 @@ class CreateEnquiryMessageFacadeMatrixRoomProvisioningTest {
     assertEquals(MATRIX_EVENT_ID, response.getT());
 
     RequestContextHolder.resetRequestAttributes();
+  }
+
+  @Test
+  void repeatSubmissionDoesNotCreateAnotherRoomWhileRequesterJoinIsPending() throws Exception {
+    when(sessionService.getSession(SESSION_ID)).thenReturn(Optional.of(session));
+    when(matrixCredentialClient.fetchMatrixCredentials(AGENCY_ID))
+        .thenReturn(Optional.of(validCredentials()));
+    when(matrixSynapseService.loginAsUserAccessToken(AGENCY_MATRIX_ID)).thenReturn(AGENCY_TOKEN);
+    when(matrixSynapseService.loginAsUserAccessToken(USER_MATRIX_ID)).thenReturn(USER_TOKEN);
+    var createBody = new MatrixCreateRoomResponseDTO();
+    createBody.setRoomId(NEW_ROOM_ID);
+    when(matrixSynapseService.createRoom(anyString(), anyString(), eq(AGENCY_TOKEN)))
+        .thenReturn(ResponseEntity.ok(createBody));
+    when(matrixSynapseService.inviteUserToRoom(NEW_ROOM_ID, USER_MATRIX_ID, AGENCY_TOKEN))
+        .thenReturn(ResponseEntity.ok(new MatrixInviteUserResponseDTO()));
+    when(matrixSynapseService.joinRoomOnce(NEW_ROOM_ID, USER_TOKEN))
+        .thenThrow(new MatrixJoinRateLimitedException("fixture", 19_000L));
+    Mockito.lenient()
+        .when(roomAttempts.claimRequesterJoin(session, user))
+        .thenReturn(
+            new RequesterJoinRecovery(false, Optional.empty()),
+            new RequesterJoinRecovery(true, Optional.empty()));
+
+    var enquiry = new EnquiryData(user, SESSION_ID, MESSAGE, null);
+    enquiry.setMatrixEventId(MATRIX_EVENT_ID);
+    assertThrows(
+        InternalServerErrorException.class,
+        () -> createEnquiryMessageFacade.createEnquiryMessage(enquiry));
+    assertThrows(
+        InternalServerErrorException.class,
+        () -> createEnquiryMessageFacade.createEnquiryMessage(enquiry));
+
+    verify(matrixSynapseService).createRoom(anyString(), anyString(), eq(AGENCY_TOKEN));
+    verify(matrixSynapseService).inviteUserToRoom(NEW_ROOM_ID, USER_MATRIX_ID, AGENCY_TOKEN);
+    verify(matrixSynapseService).joinRoomOnce(NEW_ROOM_ID, USER_TOKEN);
+    verify(matrixSynapseService, Mockito.never())
+        .getRoomEvent(anyString(), anyString(), anyString());
   }
 
   @Test
@@ -311,7 +369,8 @@ class CreateEnquiryMessageFacadeMatrixRoomProvisioningTest {
     when(matrixSynapseService.loginAsUserAccessToken(USER_MATRIX_ID)).thenReturn(USER_TOKEN);
     when(matrixSynapseService.loginAsUserAccessToken(consultantMatrixId))
         .thenReturn(consultantToken);
-    when(matrixSynapseService.joinRoom(eq(NEW_ROOM_ID), anyString())).thenReturn(true);
+    when(matrixSynapseService.joinRoom(NEW_ROOM_ID, consultantToken)).thenReturn(true);
+    when(matrixSynapseService.joinRoomOnce(NEW_ROOM_ID, USER_TOKEN)).thenReturn(true);
     when(matrixSynapseService.getRoomEvent(NEW_ROOM_ID, MATRIX_EVENT_ID, USER_TOKEN))
         .thenReturn(
             Optional.of(

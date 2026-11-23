@@ -73,10 +73,21 @@ public class AgencyDepartmentMembershipBackfill {
       String roomId,
       String agencyMatrixUserId,
       List<Consultant> consultants) {
-    if (consultants == null || consultants.isEmpty() || isBlank(roomId) || sessionId == null) {
+    if (consultants != null) {
+      scheduleConsultantIds(agencyId, sessionId, roomId, agencyMatrixUserId, ids(consultants));
+    }
+  }
+
+  public void scheduleConsultantIds(
+      Long agencyId,
+      Long sessionId,
+      String roomId,
+      String agencyMatrixUserId,
+      List<String> consultantIds) {
+    if (consultantIds.isEmpty() || isBlank(roomId) || sessionId == null) {
       return;
     }
-    var pending = List.copyOf(consultants);
+    var pending = List.copyOf(consultantIds);
     // The worker re-reads the session to check entitlement, so it must not start before the
     // registration transaction that saved the room id has committed.
     if (TransactionSynchronizationManager.isSynchronizationActive()) {
@@ -97,9 +108,9 @@ public class AgencyDepartmentMembershipBackfill {
       Long sessionId,
       String roomId,
       String agencyMatrixUserId,
-      List<Consultant> pending) {
+      List<String> pending) {
     try {
-      executor.execute(() -> backfill(agencyId, sessionId, roomId, agencyMatrixUserId, pending));
+      executor.execute(() -> backfillIds(agencyId, sessionId, roomId, agencyMatrixUserId, pending));
       log.info(
           "Queued {} consultants of agency {} for background membership of room {}",
           pending.size(),
@@ -111,7 +122,7 @@ public class AgencyDepartmentMembershipBackfill {
           pending.size(),
           agencyId,
           roomId,
-          ids(pending));
+          pending);
     }
   }
 
@@ -121,10 +132,19 @@ public class AgencyDepartmentMembershipBackfill {
       String roomId,
       String agencyMatrixUserId,
       List<Consultant> consultants) {
+    return backfillIds(agencyId, sessionId, roomId, agencyMatrixUserId, ids(consultants));
+  }
+
+  private int backfillIds(
+      Long agencyId,
+      Long sessionId,
+      String roomId,
+      String agencyMatrixUserId,
+      List<String> consultants) {
     int joined = 0;
     int skipped = 0;
-    List<Consultant> givenUp = new ArrayList<>();
-    for (Consultant queued : consultants) {
+    List<String> givenUp = new ArrayList<>();
+    for (String queued : consultants) {
       var outcome = joinWithRetry(queued, agencyId, sessionId, roomId, agencyMatrixUserId);
       switch (outcome) {
         case JOINED -> joined++;
@@ -153,7 +173,7 @@ public class AgencyDepartmentMembershipBackfill {
           consultants.size(),
           agencyId,
           roomId,
-          ids(givenUp));
+          givenUp);
     }
     return joined;
   }
@@ -165,10 +185,10 @@ public class AgencyDepartmentMembershipBackfill {
   }
 
   private Outcome joinWithRetry(
-      Consultant queued, Long agencyId, Long sessionId, String roomId, String agencyMatrixUserId) {
+      String queued, Long agencyId, Long sessionId, String roomId, String agencyMatrixUserId) {
     long failureBackoffMs = INITIAL_FAILURE_BACKOFF_MS;
     for (int attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
-      var outcome = tryJoin(queued.getId(), agencyId, sessionId, roomId, agencyMatrixUserId);
+      var outcome = tryJoin(queued, agencyId, sessionId, roomId, agencyMatrixUserId);
       if (outcome.isEmpty()) {
         return Outcome.NOT_ENTITLED;
       }
@@ -189,7 +209,7 @@ public class AgencyDepartmentMembershipBackfill {
       }
       log.warn(
           "Background membership of consultant {} in room {} {}; retrying attempt {} of {} after {} ms",
-          queued.getId(),
+          queued,
           roomId,
           result.rateLimited() ? "was rate limited" : "failed",
           attempt + 1,
