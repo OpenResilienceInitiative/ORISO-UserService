@@ -39,7 +39,6 @@ jobs:
       uses: actions/checkout@v6
       with:
         repository: OpenResilienceInitiative/ORISO-AgencyService
-        # AgencyService PR #372 head: dev plus featureLiveChatFurtherCounsellingEnabled (ORISO-Frontend#2251).
         # AgencyService #389 head (featureTeamDiscussionEnabled / featureTeamDiscussionAfterAcceptEnabled,
         # ORISO-Frontend#2491) includes the previous provider. Merge AgencyService #389 before this PR so
         # the push-to-dev run against AgencyService dev stays green.

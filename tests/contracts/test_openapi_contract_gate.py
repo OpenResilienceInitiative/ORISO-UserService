@@ -150,7 +150,7 @@ class OpenApiContractGateTest(unittest.TestCase):
             workflow,
             re.compile(
                 r"repository: OpenResilienceInitiative/ORISO-AgencyService.*"
-                r"c25826f5e247ce9e711206bda340beca0b91fdd7",
+                r"c50ca29c8c63f600e6af350db5ff693a7fed3503",
                 re.DOTALL,
             ),
         )
@@ -167,7 +167,7 @@ class OpenApiContractGateTest(unittest.TestCase):
             re.compile(
                 r"repository: OpenResilienceInitiative/ORISO-TenantService.*"
                 # TenantService #393 includes the previous contract and both reservation operations.
-                r"4a608517d60d8be0a8f7b63e87a167a94c6e7508",
+                r"bd15fe30ced95362a3eeaeae1303831588d07c98",
                 re.DOTALL,
             ),
         )
