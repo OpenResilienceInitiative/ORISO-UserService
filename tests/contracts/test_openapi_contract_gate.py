@@ -166,9 +166,8 @@ class OpenApiContractGateTest(unittest.TestCase):
             workflow,
             re.compile(
                 r"repository: OpenResilienceInitiative/ORISO-TenantService.*"
-                # TenantService provider: TenantService#368 head (dev including #357 plus the
-                # featureGuestAccount* caps of UserService#1662).
-                r"b9e4036bf8924e49a0b033af1f85670dc4ca998a",
+                # TenantService #393 includes the previous contract and both reservation operations.
+                r"4a608517d60d8be0a8f7b63e87a167a94c6e7508",
                 re.DOTALL,
             ),
         )

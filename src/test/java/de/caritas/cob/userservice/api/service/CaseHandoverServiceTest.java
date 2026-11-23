@@ -4510,6 +4510,10 @@ class CaseHandoverServiceTest {
         List.of(450L, 501L, 502L),
         response.getSessions().stream().map(dto -> dto.getSession().getId()).toList());
     verify(sessionRepository, times(3)).findSessionIdsWithAnyAdditionalTopic(any(), any());
+    verify(caseHandoverRequestRepository)
+        .findLatestCandidateStatusRequests(List.of(450L, 501L, 502L), requester.getId());
+    verify(caseHandoverRequestRepository, never())
+        .findBySessionIdAndRequesterConsultantIdOrderByCreatedAtDesc(any(), any());
   }
 
   @Test
@@ -4661,6 +4665,7 @@ class CaseHandoverServiceTest {
     assertTrue(response.getSessions().isEmpty());
     verify(agencyService, never()).getAgencies(any());
     verify(sessionRepository, never()).findHandoverCandidatePage(any());
+    verifyNoInteractions(caseHandoverRequestRepository);
     verify(sessionRepository)
         .findHandoverCandidates(
             List.of(10L), requester, List.of(SessionStatus.IN_PROGRESS, SessionStatus.DONE), false);

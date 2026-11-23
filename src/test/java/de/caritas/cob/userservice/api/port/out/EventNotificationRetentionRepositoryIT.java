@@ -25,14 +25,14 @@ import org.springframework.test.context.TestPropertySource;
 class EventNotificationRetentionRepositoryIT {
 
   private static final LocalDateTime NOW = LocalDateTime.of(2026, 8, 14, 12, 0);
-  private static final LocalDateTime CUTOFF = NOW.minusDays(90);
+  private static final LocalDateTime CUTOFF = NOW.toLocalDate().minusDays(90).atStartOfDay();
 
   @Autowired private EventNotificationRepository underTest;
 
   @Test
   void deleteReadBefore_removesOnlyReadNotificationsPastTheCutoff() {
-    Long staleRead = save("stale-read", NOW.minusDays(200), NOW.minusDays(120));
-    Long recentRead = save("recent-read", NOW.minusDays(200), NOW.minusDays(10));
+    Long staleRead = save("stale-read", NOW.minusDays(200), CUTOFF.minusDays(1));
+    Long recentRead = save("recent-read", NOW.minusDays(200), CUTOFF.plusDays(1));
     Long staleUnread = save("stale-unread", NOW.minusDays(200), null);
 
     int deleted = underTest.deleteReadBefore(CUTOFF);

@@ -546,6 +546,38 @@ class MatrixSynapseServiceTest {
     verify(matrixRoomClient).createRoom("Room name", "room-alias", ACCESS_TOKEN, true);
   }
 
+  /** A room without its moderation rule is never handed out and must not stay on Synapse. */
+  @Test
+  void createRoomShouldPurgeARoomWhoseModerationRuleCouldNotBeApplied() throws Exception {
+    matrixConfig.setEncryptionEnabled(true);
+    var failure =
+        new de.caritas.cob.userservice.api.exception.matrix.MatrixRoomRuleException(
+            "rule", MATRIX_ROOM_ID);
+    when(matrixRoomClient.createRoom("Room name", "room-alias", ACCESS_TOKEN, true))
+        .thenThrow(failure);
+    stubAdminLogin();
+    when(restTemplate.exchange(
+            eq(
+                URI.create(
+                    "https://matrix.example.com/_synapse/admin/v2/rooms/%21room%3Amatrix.example.com")),
+            eq(HttpMethod.DELETE),
+            any(HttpEntity.class),
+            eq(String.class)))
+        .thenReturn(ResponseEntity.ok(""));
+
+    assertThatThrownBy(
+            () -> matrixSynapseService().createRoom("Room name", "room-alias", ACCESS_TOKEN))
+        .isSameAs(failure);
+    verify(restTemplate)
+        .exchange(
+            eq(
+                URI.create(
+                    "https://matrix.example.com/_synapse/admin/v2/rooms/%21room%3Amatrix.example.com")),
+            eq(HttpMethod.DELETE),
+            any(HttpEntity.class),
+            eq(String.class));
+  }
+
   @Test
   void banUserFromRoomAsModeratorShouldMintModeratorTokenAndBan() {
     var moderatorId = "@moderator:example.org";

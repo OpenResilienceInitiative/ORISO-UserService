@@ -7,6 +7,7 @@ import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.when;
 
 import com.neovisionaries.i18n.LanguageCode;
+import com.zaxxer.hikari.HikariDataSource;
 import de.caritas.cob.userservice.api.helper.ConsultantDisplayNameResolver;
 import de.caritas.cob.userservice.api.model.Chat;
 import de.caritas.cob.userservice.api.model.Consultant;
@@ -27,6 +28,7 @@ import de.caritas.cob.userservice.api.tenant.TenantContext;
 import de.caritas.cob.userservice.api.workflow.accountinactivity.AccountInactivityEffects;
 import de.caritas.cob.userservice.api.workflow.accountinactivity.AccountInactivityService;
 import de.caritas.cob.userservice.api.workflow.delete.service.IdentityTombstoneService;
+import io.micrometer.core.instrument.MeterRegistry;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
@@ -85,6 +87,7 @@ class EventNotificationServiceReplicaIT {
   @Autowired private AccountInactivityService accountLifecycle;
   @Autowired private JdbcTemplate jdbc;
   @Autowired private DataSource dataSource;
+  @Autowired private MeterRegistry meterRegistry;
   @Autowired private PlatformTransactionManager transactionManager;
   @MockitoBean private AccountInactivityEffects accountEffects;
 
@@ -239,6 +242,50 @@ class EventNotificationServiceReplicaIT {
           .isEqualTo(GroupChatLifecycleNotificationService.EVENT_GROUP_CHAT_REMINDER);
     }
     assertThat(signaledRecipients).containsExactlyInAnyOrderElementsOf(recipientIds);
+  }
+
+  @Test
+  void overlappingReminderCollectorsPublishOneNotificationForAnOccurrence() throws Exception {
+    var start = LocalDateTime.of(2090, 6, 1, 10, 0);
+    createProofSeries(start);
+    var member = addProofMember("overlapping-collector");
+    var seriesFailures = meterRegistry.counter("userservice.group.chat.reminder.series.failures");
+    var failuresBefore = seriesFailures.count();
+    var ready = new CountDownLatch(2);
+    var collect = new CountDownLatch(1);
+    Runnable publish =
+        () ->
+            TenantContext.runIn(
+                0L,
+                () -> {
+                  ready.countDown();
+                  await(collect);
+                  reminders.publishUpcomingReminders(start.minusMinutes(60));
+                });
+
+    var pool = dataSource.unwrap(HikariDataSource.class);
+    var previousPoolSize = pool.getMaximumPoolSize();
+    // Each collector can hold the series lock and use a second connection to commit its event.
+    pool.setMaximumPoolSize(4);
+    try (var workers = Executors.newFixedThreadPool(2)) {
+      var first = workers.submit(publish);
+      var second = workers.submit(publish);
+      try {
+        await(ready);
+      } finally {
+        collect.countDown();
+      }
+      first.get(10, TimeUnit.SECONDS);
+      second.get(10, TimeUnit.SECONDS);
+    } finally {
+      pool.setMaximumPoolSize(previousPoolSize);
+    }
+
+    assertThat(seriesFailures.count()).isEqualTo(failuresBefore);
+    assertThat(notifications.getFeed(member.getUserId(), 0, 100).getItems())
+        .singleElement()
+        .extracting(item -> item.getEventType())
+        .isEqualTo(GroupChatLifecycleNotificationService.EVENT_GROUP_CHAT_REMINDER);
   }
 
   @Test

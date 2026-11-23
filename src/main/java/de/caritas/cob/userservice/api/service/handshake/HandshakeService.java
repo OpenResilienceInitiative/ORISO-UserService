@@ -11,6 +11,8 @@ import de.caritas.cob.userservice.api.model.HandshakeSession;
 import de.caritas.cob.userservice.api.model.HandshakeSession.HandshakeStatus;
 import de.caritas.cob.userservice.api.port.out.HandshakeAuditEventRepository;
 import de.caritas.cob.userservice.api.port.out.HandshakeSessionRepository;
+import de.caritas.cob.userservice.api.workflow.scheduling.ScheduledTaskClaimService;
+import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.UUID;
@@ -41,6 +43,9 @@ public class HandshakeService {
   private static final String EVENT_CONFIRM_REJECTED = "CONFIRM_REJECTED";
   private static final String EVENT_NOT_ESTABLISHED = "SESSION_NOT_ESTABLISHED";
   private static final String EVENT_CONFIRM_LOCKED = "CONFIRM_LOCKED";
+  private static final String SWEEP_TASK_NAME = "handshake-expiry-sweep";
+  private static final String AUDIT_PURGE_TASK_NAME = "handshake-audit-retention";
+  private static final int AUDIT_PURGE_BATCH_SIZE = 1_000;
 
   private final @NonNull HandshakeSessionRepository handshakeSessionRepository;
   private final @NonNull HandshakeAuditEventRepository handshakeAuditEventRepository;
@@ -54,6 +59,7 @@ public class HandshakeService {
       identityClientConfig;
 
   private final @NonNull List<HandshakeCompletionHandler> completionHandlers;
+  private final @NonNull ScheduledTaskClaimService claims;
 
   private final de.caritas.cob.userservice.api.helper.UsernameTranscoder usernameTranscoder =
       new de.caritas.cob.userservice.api.helper.UsernameTranscoder();
@@ -64,11 +70,17 @@ public class HandshakeService {
   @Value("${handshake.audit-retention-months:12}")
   private long auditRetentionMonths;
 
+  @Value("${handshake.audit-purge-claim-duration:PT12H}")
+  private Duration auditPurgeClaimDuration;
+
   @Value("${handshake.max-confirm-attempts:5}")
   private int maxConfirmAttempts;
 
   @Value("${handshake.sweep-batch-size:200}")
   private int sweepBatchSize;
+
+  @Value("${handshake.sweep-claim-duration:PT2M}")
+  private Duration sweepClaimDuration;
 
   @Transactional
   public HandshakeItem initiate(AuthenticatedUser initiator, InitiateHandshakeRequest request) {
@@ -177,10 +189,28 @@ public class HandshakeService {
         .toList();
   }
 
-  /** Lapse sweep — a quiet no-answer leaves exactly one audit entry per session. */
+  /** Commit one bounded expiry page while holding the shared scheduler claim. */
   @Scheduled(fixedDelayString = "${handshake.sweep-delay-ms:60000}")
-  @Transactional
   public void sweepExpired() {
+    var claim = claims.tryClaimLease(SWEEP_TASK_NAME, sweepClaimDuration);
+    if (claim.isEmpty()) {
+      return;
+    }
+    var lease = claim.get();
+    try {
+      claims.runIfHeld(lease, this::expireLapsedSessions);
+    } finally {
+      try {
+        claims.release(lease);
+      } catch (RuntimeException failure) {
+        log.warn(
+            "Could not release the handshake expiry claim ({})",
+            failure.getClass().getSimpleName());
+      }
+    }
+  }
+
+  private void expireLapsedSessions() {
     handshakeSessionRepository
         .findAllByStatusAndExpiryDateBefore(
             HandshakeStatus.PENDING,
@@ -191,10 +221,21 @@ public class HandshakeService {
 
   /** ADR-018 §3: audit retention 12 months, automatic deletion. */
   @Scheduled(cron = "${handshake.audit-purge-cron:0 30 3 * * *}")
-  @Transactional
   public void purgeOldAuditEvents() {
-    handshakeAuditEventRepository.deleteAllByCreateDateBefore(
-        nowInUtc().minusMonths(auditRetentionMonths));
+    if (!claims.tryClaim(AUDIT_PURGE_TASK_NAME, auditPurgeClaimDuration)) {
+      return;
+    }
+    var cutoff = nowInUtc().minusMonths(auditRetentionMonths);
+    long total = 0;
+    int deleted;
+    do {
+      deleted =
+          handshakeAuditEventRepository.deleteBatchCreatedBefore(cutoff, AUDIT_PURGE_BATCH_SIZE);
+      total += deleted;
+    } while (deleted == AUDIT_PURGE_BATCH_SIZE);
+    if (total > 0) {
+      log.info("Removed {} expired handshake audit entries", total);
+    }
   }
 
   /**

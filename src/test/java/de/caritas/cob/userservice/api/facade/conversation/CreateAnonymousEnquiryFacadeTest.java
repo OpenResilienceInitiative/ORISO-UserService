@@ -19,12 +19,10 @@ import de.caritas.cob.userservice.api.conversation.service.AnonymousConversation
 import de.caritas.cob.userservice.api.conversation.service.user.anonymous.AnonymousUserCreatorService;
 import de.caritas.cob.userservice.api.conversation.service.user.anonymous.AnonymousUsernameRegistry;
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
-import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
 import de.caritas.cob.userservice.api.helper.UserHelper;
 import de.caritas.cob.userservice.api.manager.consultingtype.ConsultingTypeManager;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
-import de.caritas.cob.userservice.api.tenant.TenantContextProvider;
 import de.caritas.cob.userservice.consultingtypeservice.generated.web.model.ExtendedConsultingTypeResponseDTO;
 import java.util.concurrent.atomic.AtomicReference;
 import org.jeasy.random.EasyRandom;
@@ -32,7 +30,6 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
-import org.mockito.Spy;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.test.util.ReflectionTestUtils;
 
@@ -45,7 +42,6 @@ public class CreateAnonymousEnquiryFacadeTest {
   @Mock private AnonymousUsernameRegistry usernameRegistry;
   @Mock private UserHelper userHelper;
   @Mock private ConsultingTypeManager consultingTypeManager;
-  @Spy private TenantContextProvider tenantContextProvider = new TenantContextProvider();
 
   @org.junit.jupiter.api.BeforeEach
   void realDpaPolicyFixture() {
@@ -57,7 +53,6 @@ public class CreateAnonymousEnquiryFacadeTest {
             usernameRegistry,
             userHelper,
             consultingTypeManager,
-            tenantContextProvider,
             mock(de.caritas.cob.userservice.api.admin.service.tenant.TenantService.class));
   }
 
@@ -75,7 +70,7 @@ public class CreateAnonymousEnquiryFacadeTest {
             org.springframework.web.server.ResponseStatusException.class,
             () ->
                 createAnonymousEnquiryFacade.createAnonymousEnquiry(
-                    new CreateAnonymousEnquiryDTO(1)));
+                    new CreateAnonymousEnquiryDTO(1), false));
     org.junit.jupiter.api.Assertions.assertEquals(
         org.springframework.http.HttpStatus.FORBIDDEN, refused.getStatusCode());
     org.mockito.Mockito.verifyNoInteractions(
@@ -175,7 +170,7 @@ public class CreateAnonymousEnquiryFacadeTest {
                   anonymousEnquiryDTO.getConsultingType()))
               .thenReturn(consultingTypeResponseDTO);
 
-          createAnonymousEnquiryFacade.createAnonymousEnquiry(anonymousEnquiryDTO);
+          createAnonymousEnquiryFacade.createAnonymousEnquiry(anonymousEnquiryDTO, false);
 
           verifyNoInteractions(anonymousUserCreatorService);
           verifyNoInteractions(anonymousConversationCreatorService);
@@ -199,7 +194,7 @@ public class CreateAnonymousEnquiryFacadeTest {
     when(consultingTypeManager.getConsultingTypeSettings(anonymousEnquiryDTO.getConsultingType()))
         .thenReturn(consultingTypeResponseDTO);
 
-    createAnonymousEnquiryFacade.createAnonymousEnquiry(anonymousEnquiryDTO);
+    createAnonymousEnquiryFacade.createAnonymousEnquiry(anonymousEnquiryDTO, false);
 
     verify(anonymousUserCreatorService, times(1)).createAnonymousUser(any());
     verify(anonymousConversationCreatorService, times(1)).createAnonymousConversation(any(), any());
@@ -215,26 +210,11 @@ public class CreateAnonymousEnquiryFacadeTest {
   }
 
   @Test
-  void createAnonymousEnquiry_Should_WriteNothing_When_MultiTenantRouteHasNoTenant() {
-    ReflectionTestUtils.setField(tenantContextProvider, "multiTenancyEnabled", true);
-    TenantContext.clear();
-
-    assertThrows(
-        ForbiddenException.class,
-        () ->
-            createAnonymousEnquiryFacade.createAnonymousEnquiry(
-                new CreateAnonymousEnquiryDTO(CONSULTING_TYPE_ID_SUCHT)));
-
-    verifyNoInteractions(anonymousUserCreatorService, anonymousConversationCreatorService);
-  }
-
-  @Test
   void createAnonymousEnquiry_Should_WriteInTheCallersTenant_When_OneIsSet() {
-    ReflectionTestUtils.setField(tenantContextProvider, "multiTenancyEnabled", true);
     TenantContext.setCurrentTenant(5L);
     var writtenIn = givenCreationRecordsItsTenant();
 
-    createAnonymousEnquiryFacade.createAnonymousEnquiry(anonymousEnquiry());
+    createAnonymousEnquiryFacade.createAnonymousEnquiry(anonymousEnquiry(), false);
 
     assertEquals(5L, writtenIn.get());
   }
@@ -244,7 +224,7 @@ public class CreateAnonymousEnquiryFacadeTest {
     TenantContext.clear();
     var writtenIn = givenCreationRecordsItsTenant();
 
-    createAnonymousEnquiryFacade.createAnonymousEnquiry(anonymousEnquiry());
+    createAnonymousEnquiryFacade.createAnonymousEnquiry(anonymousEnquiry(), false);
 
     assertNull(writtenIn.get());
     verify(anonymousUserCreatorService).createAnonymousUser(any());

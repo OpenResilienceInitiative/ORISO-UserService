@@ -891,14 +891,17 @@ public class SessionSupervisorFacade {
     if (session.getAgencyId() == null) {
       return false;
     }
-    // Check if consultant has agency relationship
-    // Note: getConsultantAgencies() might return null if not loaded, so handle that
+    // The standing-supervisor attach runs addSupervisor by self-invocation, outside any
+    // transaction, so the consultant here can be detached: touching its uninitialised lazy
+    // collection throws (ORISO-Frontend#2386 on Dev, 22 Nov 2026). Use the collection only when it
+    // is really loaded; otherwise ask the repository.
     Set<ConsultantAgency> consultantAgencies = consultant.getConsultantAgencies();
-    if (consultantAgencies == null || consultantAgencies.isEmpty()) {
+    if (consultantAgencies == null
+        || !org.hibernate.Hibernate.isInitialized(consultantAgencies)
+        || consultantAgencies.isEmpty()) {
       log.warn(
           "Consultant {} has no loaded ConsultantAgencies. Checking via repository.",
           consultant.getId());
-      // Fallback: Check via repository if relationship not loaded
       List<ConsultantAgency> agencies =
           consultantAgencyRepository.findByConsultantIdAndDeleteDateIsNull(consultant.getId());
       return agencies.stream().anyMatch(ca -> ca.getAgencyId().equals(session.getAgencyId()));
