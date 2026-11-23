@@ -1189,16 +1189,39 @@ class TeamDiscussionFacadeTest {
   }
 
   @Test
-  void theAssignedCounsellorTakesPartEvenOutsideTheAgency() {
-    existing(TeamDiscussion.Status.ARCHIVED);
+  void theAssignedCounsellorRemovedFromTheAgencyIsRefused() {
+    existing(TeamDiscussion.Status.OPEN);
     accepted();
+    when(featureGate.continuesAfterAccept(session)).thenReturn(true);
     when(consultantAgencyRepository.existsByConsultantIdAndAgencyIdAndDeleteDateIsNull(
             CONSULTANT_ID, AGENCY_ID))
         .thenReturn(false);
 
-    var view = facade.getDiscussion(SESSION_ID, CONSULTANT_ID);
+    assertThatThrownBy(() -> facade.getDiscussion(SESSION_ID, CONSULTANT_ID))
+        .isInstanceOf(ForbiddenException.class);
+    assertThatThrownBy(() -> facade.getOrCreateDiscussion(SESSION_ID, CONSULTANT_ID))
+        .isInstanceOf(ForbiddenException.class);
+    assertThatThrownBy(() -> facade.closeDiscussion(SESSION_ID, CONSULTANT_ID))
+        .isInstanceOf(ForbiddenException.class);
+  }
 
-    assertThat(view.get().status()).isEqualTo(TeamDiscussion.Status.ARCHIVED);
+  @Test
+  void theAssignedCounsellorIsRefusedByTheTransactionCheckToo() {
+    var discussion = existing(TeamDiscussion.Status.OPEN);
+    accepted();
+    var tx =
+        new de.caritas.cob.userservice.api.service.teamdiscussion.TeamDiscussionAccessTransactions(
+            sessionRepository,
+            consultantRepository,
+            consultantAgencyRepository,
+            teamDiscussionRepository,
+            participantRepository);
+    when(consultantAgencyRepository.existsByConsultantIdAndAgencyIdAndDeleteDateIsNull(
+            CONSULTANT_ID, AGENCY_ID))
+        .thenReturn(false);
+
+    assertThatThrownBy(() -> tx.read(SESSION_ID, discussion.getId(), CONSULTANT_ID, a -> a))
+        .isInstanceOf(ForbiddenException.class);
   }
 
   @Test

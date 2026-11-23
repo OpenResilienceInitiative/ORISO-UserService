@@ -346,13 +346,11 @@ public class TeamDiscussionFacade {
         consultantRepository
             .findById(consultantId)
             .orElseThrow(() -> new ForbiddenException("Consultant not found"));
-    boolean assigned =
-        session.getConsultant() != null
-            && consultant.getId().equals(session.getConsultant().getId());
-    if (!assigned
-        && (session.getAgencyId() == null
-            || !consultantAgencyRepository.existsByConsultantIdAndAgencyIdAndDeleteDateIsNull(
-                consultant.getId(), session.getAgencyId()))) {
+    // Same rule as TeamDiscussionAccessTransactions: an active membership in the case's agency,
+    // also for the assigned counsellor after acceptance (FE#2491).
+    if (session.getAgencyId() == null
+        || !consultantAgencyRepository.existsByConsultantIdAndAgencyIdAndDeleteDateIsNull(
+            consultant.getId(), session.getAgencyId())) {
       throw new ForbiddenException(
           "Consultant is not a member of the enquiry's agency and may not access its team"
               + " discussion");
