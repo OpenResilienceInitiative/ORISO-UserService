@@ -217,10 +217,10 @@
 			<version>${json-smart.version}</version>
 		</dependency>
 
-		<!-- Search dependency -->
+		<!-- Legacy search annotations and utilities. Spring Data owns the queries. -->
 		<dependency>
 			<groupId>org.hibernate</groupId>
-			<artifactId>hibernate-search-orm</artifactId>
+			<artifactId>hibernate-search-engine</artifactId>
 			<version>5.11.12.Final</version>
 		</dependency>
 
