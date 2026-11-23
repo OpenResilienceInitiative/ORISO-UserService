@@ -6,6 +6,7 @@ import de.caritas.cob.userservice.api.exception.matrix.MatrixCreateRoomException
 import de.caritas.cob.userservice.api.exception.matrix.MatrixCreateRoomRateLimitedException;
 import de.caritas.cob.userservice.api.exception.matrix.MatrixInviteUserException;
 import de.caritas.cob.userservice.api.exception.matrix.MatrixJoinRateLimitedException;
+import de.caritas.cob.userservice.api.exception.matrix.MatrixJoinTemporarilyUnavailableException;
 import de.caritas.cob.userservice.api.model.AgencyEnquiryRoomAttempt.InitialContact;
 import de.caritas.cob.userservice.api.model.AgencyEnquiryRoomAttempt.RequesterJoinPlan;
 import de.caritas.cob.userservice.api.model.Consultant;
@@ -98,9 +99,7 @@ public class AgencyPreAssignmentRoomService {
         session.setMatrixRoomId(current.get().getMatrixRoomId());
         return;
       }
-      var recovery = roomAttempts.claimRequesterJoin(session, user);
-      if (recovery.pending()) {
-        recovery.claim().ifPresent(claim -> joinPreparedRoom(session, user, claim, false, 0));
+      if (resumePreparedRoom(session, user)) {
         return;
       }
       // Checked only while holding the marker: a legacy repair that just finished cannot be
@@ -113,18 +112,34 @@ public class AgencyPreAssignmentRoomService {
       }
       lastRepairStart.put(sessionId, now);
       log.info("Repairing the missing agency holding room of session {}", sessionId);
-      ensureHoldingRoom(session, user);
+      createHoldingRoom(session, user);
     } finally {
       repairsInFlight.remove(sessionId);
     }
   }
 
   public void ensureHoldingRoom(Session session, User user) {
-    long started = System.nanoTime();
     if (session == null || user == null) {
       return;
     }
+    if (session.getId() != null
+        && session.getMatrixRoomId() == null
+        && session.getAgencyId() != null
+        && !isBlank(user.getMatrixUserId())
+        && resumePreparedRoom(session, user)) {
+      return;
+    }
+    createHoldingRoom(session, user);
+  }
 
+  private boolean resumePreparedRoom(Session session, User user) {
+    var recovery = roomAttempts.claimRequesterJoin(session, user);
+    recovery.claim().ifPresent(claim -> joinPreparedRoom(session, user, claim, false, 0));
+    return recovery.pending();
+  }
+
+  private void createHoldingRoom(Session session, User user) {
+    long started = System.nanoTime();
     if (session.getMatrixRoomId() != null) {
       log.debug(
           "Session {} already has Matrix room {} configured, skipping agency holding room.",
@@ -342,6 +357,12 @@ public class AgencyPreAssignmentRoomService {
             .ifPresent(nextClaim -> joinPreparedRoom(session, user, nextClaim, false, 0));
       }
       return;
+    } catch (MatrixJoinTemporarilyUnavailableException e) {
+      roomAttempts.deferRequesterJoin(claim, REPAIR_COOLDOWN.toMillis());
+      log.info(
+          "Holding-room join deferred after a temporary Matrix failure for session {}",
+          session.getId());
+      return;
     }
 
     var plan = claim.plan();
@@ -353,9 +374,7 @@ public class AgencyPreAssignmentRoomService {
     if (binding.isEmpty()) {
       roomAttempts.finishRequesterJoin(claim);
       log.warn(
-          "Matrix holding room {} was not bound to session {} because publication was refused",
-          claim.roomId(),
-          session.getId());
+          "Publication of the prepared holding room was refused for session {}", session.getId());
       return;
     }
     var confirmedRoomId = binding.get();
@@ -363,16 +382,12 @@ public class AgencyPreAssignmentRoomService {
     if (!claim.roomId().equals(confirmedRoomId)) {
       roomAttempts.finishRequesterJoin(claim);
       log.warn(
-          "Matrix holding room {} was not bound to session {} because publication returned confirmed room {}",
-          claim.roomId(),
-          session.getId(),
-          confirmedRoomId);
+          "An existing room binding superseded the prepared room for session {}", session.getId());
       return;
     }
 
     log.info(
-        "Configured agency holding Matrix room {} for session {} (agency {}).",
-        confirmedRoomId,
+        "Configured agency holding room for session {} (agency {}).",
         session.getId(),
         session.getAgencyId());
     departmentMembershipBackfill.scheduleConsultantIds(

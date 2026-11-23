@@ -896,6 +896,23 @@ class MatrixRoomClientTest {
   }
 
   @Test
+  void joinRoomOnceSurfacesTemporaryServiceFailureWithoutRetrying() {
+    var joinUrl = uri(API_URL + "/_matrix/client/r0/rooms/" + ENCODED_ROOM_ID + "/join");
+    when(restTemplate.postForEntity(
+            eq(joinUrl), org.mockito.ArgumentMatchers.any(HttpEntity.class), eq(Map.class)))
+        .thenThrow(
+            new org.springframework.web.client.HttpServerErrorException(
+                HttpStatus.SERVICE_UNAVAILABLE));
+
+    assertThatThrownBy(() -> matrixRoomClient.joinRoomOnce(ROOM_ID, ACCESS_TOKEN))
+        .hasMessage("Matrix room join is temporarily unavailable")
+        .hasNoCause();
+    verify(restTemplate)
+        .postForEntity(
+            eq(joinUrl), org.mockito.ArgumentMatchers.any(HttpEntity.class), eq(Map.class));
+  }
+
+  @Test
   void joinRoomOnce_ShouldHonorTheLongerRetryAfterHeader() {
     var headers = new HttpHeaders();
     headers.set(HttpHeaders.RETRY_AFTER, "20");

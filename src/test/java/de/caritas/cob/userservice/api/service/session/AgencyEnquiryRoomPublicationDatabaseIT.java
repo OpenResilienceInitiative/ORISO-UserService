@@ -1,6 +1,7 @@
 package de.caritas.cob.userservice.api.service.session;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
@@ -32,10 +33,10 @@ import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
-import java.util.concurrent.Callable;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import org.hibernate.SessionFactory;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -50,6 +51,7 @@ import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import org.springframework.test.util.AopTestUtils;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.annotation.Propagation;
@@ -339,26 +341,73 @@ class AgencyEnquiryRoomPublicationDatabaseIT {
     roomAttempts.deferRequesterJoin(first, 1_000L);
     when(clock.instant()).thenReturn(Instant.parse("2026-11-19T12:00:01Z"));
 
-    var start = new CountDownLatch(1);
-    Callable<Boolean> claim =
-        () -> {
-          TenantContext.setCurrentTenant(TENANT_ID);
-          try {
-            if (!start.await(5, TimeUnit.SECONDS)) {
-              throw new IllegalStateException("The claim fixture did not start");
-            }
-            return roomAttempts.claimRequesterJoin(enquiry, requester).claim().isPresent();
-          } finally {
-            TenantContext.clear();
-          }
-        };
-    try (var executor = Executors.newFixedThreadPool(2)) {
-      var left = executor.submit(claim);
-      var right = executor.submit(claim);
-      start.countDown();
+    // Keep the first claim in an explicit transaction so the second reaches the real lock while
+    // it is held. Invoking the target directly keeps REQUIRES_NEW from committing it early.
+    AgencyEnquiryRoomAttempts target = AopTestUtils.getTargetObject(roomAttempts);
+    var firstClaimed = new CountDownLatch(1);
+    var contenderConnected = new CountDownLatch(1);
+    var release = new CountDownLatch(1);
+    var transaction = new TransactionTemplate(transactionManager);
+    transaction.setTimeout(8);
+    var executor = Executors.newFixedThreadPool(2, Thread.ofPlatform().daemon().factory());
+    var owner =
+        executor.submit(
+            () -> {
+              TenantContext.setCurrentTenant(TENANT_ID);
+              try {
+                return transaction.execute(
+                    status -> {
+                      var claim = target.claimRequesterJoin(enquiry, requester).claim();
+                      firstClaimed.countDown();
+                      awaitClaimFixture(release);
+                      return claim;
+                    });
+              } finally {
+                TenantContext.clear();
+              }
+            });
+    try {
+      awaitClaimFixture(firstClaimed);
+      var contender =
+          executor.submit(
+              () -> {
+                TenantContext.setCurrentTenant(TENANT_ID);
+                try {
+                  return transaction.execute(
+                      status -> {
+                        jdbc.queryForObject("SELECT 1", Integer.class);
+                        contenderConnected.countDown();
+                        return target.claimRequesterJoin(enquiry, requester);
+                      });
+                } finally {
+                  TenantContext.clear();
+                }
+              });
+      awaitClaimFixture(contenderConnected);
+      assertThatThrownBy(() -> contender.get(250, TimeUnit.MILLISECONDS))
+          .isInstanceOf(TimeoutException.class);
+      release.countDown();
 
-      assertThat(List.of(left.get(10, TimeUnit.SECONDS), right.get(10, TimeUnit.SECONDS)))
-          .containsExactlyInAnyOrder(true, false);
+      assertThat(owner.get(5, TimeUnit.SECONDS))
+          .hasValueSatisfying(claim -> assertThat(claim.attemptId()).isEqualTo(attemptId));
+      var recovery = contender.get(5, TimeUnit.SECONDS);
+      assertThat(recovery.pending()).isTrue();
+      assertThat(recovery.claim()).isEmpty();
+    } finally {
+      release.countDown();
+      executor.shutdownNow();
+      assertThat(executor.awaitTermination(9, TimeUnit.SECONDS)).isTrue();
+    }
+  }
+
+  private static void awaitClaimFixture(CountDownLatch signal) {
+    try {
+      if (!signal.await(4, TimeUnit.SECONDS)) {
+        throw new IllegalStateException("The claim fixture did not reach its checkpoint");
+      }
+    } catch (InterruptedException interrupted) {
+      Thread.currentThread().interrupt();
+      throw new IllegalStateException("The claim fixture was interrupted", interrupted);
     }
   }
 

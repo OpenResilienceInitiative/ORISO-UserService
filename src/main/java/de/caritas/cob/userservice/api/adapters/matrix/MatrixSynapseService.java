@@ -20,6 +20,7 @@ import de.caritas.cob.userservice.api.exception.matrix.MatrixCreateRoomException
 import de.caritas.cob.userservice.api.exception.matrix.MatrixCreateUserException;
 import de.caritas.cob.userservice.api.exception.matrix.MatrixInviteUserException;
 import de.caritas.cob.userservice.api.exception.matrix.MatrixJoinRateLimitedException;
+import de.caritas.cob.userservice.api.exception.matrix.MatrixJoinTemporarilyUnavailableException;
 import de.caritas.cob.userservice.api.helper.MatrixIds;
 import de.caritas.cob.userservice.api.port.out.MatrixRoomMembershipLookup;
 import de.caritas.cob.userservice.api.port.out.MatrixUserClient;
@@ -1718,7 +1719,7 @@ public class MatrixSynapseService implements MatrixUserClient, MatrixRoomMembers
   }
 
   public boolean joinRoomOnce(String roomId, String accessToken)
-      throws MatrixJoinRateLimitedException {
+      throws MatrixJoinRateLimitedException, MatrixJoinTemporarilyUnavailableException {
     return matrixRoomClient.joinRoomOnce(roomId, accessToken);
   }
 

@@ -13,6 +13,7 @@ import de.caritas.cob.userservice.api.exception.matrix.MatrixCreateRoomRateLimit
 import de.caritas.cob.userservice.api.exception.matrix.MatrixInviteRateLimitedException;
 import de.caritas.cob.userservice.api.exception.matrix.MatrixInviteUserException;
 import de.caritas.cob.userservice.api.exception.matrix.MatrixJoinRateLimitedException;
+import de.caritas.cob.userservice.api.exception.matrix.MatrixJoinTemporarilyUnavailableException;
 import java.net.URI;
 import java.util.HashMap;
 import java.util.Map;
@@ -27,6 +28,7 @@ import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.HttpClientErrorException;
+import org.springframework.web.client.ResourceAccessException;
 import org.springframework.web.client.RestClientResponseException;
 import org.springframework.web.client.RestTemplate;
 
@@ -617,13 +619,13 @@ public class MatrixRoomClient {
   public boolean joinRoom(String roomId, String accessToken) {
     try {
       return joinRoomOnce(roomId, accessToken);
-    } catch (MatrixJoinRateLimitedException ignored) {
+    } catch (MatrixJoinRateLimitedException | MatrixJoinTemporarilyUnavailableException ignored) {
       return false;
     }
   }
 
   public boolean joinRoomOnce(String roomId, String accessToken)
-      throws MatrixJoinRateLimitedException {
+      throws MatrixJoinRateLimitedException, MatrixJoinTemporarilyUnavailableException {
     var roomRef = redactor.roomPseudonym(roomId);
     try {
       var headers = getClientHttpHeaders(accessToken);
@@ -639,6 +641,9 @@ public class MatrixRoomClient {
         log.info("Successfully joined Matrix room {}", roomRef);
         return true;
       } else {
+        if (response.getStatusCode().is5xxServerError()) {
+          throw new MatrixJoinTemporarilyUnavailableException();
+        }
         log.warn(
             "Failed to join Matrix room {} (HTTP {})", roomRef, response.getStatusCode().value());
         return false;
@@ -665,6 +670,13 @@ public class MatrixRoomClient {
           log.info("User already in Matrix room {}, skipping join", roomRef);
           return true;
         }
+      }
+      if (ex instanceof MatrixJoinTemporarilyUnavailableException
+          || ex instanceof ResourceAccessException
+          || (ex instanceof RestClientResponseException response
+              && response.getStatusCode().is5xxServerError())) {
+        log.warn("Matrix join temporarily unavailable for room {} ({})", roomRef, failureType(ex));
+        throw new MatrixJoinTemporarilyUnavailableException();
       }
       log.error("Could not join Matrix room {} ({})", roomRef, failureType(ex));
       return false;

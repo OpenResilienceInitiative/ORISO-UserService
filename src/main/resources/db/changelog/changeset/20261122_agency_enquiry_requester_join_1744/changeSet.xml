@@ -2,16 +2,32 @@
 <databaseChangeLog xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
   xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
   xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.3.xsd">
-  <changeSet id="20261122-agency-enquiry-requester-join-1744" author="oriso">
+  <!-- Keep these additive columns on application rollback so already recorded joins survive. -->
+  <changeSet id="20261122-agency-enquiry-requester-join-plan-1744" author="oriso">
+    <preConditions onFail="MARK_RAN" onError="HALT">
+      <not><columnExists tableName="agency_enquiry_room_attempt" columnName="requester_join_plan"/></not>
+    </preConditions>
     <addColumn tableName="agency_enquiry_room_attempt">
       <column name="requester_join_plan" type="json"/>
+    </addColumn>
+    <rollback><sql>SELECT 1</sql></rollback>
+  </changeSet>
+  <changeSet id="20261122-agency-enquiry-requester-join-ready-at-1744" author="oriso">
+    <preConditions onFail="MARK_RAN" onError="HALT">
+      <not><columnExists tableName="agency_enquiry_room_attempt" columnName="requester_join_ready_at"/></not>
+    </preConditions>
+    <addColumn tableName="agency_enquiry_room_attempt">
       <column name="requester_join_ready_at" type="datetime(6)"/>
+    </addColumn>
+    <rollback><sql>SELECT 1</sql></rollback>
+  </changeSet>
+  <changeSet id="20261122-agency-enquiry-requester-join-claim-1744" author="oriso">
+    <preConditions onFail="MARK_RAN" onError="HALT">
+      <not><columnExists tableName="agency_enquiry_room_attempt" columnName="requester_join_claim"/></not>
+    </preConditions>
+    <addColumn tableName="agency_enquiry_room_attempt">
       <column name="requester_join_claim" type="varchar(36)"/>
     </addColumn>
-    <rollback>
-      <dropColumn tableName="agency_enquiry_room_attempt" columnName="requester_join_claim"/>
-      <dropColumn tableName="agency_enquiry_room_attempt" columnName="requester_join_ready_at"/>
-      <dropColumn tableName="agency_enquiry_room_attempt" columnName="requester_join_plan"/>
-    </rollback>
+    <rollback><sql>SELECT 1</sql></rollback>
   </changeSet>
 </databaseChangeLog>
