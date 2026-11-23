@@ -19,6 +19,7 @@ import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteTargetR
 import de.caritas.cob.userservice.api.service.accountinvite.InviteEmailTemplateKind;
 import de.caritas.cob.userservice.api.service.accountinvite.mail.InviteMailDispatchService;
 import de.caritas.cob.userservice.api.service.accountinvite.mail.InviteMailOrigin;
+import de.caritas.cob.userservice.api.service.notification.DpaAdminNoticeOutboxConsumer.Event;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
 import de.caritas.cob.userservice.tenantadminservice.generated.web.model.DpaSignatureDTO;
 import jakarta.annotation.PreDestroy;
@@ -31,6 +32,7 @@ import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
 import java.time.temporal.ChronoUnit;
 import java.util.Comparator;
+import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
@@ -39,10 +41,13 @@ import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.Executor;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.Function;
 import java.util.function.UnaryOperator;
 import java.util.stream.Stream;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.dao.TransientDataAccessException;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
@@ -65,18 +70,20 @@ import org.springframework.web.client.HttpClientErrorException;
  * <p>Per-role deduplication: a ledger row per (tenant, signed version, recipient role) is claimed
  * in its own transaction BEFORE sending — of two concurrent hints exactly one wins the unique
  * constraint. New verified administrator claims stay pending through mail preparation, so a
- * recovery sweep can pick them up after interruption. Explicit handoff failures release the claim
- * so a later hint can retry. Legacy and signer claims also release on preparation failure.
+ * recovery sweep can pick them up after interruption. Hint-only claims retain their existing
+ * release policy so a later hint can retry. An exact outbox claim retains its producer event and
+ * recipient evidence after a failed handoff.
  *
- * <p><b>Deliberate duplicate on an uncertain delivery (#1341).</b> The release happens for EVERY
- * failure before the handover, including {@link
+ * <p><b>Deliberate duplicate on an uncertain delivery (#1341).</b> Hint-only claims still release
+ * on dispatch failure, including {@link
  * de.caritas.cob.userservice.api.exception.SmtpSendException.DeliveryDisposition#DELIVERY_UNCERTAIN}
  * — the case where SMTP may already have accepted the mail but the client never saw the
  * confirmation (a 502 or a timeout from a Träger's own relay). A later hint can then deliver a
  * SECOND "contract signed" notice for the same signature. That is the chosen trade-off, decided by
  * Frank on 2026-10-02: <b>better twice than never.</b> The notice is the signal that unblocks the
  * organisation's setup, so a missing one stalls the Träger while a duplicate only annoys one
- * administrator.
+ * administrator. An uncertain result for an exact outbox claim is held with its original evidence
+ * while the durable handoff contract is being prepared.
  *
  * <p>This is the opposite of {@code InviteDelivery}, which KEEPS its claim on an uncertain outcome.
  * An invite mail carries a single-use token: re-sending mints a second link and silently kills the
@@ -101,6 +108,7 @@ public class DpaSignedNoticeService {
   private static final Duration ADMIN_RECOVERY_BUDGET = Duration.ofSeconds(45);
   private static final Duration ADMIN_RECOVERY_DELAY = Duration.ofMinutes(1);
   private static final Duration ADMIN_PROOF_RETRY_DELAY = Duration.ofMinutes(15);
+  private static final int ADMIN_REARM_ATTEMPTS = 3;
   // A recorded recipient that still disagrees with the current one after this long is not a
   // transient read: the claim leaves automatic recovery and waits for an operator to reconcile it.
   private static final Duration ADMIN_RECIPIENT_MISMATCH_PARK_AFTER = Duration.ofHours(24);
@@ -411,8 +419,34 @@ public class DpaSignedNoticeService {
   }
 
   void retryPendingAdminNotices() {
+    retryPendingAdminNotices(
+        noticeRepository.findDueAdminNoticeIds(nowUtc(), ADMIN_RECOVERY_BATCH),
+        claim -> forwardedSignatures(claim.getTenantId()));
+  }
+
+  void retryPendingExactAdminNotices(Function<Event, Optional<DpaSignatureDTO>> readExact) {
+    retryPendingAdminNotices(
+        noticeRepository.findDueExactAdminNoticeIds(nowUtc(), ADMIN_RECOVERY_BATCH),
+        claim -> {
+          if (claim.getAdminSourceEventId() == null
+              || claim.getAdminSourceSignedAtEpochMillis() == null) {
+            return Stream.empty();
+          }
+          return readExact
+              .apply(
+                  new Event(
+                      claim.getAdminSourceEventId(),
+                      claim.getTenantId(),
+                      claim.getAdminSourceSignedAtEpochMillis()))
+              .stream()
+              .filter(DpaSignedNoticeService::isSignedForward);
+        });
+  }
+
+  private void retryPendingAdminNotices(
+      List<Long> due, Function<DpaSignedNotice, Stream<DpaSignatureDTO>> readSignatures) {
     long started = System.nanoTime();
-    for (long id : noticeRepository.findDueAdminNoticeIds(nowUtc(), ADMIN_RECOVERY_BATCH)) {
+    for (long id : due) {
       if (System.nanoTime() - started >= ADMIN_RECOVERY_BUDGET.toNanos()) {
         break;
       }
@@ -423,7 +457,9 @@ public class DpaSignedNoticeService {
             requiresNewTransaction.execute(
                 tx -> noticeRepository.reserveAdminPreparation(id, now, reservedUntil));
         if (Integer.valueOf(1).equals(reserved)) {
-          noticeRepository.findById(id).ifPresent(claim -> retryAdminNotice(claim, reservedUntil));
+          noticeRepository
+              .findById(id)
+              .ifPresent(claim -> retryAdminNotice(claim, reservedUntil, readSignatures));
         }
       } catch (RuntimeException failure) {
         log.warn(
@@ -434,7 +470,10 @@ public class DpaSignedNoticeService {
     }
   }
 
-  private void retryAdminNotice(DpaSignedNotice claim, LocalDateTime reservedUntil) {
+  private void retryAdminNotice(
+      DpaSignedNotice claim,
+      LocalDateTime reservedUntil,
+      Function<DpaSignedNotice, Stream<DpaSignatureDTO>> readSignatures) {
     if (claim.getNoticeRole() != NoticeRole.ADMIN
         || claim.getSentAt() != null
         || !reservedUntil.equals(claim.getAdminNextAttemptAt())
@@ -446,7 +485,8 @@ public class DpaSignedNoticeService {
         tenantId,
         () -> {
           var signature =
-              forwardedSignatures(tenantId)
+              readSignatures
+                  .apply(claim)
                   .filter(row -> Objects.equals(row.getTenantId(), tenantId))
                   .filter(row -> claim.getDpaVersion().equals(dedupKeyFor(row)))
                   .filter(row -> claim.getAdminRecoverySignatureAt().equals(row.getSignedAt()))
@@ -529,6 +569,81 @@ public class DpaSignedNoticeService {
     return LocalDateTime.ofInstant(clock.instant(), ZoneOffset.UTC).truncatedTo(ChronoUnit.MICROS);
   }
 
+  /** The caller has matched the key against a separate authenticated, exact audit read. */
+  boolean acceptExactAdminNotice(Event event, DpaSignatureDTO signature) {
+    if (!Objects.equals(event.tenantId(), signature.getTenantId())
+        || !isSignedForward(signature)
+        || isBlank(signature.getDpaVersion())
+        || isBlank(signature.getSignedAt())
+        || signature.getSignedAt().length() > 64) {
+      return false;
+    }
+    var accepted = new AtomicBoolean();
+    TenantContext.runIn(
+        event.tenantId(),
+        () -> {
+          var recipient = resolveRecipient(event.tenantId(), signature);
+          if (recipient.isEmpty()) {
+            return;
+          }
+          var existing =
+              noticeRepository
+                  .findByAdminSourceEventId(event.id())
+                  .or(
+                      () ->
+                          claimNotice(
+                              event.tenantId(),
+                              signature,
+                              recipient.get(),
+                              NoticeRole.ADMIN,
+                              event))
+                  .or(() -> bindDeliveredAdminHint(event, signature, recipient.get()));
+          accepted.set(
+              existing
+                  .filter(
+                      row ->
+                          row.getNoticeRole() == NoticeRole.ADMIN
+                              && Objects.equals(row.getTenantId(), event.tenantId())
+                              && Objects.equals(
+                                  row.getAdminSourceSignedAtEpochMillis(),
+                                  event.signedAtEpochMillis())
+                              && Objects.equals(
+                                  row.getAdminRecoverySignatureAt(), signature.getSignedAt())
+                              && row.getDpaVersion().equals(signature.getDpaVersion())
+                              && row.getRecipientEmail().equals(recipient.get().email())
+                              && (row.getSentAt() != null || row.getAdminNextAttemptAt() != null))
+                  .isPresent());
+        });
+    return accepted.get();
+  }
+
+  private Optional<DpaSignedNotice> bindDeliveredAdminHint(
+      Event event, DpaSignatureDTO signature, Recipient recipient) {
+    try {
+      requiresNewTransaction.executeWithoutResult(
+          tx ->
+              noticeRepository
+                  .lockDeliveredAdminHint(event.tenantId(), signature.getDpaVersion())
+                  .filter(
+                      row ->
+                          row.getDpaVersion().equals(signature.getDpaVersion())
+                              && signature.getSignedAt().equals(row.getAdminRecoverySignatureAt())
+                              && recipient.email().equals(row.getRecipientEmail()))
+                  .ifPresent(
+                      row ->
+                          noticeRepository.bindDeliveredAdminHint(
+                              row.getId(), event.id(), event.signedAtEpochMillis())));
+    } catch (DataIntegrityViolationException concurrentBinding) {
+      // An event can only own one row. The complete proof is checked on the committed binding.
+    }
+    return noticeRepository.findByAdminSourceEventId(event.id());
+  }
+
+  private static boolean isSignedForward(DpaSignatureDTO signature) {
+    return STATUS_SIGNED.equalsIgnoreCase(signature.getStatus())
+        && SOURCE_FORWARDED_EXTERNAL.equalsIgnoreCase(signature.getSource());
+  }
+
   private Optional<Recipient> resolveRecipient(Long tenantId, DpaSignatureDTO signature) {
     if (!isBlank(signature.getForwardedByUserId())) {
       return adminRepository
@@ -567,6 +682,11 @@ public class DpaSignedNoticeService {
   /** Claims the exactly-once ledger row; empty when another hint already claimed it. */
   private Optional<DpaSignedNotice> claimNotice(
       Long tenantId, DpaSignatureDTO signature, Recipient recipient, NoticeRole role) {
+    return claimNotice(tenantId, signature, recipient, role, null);
+  }
+
+  private Optional<DpaSignedNotice> claimNotice(
+      Long tenantId, DpaSignatureDTO signature, Recipient recipient, NoticeRole role, Event event) {
     var dpaVersion = dedupKeyFor(signature);
     var signedAt = signature.getSignedAt();
     boolean recoverableAdmin =
@@ -586,6 +706,9 @@ public class DpaSignedNoticeService {
                           .recipientEmail(recipient.email())
                           .signedAt(parseDateTime(signedAt))
                           .adminRecoverySignatureAt(recoverableAdmin ? signedAt : null)
+                          .adminSourceEventId(event == null ? null : event.id())
+                          .adminSourceSignedAtEpochMillis(
+                              event == null ? null : event.signedAtEpochMillis())
                           .adminNextAttemptAt(
                               recoverableAdmin ? nowUtc().plus(ADMIN_RECOVERY_DELAY) : null)
                           .createDate(LocalDateTime.now())
@@ -636,7 +759,11 @@ public class DpaSignedNoticeService {
           recipient.language(),
           InviteMailOrigin.of(tenantId, TenantSystemEmailDelivery.Purpose.DPA_SIGNED_NOTICE));
     } catch (RuntimeException failure) {
-      releaseClaim(claim, tenantId, failure);
+      if (claim.getAdminSourceEventId() == null) {
+        releaseClaim(claim, tenantId, failure);
+      } else {
+        retainExactAdminNotice(claim, dispositionOf(failure));
+      }
       return;
     }
 
@@ -664,6 +791,63 @@ public class DpaSignedNoticeService {
   }
 
   private record PreparedNotice(String subject, String body) {}
+
+  private void retainExactAdminNotice(DpaSignedNotice notice, DeliveryDisposition disposition) {
+    if (disposition == DeliveryDisposition.CONFIRMED_NOT_SENT) {
+      rearmConfirmedUnsentAdminNotice(notice);
+    }
+    log.warn("Exact DPA administrator notice {} retained after {}", notice.getId(), disposition);
+  }
+
+  private void rearmConfirmedUnsentAdminNotice(DpaSignedNotice notice) {
+    var nextAttempt = nowUtc().plus(ADMIN_PROOF_RETRY_DELAY);
+    for (int attempt = 1; attempt <= ADMIN_REARM_ATTEMPTS; attempt++) {
+      var updateFinished = new AtomicBoolean();
+      try {
+        requiresNewTransaction.executeWithoutResult(
+            tx -> {
+              noticeRepository.rearmExactAdminNotice(
+                  notice.getId(), notice.getAdminSourceEventId(), nextAttempt);
+              updateFinished.set(true);
+            });
+        return;
+      } catch (RuntimeException failure) {
+        // A commit error can arrive after the write was applied. Do not replay across that
+        // boundary, where another worker could already have started a new SMTP attempt.
+        if (updateFinished.get()
+            || !(failure instanceof TransientDataAccessException)
+            || attempt == ADMIN_REARM_ATTEMPTS) {
+          verifyExactAdminRearm(notice, failure);
+          return;
+        }
+      }
+    }
+  }
+
+  private void verifyExactAdminRearm(DpaSignedNotice notice, RuntimeException rearmFailure) {
+    long noticeId = notice.getId();
+    try {
+      if (noticeRepository
+          .findByAdminSourceEventId(notice.getAdminSourceEventId())
+          .filter(
+              row ->
+                  row.getId().equals(notice.getId())
+                      && (row.getSentAt() != null || row.getAdminNextAttemptAt() != null))
+          .isPresent()) {
+        return;
+      }
+    } catch (RuntimeException readbackFailure) {
+      log.warn(
+          "Could not verify exact DPA administrator notice {} after rearm failure ({})",
+          noticeId,
+          readbackFailure.getClass().getSimpleName());
+    }
+    metrics.recordClaimStuck();
+    log.error(
+        "Exact DPA administrator notice {} requires reconciliation after confirmed non-delivery ({})",
+        noticeId,
+        rearmFailure.getClass().getSimpleName());
+  }
 
   private PreparedNotice prepareNotice(
       Long tenantId, DpaSignatureDTO signature, Recipient recipient, DpaSignedNotice claim) {

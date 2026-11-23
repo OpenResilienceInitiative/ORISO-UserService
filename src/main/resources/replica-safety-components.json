@@ -930,6 +930,30 @@
       }
     },
     {
+      "id": "dpa-signed-notice-exact-outbox",
+      "source": "src/main/java/de/caritas/cob/userservice/api/service/notification/DpaAdminNoticeOutboxScheduler.java",
+      "kind": "scheduler",
+      "owner": "notifications",
+      "risk": "duplicate-side-effect",
+      "components": [
+        "retryPending"
+      ],
+      "decision": "Explicit opt-in schedules bounded exact-event intake and recovery on the shared recovery executor. A shared lease fences persistent page progress. Signed acknowledgements rely on committed exact receipts and can be replayed; no external call holds the lease row lock.",
+      "signals": [
+        "userservice.scheduler.executions",
+        "userservice.scheduler.duration"
+      ],
+      "status": "bounded",
+      "claim": {
+        "mechanism": "scheduled-task-claim",
+        "evidence": [
+          {
+            "contains": ["claims.tryClaimLease(TASK_NAME, LEASE_DURATION)"]
+          }
+        ]
+      }
+    },
+    {
       "id": "reply-email-delivery-scheduler",
       "source": "src/main/java/de/caritas/cob/userservice/api/service/notification/ReplyEmailDeliveryScheduler.java",
       "kind": "scheduler",
