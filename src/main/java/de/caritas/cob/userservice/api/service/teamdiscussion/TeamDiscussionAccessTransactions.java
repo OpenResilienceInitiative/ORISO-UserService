@@ -74,10 +74,12 @@ public class TeamDiscussionAccessTransactions {
             .filter(row -> row.getDeleteDate() == null)
             .orElseThrow(() -> new ForbiddenException("Current consultant required"));
     // One rule for everyone, also the assigned counsellor after acceptance (FE#2491): an active
-    // membership in the case's agency.
-    if (session.getAgencyId() == null
-        || !agencies.existsByConsultantIdAndAgencyIdAndDeleteDateIsNull(
-            consultantId, session.getAgencyId())) {
+    // membership in the discussion's Beratungsstelle — the case's, or a former one after a move
+    // (D4), whose members keep read access to their archived chat.
+    var agencyId =
+        discussion.getAgencyId() != null ? discussion.getAgencyId() : session.getAgencyId();
+    if (agencyId == null
+        || !agencies.existsByConsultantIdAndAgencyIdAndDeleteDateIsNull(consultantId, agencyId)) {
       throw new ForbiddenException("Current owning agency membership required");
     }
     if (session.getStatus() == Session.SessionStatus.REJECTED

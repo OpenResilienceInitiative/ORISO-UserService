@@ -85,6 +85,11 @@ public class TeamDiscussionNotificationService {
       return;
     }
     Session session = sessionOpt.get();
+    if (discussion.getAgencyId() != null
+        && !discussion.getAgencyId().equals(session.getAgencyId())) {
+      // D4: the case moved away; the new Beratungsstelle never hears of the old team chat.
+      return;
+    }
     if (session.getStatus() == Session.SessionStatus.REJECTED || !teamChatSwitchedOn(session)) {
       // Create/accept race guard: once the case is accepted, an OPEN row must not keep
       // notifying — the facade lazily archives it on next access — unless the team chat

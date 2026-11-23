@@ -45,16 +45,18 @@ public class TeamDiscussionFeatureGate {
    *     when the TenantService or AgencyService cannot be reached
    */
   public void requireEnabled(Session session) {
+    requireEnabled(session.getTenantId(), session.getAgencyId());
+  }
+
+  /** As {@link #requireEnabled(Session)} for a given Beratungsstelle (D4: a former one's chat). */
+  public void requireEnabled(Long tenantId, Long agencyId) {
     if (!teamDiscussionEnabled) {
       throw new CustomValidationHttpStatusException(
           HttpStatusExceptionReason.FEATURE_DISABLED, HttpStatus.FORBIDDEN);
     }
     // The team chat has only a master switch; the kind merely selects no per-kind switch.
     conversationFeatureGate.require(
-        ConversationFeature.TEAM_DISCUSSION,
-        ConversationKind.ONE_ON_ONE,
-        session.getTenantId(),
-        session.getAgencyId());
+        ConversationFeature.TEAM_DISCUSSION, ConversationKind.ONE_ON_ONE, tenantId, agencyId);
   }
 
   /**

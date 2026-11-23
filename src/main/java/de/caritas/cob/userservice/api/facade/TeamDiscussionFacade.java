@@ -23,6 +23,8 @@ import de.caritas.cob.userservice.api.service.teamdiscussion.TeamDiscussionCreat
 import de.caritas.cob.userservice.api.service.teamdiscussion.TeamDiscussionFeatureGate;
 import de.caritas.cob.userservice.api.service.teamdiscussion.TeamDiscussionRoomCleanupService;
 import java.time.LocalDateTime;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 import lombok.NonNull;
@@ -89,10 +91,14 @@ public class TeamDiscussionFacade {
    */
   public TeamDiscussionView getOrCreateDiscussion(Long sessionId, String consultantId) {
     Session session = loadSession(sessionId);
-    featureGate.requireEnabled(session);
-    Consultant consultant = requireEligibleConsultant(session, consultantId);
+    var target = resolve(session, consultantId);
+    Consultant consultant = target.consultant();
 
-    Optional<TeamDiscussion> existing = teamDiscussionRepository.findBySessionId(sessionId);
+    Optional<TeamDiscussion> existing = target.discussion();
+    if (target.moved()) {
+      // A former Beratungsstelle's discussion: read-only join, never reopened or replaced.
+      return joinAndView(sessionId, existing.get().getId(), consultantId);
+    }
     if (existing.isPresent()) {
       if (existing.get().getStatus() == TeamDiscussion.Status.CLOSED) {
         // Switching on again commits on its own before the join: a failed join must not roll back
@@ -125,6 +131,7 @@ public class TeamDiscussionFacade {
             .createDate(LocalDateTime.now())
             .createdByConsultantId(consultant.getId())
             .tenantId(session.getTenantId())
+            .agencyId(session.getAgencyId())
             .build();
     TeamDiscussion discussion;
     try {
@@ -174,9 +181,7 @@ public class TeamDiscussionFacade {
    */
   public void closeDiscussion(Long sessionId, String consultantId) {
     Session session = loadSession(sessionId);
-    featureGate.requireEnabled(session);
-    requireEligibleConsultant(session, consultantId);
-    Optional<TeamDiscussion> existing = teamDiscussionRepository.findBySessionId(sessionId);
+    Optional<TeamDiscussion> existing = resolve(session, consultantId).discussion();
     if (existing.isEmpty()) {
       return;
     }
@@ -216,17 +221,15 @@ public class TeamDiscussionFacade {
     var discussion = teamDiscussionRepository.findById(discussionId).orElse(null);
     if (discussion == null) return;
     var session = loadSession(discussion.getSessionId());
-    featureGate.requireEnabled(session);
+    featureGate.requireEnabled(session.getTenantId(), agencyOf(discussion, session));
     joinAndView(session.getId(), discussion.getId(), consultantId);
   }
 
   /** Returns the discussion if one exists — also ARCHIVED ones (read-only archive access). */
   public Optional<TeamDiscussionView> getDiscussion(Long sessionId, String consultantId) {
     Session session = loadSession(sessionId);
-    featureGate.requireEnabled(session);
-    requireEligibleConsultant(session, consultantId);
-    return teamDiscussionRepository
-        .findBySessionId(sessionId)
+    return resolve(session, consultantId)
+        .discussion()
         .map(
             discussion ->
                 accessTransactions.read(
@@ -277,6 +280,17 @@ public class TeamDiscussionFacade {
       }
       return discussion;
     }
+    if (movedAway(discussion, session)) {
+      // D4: the case moved to another Beratungsstelle; its team chat closes for good.
+      if (discussion.getStatus() != TeamDiscussion.Status.ARCHIVED) {
+        archiveDiscussion(session, discussion);
+      } else if (!discussion.isReadOnlyApplied()
+          && makeRoomReadOnlyBestEffort(session, discussion)) {
+        discussion.setReadOnlyApplied(true);
+        teamDiscussionRepository.save(discussion);
+      }
+      return discussion;
+    }
     boolean sessionAccepted =
         session.getConsultant() != null || session.getStatus() != SessionStatus.NEW;
     if (discussion.getStatus() != TeamDiscussion.Status.ARCHIVED
@@ -302,12 +316,27 @@ public class TeamDiscussionFacade {
    * attachStandingSupervisorIfAssigned}).
    */
   public void archiveDiscussionIfPresent(Session session) {
+    archiveDiscussionIfPresent(session, new HashMap<>());
+  }
+
+  /**
+   * The repair sweep's variant: {@code decisionsOfThisSweep} remembers whether the team chat
+   * continues after acceptance per Träger and Beratungsstelle, so a sweep over many continuing
+   * discussions reads the settings once per pair instead of once per row (FE#2491). An unreadable
+   * setting is remembered as "unknown" for the sweep: nothing is archived, the next sweep retries.
+   * Switching the setting or the master off is seen by the next sweep, which then archives.
+   */
+  public void archiveDiscussionIfPresent(
+      Session session, Map<String, Optional<Boolean>> decisionsOfThisSweep) {
     try {
       if (session == null || session.getId() == null) {
         return;
       }
+      archiveMovedDiscussions(session);
       Optional<TeamDiscussion> discussionOpt =
-          teamDiscussionRepository.findBySessionId(session.getId());
+          teamDiscussionRepository
+              .findBySessionId(session.getId())
+              .filter(discussion -> !movedAway(discussion, session));
       if (discussionOpt.isEmpty()) {
         return;
       }
@@ -316,9 +345,11 @@ public class TeamDiscussionFacade {
         return;
       }
       // FE#2491: the Träger and Beratungsstelle may let the team chat continue after acceptance.
-      // An unreadable setting throws (503) and is logged below: on an outage nothing is archived,
-      // the repair scheduler retries.
-      if (featureGate.continuesAfterAccept(session)) {
+      var continues =
+          decisionsOfThisSweep.computeIfAbsent(
+              session.getTenantId() + ":" + session.getAgencyId(),
+              pair -> continuesAfterAcceptOrUnknown(session));
+      if (continues.isEmpty() || continues.get()) {
         return;
       }
       archiveDiscussion(session, discussionOpt.get());
@@ -330,6 +361,33 @@ public class TeamDiscussionFacade {
     }
   }
 
+  private Optional<Boolean> continuesAfterAcceptOrUnknown(Session session) {
+    try {
+      return Optional.of(featureGate.continuesAfterAccept(session));
+    } catch (RuntimeException unavailable) {
+      log.warn(
+          "Team discussion of session {} not archived: the after-acceptance setting is not"
+              + " readable ({})",
+          session.getId(),
+          unavailable.getClass().getSimpleName());
+      return Optional.empty();
+    }
+  }
+
+  /**
+   * ORISO-Frontend#2491: joins the caller into an existing discussion without changing it — the
+   * read-only way into a CLOSED or ARCHIVED team chat (and a plain join into an OPEN one). Never
+   * creates, never reopens.
+   *
+   * @return empty when the enquiry has no team discussion
+   */
+  public Optional<TeamDiscussionView> joinDiscussion(Long sessionId, String consultantId) {
+    Session session = loadSession(sessionId);
+    return resolve(session, consultantId)
+        .discussion()
+        .map(discussion -> joinAndView(sessionId, discussion.getId(), consultantId));
+  }
+
   private Session loadSession(Long sessionId) {
     var session =
         sessionRepository
@@ -339,23 +397,6 @@ public class TeamDiscussionFacade {
     membersOnlyChatAccess.requireOrdinary(
         session, "The session of a members-only chat has no team discussion.");
     return session;
-  }
-
-  private Consultant requireEligibleConsultant(Session session, String consultantId) {
-    Consultant consultant =
-        consultantRepository
-            .findById(consultantId)
-            .orElseThrow(() -> new ForbiddenException("Consultant not found"));
-    // Same rule as TeamDiscussionAccessTransactions: an active membership in the case's agency,
-    // also for the assigned counsellor after acceptance (FE#2491).
-    if (session.getAgencyId() == null
-        || !consultantAgencyRepository.existsByConsultantIdAndAgencyIdAndDeleteDateIsNull(
-            consultant.getId(), session.getAgencyId())) {
-      throw new ForbiddenException(
-          "Consultant is not a member of the enquiry's agency and may not access its team"
-              + " discussion");
-    }
-    return consultant;
   }
 
   /**
@@ -426,7 +467,7 @@ public class TeamDiscussionFacade {
     if (isJoinedMember(discussion.getMatrixRoomId(), consultant.getMatrixUserId())) {
       return;
     }
-    String agencyToken = loginAgencyOperator(session);
+    String agencyToken = loginAgencyOperator(agencyOf(discussion, session));
     try {
       try {
         matrixSynapseService.inviteUserToRoom(
@@ -516,7 +557,7 @@ public class TeamDiscussionFacade {
           matrixSynapseService.setRoomEventsDefaultPowerLevel(
               discussion.getMatrixRoomId(),
               OPEN_EVENTS_DEFAULT_POWER_LEVEL,
-              loginAgencyOperator(session));
+              loginAgencyOperator(agencyOf(discussion, session)));
     } catch (Exception ex) {
       log.warn(
           "Could not make team discussion room {} writable again: {}",
@@ -550,7 +591,7 @@ public class TeamDiscussionFacade {
 
   private boolean makeRoomReadOnlyBestEffort(Session session, TeamDiscussion discussion) {
     try {
-      String agencyToken = loginAgencyOperator(session);
+      String agencyToken = loginAgencyOperator(agencyOf(discussion, session));
       return matrixSynapseService.setRoomEventsDefaultPowerLevel(
           discussion.getMatrixRoomId(), ARCHIVED_EVENTS_DEFAULT_POWER_LEVEL, agencyToken);
     } catch (Exception ex) {
@@ -563,23 +604,95 @@ public class TeamDiscussionFacade {
   }
 
   private String loginAgencyOperator(Session session) {
+    return loginAgencyOperator(session.getAgencyId());
+  }
+
+  /** The room belongs to the Beratungsstelle that created it, also after the case moved. */
+  private String loginAgencyOperator(Long agencyId) {
     AgencyMatrixCredentialsDTO credentials =
         matrixCredentialClient
-            .fetchMatrixCredentials(session.getAgencyId())
+            .fetchMatrixCredentials(agencyId)
             .orElseThrow(
                 () ->
                     new InternalServerErrorException(
-                        "No Matrix service account for agency " + session.getAgencyId()));
+                        "No Matrix service account for agency " + agencyId));
     if (credentials.getMatrixUserId() == null || credentials.getMatrixUserId().isBlank()) {
       throw new InternalServerErrorException(
-          "Matrix service account for agency " + session.getAgencyId() + " is incomplete");
+          "Matrix service account for agency " + agencyId + " is incomplete");
     }
     String token = matrixSynapseService.loginAsUserAccessToken(credentials.getMatrixUserId());
     if (token == null || token.isBlank()) {
       throw new InternalServerErrorException(
-          "Matrix service account login failed for agency " + session.getAgencyId());
+          "Matrix service account login failed for agency " + agencyId);
     }
     return token;
+  }
+
+  /** The Beratungsstelle a discussion belongs to; legacy rows without one belong to the case's. */
+  static Long agencyOf(TeamDiscussion discussion, Session session) {
+    return discussion.getAgencyId() != null ? discussion.getAgencyId() : session.getAgencyId();
+  }
+
+  /** Whether the case moved to another Beratungsstelle after this discussion was started (D4). */
+  static boolean movedAway(TeamDiscussion discussion, Session session) {
+    return discussion.getAgencyId() != null
+        && !discussion.getAgencyId().equals(session.getAgencyId());
+  }
+
+  /** What a caller may see: the case's current discussion, or a former Beratungsstelle's one. */
+  private record Target(
+      Consultant consultant, Optional<TeamDiscussion> discussion, boolean moved) {}
+
+  /**
+   * D4 (FE#2491): members of the case's current Beratungsstelle see only its own discussion; a
+   * discussion of a Beratungsstelle the case moved away from is archived and stays readable only
+   * for that Beratungsstelle's members. Everyone else is refused. One rule throughout: an active
+   * membership in the discussion's Beratungsstelle (as in {@code
+   * TeamDiscussionAccessTransactions}).
+   */
+  private Target resolve(Session session, String consultantId) {
+    Consultant consultant =
+        consultantRepository
+            .findById(consultantId)
+            .orElseThrow(() -> new ForbiddenException("Consultant not found"));
+    if (session.getAgencyId() != null && isMember(consultant.getId(), session.getAgencyId())) {
+      featureGate.requireEnabled(session);
+      archiveMovedDiscussions(session);
+      var current =
+          teamDiscussionRepository
+              .findBySessionId(session.getId())
+              .filter(discussion -> !movedAway(discussion, session));
+      return new Target(consultant, current, false);
+    }
+    var former =
+        teamDiscussionRepository.findAllBySessionIdOrderByIdDesc(session.getId()).stream()
+            .filter(discussion -> movedAway(discussion, session))
+            .filter(discussion -> isMember(consultant.getId(), discussion.getAgencyId()))
+            .findFirst();
+    if (former.isEmpty()) {
+      throw new ForbiddenException(
+          "Consultant is not a member of the enquiry's agency and may not access its team"
+              + " discussion");
+    }
+    featureGate.requireEnabled(session.getTenantId(), former.get().getAgencyId());
+    return new Target(consultant, former, true);
+  }
+
+  private boolean isMember(String consultantId, Long agencyId) {
+    return agencyId != null
+        && consultantAgencyRepository.existsByConsultantIdAndAgencyIdAndDeleteDateIsNull(
+            consultantId, agencyId);
+  }
+
+  /** Archives every discussion of a Beratungsstelle the case moved away from (D4). */
+  private void archiveMovedDiscussions(Session session) {
+    for (var discussion :
+        teamDiscussionRepository.findAllBySessionIdOrderByIdDesc(session.getId())) {
+      if (movedAway(discussion, session)
+          && discussion.getStatus() != TeamDiscussion.Status.ARCHIVED) {
+        archiveDiscussion(session, discussion);
+      }
+    }
   }
 
   private TeamDiscussionView toView(TeamDiscussion discussion) {

@@ -43,6 +43,19 @@ public class TeamDiscussionController {
     return ResponseEntity.noContent().build();
   }
 
+  /**
+   * ORISO-Frontend#2491: read-only join. Joins the caller into the existing discussion without
+   * changing its status — the way to read a CLOSED or ARCHIVED team chat. 200 with the discussion,
+   * 204 when none exists.
+   */
+  @PostMapping("/{sessionId}/team-discussion/join")
+  public ResponseEntity<TeamDiscussionResponseDTO> join(@PathVariable Long sessionId) {
+    return teamDiscussionFacade
+        .joinDiscussion(sessionId, authenticatedUser.getUserId())
+        .map(view -> ResponseEntity.ok(TeamDiscussionResponseDTO.from(view)))
+        .orElseGet(() -> new ResponseEntity<>(HttpStatus.NO_CONTENT));
+  }
+
   /** Returns the discussion if one exists — including ARCHIVED (read-only archive access). */
   @GetMapping("/{sessionId}/team-discussion")
   public ResponseEntity<TeamDiscussionResponseDTO> get(@PathVariable Long sessionId) {

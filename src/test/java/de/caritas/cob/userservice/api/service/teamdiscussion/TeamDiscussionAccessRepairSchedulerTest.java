@@ -51,7 +51,8 @@ class TeamDiscussionAccessRepairSchedulerTest {
     var consultant = new Consultant();
     consultant.setId("removed");
     consultant.setMatrixUserId("@removed:test");
-    when(discussions.findPendingArchiveRepairs(eq(Session.SessionStatus.NEW), anyLong(), any()))
+    when(discussions.findPendingArchiveRepairs(
+            eq(Session.SessionStatus.NEW), eq(TeamDiscussion.Status.ARCHIVED), anyLong(), any()))
         .thenReturn(List.of(discussion));
     when(participants.findAccessRepairs(anyLong(), any())).thenReturn(List.of(participant));
     doAnswer(
@@ -105,7 +106,7 @@ class TeamDiscussionAccessRepairSchedulerTest {
             writer);
     restarted.reconcileAccess();
     verify(facade).restoreExistingDiscussionMembership(1L, "removed");
-    verify(facade, times(3)).archiveDiscussionIfPresent(session);
+    verify(facade, times(3)).archiveDiscussionIfPresent(eq(session), any());
     verify(claims, times(3)).release(lease);
     verify(claims, atLeastOnce()).runIfHeld(eq(lease), any());
     assertThat(TenantContext.getCurrentTenant()).isNull();

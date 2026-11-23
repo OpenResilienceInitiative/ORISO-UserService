@@ -20,7 +20,7 @@ public interface TeamDiscussionParticipantRepository
       "select p from TeamDiscussionParticipant p, TeamDiscussion td, Session s"
           + " where p.id > :afterId and p.teamDiscussionId = td.id and td.sessionId = s.id"
           + " and (p.accessRepairRequired = true or not exists (select ca.id from ConsultantAgency ca"
-          + " where ca.consultant.id = p.consultantId and ca.agencyId = s.agencyId"
+          + " where ca.consultant.id = p.consultantId and ca.agencyId = coalesce(td.agencyId, s.agencyId)"
           + " and ca.deleteDate is null)) order by p.id")
   List<TeamDiscussionParticipant> findAccessRepairs(@Param("afterId") long afterId, Pageable page);
 
@@ -33,7 +33,8 @@ public interface TeamDiscussionParticipantRepository
   @Query(
       "update TeamDiscussionParticipant p set p.accessRepairRequired = true"
           + " where p.consultantId = :consultantId and p.teamDiscussionId in"
-          + " (select td.id from TeamDiscussion td, Session s where td.sessionId = s.id and s.agencyId = :agencyId)")
+          + " (select td.id from TeamDiscussion td, Session s where td.sessionId = s.id"
+          + " and coalesce(td.agencyId, s.agencyId) = :agencyId)")
   int markAgencyRevocation(
       @Param("consultantId") String consultantId, @Param("agencyId") Long agencyId);
 

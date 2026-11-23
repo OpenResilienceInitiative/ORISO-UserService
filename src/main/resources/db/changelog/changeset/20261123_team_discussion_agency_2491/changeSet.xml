@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+  xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.3.xsd">
+  <!--
+    ORISO-Frontend#2491 (D4): a team discussion belongs to the case AND its Beratungsstelle. When
+    the case moves to another Beratungsstelle, the old discussion is archived and the new
+    Beratungsstelle may start its own, so uniqueness moves from (session_id) to
+    (session_id, agency_id). Existing rows take the case's current Beratungsstelle.
+  -->
+  <changeSet id="20261123-team-discussion-agency-column-2491" author="oriso">
+    <preConditions onFail="MARK_RAN" onError="HALT">
+      <not><columnExists tableName="team_discussion" columnName="agency_id"/></not>
+    </preConditions>
+    <addColumn tableName="team_discussion">
+      <column name="agency_id" type="BIGINT"/>
+    </addColumn>
+    <rollback><sql>SELECT 1</sql></rollback>
+  </changeSet>
+  <changeSet id="20261123-team-discussion-agency-backfill-2491" author="oriso" dbms="mariadb,mysql">
+    <sql>UPDATE team_discussion td JOIN session s ON s.id = td.session_id SET td.agency_id = s.agency_id WHERE td.agency_id IS NULL</sql>
+    <rollback><sql>SELECT 1</sql></rollback>
+  </changeSet>
+  <changeSet id="20261123-team-discussion-session-agency-unique-2491" author="oriso">
+    <preConditions onFail="MARK_RAN" onError="HALT">
+      <not><indexExists tableName="team_discussion" indexName="uk_team_discussion_session_agency"/></not>
+    </preConditions>
+    <addUniqueConstraint tableName="team_discussion" columnNames="session_id, agency_id" constraintName="uk_team_discussion_session_agency"/>
+    <rollback>
+      <dropUniqueConstraint tableName="team_discussion" constraintName="uk_team_discussion_session_agency"/>
+    </rollback>
+  </changeSet>
+  <changeSet id="20261123-team-discussion-drop-session-unique-2491" author="oriso">
+    <preConditions onFail="MARK_RAN" onError="HALT">
+      <indexExists tableName="team_discussion" indexName="uk_team_discussion_session"/>
+    </preConditions>
+    <dropUniqueConstraint tableName="team_discussion" constraintName="uk_team_discussion_session"/>
+    <rollback><sql>SELECT 1</sql></rollback>
+  </changeSet>
+</databaseChangeLog>

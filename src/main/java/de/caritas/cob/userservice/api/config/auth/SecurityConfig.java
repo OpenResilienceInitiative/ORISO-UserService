@@ -614,7 +614,9 @@ public class SecurityConfig {
                     "/users/sessions/{sessionId:[0-9]+}/rejection",
                     "/service/users/sessions/{sessionId:[0-9]+}/rejection",
                     "/users/sessions/{sessionId:[0-9]+}/team-discussion",
-                    "/service/users/sessions/{sessionId:[0-9]+}/team-discussion")
+                    "/service/users/sessions/{sessionId:[0-9]+}/team-discussion",
+                    "/users/sessions/{sessionId:[0-9]+}/team-discussion/join",
+                    "/service/users/sessions/{sessionId:[0-9]+}/team-discussion/join")
                 .hasAuthority(CONSULTANT_DEFAULT)
                 .requestMatchers(
                     "/conversations/anonymous/{sessionId:[0-9]+}/finish",
