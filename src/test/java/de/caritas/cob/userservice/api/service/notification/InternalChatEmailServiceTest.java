@@ -745,8 +745,7 @@ class InternalChatEmailServiceTest {
             mock(FeedbackMessageEmailService.class),
             service,
             caller,
-            mock(MessageEventCurrentAccessService.class),
-            Optional.empty());
+            mock(MessageEventCurrentAccessService.class));
     var request =
         new de.caritas.cob.userservice.api.adapters.web.controller.EventNotificationController
             .MessageEventRequestDTO();

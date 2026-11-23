@@ -34,7 +34,6 @@ import lombok.Getter;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
@@ -54,7 +53,6 @@ public class EventNotificationService {
   static final int MAX_DEDUPLICATION_KEY_LENGTH = 191;
 
   private static final String SYSTEM_NOTIFICATION_PREFIX = "[SYSTEM_NOTIFICATION]";
-  private static final String REDACTED_PREVIEW = "[content hidden]";
   private static final long ACTIVE_VIEW_TTL_NANOS = Duration.ofSeconds(30).toNanos();
 
   private final @NonNull EventNotificationRepository eventNotificationRepository;
@@ -72,9 +70,6 @@ public class EventNotificationService {
   private final Map<String, ActiveViewState> activeViewByUserId = new ConcurrentHashMap<>();
   private final ObjectMapper paramsObjectMapper = new ObjectMapper();
   private volatile LongSupplier monotonicNanos = System::nanoTime;
-
-  @Value("${privacy.notificationPreviewMode:NONE}")
-  private String notificationPreviewMode;
 
   @Transactional
   public void createInquiryAcceptedNotification(Session session, Consultant consultant) {
@@ -271,7 +266,7 @@ public class EventNotificationService {
    *
    * <p>This is also the "narrow exception" the issue asks for, and it is narrow by construction
    * rather than by a flag: system notifications are filtered out of the timeline on the <b>Matrix
-   * ingestion</b> path ({@code isSystemNotificationMessage}), where an unfiltered system message
+   * ingestion</b> path ({@code legacySystemNotificationMarker}), where an unfiltered system message
    * would produce a timeline row for every internal event in every room. That filter stays exactly
    * as strict as it is. The Erstantwort instead writes its own single row here, from the enquiry
    * facade, so nothing else slips through with it.
@@ -727,7 +722,7 @@ public class EventNotificationService {
     if (sessionOpt.isEmpty()) {
       return;
     }
-    if (isSystemNotificationMessage(messagePreview)) {
+    if (legacySystemNotificationMarker(messagePreview) != null) {
       return;
     }
 
@@ -821,7 +816,7 @@ public class EventNotificationService {
     if (sessionOpt.isEmpty()) {
       return;
     }
-    if (isSystemNotificationMessage(messagePreview)) {
+    if (legacySystemNotificationMarker(messagePreview) != null) {
       return;
     }
 
@@ -1634,24 +1629,12 @@ public class EventNotificationService {
   }
 
   private String buildMessageNotificationText(String senderLabel, PrivacyEnvelope envelope) {
-    NotificationPreviewMode mode = currentPreviewMode();
-    String contentLabel = contentLabel(envelope);
-    if (mode == NotificationPreviewMode.MASKED) {
-      return String.format("%s sent a new %s: %s", senderLabel, contentLabel, REDACTED_PREVIEW);
-    }
-    // FULL is retained as a legacy configuration value but intentionally behaves like NONE.
-    // Persisted events never carry message plaintext; the browser hydrates it from Matrix.
-    return String.format("%s sent a new %s.", senderLabel, contentLabel);
+    return String.format("%s sent a new %s.", senderLabel, contentLabel(envelope));
   }
 
   private String buildThreadReplyNotificationText(String senderLabel, PrivacyEnvelope envelope) {
-    NotificationPreviewMode mode = currentPreviewMode();
-    String contentLabel = contentLabel(envelope);
-    if (mode == NotificationPreviewMode.MASKED) {
-      return String.format(
-          "%s replied in a thread with a new %s: %s", senderLabel, contentLabel, REDACTED_PREVIEW);
-    }
-    return String.format("%s replied in a thread with a new %s.", senderLabel, contentLabel);
+    return String.format(
+        "%s replied in a thread with a new %s.", senderLabel, contentLabel(envelope));
   }
 
   private String contentLabel(PrivacyEnvelope envelope) {
@@ -1674,17 +1657,11 @@ public class EventNotificationService {
     }
   }
 
-  private NotificationPreviewMode currentPreviewMode() {
-    try {
-      return NotificationPreviewMode.valueOf(
-          safeValue(notificationPreviewMode, "NONE").toUpperCase());
-    } catch (IllegalArgumentException ex) {
-      return NotificationPreviewMode.NONE;
-    }
-  }
-
-  private boolean isSystemNotificationMessage(String messagePreview) {
-    return messagePreview != null && messagePreview.startsWith(SYSTEM_NOTIFICATION_PREFIX);
+  /** Retains only the marker used to suppress legacy system notifications. */
+  public static String legacySystemNotificationMarker(String preview) {
+    return preview != null && preview.startsWith(SYSTEM_NOTIFICATION_PREFIX)
+        ? SYSTEM_NOTIFICATION_PREFIX
+        : null;
   }
 
   private boolean looksEncoded(String value) {
@@ -1876,11 +1853,5 @@ public class EventNotificationService {
       this.mainChatHidden = mainChatHidden;
       this.lastHeartbeatNanos = lastHeartbeatNanos;
     }
-  }
-
-  private enum NotificationPreviewMode {
-    NONE,
-    MASKED,
-    FULL
   }
 }

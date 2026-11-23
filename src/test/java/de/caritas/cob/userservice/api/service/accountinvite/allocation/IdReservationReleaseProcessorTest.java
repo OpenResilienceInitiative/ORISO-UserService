@@ -3,11 +3,14 @@ package de.caritas.cob.userservice.api.service.accountinvite.allocation;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.util.ReflectionTestUtils.setField;
 
 import de.caritas.cob.userservice.api.model.IdReservationReleaseTask;
+import de.caritas.cob.userservice.api.model.TenantReservationReleaseTask;
 import de.caritas.cob.userservice.api.port.out.IdReservationReleaseTaskRepository;
+import de.caritas.cob.userservice.api.port.out.TenantReservationReleaseTaskRepository;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
 import de.caritas.cob.userservice.api.tenant.TenantData;
 import java.time.LocalDateTime;
@@ -26,6 +29,7 @@ class IdReservationReleaseProcessorTest {
   @InjectMocks private IdReservationReleaseProcessor processor;
 
   @Mock private IdReservationReleaseTaskRepository taskRepository;
+  @Mock private TenantReservationReleaseTaskRepository tenantTaskRepository;
   @Mock private TenantIdAllocationClient tenantIdAllocationClient;
   @Mock private AgencyIdAllocationClient agencyIdAllocationClient;
 
@@ -38,7 +42,7 @@ class IdReservationReleaseProcessorTest {
   void pendingTaskIds_ShouldSelectOnlyBoundedBackedOffAttempts() {
     setField(processor, "maxAttempts", 8);
     setField(processor, "retryBackoff", java.time.Duration.ofMinutes(3));
-    IdReservationReleaseTask task = task(IdReservationReleaseType.TENANT, 41L, null);
+    IdReservationReleaseTask task = task(IdReservationReleaseType.AGENCY, 41L, null);
     when(taskRepository.findRetryable(
             org.mockito.ArgumentMatchers.eq(8),
             org.mockito.ArgumentMatchers.any(LocalDateTime.class),
@@ -50,9 +54,9 @@ class IdReservationReleaseProcessorTest {
 
   @Test
   void process_ShouldDeleteTask_WhenReleaseSucceeds() {
-    IdReservationReleaseTask task = task(IdReservationReleaseType.TENANT, 41L, null);
+    IdReservationReleaseTask task = task(IdReservationReleaseType.AGENCY, 41L, null);
     when(taskRepository.findByIdForUpdate(1L)).thenReturn(Optional.of(task));
-    when(tenantIdAllocationClient.release(41L)).thenReturn(true);
+    when(agencyIdAllocationClient.release(41L)).thenReturn(true);
 
     assertThat(processor.process(1L)).isTrue();
 
@@ -93,9 +97,9 @@ class IdReservationReleaseProcessorTest {
 
   @Test
   void process_ShouldRetainTaskAndClearTenantContext_WhenClientThrows() {
-    IdReservationReleaseTask task = task(IdReservationReleaseType.TENANT, 41L, 12L);
+    IdReservationReleaseTask task = task(IdReservationReleaseType.AGENCY, 41L, 12L);
     when(taskRepository.findByIdForUpdate(1L)).thenReturn(Optional.of(task));
-    when(tenantIdAllocationClient.release(41L))
+    when(agencyIdAllocationClient.release(41L))
         .thenThrow(new IllegalStateException("ledger unreachable"));
 
     assertThat(processor.process(1L)).isFalse();
@@ -104,6 +108,36 @@ class IdReservationReleaseProcessorTest {
     assertThat(task.getLastAttemptAt()).isNotNull();
     assertThat(TenantContext.contextIsSet()).isFalse();
     verify(taskRepository).save(task);
+  }
+
+  @Test
+  void legacyTenantTaskRemainsAvailableForReconciliationWithoutCallingTheProvider() {
+    IdReservationReleaseTask task = task(IdReservationReleaseType.TENANT, 41L, 12L);
+    when(taskRepository.findByIdForUpdate(1L)).thenReturn(Optional.of(task));
+
+    assertThat(processor.process(1L)).isFalse();
+
+    verifyNoInteractions(tenantIdAllocationClient, agencyIdAllocationClient);
+    verify(taskRepository, never()).delete(task);
+    verify(taskRepository, never()).save(task);
+  }
+
+  @Test
+  void tenantReleaseRepeatsTheOriginalProofAfterAnUnconfirmedAttempt() {
+    var task =
+        new TenantReservationReleaseTask(41L, "original-proof", "generation", LocalDateTime.now());
+    when(tenantTaskRepository.findByIdForUpdate(1L)).thenReturn(Optional.of(task));
+    when(tenantIdAllocationClient.release(41L, "original-proof")).thenReturn(false, true);
+
+    processor.processTenant(1L);
+
+    assertThat(task.getAttemptCount()).isEqualTo(1);
+    assertThat(task.getLastAttemptAt()).isNotNull();
+    verify(tenantTaskRepository, never()).delete(task);
+
+    processor.processTenant(1L);
+
+    verify(tenantTaskRepository).delete(task);
   }
 
   private IdReservationReleaseTask task(

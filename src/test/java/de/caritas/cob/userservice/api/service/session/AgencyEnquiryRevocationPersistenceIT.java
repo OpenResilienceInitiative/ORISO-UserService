@@ -56,6 +56,7 @@ class AgencyEnquiryRevocationPersistenceIT {
   @Autowired private AgencyEnquiryRevocations revocations;
   @MockitoBean private AgencyEnquiryRoomRetirements retiredRooms;
   @MockitoBean private AgencyEnquiryRoomDecisions roomDecisions;
+  @MockitoBean private SessionOwnershipService ownership;
   @MockitoBean private Clock clock;
   @MockitoBean private SessionRepository sessions;
   @MockitoBean private ConsultantRepository consultants;

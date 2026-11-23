@@ -311,6 +311,8 @@
   <include file="db/changelog/changeset/20261121_agency_enquiry_revocation_room_scope_1692/changeSet.xml"/>
   <include file="db/changelog/changeset/20261121_invitation_appointment_kind_1747/changeSet.xml"/>
   <include file="db/changelog/changeset/20261119_agency_enquiry_room_decision_1692/changeSet.xml"/>
+  <include file="db/changelog/changeset/20261119_agency_enquiry_room_preparation_1692/changeSet.xml"/>
   <include file="db/changelog/changeset/20261121_event_notification_read_day/changeSet.xml"/>
+  <include file="db/changelog/changeset/20261121_tenant_reservation_release_1052/changeSet.xml"/>
   <include file="db/changelog/changeset/20261119_dpa_admin_notice_recovery_1704/changeSet.xml"/>
 </databaseChangeLog>
