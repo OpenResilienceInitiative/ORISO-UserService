@@ -1699,9 +1699,7 @@ public class CaseHandoverService {
     }
 
     LocalDateTime now = LocalDateTime.now(clock);
-    session.setConsultant(original);
-    session.setUpdateDate(now);
-    sessionRepository.save(session);
+    sessionOwnershipService.updateOwner(session, original, session.getStatus(), now);
     takeover.setStatus(Status.RECLAIMED);
     takeover.setAuditOutcome(OUTCOME_RECLAIMED);
     takeover.setResolvedAt(now);
