@@ -740,6 +740,57 @@ class DpaSignedNoticeServiceTest {
     verify(inviteMailDispatchService, never())
         .send(any(), any(), any(), any(), any(), any(), any());
     assertProofDeferred(pending);
+    assertEquals(
+        0.0, counter("oriso.dpa_signed_notice.dispatch", "outcome", "parked_recipient_mismatch"));
+  }
+
+  @Test
+  void recoveryParksALongMismatchedClaimForReconciliationInsteadOfRetryingForever() {
+    // A changed address is not authority to readdress the receipt, and retrying every 15 minutes
+    // forever only repeats upstream reads. After a day the claim leaves automatic recovery, unsent
+    // and still holding the recorded recipient, until an operator reconciles it.
+    var signature = forwardedSignature("kc-admin-1");
+    var pending = dueAdminNotice(signature);
+    pending.setCreateDate(LocalDateTime.now().minusHours(25));
+    givenPending(pending);
+    givenSignatures(signature);
+    var currentAdmin = forwardingAdmin();
+    currentAdmin.setEmail("changed@example.org");
+    when(adminRepository.findById("kc-admin-1")).thenReturn(Optional.of(currentAdmin));
+
+    service.retryPendingAdminNotices();
+
+    verify(inviteMailDispatchService, never())
+        .send(any(), any(), any(), any(), any(), any(), any());
+    var deadline = ArgumentCaptor.forClass(LocalDateTime.class);
+    verify(noticeRepository)
+        .reserveAdminPreparation(eq(pending.getId()), any(), deadline.capture());
+    verify(noticeRepository).lockAdminPreparation(pending.getId(), deadline.getValue());
+    verify(noticeRepository, never()).delete(any(DpaSignedNotice.class));
+    assertThat(pending.getAdminNextAttemptAt()).isNull();
+    assertThat(pending.getSentAt()).isNull();
+    assertThat(pending.getRecipientEmail()).isEqualTo("toni@example.org");
+    assertThat(pending.getAdminRecoverySignatureAt()).isEqualTo("2026-08-14T09:15:00");
+    assertEquals(
+        1.0, counter("oriso.dpa_signed_notice.dispatch", "outcome", "parked_recipient_mismatch"));
+  }
+
+  @Test
+  void recoveryKeepsBackingOffALongPendingClaimWhoseRecipientIsOnlyUnavailable() {
+    // An unresolvable recipient can be transient (directory outage, admin row being rebuilt);
+    // only a positive mismatch with the recorded address parks the claim.
+    var signature = forwardedSignature("kc-admin-1");
+    var pending = dueAdminNotice(signature);
+    pending.setCreateDate(LocalDateTime.now().minusHours(25));
+    givenPending(pending);
+    givenSignatures(signature);
+    when(adminRepository.findById("kc-admin-1")).thenReturn(Optional.empty());
+
+    service.retryPendingAdminNotices();
+
+    assertProofDeferred(pending);
+    assertEquals(
+        0.0, counter("oriso.dpa_signed_notice.dispatch", "outcome", "parked_recipient_mismatch"));
   }
 
   @Test
@@ -794,6 +845,7 @@ class DpaSignedNoticeServiceTest {
         .recipientEmail("toni@example.org")
         .adminRecoverySignatureAt(signature.getSignedAt())
         .adminNextAttemptAt(LocalDateTime.parse("2026-08-15T00:00:00"))
+        .createDate(LocalDateTime.now())
         .build();
   }
 

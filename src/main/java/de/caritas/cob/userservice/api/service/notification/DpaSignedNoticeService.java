@@ -101,6 +101,9 @@ public class DpaSignedNoticeService {
   private static final Duration ADMIN_RECOVERY_BUDGET = Duration.ofSeconds(45);
   private static final Duration ADMIN_RECOVERY_DELAY = Duration.ofMinutes(1);
   private static final Duration ADMIN_PROOF_RETRY_DELAY = Duration.ofMinutes(15);
+  // A recorded recipient that still disagrees with the current one after this long is not a
+  // transient read: the claim leaves automatic recovery and waits for an operator to reconcile it.
+  private static final Duration ADMIN_RECIPIENT_MISMATCH_PARK_AFTER = Duration.ofHours(24);
 
   static final String SOURCE_FORWARDED_EXTERNAL = "FORWARDED_EXTERNAL";
   static final String STATUS_SIGNED = "SIGNED";
@@ -456,10 +459,14 @@ public class DpaSignedNoticeService {
 
           var signed = signature.getFirst();
           var recipient = resolveRecipient(tenantId, signed);
-          if (recipient.isEmpty() || !claim.getRecipientEmail().equals(recipient.get().email())) {
+          if (recipient.isEmpty()) {
+            deferMissingAdminProof(claim, reservedUntil);
+            return;
+          }
+          if (!claim.getRecipientEmail().equals(recipient.get().email())) {
             // A verified hint is still a tenant-level trigger, not authority to readdress a
             // pending notice. Wizard recipient resolution can point to a different invite.
-            deferMissingAdminProof(claim, reservedUntil);
+            deferOrParkRecipientMismatch(claim, reservedUntil);
             return;
           }
           sendNotice(tenantId, signed, recipient.get(), claim, reservedUntil);
@@ -471,6 +478,32 @@ public class DpaSignedNoticeService {
         claim.getId(), reservedUntil, now -> now.plus(ADMIN_PROOF_RETRY_DELAY))) {
       log.warn(
           "DPA administrator notice {} deferred because its delivery proof changed or is unavailable",
+          claim.getId());
+    }
+  }
+
+  /**
+   * Backs off while a mismatch may still settle (an address change being reverted, two workers
+   * reading different states). Once the claim is older than {@link
+   * #ADMIN_RECIPIENT_MISMATCH_PARK_AFTER} it is parked: unsent, recipient and signature evidence
+   * untouched, no next attempt. The sweep then stops reading upstream for it, and nothing
+   * readdresses or resends it automatically. The log carries the notice id only, never an address.
+   */
+  private void deferOrParkRecipientMismatch(DpaSignedNotice claim, LocalDateTime reservedUntil) {
+    var createdAt = claim.getCreateDate();
+    // create_date is written with the zone-local wall clock, so it is compared against the same.
+    var parkFrom =
+        LocalDateTime.ofInstant(clock.instant(), ZoneId.systemDefault())
+            .minus(ADMIN_RECIPIENT_MISMATCH_PARK_AFTER);
+    if (createdAt == null || createdAt.isAfter(parkFrom)) {
+      deferMissingAdminProof(claim, reservedUntil);
+      return;
+    }
+    if (transitionAdminPreparation(claim.getId(), reservedUntil, now -> null)) {
+      metrics.recordRecipientMismatchParked();
+      log.error(
+          "DPA administrator notice {} parked: its recorded recipient no longer matches; it stays"
+              + " unsent until it is reconciled",
           claim.getId());
     }
   }
