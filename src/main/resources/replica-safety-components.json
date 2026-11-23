@@ -919,7 +919,15 @@
         "userservice.scheduler.executions",
         "userservice.scheduler.duration"
       ],
-      "status": "bounded"
+      "status": "bounded",
+      "claim": {
+        "mechanism": "scheduled-task-claim",
+        "evidence": [
+          {
+            "contains": [".tryClaimLease(TASK_NAME, Duration.ofMinutes(3))"]
+          }
+        ]
+      }
     },
     {
       "id": "reply-email-delivery-scheduler",
