@@ -3666,6 +3666,33 @@ class CaseHandoverServiceTest {
   }
 
   @Test
+  void getStatus_letsADepartmentColleagueReadAnAcceptedTeamCase_withoutARequest() {
+    // FE#2494 *4 decision d: Teamberatung is read access for the team, writing stays with the
+    // owner.
+    session.setTeamSession(true);
+    session.setStatus(Session.SessionStatus.IN_PROGRESS);
+
+    CaseHandoverStatus status = caseHandoverService.getStatus(123L);
+
+    assertEquals("GRANTED", status.getStatus());
+    assertTrue(status.isCanViewContent());
+    assertEquals("TEAM_READER", status.getAuditOutcome());
+    assertNull(status.getAccessType());
+    verify(caseHandoverRequestRepository, never()).save(any());
+  }
+
+  @Test
+  void getStatus_keepsATeamEnquiryLocked_untilItIsAccepted() {
+    session.setTeamSession(true);
+    session.setStatus(Session.SessionStatus.NEW);
+
+    CaseHandoverStatus status = caseHandoverService.getStatus(123L);
+
+    assertEquals("NOT_REQUESTED", status.getStatus());
+    assertFalse(status.isCanViewContent());
+  }
+
+  @Test
   void getStatus_keepsHistoricalGrantButLocksContent_WhenRequesterNoLongerOwnsSession() {
     Consultant successor = consultant("successor", "Successor Counsellor");
     session.setConsultant(successor);
@@ -3767,6 +3794,39 @@ class CaseHandoverServiceTest {
     assertEquals("ICON", candidate.getConsultant().getAvatarKind());
     assertEquals("magpie", candidate.getConsultant().getAvatarId());
     assertEquals("previous", candidate.getConsultant().getId());
+  }
+
+  @Test
+  void searchCandidates_offersAColleaguesTeamCaseForReading_withoutARequest() {
+    // FE#2494 *4: search a colleague, press Enter, open one of their cases and read it.
+    session.setTeamSession(true);
+    givenCandidates(session);
+
+    var status =
+        caseHandoverService
+            .searchCandidates("asker", 0, 15, false)
+            .getSessions()
+            .get(0)
+            .getCaseHandoverStatus();
+
+    assertEquals("GRANTED", status.getStatus());
+    assertTrue(status.getCanViewContent());
+    assertFalse(status.getHasRequest());
+  }
+
+  @Test
+  void searchCandidates_keepsAnOrdinaryCaseLocked() {
+    givenCandidates(session);
+
+    var status =
+        caseHandoverService
+            .searchCandidates("asker", 0, 15, false)
+            .getSessions()
+            .get(0)
+            .getCaseHandoverStatus();
+
+    assertEquals("NOT_REQUESTED", status.getStatus());
+    assertFalse(status.getCanViewContent());
   }
 
   @Test

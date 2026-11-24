@@ -122,6 +122,7 @@ public class CaseHandoverService {
   private static final String OUTCOME_ACCESS_EXPIRED = "ACCESS_EXPIRED";
   private static final String OUTCOME_ALREADY_ANSWERED = "ALREADY_ANSWERED";
   private static final String OUTCOME_NOT_REQUESTED = "NOT_REQUESTED";
+  static final String OUTCOME_TEAM_READER = "TEAM_READER";
   private static final String OUTCOME_RECLAIMED = "RECLAIMED";
 
   /** ADR-002: "counsellor left" has no reclaim. ASSIGNMENT_ENDED is its successor (#1245). */
@@ -654,6 +655,21 @@ public class CaseHandoverService {
           .build();
     }
 
+    // FE#2494 *4 (decision d): in Teamberatung every counsellor of the department reads the case
+    // without a request; writing stays with the owner (TeamSessionReadOnlyService).
+    if (isTeamReader(session)) {
+      return CaseHandoverStatus.builder()
+          .sessionId(sessionId)
+          .status(Status.GRANTED.name())
+          .canViewContent(true)
+          .clientConsent(CaseHandoverConsentMode.NONE)
+          .clientConsentRequired(false)
+          .ownershipRevision(session.getOwnershipRevision())
+          .policyAuthority(POLICY_AUTHORITY)
+          .auditOutcome(OUTCOME_TEAM_READER)
+          .build();
+    }
+
     CaseHandoverStatus status =
         latestFor(sessionId, requester)
             .map(this::toStatus)
@@ -877,7 +893,9 @@ public class CaseHandoverService {
                 candidate ->
                     toCandidateDto(candidate, agencyNames)
                         .caseHandoverStatus(
-                            candidateStatus(requestsBySession.get(candidate.getId()), now)))
+                            isTeamReader(candidate)
+                                ? teamReaderCandidateStatus()
+                                : candidateStatus(requestsBySession.get(candidate.getId()), now)))
             .collect(Collectors.toList());
 
     return new ConsultantSessionListResponseDTO()
@@ -885,6 +903,14 @@ public class CaseHandoverService {
         .offset(safeOffset)
         .count(page.size())
         .total(total);
+  }
+
+  /** FE#2494 *4: a colleague's team case opens for reading straight from the search. */
+  private static CaseHandoverListStatusDTO teamReaderCandidateStatus() {
+    return new CaseHandoverListStatusDTO()
+        .status(Status.GRANTED.name())
+        .canViewContent(true)
+        .hasRequest(false);
   }
 
   private CaseHandoverListStatusDTO candidateStatus(
@@ -2004,6 +2030,13 @@ public class CaseHandoverService {
 
   private String decodeUsername(String username) {
     return username == null ? null : new UsernameTranscoder().decodeUsername(username);
+  }
+
+  /** Department eligibility is checked before; the team reader needs an accepted team case. */
+  private static boolean isTeamReader(Session session) {
+    return session.isTeamSession()
+        && session.getConsultant() != null
+        && session.getStatus() == Session.SessionStatus.IN_PROGRESS;
   }
 
   private void verifyEligibleForSession(Session session, Consultant requester) {

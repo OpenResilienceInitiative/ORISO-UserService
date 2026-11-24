@@ -211,6 +211,20 @@ public interface SessionRepository extends CrudRepository<Session, Long>, Sessio
       boolean isTeamSession);
 
   /**
+   * Accepted team sessions with a case room, in id order after {@code afterId}: the sweep of {@code
+   * TeamSessionReadOnlyRepairScheduler} (FE#2494 *4, decision d).
+   */
+  @Query(
+      """
+      select s.id from Session s
+      where s.teamSession = true and s.status = :status and s.consultant is not null
+        and s.matrixRoomId is not null and s.id > :afterId
+      order by s.id asc
+      """)
+  List<Long> findTeamReadOnlyCandidates(
+      @Param("status") SessionStatus status, @Param("afterId") long afterId, Pageable page);
+
+  /**
    * Find metadata-only case handover candidates in the requester's agencies. These sessions are
    * already owned by another consultant and are therefore not part of the normal "my sessions"
    * list.

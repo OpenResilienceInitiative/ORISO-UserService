@@ -101,6 +101,9 @@ class AssignEnquiryFacadeTest {
   de.caritas.cob.userservice.api.service.furthercounselling.TopicDuplicateService
       topicDuplicateService;
 
+  @Mock
+  de.caritas.cob.userservice.api.service.session.TeamSessionReadOnlyService teamSessionReadOnly;
+
   private static final String USER_MATRIX_ID = "@user:matrix.example.com";
   private static final String CONSULTANT_MATRIX_ID = "@consultant:matrix.example.com";
   private static final String MATRIX_ROOM_ID = "!createdRoom:matrix.example.com";
@@ -136,7 +139,8 @@ class AssignEnquiryFacadeTest {
             acceptanceNotices,
             acceptanceDelivery,
             topicDuplicateService,
-            messaging);
+            messaging,
+            teamSessionReadOnly);
     CONSULTANT_WITH_AGENCY.setTenantId(41L);
     // ADR-002 §2: the display name comes from the resolver, never from the real name.
     lenient()
@@ -489,6 +493,14 @@ class AssignEnquiryFacadeTest {
             SESSION_WITHOUT_CONSULTANT.getId(), CONSULTANT_WITH_AGENCY);
     verify(eventNotificationService)
         .createInquiryAcceptedNotification(SESSION_WITHOUT_CONSULTANT, CONSULTANT_WITH_AGENCY);
+  }
+
+  /** FE#2494 *4: in Teamberatung only the accepting counsellor writes. */
+  @Test
+  void assignRegisteredEnquiry_Should_makeTheTeamColleaguesReaders() {
+    assignEnquiryFacade.assignRegisteredEnquiry(SESSION_WITHOUT_CONSULTANT, CONSULTANT_WITH_AGENCY);
+
+    verify(teamSessionReadOnly).enforceAfterCommit(SESSION_WITHOUT_CONSULTANT.getId());
   }
 
   @Test
