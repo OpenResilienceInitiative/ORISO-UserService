@@ -1447,7 +1447,8 @@ class SessionSupervisorFacadeTest {
   }
 
   @Test
-  void replaceSupervisor_Should_refuseARowOfAnotherSessionOrAnInactiveRow() {
+  void replaceSupervisor_Should_refuseAnInactiveRow() {
+    newSupervisorInSameAgency();
     SessionSupervisor inactive = activeSupervisorRow(1L);
     inactive.setIsActive(false);
     when(sessionSupervisorRepository.findById(1L)).thenReturn(Optional.of(inactive));
@@ -1457,11 +1458,40 @@ class SessionSupervisorFacadeTest {
                 facade.replaceSupervisor(
                     SESSION_ID, 1L, NEW_SUPERVISOR_ID, addedBy, "PEER_SUPPORT", "x"))
         .isInstanceOf(BadRequestException.class);
+    verify(matrixSynapseService, never()).removeUserFromRoom(any(), any(), any());
+  }
+
+  @Test
+  void replaceSupervisor_Should_answerNotFound_forARowOfAnotherSession() {
+    newSupervisorInSameAgency();
+    SessionSupervisor foreign = activeSupervisorRow(1L);
+    Session other = new Session();
+    other.setId(SESSION_ID + 1);
+    foreign.setSession(other);
+    when(sessionSupervisorRepository.findById(1L)).thenReturn(Optional.of(foreign));
+
     assertThatThrownBy(
             () ->
                 facade.replaceSupervisor(
-                    SESSION_ID + 1, 1L, NEW_SUPERVISOR_ID, addedBy, "PEER_SUPPORT", "x"))
-        .isInstanceOf(BadRequestException.class);
+                    SESSION_ID, 1L, NEW_SUPERVISOR_ID, addedBy, "PEER_SUPPORT", "x"))
+        .isInstanceOf(NotFoundException.class);
+    assertThat(foreign.getIsActive()).isTrue();
+  }
+
+  @Test
+  void replaceSupervisor_Should_checkPermissionBeforeLookingAtTheSupervisorRow() {
+    Consultant stranger = new Consultant();
+    stranger.setId("someone-else");
+    stranger.setMatrixUserId("@else:oriso");
+    newSupervisorInSameAgency();
+
+    assertThatThrownBy(
+            () ->
+                facade.replaceSupervisor(
+                    SESSION_ID, 1L, NEW_SUPERVISOR_ID, stranger, "PEER_SUPPORT", "x"))
+        .isInstanceOf(RuntimeException.class);
+    verify(sessionSupervisorRepository, never()).findById(any());
+    verify(matrixSynapseService, never()).removeUserFromRoom(any(), any(), any());
   }
 
   @Test

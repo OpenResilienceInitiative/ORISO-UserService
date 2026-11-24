@@ -424,13 +424,17 @@ public class SessionSupervisorFacade {
       Consultant actor,
       String reasonCode,
       String notes) {
+    // Permission, feature gate and every add check first (#2494 *6): a caller who may not manage
+    // this session's supervisors learns nothing about its supervisor rows, and a refused
+    // candidate leaves everything unchanged.
+    AddPlan plan = prepareAdd(sessionId, newSupervisorConsultantId, actor, reasonCode, notes);
+    Session session = plan.session();
+
     SessionSupervisor old =
         sessionSupervisorRepository
             .findById(supervisorId)
+            .filter(row -> row.getSession() != null && sessionId.equals(row.getSession().getId()))
             .orElseThrow(() -> new NotFoundException("Supervisor not found: " + supervisorId));
-    if (old.getSession() == null || !sessionId.equals(old.getSession().getId())) {
-      throw new BadRequestException("Supervisor does not belong to this session");
-    }
     if (!Boolean.TRUE.equals(old.getIsActive())) {
       throw new BadRequestException("Supervisor is already removed");
     }
@@ -439,10 +443,6 @@ public class SessionSupervisorFacade {
         && newSupervisorConsultantId.equals(old.getSupervisorConsultant().getId())) {
       throw new BadRequestException("The new supervisor is the current supervisor");
     }
-
-    // All checks of an add, including permission and the feature gate, before anything changes.
-    AddPlan plan = prepareAdd(sessionId, newSupervisorConsultantId, actor, reasonCode, notes);
-    Session session = plan.session();
 
     String clientRoomId = session.getMatrixRoomId();
     String sideRoomId = old.getMatrixRoomId();
