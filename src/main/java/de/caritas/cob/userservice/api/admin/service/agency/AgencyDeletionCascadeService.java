@@ -115,7 +115,18 @@ public class AgencyDeletionCascadeService {
             idsOf(() -> userRepository.findActiveAdviceSeekersOnlyInAgency(agencyId)),
             askerUserAdminFacade::markAskerForDeletion,
             failures));
+    List<String> linked = null;
     if (failures.size() == failuresBeforeAdviceSeekers) {
+      try {
+        // Read while every link still exists: taking the memberships below removes the only
+        // row that ties an advice seeker without sessions to this Beratungsstelle.
+        linked = userRepository.findActiveAdviceSeekerIdsLinkedToAgency(agencyId);
+      } catch (RuntimeException e) {
+        failures.add(failure(KindEnum.ADVICE_SEEKER, null, e));
+      }
+    }
+    if (linked != null) {
+      var candidates = linked;
       result.keptAdviceSeekerSessions(
           count(
               KindEnum.SESSIONS,
@@ -127,15 +138,15 @@ public class AgencyDeletionCascadeService {
           KindEnum.MEMBERSHIPS,
           () -> (long) userAgencyRepository.deleteMembershipsOfKeptAdviceSeekers(agencyId),
           failures);
-      // Asked again now that this Beratungsstelle's sessions and memberships are gone: a
-      // Beratungsstelle deleted at the same time may have taken the advice seeker's last other
-      // session or membership after the first answer. Of two such cascades, the one asking last
-      // sees what both took away, so the account is marked by one of them.
+      // Asked again now that this Beratungsstelle's sessions and memberships are gone: one deleted
+      // at the same time may have taken an advice seeker's last other session or membership after
+      // the first answer. Of two such cascades, the one asking last sees what both took away, so
+      // the account is marked by one of them.
       result.adviceSeekers(
           result.getAdviceSeekers()
               + forEach(
                   KindEnum.ADVICE_SEEKER,
-                  idsOf(() -> userRepository.findActiveAdviceSeekersOnlyInAgency(agencyId)),
+                  idsOf(() -> withoutOtherAgency(candidates, agencyId)),
                   askerUserAdminFacade::markAskerForDeletion,
                   failures));
     } else {
@@ -230,6 +241,17 @@ public class AgencyDeletionCascadeService {
       (withOtherAgency.contains(id) ? alsoElsewhere : onlyHere).add(id);
     }
     return new Counsellors(onlyHere, alsoElsewhere);
+  }
+
+  private static final int ID_CHUNK = 500;
+
+  private List<User> withoutOtherAgency(List<String> userIds, Long agencyId) {
+    var result = new ArrayList<User>();
+    for (int from = 0; from < userIds.size(); from += ID_CHUNK) {
+      var chunk = userIds.subList(from, Math.min(from + ID_CHUNK, userIds.size()));
+      result.addAll(userRepository.findActiveWithoutOtherAgency(chunk, agencyId));
+    }
+    return result;
   }
 
   private static Supplier<List<String>> idsOf(Supplier<List<User>> users) {

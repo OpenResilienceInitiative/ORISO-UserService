@@ -83,7 +83,7 @@ class AgencyDeletionCascadeServiceTest {
     when(inviteRevocation.revokeForAgency(AGENCY)).thenReturn(new Revoked(1, 1));
     when(sessionRepository.closeUnassignedEnquiriesOfAgency(AGENCY, NOW_UTC)).thenReturn(3);
     when(userRepository.findActiveAdviceSeekersOnlyInAgency(AGENCY))
-        .thenReturn(List.of(asker("only-here")), List.of());
+        .thenReturn(List.of(asker("only-here")));
     when(sessionRepository.markSessionsOfKeptAdviceSeekersForDeletion(AGENCY, NOW_UTC))
         .thenReturn(2);
     when(consultantAgencyRepository.findActiveConsultantIdsByAgencyId(AGENCY))
@@ -138,20 +138,45 @@ class AgencyDeletionCascadeServiceTest {
   @Test
   void cascade_Should_markAKeptAdviceSeeker_Whom_aConcurrentDeletionLeftOnlyHere() {
     when(inviteRevocation.revokeForAgency(AGENCY)).thenReturn(new Revoked(0, 0));
-    // Kept at first: another Beratungsstelle still had a session. That one was deleted at the
-    // same time, so after this one's sessions were marked the advice seeker is only here.
-    when(userRepository.findActiveAdviceSeekersOnlyInAgency(AGENCY))
-        .thenReturn(List.of(), List.of(asker("shared")));
+    // Kept at first: another Beratungsstelle still had a session or membership. That one was
+    // deleted at the same time, so once this one's links are taken nothing else is left.
+    when(userRepository.findActiveAdviceSeekersOnlyInAgency(AGENCY)).thenReturn(List.of());
+    when(userRepository.findActiveAdviceSeekerIdsLinkedToAgency(AGENCY))
+        .thenReturn(List.of("shared", "elsewhere-too"));
+    when(userRepository.findActiveWithoutOtherAgency(List.of("shared", "elsewhere-too"), AGENCY))
+        .thenReturn(List.of(asker("shared")));
     when(groupChatDeleter.deleteChatsOf(AGENCY)).thenReturn(new Deleted(0, List.of()));
 
     var result = service.cascade(AGENCY);
 
     assertThat(result.getComplete()).isTrue();
     assertThat(result.getAdviceSeekers()).isEqualTo(1L);
-    var order = inOrder(sessionRepository, userAgencyRepository, askerUserAdminFacade);
+    // The links are read before they are taken, and asked about only afterwards.
+    var order =
+        inOrder(userRepository, sessionRepository, userAgencyRepository, askerUserAdminFacade);
+    order.verify(userRepository).findActiveAdviceSeekerIdsLinkedToAgency(AGENCY);
     order.verify(sessionRepository).markSessionsOfKeptAdviceSeekersForDeletion(AGENCY, NOW_UTC);
     order.verify(userAgencyRepository).deleteMembershipsOfKeptAdviceSeekers(AGENCY);
+    order.verify(userRepository).findActiveWithoutOtherAgency(any(), eq(AGENCY));
     order.verify(askerUserAdminFacade).markAskerForDeletion("shared");
+    verify(askerUserAdminFacade, never()).markAskerForDeletion("elsewhere-too");
+  }
+
+  @Test
+  void cascade_Should_leaveSessionsAndMemberships_When_theLinkedAdviceSeekersCannotBeRead() {
+    when(inviteRevocation.revokeForAgency(AGENCY)).thenReturn(new Revoked(0, 0));
+    when(userRepository.findActiveAdviceSeekerIdsLinkedToAgency(AGENCY))
+        .thenThrow(new IllegalStateException("db"));
+    when(groupChatDeleter.deleteChatsOf(AGENCY)).thenReturn(new Deleted(0, List.of()));
+
+    var result = service.cascade(AGENCY);
+
+    assertThat(result.getComplete()).isFalse();
+    assertThat(result.getFailures())
+        .extracting("kind", "id", "reason")
+        .containsExactly(tuple(KindEnum.ADVICE_SEEKER, null, "IllegalStateException"));
+    verify(sessionRepository, never()).markSessionsOfKeptAdviceSeekersForDeletion(any(), any());
+    verify(userAgencyRepository, never()).deleteMembershipsOfKeptAdviceSeekers(any());
   }
 
   @Test

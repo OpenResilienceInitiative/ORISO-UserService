@@ -96,15 +96,48 @@ class AgencyDeletionQueriesIT {
   }
 
   @Test
-  void findActiveAdviceSeekersOnlyInAgency_Should_findAnAdviceSeekerBothConcurrentCascadesKept() {
-    // Both Beratungsstellen are deleted at the same time and both ask before either marks:
-    // alsoElsewhereBySession still has a session in the other one, so each cascade keeps them.
+  void secondQuestion_Should_findAnAdviceSeekerBothConcurrentCascadesKept_bySessions() {
+    assertInterleavingMarks(alsoElsewhereBySession);
+  }
+
+  @Test
+  void secondQuestion_Should_findAnAdviceSeekerBothConcurrentCascadesKept_byMembershipsOnly() {
+    var membershipsOnly = asker();
+    membership(membershipsOnly, AGENCY);
+    membership(membershipsOnly, OTHER_AGENCY);
+    entityManager.flush();
+
+    assertInterleavingMarks(membershipsOnly);
+  }
+
+  @Test
+  void findActiveWithoutOtherAgency_Should_leaveOutThoseStillLinkedElsewhere() {
+    var linked = userRepository.findActiveAdviceSeekerIdsLinkedToAgency(AGENCY);
+    assertThat(linked)
+        .contains(alsoElsewhereBySession.getUserId(), onlyByMembership.getUserId())
+        .doesNotContain(alreadyMarked.getUserId(), elsewhereOnly.getUserId());
+
+    assertThat(userRepository.findActiveWithoutOtherAgency(linked, AGENCY))
+        .extracting(User::getUserId)
+        .containsExactlyInAnyOrder(onlyBySession.getUserId(), onlyByMembership.getUserId());
+  }
+
+  /**
+   * Two Beratungsstellen deleted at the same time; both ask before either takes anything. The
+   * advice seeker is kept by both, so each takes only its own sessions and membership. The second
+   * question asked over the ids read beforehand still finds them, from either side.
+   */
+  private void assertInterleavingMarks(User shared) {
     assertThat(userRepository.findActiveAdviceSeekersOnlyInAgency(AGENCY))
         .extracting(User::getUserId)
-        .doesNotContain(alsoElsewhereBySession.getUserId());
+        .doesNotContain(shared.getUserId());
     assertThat(userRepository.findActiveAdviceSeekersOnlyInAgency(OTHER_AGENCY))
         .extracting(User::getUserId)
-        .doesNotContain(alsoElsewhereBySession.getUserId());
+        .doesNotContain(shared.getUserId());
+    var linkedHere = userRepository.findActiveAdviceSeekerIdsLinkedToAgency(AGENCY);
+    var linkedThere = userRepository.findActiveAdviceSeekerIdsLinkedToAgency(OTHER_AGENCY);
+    assertThat(linkedHere).contains(shared.getUserId());
+    assertThat(linkedThere).contains(shared.getUserId());
 
     sessionRepository.markSessionsOfKeptAdviceSeekersForDeletion(AGENCY, NOW);
     userAgencyRepository.deleteMembershipsOfKeptAdviceSeekers(AGENCY);
@@ -113,14 +146,12 @@ class AgencyDeletionQueriesIT {
     entityManager.flush();
     entityManager.clear();
 
-    // Every session of theirs is now marked and the account still active. The second question
-    // each cascade asks after its own marking finds them, so the account is marked as well.
-    assertThat(userRepository.findActiveAdviceSeekersOnlyInAgency(AGENCY))
+    assertThat(userRepository.findActiveWithoutOtherAgency(linkedHere, AGENCY))
         .extracting(User::getUserId)
-        .contains(alsoElsewhereBySession.getUserId());
-    assertThat(userRepository.findActiveAdviceSeekersOnlyInAgency(OTHER_AGENCY))
+        .contains(shared.getUserId());
+    assertThat(userRepository.findActiveWithoutOtherAgency(linkedThere, OTHER_AGENCY))
         .extracting(User::getUserId)
-        .contains(alsoElsewhereBySession.getUserId());
+        .contains(shared.getUserId());
   }
 
   @Test
