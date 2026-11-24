@@ -30,6 +30,8 @@ import org.springframework.boot.data.jpa.test.autoconfigure.DataJpaTest;
 import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase;
 import org.springframework.context.annotation.Import;
 import org.springframework.test.context.ActiveProfiles;
+import org.springframework.test.context.DynamicPropertyRegistry;
+import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
@@ -49,6 +51,32 @@ class AgencyAdviceSeekerUnlinkerConcurrencyIT {
   private static final long AGENCY = 990_711L;
   private static final long OTHER_AGENCY = 990_712L;
   private static final LocalDateTime NOW = LocalDateTime.of(2026, 11, 24, 10, 0);
+
+  /** H2 locally; the MariaDB contract job runs it against MariaDB too (shared class). */
+  @DynamicPropertySource
+  static void useMariaDbWhenProvided(DynamicPropertyRegistry registry) {
+    var url = System.getenv("LIQUIBASE_IT_DB_URL");
+    if (url == null || url.isBlank()) {
+      return;
+    }
+    registry.add("spring.datasource.url", () -> url);
+    registry.add(
+        "spring.datasource.username",
+        () -> System.getenv().getOrDefault("LIQUIBASE_IT_DB_USERNAME", "root"));
+    registry.add(
+        "spring.datasource.password",
+        () -> System.getenv().getOrDefault("LIQUIBASE_IT_DB_PASSWORD", "root"));
+    registry.add("spring.datasource.driver-class-name", () -> "org.mariadb.jdbc.Driver");
+    registry.add("spring.liquibase.enabled", () -> "true");
+    registry.add(
+        "spring.liquibase.change-log", () -> "classpath:db/changelog/userservice-master.xml");
+    registry.add("spring.liquibase.contexts", () -> "dev,seed");
+    registry.add("spring.jpa.hibernate.ddl-auto", () -> "validate");
+    registry.add(
+        "spring.jpa.properties.hibernate.dialect", () -> "org.hibernate.dialect.MariaDBDialect");
+    registry.add("spring.jpa.defer-datasource-initialization", () -> "false");
+    registry.add("spring.sql.init.mode", () -> "never");
+  }
 
   @Autowired private UserRepository userRepository;
   @Autowired private SessionRepository sessionRepository;
