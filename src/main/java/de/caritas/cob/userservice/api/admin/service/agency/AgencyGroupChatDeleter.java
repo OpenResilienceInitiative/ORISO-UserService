@@ -1,7 +1,5 @@
 package de.caritas.cob.userservice.api.admin.service.agency;
 
-import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
-import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService.RoomPurgeOutcome;
 import de.caritas.cob.userservice.api.model.Chat;
 import de.caritas.cob.userservice.api.port.out.ChatRepository;
 import de.caritas.cob.userservice.api.service.ChatService;
@@ -42,8 +40,7 @@ public class AgencyGroupChatDeleter {
   private final @NonNull ChatRepository chatRepository;
   private final @NonNull ChatService chatService;
   private final @NonNull ChatMatrixRoomHistory roomHistory;
-  private final @NonNull GroupChatMatrixCleanupService groupLocks;
-  private final @NonNull MatrixSynapseService matrixSynapseService;
+  private final @NonNull GroupChatMatrixCleanupService matrixCleanup;
   private final @NonNull PlatformTransactionManager transactionManager;
 
   public long countChatsOf(Long agencyId) {
@@ -73,7 +70,7 @@ public class AgencyGroupChatDeleter {
   }
 
   private boolean delete(Chat candidate) {
-    groupLocks.lockOwner(candidate.getChatOwner());
+    matrixCleanup.lockOwner(candidate.getChatOwner());
     var locked = chatRepository.findByIdForUpdate(candidate.getId());
     if (locked.isEmpty()) {
       return false; // Deleted since it was listed.
@@ -92,8 +89,7 @@ public class AgencyGroupChatDeleter {
   }
 
   private void purgeStrictly(Long chatId, String room) {
-    var outcome = matrixSynapseService.purgeRoomOrConfirmGone(room);
-    if (outcome == null || outcome == RoomPurgeOutcome.FAILED) {
+    if (!matrixCleanup.purgeUnjournaledRoom(room)) {
       throw new RoomNotPurgedException(chatId);
     }
   }

@@ -8,8 +8,6 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoMoreInteractions;
 import static org.mockito.Mockito.when;
 
-import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
-import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService.RoomPurgeOutcome;
 import de.caritas.cob.userservice.api.model.Chat;
 import de.caritas.cob.userservice.api.model.Chat.ChatInterval;
 import de.caritas.cob.userservice.api.model.Consultant;
@@ -39,8 +37,7 @@ class AgencyGroupChatDeleterTest {
   @Mock private ChatRepository chatRepository;
   @Mock private ChatService chatService;
   @Mock private ChatMatrixRoomHistory roomHistory;
-  @Mock private GroupChatMatrixCleanupService groupLocks;
-  @Mock private MatrixSynapseService matrixSynapseService;
+  @Mock private GroupChatMatrixCleanupService matrixCleanup;
   @Mock private PlatformTransactionManager transactionManager;
 
   private AgencyGroupChatDeleter deleter;
@@ -52,8 +49,7 @@ class AgencyGroupChatDeleterTest {
             chatRepository,
             chatService,
             roomHistory,
-            groupLocks,
-            matrixSynapseService,
+            matrixCleanup,
             transactionManager);
   }
 
@@ -63,17 +59,16 @@ class AgencyGroupChatDeleterTest {
     scheduled.setStartDate(LocalDateTime.now().plusDays(3));
     given(scheduled);
     when(roomHistory.preparedNextRoom(scheduled)).thenReturn(Optional.empty());
-    when(matrixSynapseService.purgeRoomOrConfirmGone(CURRENT_ROOM))
-        .thenReturn(RoomPurgeOutcome.PURGED);
+    when(matrixCleanup.purgeUnjournaledRoom(CURRENT_ROOM)).thenReturn(true);
 
     var deleted = deleter.deleteChatsOf(AGENCY);
 
     assertThat(deleted.count()).isEqualTo(1);
     assertThat(deleted.failedChatIds()).isEmpty();
-    var order = inOrder(groupLocks, chatService, matrixSynapseService, transactionManager);
-    order.verify(groupLocks).lockOwner(scheduled.getChatOwner());
+    var order = inOrder(matrixCleanup, chatService, transactionManager);
+    order.verify(matrixCleanup).lockOwner(scheduled.getChatOwner());
     order.verify(chatService).deleteChatRecords(scheduled);
-    order.verify(matrixSynapseService).purgeRoomOrConfirmGone(CURRENT_ROOM);
+    order.verify(matrixCleanup).purgeUnjournaledRoom(CURRENT_ROOM);
     order.verify(transactionManager).commit(any());
   }
 
@@ -85,16 +80,17 @@ class AgencyGroupChatDeleterTest {
     series.setCurrentOccurrenceIndex(3);
     given(series);
     when(roomHistory.preparedNextRoom(series)).thenReturn(Optional.of(PREPARED_ROOM));
-    when(matrixSynapseService.purgeRoomOrConfirmGone(any())).thenReturn(RoomPurgeOutcome.PURGED);
+    when(matrixCleanup.purgeUnjournaledRoom(any())).thenReturn(true);
 
     var deleted = deleter.deleteChatsOf(AGENCY);
 
     assertThat(deleted.count()).isEqualTo(1);
     verify(chatService).deleteChatRecords(series);
-    verify(matrixSynapseService).purgeRoomOrConfirmGone(CURRENT_ROOM);
-    verify(matrixSynapseService).purgeRoomOrConfirmGone(PREPARED_ROOM);
+    verify(matrixCleanup).purgeUnjournaledRoom(CURRENT_ROOM);
+    verify(matrixCleanup).purgeUnjournaledRoom(PREPARED_ROOM);
     // No room for a next occurrence, no member carried, nothing saved as "next chat".
-    verifyNoMoreInteractions(matrixSynapseService);
+    verify(matrixCleanup).lockOwner(series.getChatOwner());
+    verifyNoMoreInteractions(matrixCleanup);
     verify(chatService, never()).saveChat(any());
   }
 
@@ -103,10 +99,8 @@ class AgencyGroupChatDeleterTest {
     var series = chat(3L, true, true);
     given(series);
     when(roomHistory.preparedNextRoom(series)).thenReturn(Optional.of(PREPARED_ROOM));
-    when(matrixSynapseService.purgeRoomOrConfirmGone(CURRENT_ROOM))
-        .thenReturn(RoomPurgeOutcome.PURGED);
-    when(matrixSynapseService.purgeRoomOrConfirmGone(PREPARED_ROOM))
-        .thenReturn(RoomPurgeOutcome.FAILED, RoomPurgeOutcome.PURGED);
+    when(matrixCleanup.purgeUnjournaledRoom(CURRENT_ROOM)).thenReturn(true);
+    when(matrixCleanup.purgeUnjournaledRoom(PREPARED_ROOM)).thenReturn(false, true);
 
     var first = deleter.deleteChatsOf(AGENCY);
 
@@ -128,7 +122,7 @@ class AgencyGroupChatDeleterTest {
     var chat = chat(4L, true, false);
     given(chat);
     when(roomHistory.preparedNextRoom(chat)).thenReturn(Optional.empty());
-    when(matrixSynapseService.purgeRoomOrConfirmGone(CURRENT_ROOM))
+    when(matrixCleanup.purgeUnjournaledRoom(CURRENT_ROOM))
         .thenThrow(new IllegalStateException("Synapse down"));
 
     var deleted = deleter.deleteChatsOf(AGENCY);
@@ -149,7 +143,8 @@ class AgencyGroupChatDeleterTest {
     assertThat(deleted.count()).isZero();
     assertThat(deleted.failedChatIds()).isEmpty();
     verify(chatService, never()).deleteChatRecords(any());
-    verifyNoMoreInteractions(matrixSynapseService);
+    verify(matrixCleanup).lockOwner(chat.getChatOwner());
+    verifyNoMoreInteractions(matrixCleanup);
   }
 
   @Test
