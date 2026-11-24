@@ -175,12 +175,14 @@ public class SessionAppointmentService {
     if (!end.isAfter(start)) {
       throw new BadRequestException("The end of an appointment must be after its start.");
     }
-    if (start.isBefore(freeTime.earliestStart()) || !start.isBefore(freeTime.latestStart())) {
+    var consultantId = session.getConsultant().getId();
+    // Inside the minimum lead time only a one-off's slot after its own notice
+    // (ORISO-Frontend#2494).
+    if (!freeTime.isInsideBookingWindow(consultantId, start, end)) {
       throw new ConflictException(
           "The start lies inside the lead time or beyond the booking horizon.",
           HttpStatusExceptionReason.SLOT_OUTSIDE_BOOKING_WINDOW);
     }
-    var consultantId = session.getConsultant().getId();
     consultants.lockConsultant(consultantId);
     // One upcoming appointment per conversation: an asker cannot flood the counsellor's calendar.
     if (!appointments.lockUpcomingOfSession(session.getId(), Instant.now()).isEmpty()) {

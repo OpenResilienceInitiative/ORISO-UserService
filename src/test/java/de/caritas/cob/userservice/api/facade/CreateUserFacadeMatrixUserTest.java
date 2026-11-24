@@ -117,7 +117,12 @@ class CreateUserFacadeMatrixUserTest {
                 de.caritas.cob.userservice.api.service.SessionDataService.class),
             temporaryAccountLinkResolver,
             temporaryAccountSettings,
-            lifecycleEvents);
+            lifecycleEvents,
+            org.mockito.Mockito.mock(
+                de.caritas.cob.userservice.api.conversation.service
+                    .AnonymousConversationCreatorService.class),
+            org.mockito.Mockito.mock(
+                de.caritas.cob.userservice.api.port.out.IdentityAuthentication.class));
 
     org.mockito.Mockito.lenient()
         .when(consultingTypeManager.getConsultingTypeSettings(org.mockito.ArgumentMatchers.any()))
