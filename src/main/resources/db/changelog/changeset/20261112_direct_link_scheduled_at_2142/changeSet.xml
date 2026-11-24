@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+  xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-3.2.xsd">
+  <!-- ORISO-Frontend#2142: a counsellor can note a date and time on a direct link ("Termin Frau M.,
+       Fr 14:30"), shown in their link overview. Informational only: it does not limit when the
+       link works and is not a calendar entry (scheduled calls stay with epic ORISO-Frontend#974).
+       Stored in UTC like create_date. Null for every other link, including all existing ones. -->
+  <changeSet id="20261112-direct-link-scheduled-at-2142" author="oriso">
+    <preConditions onFail="MARK_RAN">
+      <not>
+        <columnExists tableName="agency_invite_link" columnName="scheduled_at"/>
+      </not>
+    </preConditions>
+    <addColumn tableName="agency_invite_link">
+      <column name="scheduled_at" type="DATETIME"/>
+    </addColumn>
+    <!-- Keep the column on rollback (same rule as 20261110_session_direct_link_name_2170): the
+         rollback also runs after MARK_RAN, and a drop would erase dates this changeset never
+         created. The column is nullable and additive, so an older application ignores it. -->
+    <rollback><sql>SELECT 1</sql></rollback>
+  </changeSet>
+</databaseChangeLog>

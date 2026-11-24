@@ -4,6 +4,11 @@ public enum HttpStatusExceptionReason {
   ONE_TOPIC_PER_AGENCY,
   SETTINGS_UNAVAILABLE,
   USERNAME_NOT_AVAILABLE,
+  /**
+   * The username still belongs to a counsellor whose deletion is in progress. It becomes free once
+   * the hard deletion has run after the read-only safeguard window (#1489).
+   */
+  USERNAME_IN_DELETION,
   USERNAME_NOT_VALID,
   EMAIL_NOT_AVAILABLE,
   EMAIL_NOT_VALID,
@@ -80,6 +85,13 @@ public enum HttpStatusExceptionReason {
   INTERNAL_CHAT_ENCRYPTION_REQUIRED,
   /** Another request for the same people is still being processed; try again. */
   INTERNAL_CHAT_BUSY,
+  /**
+   * 409 - the room shows earlier messages to people who join later, so nobody new is admitted
+   * (ORISO-UserService#1580).
+   */
+  INTERNAL_CHAT_HISTORY_SHARED,
+  /** 409 - only an active members-only internal chat takes new colleagues. */
+  INTERNAL_CHAT_NOT_INVITABLE,
   /** The session of a members-only chat ends with its chat; stop the chat instead. */
   MEMBERS_ONLY_CHAT_STOP_REQUIRED,
   /** The case owner changed after the case handover request or offer was created. */
@@ -92,10 +104,40 @@ public enum HttpStatusExceptionReason {
    */
   GROUP_INVITE_INVALID,
   /**
+   * #1662: the running call has no share-link binding this counsellor may use (a group call a plain
+   * member or an advice seeker started, or a call the server has not registered yet). Unlike a
+   * plain 404 ("no link yet") this one stays: the app stops asking after a bounded number of tries.
+   */
+  CALL_SHARE_LINK_NO_CALL,
+  /**
    * An admin switched this feature off for the Träger or Beratungsstelle (#1564), or the switch
    * cannot be read. The counselling app hides the button; this is the server refusing the action.
    */
   FEATURE_DISABLED,
   /** A guest who arrived earlier is still waiting in the same live-chat queue. */
-  LIVE_CHAT_QUEUE_NOT_FIRST
+  LIVE_CHAT_QUEUE_NOT_FIRST,
+  /**
+   * A technical {@code group-chat-system*} account: it owns its Träger's group chats and is never
+   * deleted on its own, only with the Träger (#1521, #1525).
+   */
+  TECHNICAL_GROUP_CHAT_ACCOUNT,
+  /** The advice seeker is already marked for deletion; marking again changes nothing (#1521). */
+  ASKER_ALREADY_MARKED_FOR_DELETION,
+  /**
+   * Self-booking (ORISO-Frontend#1050): the conversation already has an upcoming appointment; an
+   * advice seeker books one at a time (security review, calendar flooding).
+   */
+  SELF_BOOKING_LIMIT_REACHED,
+  /**
+   * Self-booking (ORISO-Frontend#1050): the start lies inside the lead time or beyond the booking
+   * horizon, the window the free slots are offered in.
+   */
+  SLOT_OUTSIDE_BOOKING_WINDOW,
+  /** ORISO-Frontend#2287: only a request waiting for the counsellor is confirmed or declined. */
+  APPOINTMENT_NOT_REQUESTED,
+  /**
+   * ORISO-Frontend#2287: the requested time has passed or something else takes it now, so the
+   * request cannot be confirmed; the counsellor declines it instead.
+   */
+  REQUESTED_TIME_TAKEN
 }

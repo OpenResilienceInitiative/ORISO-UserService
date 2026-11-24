@@ -145,6 +145,35 @@ public class SessionArchiveService {
   }
 
   /**
+   * Archives the shared conversation of an expired direct invitation (ORISO-Frontend#2252). Runs
+   * without a person: the expiry sweep decided, so no caller permission is checked. A conversation
+   * that is archived already stays as it is.
+   *
+   * @return whether the status changed
+   */
+  public boolean archiveBySystem(Session session) {
+    if (session.getStatus() == SessionStatus.IN_ARCHIVE) {
+      return false;
+    }
+    session.setStatus(SessionStatus.IN_ARCHIVE);
+    sessionRepository.save(session);
+    fireArchiveOrDeleteSessionEvent(session);
+    return true;
+  }
+
+  /**
+   * Reopens an appointment conversation the expiry archived, when its counsellor sends a new link
+   * (ORISO-Frontend#2252). Only an archived conversation changes.
+   */
+  public void reopenBySystem(Session session) {
+    if (session.getStatus() != SessionStatus.IN_ARCHIVE) {
+      return;
+    }
+    session.setStatus(SessionStatus.IN_PROGRESS);
+    sessionRepository.save(session);
+  }
+
+  /**
    * Dearchive a session.
    *
    * @param sessionId the session id

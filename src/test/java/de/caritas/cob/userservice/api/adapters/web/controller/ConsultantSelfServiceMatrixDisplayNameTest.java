@@ -36,7 +36,6 @@ import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.service.ConsultantPublicSlugService;
 import de.caritas.cob.userservice.api.service.ConsultantService;
 import de.caritas.cob.userservice.api.service.DecryptionService;
-import de.caritas.cob.userservice.api.service.appointment.AppointmentService;
 import de.caritas.cob.userservice.api.service.matrix.ConsultantRenameSystemMessageService;
 import de.caritas.cob.userservice.api.service.notification.EventNotificationService;
 import de.caritas.cob.userservice.api.service.user.UserAccountService;
@@ -76,7 +75,6 @@ class ConsultantSelfServiceMatrixDisplayNameTest {
             mock(ConsultantPublicSlugService.class),
             mock(UserAccountInputValidator.class),
             matrixUserClient,
-            mock(AppointmentService.class),
             mock(SessionRepository.class),
             mock(EventNotificationService.class),
             mock(ConsultantTopicAgencyCompatibilityValidator.class),

@@ -4,7 +4,9 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -15,6 +17,8 @@ import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.service.matrix.MatrixCallGuestService;
 import de.caritas.cob.userservice.api.service.matrix.MatrixCallObservationService;
 import de.caritas.cob.userservice.api.service.matrix.MatrixCallStateService;
+import de.caritas.cob.userservice.api.service.matrix.MatrixGroupCallBindingService;
+import de.caritas.cob.userservice.api.service.matrix.MatrixSessionCallBindingService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.dao.CannotAcquireLockException;
@@ -34,6 +38,10 @@ class MatrixCallObservationControllerTest {
 
   private final MatrixCallObservationService observations =
       mock(MatrixCallObservationService.class);
+  private final MatrixSessionCallBindingService sessionBindings =
+      mock(MatrixSessionCallBindingService.class);
+  private final MatrixGroupCallBindingService groupBindings =
+      mock(MatrixGroupCallBindingService.class);
   private MockMvc mvc;
 
   @BeforeEach
@@ -44,6 +52,8 @@ class MatrixCallObservationControllerTest {
                     mock(MatrixCallStateService.class),
                     mock(MatrixCallGuestService.class),
                     observations,
+                    sessionBindings,
+                    groupBindings,
                     new AuthenticatedUser()))
             .build();
   }
@@ -158,5 +168,75 @@ class MatrixCallObservationControllerTest {
         .thenReturn(MatrixCallObservationService.Outcome.OK);
 
     register().andExpect(status().isNoContent());
+  }
+
+  @Test
+  void theSessionCounsellorsVerifiedRegistrationAlsoBindsTheCall() throws Exception {
+    // FE#2209: share links, knocks and seats read bindings only.
+    when(observations.register(any(), anyString(), anyString(), anyString(), anyBoolean()))
+        .thenReturn(MatrixCallObservationService.Outcome.OK);
+    when(sessionBindings.bind(any(), anyString(), anyString(), anyString(), anyBoolean()))
+        .thenReturn(true);
+
+    register().andExpect(status().isNoContent());
+    verify(sessionBindings)
+        .bind(any(), eq("!source:example"), eq("call"), eq("!media:example"), eq(true));
+  }
+
+  @Test
+  void aRenewalOfABoundSessionCallStaysAccepted() throws Exception {
+    // Once bound, the observation path steps aside (NOT_FOUND); the binding confirms the call.
+    when(observations.register(any(), anyString(), anyString(), anyString(), anyBoolean()))
+        .thenReturn(MatrixCallObservationService.Outcome.NOT_FOUND);
+    when(sessionBindings.bind(any(), anyString(), anyString(), anyString(), anyBoolean()))
+        .thenReturn(true);
+
+    register().andExpect(status().isNoContent());
+    // #1662: a session call that bound skips the group path entirely (short-circuit, not "|").
+    org.mockito.Mockito.verifyNoInteractions(groupBindings);
+  }
+
+  @Test
+  void theGroupModeratorsVerifiedRegistrationAlsoBindsTheGroupCall() throws Exception {
+    // #1662: a group call's share link needs a binding; the encrypted invite never creates one.
+    when(observations.register(any(), anyString(), anyString(), anyString(), anyBoolean()))
+        .thenReturn(MatrixCallObservationService.Outcome.NOT_FOUND);
+    when(sessionBindings.bind(any(), anyString(), anyString(), anyString(), anyBoolean()))
+        .thenReturn(false);
+    when(groupBindings.bind(any(), anyString(), anyString(), anyString(), anyBoolean()))
+        .thenReturn(true);
+
+    register().andExpect(status().isNoContent());
+    verify(groupBindings)
+        .bind(any(), eq("!source:example"), eq("call"), eq("!media:example"), eq(true));
+  }
+
+  @Test
+  void neitherObservationNorBindingAcceptedIsNotFound() throws Exception {
+    when(observations.register(any(), anyString(), anyString(), anyString(), anyBoolean()))
+        .thenReturn(MatrixCallObservationService.Outcome.NOT_FOUND);
+    when(sessionBindings.bind(any(), anyString(), anyString(), anyString(), anyBoolean()))
+        .thenReturn(false);
+
+    register().andExpect(status().isNotFound());
+  }
+
+  @Test
+  void aRaceOnTheCallBindingKeysIsAConflictNotAServerError() throws Exception {
+    when(observations.register(any(), anyString(), anyString(), anyString(), anyBoolean()))
+        .thenReturn(MatrixCallObservationService.Outcome.OK);
+    when(sessionBindings.bind(any(), anyString(), anyString(), anyString(), anyBoolean()))
+        .thenThrow(
+            new DataIntegrityViolationException(
+                "could not execute statement",
+                new java.sql.SQLIntegrityConstraintViolationException(
+                    "Duplicate entry 'x' for key 'matrix_call_binding.uk_call_binding_source_call'")));
+    register().andExpect(status().isConflict());
+
+    org.mockito.Mockito.doThrow(
+            new DuplicateKeyException("Duplicate entry for key 'uk_call_binding_media_room'"))
+        .when(sessionBindings)
+        .bind(any(), anyString(), anyString(), anyString(), anyBoolean());
+    register().andExpect(status().isConflict());
   }
 }

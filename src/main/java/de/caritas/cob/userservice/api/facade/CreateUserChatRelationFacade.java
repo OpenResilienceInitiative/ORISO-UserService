@@ -1,7 +1,6 @@
 package de.caritas.cob.userservice.api.facade;
 
 import de.caritas.cob.userservice.api.adapters.web.dto.UserDTO;
-import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
 import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException;
 import de.caritas.cob.userservice.api.facade.rollback.RollbackFacade;
 import de.caritas.cob.userservice.api.facade.rollback.RollbackUserAccountInformation;
@@ -9,7 +8,6 @@ import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.model.UserAgency;
 import de.caritas.cob.userservice.api.service.LogService;
 import de.caritas.cob.userservice.api.service.UserAgencyService;
-import java.util.List;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.auditing.AuditingHandler;
@@ -24,10 +22,20 @@ public class CreateUserChatRelationFacade {
   private final @NonNull RollbackFacade rollbackFacade;
   private final AuditingHandler auditingHandler;
 
+  /**
+   * Makes sure the user has a relation to the agency of the registration. The call is idempotent:
+   * when the relation already exists it is reused and nothing is written. An existing asker who
+   * asks for further counselling at an agency they already know must get the new session, not a 400
+   * (#1646). Duplicate sessions are still guarded by the session validation constraints in {@link
+   * CreateSessionFacade}.
+   */
   public void initializeUserChatAgencyRelation(UserDTO userDTO, User user) {
-    UserAgency userAgency = new UserAgency(user, userDTO.getAgencyId());
-    checkIfAlreadyAssignedToAgency(user, userAgency);
+    if (isAlreadyAssignedToAgency(user, userDTO.getAgencyId())) {
+      // Reuse silently: logging user and agency together would record a sensitive association.
+      return;
+    }
 
+    UserAgency userAgency = new UserAgency(user, userDTO.getAgencyId());
     try {
       auditingHandler.markCreated(userAgency);
       userAgencyService.saveUserAgency(userAgency);
@@ -45,15 +53,8 @@ public class CreateUserChatRelationFacade {
     }
   }
 
-  private void checkIfAlreadyAssignedToAgency(User user, UserAgency userAgency) {
-    List<UserAgency> userAgencies = userAgencyService.getUserAgenciesByUser(user);
-
-    if (userAgencies.stream()
-        .anyMatch(agency -> agency.getAgencyId().equals(userAgency.getAgencyId()))) {
-      throw new BadRequestException(
-          String.format(
-              "User %s already assigned to chat relation agency %s",
-              user.getUserId(), userAgency.getAgencyId()));
-    }
+  private boolean isAlreadyAssignedToAgency(User user, Long agencyId) {
+    return userAgencyService.getUserAgenciesByUser(user).stream()
+        .anyMatch(agency -> agency.getAgencyId().equals(agencyId));
   }
 }

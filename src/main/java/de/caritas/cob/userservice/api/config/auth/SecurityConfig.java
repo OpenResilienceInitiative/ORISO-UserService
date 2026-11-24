@@ -20,6 +20,7 @@ import org.springframework.core.convert.converter.Converter;
 import org.springframework.http.HttpMethod;
 import org.springframework.lang.Nullable;
 import org.springframework.security.authentication.AbstractAuthenticationToken;
+import org.springframework.security.authentication.AnonymousAuthenticationToken;
 import org.springframework.security.authorization.AuthorizationDecision;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
@@ -62,8 +63,6 @@ public class SecurityConfig {
           + ")|(?:(?!(?:search|absences|import|sessions|languages)$)"
           + PublicSlugFormat.REGEX
           + ")";
-
-  public static final String APPOINTMENTS_APPOINTMENT_ID = "/appointments/{appointmentId:";
 
   private final JwtGrantedAuthoritiesConverter jwtGrantedAuthoritiesConverter =
       new JwtGrantedAuthoritiesConverter();
@@ -217,6 +216,15 @@ public class SecurityConfig {
                 .permitAll()
                 .requestMatchers(HttpMethod.GET, "/users/invitelinks/*/context")
                 .permitAll()
+                // #1662: a Gesprächskreis entry page reads the circle's guest account mode; the
+                // invite secret is the credential and GroupInviteRegistration checks it.
+                .requestMatchers(HttpMethod.GET, "/users/chat/*/invite-context")
+                .permitAll()
+                // Calendar subscription feed (ADR-032): a calendar app sends no token; the signed
+                // address is the credential and CalendarFeedService checks it in constant time.
+                .requestMatchers(
+                    HttpMethod.GET, "/users/calendar/feed/*/*", "/service/users/calendar/feed/*/*")
+                .permitAll()
                 .requestMatchers(HttpMethod.POST, "/users/identity-suggestions")
                 .permitAll()
                 // This cluster-internal endpoint authenticates with its own dedicated shared
@@ -312,8 +320,6 @@ public class SecurityConfig {
                 .requestMatchers(
                     HttpMethod.GET, "/service/conversations/anonymous/{sessionId:[0-9]+}")
                 .hasAnyAuthority(ANONYMOUS_DEFAULT, USER_DEFAULT)
-                .requestMatchers("/users/notifications")
-                .hasAnyAuthority(NOTIFICATIONS_TECHNICAL)
                 .requestMatchers("/users/data")
                 .hasAnyAuthority(
                     ANONYMOUS_DEFAULT,
@@ -321,9 +327,8 @@ public class SecurityConfig {
                     CONSULTANT_DEFAULT,
                     SINGLE_TENANT_ADMIN,
                     TENANT_ADMIN,
-                    RESTRICTED_AGENCY_ADMIN)
-                .requestMatchers(HttpMethod.GET, APPOINTMENTS_APPOINTMENT_ID + UUID_PATTERN + "}")
-                .permitAll()
+                    RESTRICTED_AGENCY_ADMIN,
+                    STATISTICS_READER)
                 // Call share links (#1487), ahead of /matrix/**: guests join, counsellors manage;
                 // membership of the call is checked in the service.
                 .requestMatchers(
@@ -339,6 +344,10 @@ public class SecurityConfig {
                     "/matrix/calls/share-links/{linkId:[0-9]+}/guests/remove",
                     "/service/matrix/calls/share-links/{linkId:[0-9]+}/guests/remove")
                 .hasAuthority(CONSULTANT_DEFAULT)
+                .requestMatchers(HttpMethod.POST, "/users/event-notifications/addon")
+                .hasAuthority(TECHNICAL_DEFAULT)
+                .requestMatchers(HttpMethod.GET, "/users/addon-context")
+                .hasAuthority(TECHNICAL_DEFAULT)
                 .requestMatchers(
                     "/users/email",
                     "/users/drafts",
@@ -357,9 +366,9 @@ public class SecurityConfig {
                 // Live-Handshake (ADR-018): any authenticated professional may hit the endpoints;
                 // per-purpose role pairs + fresh-credential checks are enforced in the service.
                 .requestMatchers("/users/handshakes", "/users/handshakes/**")
-                .authenticated()
+                .access(this::authenticatedButNotStatisticsReaderOnly)
                 .requestMatchers("/users/support-rooms", "/users/support-rooms/**")
-                .authenticated()
+                .access(this::authenticatedButNotStatisticsReaderOnly)
                 .requestMatchers("/users/tutorials/progress", "/users/tutorials/progress/**")
                 .hasAnyAuthority(
                     USER_DEFAULT,
@@ -391,8 +400,19 @@ public class SecurityConfig {
                     CONSULTANT_DEFAULT,
                     SINGLE_TENANT_ADMIN,
                     TENANT_ADMIN,
-                    RESTRICTED_AGENCY_ADMIN)
-                .requestMatchers("/users/twoFactorAuth", "/users/2fa/**", "/users/mobile/app/token")
+                    RESTRICTED_AGENCY_ADMIN,
+                    STATISTICS_READER)
+                // A statistics reader must be able to set up its mandatory 2FA (#1666), but has no
+                // use for the mobile app token.
+                .requestMatchers("/users/twoFactorAuth", "/users/2fa/**")
+                .hasAnyAuthority(
+                    SINGLE_TENANT_ADMIN,
+                    TENANT_ADMIN,
+                    USER_DEFAULT,
+                    CONSULTANT_DEFAULT,
+                    RESTRICTED_AGENCY_ADMIN,
+                    STATISTICS_READER)
+                .requestMatchers("/users/mobile/app/token")
                 .hasAnyAuthority(
                     SINGLE_TENANT_ADMIN,
                     TENANT_ADMIN,
@@ -403,6 +423,10 @@ public class SecurityConfig {
                 .requestMatchers(
                     "/users/live-chat-account/conversion",
                     "/service/users/live-chat-account/conversion")
+                .access(this::isUnprivilegedLiveChatUser)
+                // #1662 "keep account": only the advice seeker, for their own temporary account.
+                .requestMatchers(
+                    "/users/temporary-account/keep", "/service/users/temporary-account/keep")
                 .access(this::isUnprivilegedLiveChatUser)
                 // The caller's own direct-link temporary account (#1476).
                 .requestMatchers(
@@ -415,6 +439,10 @@ public class SecurityConfig {
                 .requestMatchers(
                     "/users/call-knocks/mine",
                     "/service/users/call-knocks/mine",
+                    // ORISO-Frontend#2237: waiting in a group's waiting room; the service checks
+                    // the chat permission.
+                    "/users/chat/{chatId:[0-9]+}/waiting",
+                    "/service/users/chat/{chatId:[0-9]+}/waiting",
                     "/users/call-knocks/mine/{knockId:[0-9]+}",
                     "/service/users/call-knocks/mine/{knockId:[0-9]+}")
                 .hasAuthority(USER_DEFAULT)
@@ -434,10 +462,21 @@ public class SecurityConfig {
                     "/users/directlinks/{linkId:[0-9]+}",
                     "/service/users/directlinks/{linkId:[0-9]+}")
                 .hasAuthority(CONSULTANT_DEFAULT)
+                // ORISO-Frontend#2252: "Neuen Link senden" and invitations from a 1:1; ownership
+                // of the link and of the conversation is checked in the service (404 otherwise).
+                .requestMatchers(
+                    HttpMethod.POST,
+                    "/users/directlinks/{linkId:[0-9]+}/renewal",
+                    "/service/users/directlinks/{linkId:[0-9]+}/renewal",
+                    "/users/sessions/{sessionId:[0-9]+}/direct-invitations",
+                    "/service/users/sessions/{sessionId:[0-9]+}/direct-invitations")
+                .hasAuthority(CONSULTANT_DEFAULT)
                 .requestMatchers(
                     HttpMethod.POST,
                     "/users/invitelinks/*/conversations",
-                    "/service/users/invitelinks/*/conversations")
+                    "/service/users/invitelinks/*/conversations",
+                    "/users/invitelinks/*/renewal-requests",
+                    "/service/users/invitelinks/*/renewal-requests")
                 .hasAuthority(USER_DEFAULT)
                 .requestMatchers("/users/statistics/registration")
                 .hasAnyAuthority(SINGLE_TENANT_ADMIN, TENANT_ADMIN)
@@ -460,7 +499,6 @@ public class SecurityConfig {
                 .hasAuthority(USER_DEFAULT)
                 .requestMatchers(
                     "/users/sessions/{sessionId:[0-9]+}/enquiry/new",
-                    "/appointments/sessions/{sessionId:[0-9]+}/enquiry/new",
                     "/users/askers/consultingType/new",
                     "/users/askers/session/new",
                     "/users/account",
@@ -524,6 +562,8 @@ public class SecurityConfig {
                     "/users/sessions/consultants",
                     "/users/sessions/consultants/deleted-askers",
                     "/service/users/sessions/consultants/deleted-askers",
+                    "/users/sessions/consultants/deleted-askers/{formerSessionId:[0-9]+}/archive",
+                    "/service/users/sessions/consultants/deleted-askers/{formerSessionId:[0-9]+}/archive",
                     "/users/sessions/teams",
                     "/conversations/askers/anonymous/{sessionId:[0-9]+}/accept",
                     "/service/conversations/askers/anonymous/{sessionId:[0-9]+}/accept",
@@ -547,6 +587,8 @@ public class SecurityConfig {
                     "/service/users/chat-series/**",
                     "/users/agencies/{agencyId:[0-9]+}/admin-contacts",
                     "/service/users/agencies/{agencyId:[0-9]+}/admin-contacts",
+                    "/users/agencies/{agencyId:[0-9]+}/contact-person",
+                    "/service/users/agencies/{agencyId:[0-9]+}/contact-person",
                     "/users/sessions/{sessionId:[0-9]+}/case-handover",
                     "/service/users/sessions/{sessionId:[0-9]+}/case-handover",
                     "/users/sessions/{sessionId:[0-9]+}/case-handover/extend",
@@ -579,7 +621,9 @@ public class SecurityConfig {
                     "/users/chat/new",
                     "/users/chat/v2/new",
                     "/users/chat/internal-subset",
-                    "/users/chat/internal-subset/recipients")
+                    "/users/chat/internal-subset/recipients",
+                    "/users/chat/internal-subset/{chatId:[0-9]+}/recipients",
+                    "/users/chat/internal-subset/{chatId:[0-9]+}/participants")
                 .hasAuthority(CREATE_NEW_CHAT)
                 .requestMatchers("/users/chat/{chatId:[0-9]+}/start")
                 .hasAuthority(START_CHAT)
@@ -602,6 +646,13 @@ public class SecurityConfig {
                     CONSULTANT_UPDATE)
                 .requestMatchers(HttpMethod.GET, "/useradmin/supportadmins/search")
                 .hasAnyAuthority(USER_ADMIN, GLOBAL_SUPPORT_ADMIN)
+                // Asked by TenantService, with the deleting admin's token, before a Träger is
+                // deleted (#1466). The Träger scope is enforced in TenantDeletionBlockerService.
+                .requestMatchers(
+                    HttpMethod.GET,
+                    "/useradmin/tenants/{tenantId:[0-9]+}/deletion-blockers",
+                    "/service/useradmin/tenants/{tenantId:[0-9]+}/deletion-blockers")
+                .hasAnyAuthority(USER_ADMIN, TENANT_ADMIN, SINGLE_TENANT_ADMIN)
                 .requestMatchers(HttpMethod.GET, "/useradmin/tenantadmins/search")
                 .hasAnyAuthority(TENANT_ADMIN, USER_ADMIN)
                 .requestMatchers(
@@ -687,17 +738,38 @@ public class SecurityConfig {
                     "/useradmin/users/{userId:" + UUID_PATTERN + "}/identities",
                     "/service/useradmin/users/{userId:" + UUID_PATTERN + "}/identities")
                 .hasAnyAuthority(USER_ADMIN, TECHNICAL_DEFAULT)
+                // Read-only statistics accounts (ORISO-UserService#1666): managed by platform
+                // admins
+                // only. Must precede the generic /useradmin/** rule, which Träger admins also pass.
+                .requestMatchers(
+                    "/useradmin/statisticsreaders",
+                    "/useradmin/statisticsreaders/**",
+                    "/service/useradmin/statisticsreaders",
+                    "/service/useradmin/statisticsreaders/**")
+                .access(this::isPlatformAdmin)
                 .requestMatchers(
                     HttpMethod.GET,
                     "/useradmin/statistics/dashboard",
                     "/service/useradmin/statistics/dashboard")
-                .hasAnyAuthority(
-                    USER_ADMIN, TENANT_ADMIN, SINGLE_TENANT_ADMIN, RESTRICTED_AGENCY_ADMIN)
+                .access(
+                    (authentication, context) ->
+                        new AuthorizationDecision(
+                            hasAnyAuthority(
+                                    authentication,
+                                    USER_ADMIN,
+                                    TENANT_ADMIN,
+                                    SINGLE_TENANT_ADMIN,
+                                    RESTRICTED_AGENCY_ADMIN)
+                                || isPlatformStatisticsReader(authentication)))
                 .requestMatchers(
                     HttpMethod.GET,
                     "/useradmin/statistics/tutorials",
                     "/service/useradmin/statistics/tutorials")
-                .hasAnyAuthority(TENANT_ADMIN, SINGLE_TENANT_ADMIN)
+                .access(
+                    (authentication, context) ->
+                        new AuthorizationDecision(
+                            hasAnyAuthority(authentication, TENANT_ADMIN, SINGLE_TENANT_ADMIN)
+                                || isPlatformStatisticsReader(authentication)))
                 // Global statistics settings and their protocol (OBP #93): platform admins only.
                 // Must precede the generic /useradmin/** rule, which a Träger admin also passes.
                 .requestMatchers(
@@ -718,6 +790,24 @@ public class SecurityConfig {
                 .requestMatchers("/useradmin/list-preferences", "/useradmin/list-preferences/**")
                 .hasAnyAuthority(
                     USER_ADMIN, TENANT_ADMIN, SINGLE_TENANT_ADMIN, RESTRICTED_AGENCY_ADMIN)
+                // Contact person per counselling centre and Träger (ORISO-Admin#1534). Every admin
+                // role reaches it; ContactPersonAdminService narrows to the caller's AdminScope
+                // (agency admins: own centres only, never the Träger default).
+                .requestMatchers(
+                    "/useradmin/agencies/{agencyId:[0-9]+}/contactperson",
+                    "/useradmin/agencies/{agencyId:[0-9]+}/contactperson/candidates",
+                    "/useradmin/agencycontacts/coverage",
+                    "/service/useradmin/agencies/{agencyId:[0-9]+}/contactperson",
+                    "/service/useradmin/agencies/{agencyId:[0-9]+}/contactperson/candidates",
+                    "/service/useradmin/agencycontacts/coverage")
+                .hasAnyAuthority(
+                    USER_ADMIN, TENANT_ADMIN, SINGLE_TENANT_ADMIN, RESTRICTED_AGENCY_ADMIN)
+                .requestMatchers(
+                    "/useradmin/tenants/{tenantId:[0-9]+}/contactperson",
+                    "/useradmin/tenants/{tenantId:[0-9]+}/contactperson/candidates",
+                    "/service/useradmin/tenants/{tenantId:[0-9]+}/contactperson",
+                    "/service/useradmin/tenants/{tenantId:[0-9]+}/contactperson/candidates")
+                .hasAnyAuthority(USER_ADMIN, TENANT_ADMIN, SINGLE_TENANT_ADMIN)
                 .requestMatchers(
                     "/useradmin", "/useradmin/**", "/service/useradmin", "/service/useradmin/**")
                 .hasAnyAuthority(USER_ADMIN, TECHNICAL_DEFAULT)
@@ -742,6 +832,51 @@ public class SecurityConfig {
                 .access(this::canReportDeletion)
                 .requestMatchers("/users/deletion-audit-logs", "/service/users/deletion-audit-logs")
                 .access(this::canAccessPlatformAuditLogs)
+                // Calendar (ADR-032): an asker reads only their own; everything else is a
+                // counsellor's, and CalendarService decides whose calendar may be looked at.
+                .requestMatchers(
+                    HttpMethod.GET, "/users/calendar/entries", "/service/users/calendar/entries")
+                .hasAnyAuthority(USER_DEFAULT, CONSULTANT_DEFAULT)
+                .requestMatchers(
+                    "/users/calendar/colleagues",
+                    "/service/users/calendar/colleagues",
+                    "/users/calendar/colleagues/{consultantId}/entries",
+                    "/service/users/calendar/colleagues/{consultantId}/entries",
+                    "/users/calendar/blockers",
+                    "/service/users/calendar/blockers",
+                    "/users/calendar/blockers/{blockerId}",
+                    "/service/users/calendar/blockers/{blockerId}",
+                    "/users/calendar/sync",
+                    "/service/users/calendar/sync",
+                    "/users/calendar/sync/feed/reset",
+                    "/service/users/calendar/sync/feed/reset",
+                    "/users/calendar/sync/import",
+                    "/service/users/calendar/sync/import",
+                    "/users/calendar/working-hours",
+                    "/service/users/calendar/working-hours",
+                    "/users/calendar/consultation-hours",
+                    "/service/users/calendar/consultation-hours",
+                    "/users/calendar/working-hours/exceptions/{date}",
+                    "/service/users/calendar/working-hours/exceptions/{date}",
+                    "/users/calendar/proposals",
+                    "/service/users/calendar/proposals",
+                    "/users/calendar/proposals/{proposalId}",
+                    "/service/users/calendar/proposals/{proposalId}",
+                    "/users/calendar/proposals/{proposalId}/accept",
+                    "/service/users/calendar/proposals/{proposalId}/accept",
+                    "/users/calendar/proposals/{proposalId}/decline",
+                    "/service/users/calendar/proposals/{proposalId}/decline",
+                    "/users/calendar/colleague-appointments",
+                    "/service/users/calendar/colleague-appointments",
+                    "/users/calendar/colleague-appointments/{appointmentId}",
+                    "/service/users/calendar/colleague-appointments/{appointmentId}",
+                    "/users/calendar/colleague-appointments/{appointmentId}/accept",
+                    "/service/users/calendar/colleague-appointments/{appointmentId}/accept",
+                    "/users/calendar/colleague-appointments/{appointmentId}/decline",
+                    "/service/users/calendar/colleague-appointments/{appointmentId}/decline",
+                    "/users/calendar/auto-accept",
+                    "/service/users/calendar/auto-accept")
+                .hasAuthority(CONSULTANT_DEFAULT)
                 // 1:1 appointments (ORISO-Frontend#1960): who may do what is decided per session in
                 // SessionAppointmentService.
                 .requestMatchers(
@@ -751,23 +886,25 @@ public class SecurityConfig {
                     "/service/users/sessions/{sessionId:[0-9]+}/appointments/{appointmentId}",
                     "/users/sessions/{sessionId:[0-9]+}/appointments/{appointmentId}/cancel",
                     "/service/users/sessions/{sessionId:[0-9]+}/appointments/{appointmentId}/cancel",
+                    "/users/sessions/{sessionId:[0-9]+}/appointments/{appointmentId}/confirm",
+                    "/service/users/sessions/{sessionId:[0-9]+}/appointments/{appointmentId}/confirm",
+                    "/users/sessions/{sessionId:[0-9]+}/appointments/{appointmentId}/decline",
+                    "/service/users/sessions/{sessionId:[0-9]+}/appointments/{appointmentId}/decline",
+                    "/users/sessions/{sessionId:[0-9]+}/appointments/{appointmentId}/expiry-notice",
+                    "/service/users/sessions/{sessionId:[0-9]+}/appointments/{appointmentId}/expiry-notice",
+                    "/users/sessions/{sessionId:[0-9]+}/appointment-slots",
+                    "/service/users/sessions/{sessionId:[0-9]+}/appointment-slots",
+                    "/users/sessions/{sessionId:[0-9]+}/appointment-slots/booking",
+                    "/service/users/sessions/{sessionId:[0-9]+}/appointment-slots/booking",
                     "/users/appointments/upcoming",
                     "/service/users/appointments/upcoming")
                 .hasAnyAuthority(USER_DEFAULT, ANONYMOUS_DEFAULT, CONSULTANT_DEFAULT)
                 .requestMatchers(
                     "/users/consultants/sessions/{sessionId:[0-9]+}",
+                    "/users/consultants/sessions/{sessionId:[0-9]+}/enquiry/opened",
                     "/users/sessions/{sessionId:[0-9]+}/archive",
                     "/users/sessions/{sessionId:[0-9]+}")
                 .hasAnyAuthority(CONSULTANT_DEFAULT)
-                .requestMatchers("/appointments")
-                .hasAnyAuthority(CONSULTANT_DEFAULT, TECHNICAL_DEFAULT)
-                .requestMatchers("/appointments/booking/{id:[0-9]+}")
-                .hasAnyAuthority(CONSULTANT_DEFAULT, TECHNICAL_DEFAULT)
-                .requestMatchers(HttpMethod.PUT, APPOINTMENTS_APPOINTMENT_ID + UUID_PATTERN + "}")
-                .hasAuthority(CONSULTANT_DEFAULT)
-                .requestMatchers(
-                    HttpMethod.DELETE, APPOINTMENTS_APPOINTMENT_ID + UUID_PATTERN + "}")
-                .hasAuthority(CONSULTANT_DEFAULT)
                 .requestMatchers(
                     "/users/sessions/{sessionId:[0-9]+}/dearchive", "/users/mails/reassignment")
                 .hasAnyAuthority(USER_DEFAULT, CONSULTANT_DEFAULT)
@@ -927,6 +1064,52 @@ public class SecurityConfig {
                     GLOBAL_SUPPORT_ADMIN,
                     TECHNICAL_DEFAULT,
                     NOTIFICATIONS_TECHNICAL)));
+  }
+
+  /**
+   * Authenticated-only routes stay closed to a pure statistics reader (#1666): its tenant-0 token
+   * switches the tenant filter off, so an "any authenticated user" route would read across Träger.
+   */
+  private AuthorizationDecision authenticatedButNotStatisticsReaderOnly(
+      Supplier<? extends Authentication> authenticationSupplier,
+      RequestAuthorizationContext requestContext) {
+    var authentication = authenticationSupplier.get();
+    if (authentication == null
+        || !authentication.isAuthenticated()
+        || authentication instanceof AnonymousAuthenticationToken) {
+      return new AuthorizationDecision(false);
+    }
+    var authorities =
+        authentication.getAuthorities().stream()
+            .map(GrantedAuthority::getAuthority)
+            .filter(authority -> authority.startsWith(Authority.AuthorityValue.PREFIX))
+            .toList();
+    boolean onlyStatisticsReader =
+        authorities.contains(STATISTICS_READER)
+            && authorities.stream().allMatch(STATISTICS_READER::equals);
+    return new AuthorizationDecision(!onlyStatisticsReader);
+  }
+
+  private static boolean hasAnyAuthority(
+      Supplier<? extends Authentication> authenticationSupplier, String... authorities) {
+    Set<String> wanted = Set.of(authorities);
+    return authenticationSupplier.get().getAuthorities().stream()
+        .anyMatch(authority -> wanted.contains(authority.getAuthority()));
+  }
+
+  /**
+   * ORISO-UserService#1666: the read-only statistics account. Needs the authority, the realm role
+   * and the platform tenant 0 together; any one alone is not enough.
+   */
+  private boolean isPlatformStatisticsReader(
+      Supplier<? extends Authentication> authenticationSupplier) {
+    if (!(authenticationSupplier.get() instanceof JwtAuthenticationToken jwtAuthentication)) {
+      return false;
+    }
+    Jwt jwt = jwtAuthentication.getToken();
+    return hasAnyAuthority(authenticationSupplier, STATISTICS_READER)
+        && KeycloakRoles.of(jwt.getClaims()).contains(UserRole.STATISTICS_READER.getValue())
+        && isPlatformTenant(jwt);
   }
 
   private AuthorizationDecision isPlatformAdmin(

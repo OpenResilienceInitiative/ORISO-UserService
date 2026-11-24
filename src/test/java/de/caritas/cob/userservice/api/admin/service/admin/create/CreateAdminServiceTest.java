@@ -300,6 +300,39 @@ class CreateAdminServiceTest {
     verify(identityAccountRemover, never()).rollbackUser(anyString());
   }
 
+  @Test
+  void statisticsReaderGetsOnlyTheReaderRole() {
+    assertThat(createAdminService.getDefaultRoles(Admin.AdminType.STATISTICS))
+        .containsExactly(UserRole.STATISTICS_READER);
+  }
+
+  @Test
+  void statisticsReaderIsCreatedOnThePlatformTenantWithAnUnknownPermanentPassword() {
+    givenKeycloakCreatesUser();
+    var dto = givenValidCreateAdminDTO(7);
+    dto.setPassword("chosen-by-the-caller");
+    when(userHelper.getRandomPassword()).thenReturn("random-secret");
+
+    var admin = createAdminService.createNewStatisticsReader(dto);
+
+    assertThat(admin.getType()).isEqualTo(Admin.AdminType.STATISTICS);
+    assertThat(admin.getTenantId()).isZero();
+    verify(identityClient)
+        .createUser(
+            org.mockito.ArgumentMatchers.argThat(
+                user -> Long.valueOf(0L).equals(user.getTenantId())),
+            anyString(),
+            anyString());
+    verify(identityPasswordUpdater).updatePassword("kc-user-id", "random-secret");
+    verify(identityPasswordUpdater, never()).updatePassword("kc-user-id", "chosen-by-the-caller");
+    verify(identityPasswordUpdater, never()).updateTemporaryPassword(anyString(), anyString());
+    verify(identityClient).updateRole("kc-user-id", UserRole.STATISTICS_READER);
+    verify(identityClient, never()).updateRole("kc-user-id", UserRole.USER_ADMIN);
+    verify(identityClient, never()).updateRole("kc-user-id", UserRole.TENANT_ADMIN);
+    verify(identityClient, never()).updateRole("kc-user-id", UserRole.AGENCY_ADMIN);
+    verifyNoInteractions(accountSetupIssuer);
+  }
+
   private CreateAdminDTO givenValidCreateAdminDTO(Integer tenantId) {
     CreateAdminDTO createAdminDTO = easyRandom.nextObject(CreateAdminDTO.class);
     createAdminDTO.setUsername("valid_username");

@@ -3,6 +3,8 @@ package de.caritas.cob.userservice.api.workflow.delete.service;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
 import de.caritas.cob.userservice.api.workflow.delete.model.DeletionLifecycleState;
+import java.time.LocalDateTime;
+import java.time.ZoneOffset;
 import java.util.Optional;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
@@ -47,6 +49,15 @@ public class UserHardDeleteClaimService {
     if (released == 1) {
       log.warn("Released unfinished asker hard-delete claim for userId={}", userId);
     }
+  }
+
+  /**
+   * Stores which steps of the last run failed and why, so the admin interface can say it. Its own
+   * transaction: the run's other writes must not be rolled back with it, nor it with them.
+   */
+  @Transactional(propagation = Propagation.REQUIRES_NEW)
+  public void recordFailure(String userId, String reason) {
+    userRepository.recordHardDeleteFailure(userId, reason, LocalDateTime.now(ZoneOffset.UTC));
   }
 
   /**

@@ -23,8 +23,8 @@ import org.hibernate.annotations.OnDeleteAction;
 import org.hibernate.type.SqlTypes;
 
 /**
- * A 1:1 appointment of one conversation (ADR-020). Owned by UserService alone, independent of the
- * legacy {@link Appointment} and of the AppointmentService. Holds times and references only.
+ * A 1:1 appointment of one conversation (ADR-020). Owned by UserService alone. Holds times and
+ * references only.
  */
 @Entity
 @Table(name = "session_appointment")
@@ -33,9 +33,24 @@ import org.hibernate.type.SqlTypes;
 @NoArgsConstructor
 public class SessionAppointment {
 
+  /**
+   * REQUESTED: an advice seeker's booking that waits for the counsellor (ORISO-Frontend#2287); it
+   * takes the time like a scheduled one. Confirmed it is SCHEDULED, declined DECLINED. A request
+   * nobody answered by its start is declined automatically (Frank, 17 Nov 2026).
+   */
   public enum Status {
     SCHEDULED,
-    CANCELLED
+    CANCELLED,
+    REQUESTED,
+    DECLINED
+  }
+
+  /** How the appointment takes place (ADR-032); null on rows made before the kind existed. */
+  public enum Kind {
+    ONSITE,
+    VIDEO,
+    PHONE,
+    CHAT
   }
 
   @Id
@@ -45,10 +60,13 @@ public class SessionAppointment {
   @Column(columnDefinition = "char(36)")
   private UUID id;
 
-  @ManyToOne(fetch = FetchType.LAZY, optional = false)
+  /**
+   * The conversation. Empty only for the appointment of a direct invitation nobody opened yet
+   * (ORISO-Frontend#2252): the first person who opens it creates the appointment conversation.
+   */
+  @ManyToOne(fetch = FetchType.LAZY)
   @JoinColumn(
       name = "session_id",
-      nullable = false,
       foreignKey = @ForeignKey(name = "fk_session_appointment_session"))
   @OnDelete(action = OnDeleteAction.CASCADE)
   private Session session;
@@ -62,4 +80,19 @@ public class SessionAppointment {
   @Enumerated(EnumType.STRING)
   @Column(length = 16, nullable = false)
   private Status status;
+
+  @Enumerated(EnumType.STRING)
+  @Column(length = 16)
+  private Kind kind;
+
+  /** A request declined automatically because nobody answered it by its start (#2287). */
+  @Column(name = "auto_declined", nullable = false)
+  private boolean autoDeclined;
+
+  /**
+   * The conversation notice of an automatic decline is still to be posted. The backend holds no
+   * room keys, so the first participant's client that sees the flag claims and posts it.
+   */
+  @Column(name = "notice_pending", nullable = false)
+  private boolean noticePending;
 }

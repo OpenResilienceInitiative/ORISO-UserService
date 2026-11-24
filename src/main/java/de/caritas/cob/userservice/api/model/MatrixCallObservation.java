@@ -4,8 +4,14 @@ import jakarta.persistence.*;
 import lombok.*;
 
 /**
- * Observation-only registration of an encrypted internal-group call (#2166/#1624). It is NOT a call
+ * Observation-only registration of an encrypted call (#2166/#1624) in an internal group or, since
+ * #2237, a 1:1 session. Exactly one of {@code chatId} or {@code sessionId} is set. It is NOT a call
  * binding: it never admits a guest, never backs a share link or knock and never grants access.
+ *
+ * <p>Frank, 17 Nov 2026: one narrowing reader. Only counsellors start calls, so the media gate
+ * refuses an advice seeker every call room except a running counsellor call ({@code
+ * CounsellorStartedCall}). A live row whose verified creator is an active counsellor of the Träger
+ * marks such a call; it never lets in anybody the gate's other rules refuse.
  */
 @Entity
 @Table(name = "matrix_call_observation")
@@ -38,8 +44,13 @@ public class MatrixCallObservation {
   @Column(name = "tenant_id", nullable = false)
   private Long tenantId;
 
-  @Column(name = "chat_id", nullable = false)
+  /** Internal group source; null for a session call. */
+  @Column(name = "chat_id")
   private Long chatId;
+
+  /** Session source (#2237); null for an internal-group call. */
+  @Column(name = "session_id")
+  private Long sessionId;
 
   @Column(name = "video", nullable = false)
   private boolean video;
@@ -61,6 +72,25 @@ public class MatrixCallObservation {
   @Column(name = "ended_at")
   private Long endedAt;
 
+  /** #1628: last time the server looked at the MatrixRTC memberships of the media room. */
+  @Column(name = "liveness_checked_at")
+  private Long livenessCheckedAt;
+
+  /**
+   * #1628: somebody is provably still in the call, so the lease is extended even when the creator's
+   * own renewals stopped and it ran out. An ended call never comes back.
+   */
+  public void keepAlive(long now, long expiry) {
+    if (endedAt == null) {
+      lastSeenAt = now;
+      expiresAt = Math.max(expiresAt, expiry);
+    }
+  }
+
+  public void markLivenessChecked(long now) {
+    livenessCheckedAt = now;
+  }
+
   public void renew(long now, long expiry) {
     if (endedAt == null && now < expiresAt) {
       lastSeenAt = now;
@@ -70,6 +100,11 @@ public class MatrixCallObservation {
 
   public void finish(long now) {
     if (endedAt == null) endedAt = Math.min(now, expiresAt);
+  }
+
+  /** Ends at the given moment even when the lease had already run out (#1628 liveness). */
+  public void finishAt(long at) {
+    if (endedAt == null) endedAt = at;
   }
 
   public boolean isLive(long now) {

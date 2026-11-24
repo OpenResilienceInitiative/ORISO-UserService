@@ -23,6 +23,10 @@ public class MatrixCallStateController {
   private final MatrixCallGuestService guests;
   private final de.caritas.cob.userservice.api.service.matrix.MatrixCallObservationService
       observations;
+  private final de.caritas.cob.userservice.api.service.matrix.MatrixSessionCallBindingService
+      sessionBindings;
+  private final de.caritas.cob.userservice.api.service.matrix.MatrixGroupCallBindingService
+      groupBindings;
   private final AuthenticatedUser authenticatedUser;
 
   @GetMapping("/state")
@@ -69,17 +73,45 @@ public class MatrixCallStateController {
     }
   }
 
-  /** Creator of an active encrypted internal-group call registers it for observation only. */
+  /**
+   * Creator of an active encrypted group or session call registers it for observation. FE#2209: in
+   * a 1:1 session, the same registration by the session's assigned counsellor, verified against
+   * Matrix by {@code MatrixSessionCallBindingService}, also creates the call's authoritative
+   * binding, which share links, knocks and guest seats need. #1662: in a group chat, a moderator's
+   * registration does the same ({@code MatrixGroupCallBindingService}). Once bound, observation
+   * steps aside and renewals are answered by the binding.
+   */
   @PostMapping("/observations")
   public ResponseEntity<?> register(@RequestBody ObservationRequest request) {
     try {
-      return observationResponse(
+      boolean video = Boolean.TRUE.equals(request.video());
+      var observed =
           observations.register(
               authenticatedUser,
               request.sourceRoomId(),
               request.callId(),
               request.callRoomId(),
-              Boolean.TRUE.equals(request.video())));
+              video);
+      // #1662: the same verified registration by a moderator of a group chat binds the group
+      // call, so group calls can have a share link too. Each path refuses the other's rooms.
+      boolean bound =
+          sessionBindings.bind(
+                  authenticatedUser,
+                  request.sourceRoomId(),
+                  request.callId(),
+                  request.callRoomId(),
+                  video)
+              || groupBindings.bind(
+                  authenticatedUser,
+                  request.sourceRoomId(),
+                  request.callId(),
+                  request.callRoomId(),
+                  video);
+      return observationResponse(
+          bound
+              ? de.caritas.cob.userservice.api.service.matrix.MatrixCallObservationService.Outcome
+                  .OK
+              : observed);
     } catch (MatrixSynapseService.CallLookupUnavailableException unavailable) {
       return unavailable();
     } catch (org.springframework.dao.PessimisticLockingFailureException concurrent) {
@@ -106,7 +138,10 @@ public class MatrixCallStateController {
       if (message != null) {
         String lower = message.toLowerCase(java.util.Locale.ROOT);
         if (lower.contains("uk_call_observation_source_call")
-            || lower.contains("uk_call_observation_media_room")) {
+            || lower.contains("uk_call_observation_media_room")
+            // FE#2209: two first bindings of the same 1:1 call raced.
+            || lower.contains("uk_call_binding_source_call")
+            || lower.contains("uk_call_binding_media_room")) {
           return true;
         }
       }
@@ -118,6 +153,7 @@ public class MatrixCallStateController {
   @PostMapping("/observations/end")
   public ResponseEntity<?> end(@RequestBody ObservationEndRequest request) {
     try {
+      // FE#2209: for a 1:1 session call this also ends its binding, in the same transaction.
       return observationResponse(
           observations.end(authenticatedUser, request.sourceRoomId(), request.callId()));
     } catch (MatrixSynapseService.CallLookupUnavailableException unavailable) {

@@ -2914,6 +2914,19 @@ public class KeycloakServiceTest {
   }
 
   @Test
+  public void deactivateUser_Should_treatMissingIdentityAsAlreadyDeactivated() {
+    UserResource userResource = mock(UserResource.class);
+    UsersResource usersResource = mock(UsersResource.class);
+    when(userResource.toRepresentation()).thenThrow(new jakarta.ws.rs.NotFoundException());
+    when(usersResource.get(any())).thenReturn(userResource);
+    when(keycloakClient.getUsersResource()).thenReturn(usersResource);
+
+    assertDoesNotThrow(() -> this.keycloakService.deactivateUser("userId"));
+
+    verify(userResource, never()).update(any());
+  }
+
+  @Test
   public void deactivateUser_Should_keepAttributes_When_userIsDisabled() {
     UserResource userResource = givenUserResourceHolding(givenStoredUserWithAttributes("email"));
 

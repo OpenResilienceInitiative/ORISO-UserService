@@ -1,18 +1,24 @@
 package de.caritas.cob.userservice.api.model;
 
+import de.caritas.cob.userservice.api.service.agencyinvitelink.DirectInvitationAccessMode;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
+import jakarta.persistence.EnumType;
+import jakarta.persistence.Enumerated;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
 import java.time.LocalDateTime;
+import java.util.UUID;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
 import lombok.ToString;
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
 
 /**
  * Outside the tenant filter on purpose: a link is redeemed on a public route that has no tenant
@@ -110,7 +116,18 @@ public class AgencyInviteLink {
   @Column(name = "name", length = 100)
   private String name;
 
-  /** Direct links: people without an account get a temporary one (ADR-029 §3). */
+  /**
+   * Optional date and time a counsellor noted for a direct link, in UTC (ORISO-Frontend#2142).
+   * Informational only: the link works before and after it.
+   */
+  @Column(name = "scheduled_at")
+  private LocalDateTime scheduledAt;
+
+  /**
+   * Mirror of {@link #guestAccountMode} for older releases (#1662): true while the link may create
+   * temporary accounts. Written by {@link #applyGuestAccountMode}; read only for rows without a
+   * mode.
+   */
   @Builder.Default
   @Column(name = "temporary_account", nullable = false)
   private boolean temporaryAccount = false;
@@ -129,4 +146,77 @@ public class AgencyInviteLink {
   /** Call share links (#1487): the one running call ({@code matrix_call_binding.id}). */
   @Column(name = "call_binding_id", unique = true)
   private Long callBindingId;
+
+  /**
+   * Direct invitation with an appointment (ORISO-Frontend#2252): the {@code session_appointment}
+   * everybody who opens the link meets at. Its session is the shared appointment conversation once
+   * the first person opened the link (or the 1:1 the invitation was created from).
+   */
+  @JdbcTypeCode(SqlTypes.CHAR)
+  @Column(name = "appointment_id", columnDefinition = "char(36)")
+  private UUID appointmentId;
+
+  /** With an appointment only: minutes the link stays valid after its end (0..2880). */
+  @Column(name = "validity_after_end_minutes")
+  private Integer validityAfterEndMinutes;
+
+  /**
+   * Who may enter (ORISO-Frontend#2252). Since #1662 a mirror of {@link #guestAccountMode} for
+   * older releases, see {@link #effectiveAccessMode()}.
+   */
+  @Enumerated(EnumType.STRING)
+  @Column(name = "access_mode", length = 16)
+  private DirectInvitationAccessMode accessMode;
+
+  /**
+   * Which account a person without one gets (#1662). Empty for rows the migration did not reach:
+   * read through {@link #effectiveGuestAccountMode()}.
+   */
+  @Enumerated(EnumType.STRING)
+  @Column(name = "guest_account_mode", length = 16)
+  private GuestAccountMode guestAccountMode;
+
+  /** The invitation was created from an existing 1:1 and adds people to it (#2252). */
+  @Builder.Default
+  @Column(name = "joins_existing_session", nullable = false)
+  private boolean joinsExistingSession = false;
+
+  /**
+   * Every token "Neuen Link senden" replaced (#2252): each still finds the invitation, which then
+   * answers "expired", so a person with any older link can ask for a new one again.
+   */
+  @jakarta.persistence.ElementCollection(fetch = jakarta.persistence.FetchType.LAZY)
+  @jakarta.persistence.CollectionTable(
+      name = "agency_invite_link_replaced_token",
+      joinColumns = @jakarta.persistence.JoinColumn(name = "invite_link_id"))
+  @Column(name = "token", length = 64, nullable = false, unique = true)
+  @Builder.Default
+  @ToString.Exclude
+  private java.util.Set<String> replacedTokens = new java.util.HashSet<>();
+
+  /** The link's guest account mode; a row without one reads as the #1662 migration sets it. */
+  public GuestAccountMode effectiveGuestAccountMode() {
+    if (guestAccountMode != null) {
+      return guestAccountMode;
+    }
+    if (accessMode != null) {
+      return GuestAccountMode.of(accessMode);
+    }
+    if ("CALL".equals(linkKind)) {
+      return temporaryAccount ? GuestAccountMode.TEMPORARY : GuestAccountMode.PERMANENT;
+    }
+    // A direct link from before #2252 that created temporary accounts let the person choose.
+    return temporaryAccount ? GuestAccountMode.GUEST_CHOOSES : GuestAccountMode.PERMANENT;
+  }
+
+  public DirectInvitationAccessMode effectiveAccessMode() {
+    return effectiveGuestAccountMode().toAccessMode();
+  }
+
+  /** Sets the mode and the two fields an older release still reads. */
+  public void applyGuestAccountMode(GuestAccountMode mode) {
+    this.guestAccountMode = mode;
+    this.accessMode = mode.toAccessMode();
+    this.temporaryAccount = mode.offersTemporaryAccounts();
+  }
 }

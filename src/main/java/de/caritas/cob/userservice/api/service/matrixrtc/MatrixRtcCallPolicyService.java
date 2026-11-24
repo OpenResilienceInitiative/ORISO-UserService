@@ -21,6 +21,10 @@ public class MatrixRtcCallPolicyService {
   private final @NonNull MatrixRtcCorrelationIdHasher correlationIdHasher;
 
   private final @NonNull org.springframework.jdbc.core.JdbcTemplate jdbc;
+  private final @NonNull de.caritas.cob.userservice.api.service.matrix.MatrixCallGuestService
+      callGuests;
+  private final @NonNull de.caritas.cob.userservice.api.service.matrix.CounsellorStartedCall
+      counsellorCalls;
 
   public CallMediaPolicy resolve(String sourceRoomId, String matrixUserId) {
     return resolve(sourceRoomId, matrixUserId, null);
@@ -137,6 +141,19 @@ public class MatrixRtcCallPolicyService {
       return CallMediaPolicy.denied();
     }
 
+    // Frank, 17 Nov 2026: only counsellors start calls. Anybody else gets media only for a running
+    // call a counsellor of the Träger started (CounsellorStartedCall); asking for any other call
+    // room is a start and is refused, whatever the client shows.
+    if (!counsellorCalls.isCounsellor(matrixUserId, context.get().tenantId())
+        && !counsellorCalls.isRunning(sourceRoomId, callRoomId, context.get().tenantId())) {
+      log.info(
+          "Call policy denied [{}]: reason={}, tenant={}",
+          correlationId,
+          CallPolicyDenialReason.CALL_START_REQUIRES_COUNSELLOR,
+          context.get().tenantId());
+      return CallMediaPolicy.refused(CallMediaPolicy.CALL_START_REQUIRES_COUNSELLOR);
+    }
+
     var tenant = getTenant(context.get().tenantId());
     if (tenant == null || tenant.getSettings() == null) {
       log.info(
@@ -169,20 +186,28 @@ public class MatrixRtcCallPolicyService {
   /**
    * US#1477: a call guest is no member of the source conversation. The counsellor's admission to
    * the still running call stands in for that membership, and only until the seat is revoked.
+   * Security review 5901360577: a seat in a 1:1 session call counts only while the call carries the
+   * assigned counsellor's authority and a counsellor is in it (the same rule as the call-state
+   * read); a group chat's seat keeps its rule.
    */
   private boolean isActiveCallGuest(String sourceRoomId, String callRoomId, String matrixUserId) {
     // A seat belongs to one call: never accept it for another call of the same conversation.
     if (callRoomId == null || callRoomId.isBlank()) return false;
     try {
-      return !jdbc.queryForList(
-              "SELECT g.id FROM matrix_call_guest g JOIN matrix_call_binding b ON b.id = g.binding_id"
+      for (var seat :
+          jdbc.queryForList(
+              "SELECT b.id AS binding_id, b.session_id AS session_id FROM matrix_call_guest g"
+                  + " JOIN matrix_call_binding b ON b.id = g.binding_id"
                   + " WHERE b.source_room_id = ? AND b.media_room_id = ? AND b.ended_at IS NULL"
                   + " AND g.matrix_user_id = ? AND g.revoked_at IS NULL",
-              Long.class,
               sourceRoomId,
               callRoomId,
-              matrixUserId)
-          .isEmpty();
+              matrixUserId)) {
+        if (seat.get("session_id") == null) return true;
+        if (seat.get("binding_id") instanceof Number id
+            && callGuests.sessionCallAdmitsGuests(id.longValue())) return true;
+      }
+      return false;
     } catch (org.springframework.dao.DataAccessException unavailable) {
       // Deny, but visibly: an outage must not read as an ordinary non-member denial.
       log.warn("Call guest seat lookup failed: {}", unavailable.getClass().getSimpleName());

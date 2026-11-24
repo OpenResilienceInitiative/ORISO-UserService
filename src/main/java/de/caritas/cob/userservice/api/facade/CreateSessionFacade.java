@@ -133,6 +133,20 @@ public class CreateSessionFacade {
     return initializeNewDirectSession(userDTO, user, extendedConsultingTypeResponseDTO, consultant);
   }
 
+  /**
+   * Always a new conversation, even when the person already has one with this counsellor: the
+   * shared conversation of a direct invitation with an appointment (ORISO-Frontend#2252) must never
+   * be an existing 1:1, whose history other invited people would see and which the expiry archives.
+   */
+  public NewRegistrationResponseDto createNewDirectUserSession(
+      String consultantId,
+      UserDTO userDTO,
+      User user,
+      ExtendedConsultingTypeResponseDTO extendedConsultingTypeResponseDTO) {
+    var consultant = userAccountProvider.retrieveValidatedConsultantById(consultantId);
+    return initializeNewDirectSession(userDTO, user, extendedConsultingTypeResponseDTO, consultant);
+  }
+
   private NewRegistrationResponseDto initializeNewDirectSession(
       UserDTO userDTO,
       User user,

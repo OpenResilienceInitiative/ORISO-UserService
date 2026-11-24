@@ -12,6 +12,8 @@ import org.springframework.data.repository.query.Param;
 public interface ChatMatrixRoomRepository extends CrudRepository<ChatMatrixRoom, String> {
   List<ChatMatrixRoom> findBySeries_IdOrderByOccurrenceIndexAsc(Long seriesId);
 
+  Optional<ChatMatrixRoom> findByRoomId(String roomId);
+
   /**
    * A locking read returns the latest committed row, also when the surrounding transaction's
    * snapshot is older than a room reserved in a transaction of its own.

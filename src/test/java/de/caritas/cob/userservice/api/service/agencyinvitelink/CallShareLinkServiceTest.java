@@ -2,6 +2,7 @@ package de.caritas.cob.userservice.api.service.agencyinvitelink;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.Assertions.catchThrowable;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
@@ -10,11 +11,13 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import de.caritas.cob.userservice.api.admin.service.tenant.TenantService;
+import de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHttpStatusException;
 import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
 import de.caritas.cob.userservice.api.model.AgencyInviteLink;
 import de.caritas.cob.userservice.api.model.ChatAgency;
 import de.caritas.cob.userservice.api.model.GroupChatJoinRequest;
+import de.caritas.cob.userservice.api.model.GuestAccountMode;
 import de.caritas.cob.userservice.api.model.MatrixCallBinding;
 import de.caritas.cob.userservice.api.model.MatrixCallDevice;
 import de.caritas.cob.userservice.api.model.Session;
@@ -59,16 +62,26 @@ class CallShareLinkServiceTest {
   @Mock private DirectCallKnockService knocks;
   @Mock private DirectInvitePolicy directInvitePolicy;
   @Mock private TemporaryAccountPolicy temporaryAccountPolicy;
+
+  @org.mockito.Spy
+  private GuestAccountModePolicy guestAccountModes =
+      new PlatformGuestAccountModePolicy(
+          (tenant, agency, medium) -> temporaryAccountPolicy.allows(tenant, agency, medium));
+
   @Mock private TenantService tenantService;
   @Mock private de.caritas.cob.userservice.api.port.out.UserRepository users;
 
   @Mock private ChatAgencyRepository chatAgencies;
+
+  @Mock private de.caritas.cob.userservice.api.service.matrix.GroupCallCreatorAgency creatorAgency;
+
   @InjectMocks private CallShareLinkService service;
   private MatrixCallBinding binding;
   private User guest;
 
   @BeforeEach
   void setUp() {
+    org.mockito.Mockito.lenient().when(callGuests.grantsGuestAuthority(any())).thenReturn(true);
     useBinding(runningCall(500L, null, MEDIA));
     var session = new Session();
     session.setAgencyId(99L);
@@ -115,6 +128,88 @@ class CallShareLinkServiceTest {
     assertThat(share.temporaryAccount()).isFalse();
   }
 
+  // --- #1662: a group call's link registers under the call creator's Beratungsstelle ---
+
+  @Test
+  void groupCallLinkCarriesTheCallCreatorsAgencyAndItsConsultingType() {
+    useBinding(runningCall(null, 600L, MEDIA));
+    when(creatorAgency.of(binding)).thenReturn(Optional.of(99L));
+    when(creatorAgency.consultingTypeOf(99L)).thenReturn(Optional.of(3));
+
+    var share = service.create(TENANT, COUNSELLOR, SOURCE, CALL_ID, true, true);
+
+    assertThat(share.link().getAgencyId()).isEqualTo(99L);
+    assertThat(share.link().getConsultingTypeId()).isEqualTo(3);
+    // A group has no main topic of its own; the registration names none.
+    assertThat(share.link().getTopicId()).isNull();
+    assertThat(share.temporaryAccountAllowed()).isTrue();
+    assertThat(share.temporaryAccount()).isTrue();
+    assertThat(share.allowedGuestAccountModes()).contains(GuestAccountMode.GUEST_CHOOSES);
+  }
+
+  @Test
+  void groupCallLinkStillNeedsEveryAgencyOfTheGroupToAllowDirectInvites() {
+    useBinding(runningCall(null, 600L, MEDIA));
+    when(creatorAgency.of(binding)).thenReturn(Optional.of(99L));
+    when(creatorAgency.consultingTypeOf(99L)).thenReturn(Optional.of(3));
+    when(chatAgencies.findByChat_Id(600L))
+        .thenReturn(
+            List.of(
+                ChatAgency.builder().agencyId(99L).build(),
+                ChatAgency.builder().agencyId(101L).build()));
+    when(directInvitePolicy.allows(TENANT, 101L, InviteLinkChatType.VIDEO)).thenReturn(false);
+
+    assertThatThrownBy(() -> service.create(TENANT, COUNSELLOR, SOURCE, CALL_ID, true, true))
+        .isInstanceOf(ForbiddenException.class);
+  }
+
+  @Test
+  void groupCallLinkEndsOnceTheCreatorNoLongerStandsForItsAgency() {
+    useBinding(runningCall(null, 600L, MEDIA));
+    when(creatorAgency.of(binding)).thenReturn(Optional.of(99L));
+    var link = link(true, true);
+    assertThat(catchThrowable(() -> service.requireUsable(link))).isNull();
+
+    when(creatorAgency.of(binding)).thenReturn(Optional.empty());
+
+    assertThatThrownBy(() -> service.requireUsable(link))
+        .isInstanceOf(CallShareLinkEndedException.class);
+  }
+
+  @Test
+  void aGroupCallLinkIsNotCreatedWhileTheAgencyLookupFailsAndIsCompleteOnceItRecovers() {
+    useBinding(runningCall(null, 600L, MEDIA));
+    when(creatorAgency.of(binding)).thenReturn(Optional.of(99L));
+    when(creatorAgency.consultingTypeOf(99L))
+        .thenThrow(
+            new de.caritas.cob.userservice.api.exception.httpresponses.ServiceUnavailableException(
+                "down"))
+        .thenReturn(Optional.of(3));
+
+    assertThatThrownBy(() -> service.create(TENANT, COUNSELLOR, SOURCE, CALL_ID, true, true))
+        .isInstanceOf(
+            de.caritas.cob.userservice.api.exception.httpresponses.ServiceUnavailableException
+                .class);
+    verify(links, never()).save(any());
+
+    var share = service.create(TENANT, COUNSELLOR, SOURCE, CALL_ID, true, true);
+
+    assertThat(share.link().getConsultingTypeId()).isEqualTo(3);
+    assertThat(share.temporaryAccountAllowed()).isTrue();
+  }
+
+  @Test
+  void groupCallWhoseAgencyHasNoKnownConsultingTypeOnlyTakesExistingAccounts() {
+    useBinding(runningCall(null, 600L, MEDIA));
+    when(creatorAgency.of(binding)).thenReturn(Optional.of(99L));
+    when(creatorAgency.consultingTypeOf(99L)).thenReturn(Optional.empty());
+
+    var share = service.create(TENANT, COUNSELLOR, SOURCE, CALL_ID, true, true);
+
+    assertThat(share.temporaryAccountAllowed()).isFalse();
+    assertThat(share.guestAccountMode()).isEqualTo(GuestAccountMode.PERMANENT);
+  }
+
   @Test
   void callInSourceRoomCannotBeSharedWithGuests() {
     useBinding(runningCall(500L, null, SOURCE));
@@ -123,6 +218,29 @@ class CallShareLinkServiceTest {
         .isInstanceOf(CallShareLinkEndedException.class);
     assertThatThrownBy(() -> service.requireUsable(link(true, true)))
         .isInstanceOf(CallShareLinkEndedException.class);
+  }
+
+  @Test
+  void requireUsable_Should_Return410_When_TheCallCarriesNoGuestAuthority() {
+    // CodeRabbit 4585785793: a 1:1 session call placed by anybody but its assigned, active
+    // counsellor rings, but its link is not usable.
+    when(callGuests.grantsGuestAuthority(binding)).thenReturn(false);
+
+    assertThatThrownBy(() -> service.requireUsable(link(true, true)))
+        .isInstanceOf(CallShareLinkEndedException.class);
+  }
+
+  @org.junit.jupiter.params.ParameterizedTest(name = "knock = {0}")
+  @org.junit.jupiter.params.provider.ValueSource(booleans = {true, false})
+  void join_Should_Return410_AndNeitherKnockNorSeat_When_TheCallCarriesNoGuestAuthority(
+      boolean knock) {
+    joinable(knock);
+    when(callGuests.grantsGuestAuthority(binding)).thenReturn(false);
+
+    assertThatThrownBy(() -> service.join("token-5", guest))
+        .isInstanceOf(CallShareLinkEndedException.class);
+    verify(knocks, never()).knockOnCallLink(any(), any(), anyString());
+    verify(callGuests, never()).admitAs(any(), any(), any(), any(), any());
   }
 
   @Test
@@ -174,6 +292,25 @@ class CallShareLinkServiceTest {
     assertThat(view.link().isTemporaryAccount()).isFalse();
     assertThat(view.temporaryAccount()).isFalse();
     assertThat(view.temporaryAccountAllowed()).isFalse();
+  }
+
+  /*
+   * #1662 (Frank, 17 Nov): a group call started by a plain member or an advice seeker has no
+   * binding and never gets a link. The app must tell that from "no link yet" so it can stop asking
+   * after a bounded number of tries instead of every 10 s for the whole call.
+   */
+  @Test
+  void current_Should_NameTheMissingCall_When_TheCallHasNoBindingForThisCounsellor() {
+    when(callGuests.counsellorCall(TENANT, "stranger", SOURCE, CALL_ID))
+        .thenReturn(new CounsellorCall(Outcome.NOT_FOUND, null, null, null));
+
+    var refusal = catchThrowable(() -> service.current(TENANT, "stranger", SOURCE, CALL_ID));
+
+    assertThat(refusal).isInstanceOf(CustomValidationHttpStatusException.class);
+    var custom = (CustomValidationHttpStatusException) refusal;
+    assertThat(custom.getHttpStatus()).isEqualTo(org.springframework.http.HttpStatus.NOT_FOUND);
+    assertThat(custom.getCustomHttpHeaders().getFirst("X-Reason"))
+        .isEqualTo("CALL_SHARE_LINK_NO_CALL");
   }
 
   @Test
@@ -332,6 +469,102 @@ class CallShareLinkServiceTest {
         .isInstanceOf(NotFoundException.class);
   }
 
+  // --- guest account mode (#1662) ---
+
+  @Test
+  void create_Should_StoreTheChosenGuestAccountMode() {
+    when(links.findByCallBindingId(binding.getId())).thenReturn(Optional.empty());
+
+    var view =
+        service.create(
+            TENANT, COUNSELLOR, SOURCE, CALL_ID, null, null, GuestAccountMode.GUEST_CHOOSES);
+
+    assertThat(view.link().getGuestAccountMode()).isEqualTo(GuestAccountMode.GUEST_CHOOSES);
+    assertThat(view.guestAccountMode()).isEqualTo(GuestAccountMode.GUEST_CHOOSES);
+    assertThat(view.temporaryAccount()).isTrue();
+    assertThat(view.allowedGuestAccountModes())
+        .containsExactlyInAnyOrder(GuestAccountMode.values());
+  }
+
+  @Test
+  void create_Should_ReadTheOldSwitch_When_NoModeIsGiven() {
+    when(links.findByCallBindingId(binding.getId())).thenReturn(Optional.empty());
+
+    var byDefault = service.create(TENANT, COUNSELLOR, SOURCE, CALL_ID, null, null);
+    assertThat(byDefault.guestAccountMode()).isEqualTo(GuestAccountMode.TEMPORARY);
+
+    var off = service.create(TENANT, COUNSELLOR, SOURCE, CALL_ID, null, false);
+    assertThat(off.guestAccountMode()).isEqualTo(GuestAccountMode.PERMANENT);
+    assertThat(off.link().isTemporaryAccount()).isFalse();
+  }
+
+  @Test
+  void create_Should_Refuse_AChosenModeThatIsNotAllowed() {
+    when(links.findByCallBindingId(binding.getId())).thenReturn(Optional.empty());
+    when(temporaryAccountPolicy.allows(eq(TENANT), any(), any())).thenReturn(false);
+
+    assertThatThrownBy(
+            () ->
+                service.create(
+                    TENANT, COUNSELLOR, SOURCE, CALL_ID, null, null, GuestAccountMode.TEMPORARY))
+        .isInstanceOf(ForbiddenException.class);
+  }
+
+  @Test
+  void aTraegerWithoutPermanentGuestAccountsFallsBackToTheClosestAllowedMode() {
+    when(links.findByCallBindingId(binding.getId())).thenReturn(Optional.empty());
+    org.mockito.Mockito.doReturn(
+            java.util.EnumSet.of(GuestAccountMode.TEMPORARY, GuestAccountMode.GUEST_CHOOSES))
+        .when(guestAccountModes)
+        .allowedModes(eq(TENANT), any(), any());
+
+    // the old switch "off" asks for permanent accounts, which this Träger does not offer
+    var share = service.create(TENANT, COUNSELLOR, SOURCE, CALL_ID, null, false);
+
+    assertThat(share.guestAccountMode()).isEqualTo(GuestAccountMode.GUEST_CHOOSES);
+    assertThat(share.link().getGuestAccountMode()).isEqualTo(GuestAccountMode.GUEST_CHOOSES);
+    assertThat(share.allowedGuestAccountModes())
+        .containsExactlyInAnyOrder(GuestAccountMode.TEMPORARY, GuestAccountMode.GUEST_CHOOSES);
+    assertThat(service.effectiveGuestAccountMode(share.link()))
+        .isEqualTo(GuestAccountMode.GUEST_CHOOSES);
+  }
+
+  @Test
+  void anExistingPermanentLinkShowsTheClosestModeTheTraegerStillAllows() {
+    var link = link(true, false);
+    link.applyGuestAccountMode(GuestAccountMode.PERMANENT);
+    when(links.findByIdForUpdate(5L)).thenReturn(Optional.of(link));
+    org.mockito.Mockito.doReturn(java.util.EnumSet.of(GuestAccountMode.TEMPORARY))
+        .when(guestAccountModes)
+        .allowedModes(eq(TENANT), any(), any());
+
+    var view = service.update(TENANT, COUNSELLOR, 5L, null, null);
+
+    assertThat(view.guestAccountMode()).isEqualTo(GuestAccountMode.TEMPORARY);
+    assertThat(view.allowedGuestAccountModes()).containsExactly(GuestAccountMode.TEMPORARY);
+  }
+
+  @Test
+  void aGroupCallLinkOffersOnlyPermanentAccounts() {
+    useBinding(runningCall(null, 600L, MEDIA));
+
+    var share = service.create(TENANT, COUNSELLOR, SOURCE, CALL_ID, null, null);
+
+    assertThat(share.guestAccountMode()).isEqualTo(GuestAccountMode.PERMANENT);
+    assertThat(share.allowedGuestAccountModes()).containsExactly(GuestAccountMode.PERMANENT);
+  }
+
+  @Test
+  void update_Should_ChangeTheGuestAccountMode() {
+    var link = link(true, true);
+    when(links.findByIdForUpdate(5L)).thenReturn(Optional.of(link));
+
+    var view = service.update(TENANT, COUNSELLOR, 5L, null, null, GuestAccountMode.GUEST_CHOOSES);
+
+    assertThat(link.getGuestAccountMode()).isEqualTo(GuestAccountMode.GUEST_CHOOSES);
+    assertThat(view.guestAccountMode()).isEqualTo(GuestAccountMode.GUEST_CHOOSES);
+  }
+
   @Test
   void update_Should_ClampTemporaryAccount_When_NotAllowed() {
     var link = link(true, false);
@@ -464,7 +697,7 @@ class CallShareLinkServiceTest {
     joinable(false);
     when(callGuests.admitAs(TENANT, COUNSELLOR, SOURCE, CALL_ID, "guest-1"))
         .thenReturn(new Admission(Outcome.NOT_FOUND, null, null, null));
-    when(callGuests.counsellorsInConversation(TENANT, SOURCE)).thenReturn(List.of("co-moderator"));
+    when(callGuests.counsellorsInCall(eq(TENANT), any())).thenReturn(List.of("co-moderator"));
     when(callGuests.admitAs(TENANT, "co-moderator", SOURCE, CALL_ID, "guest-1"))
         .thenReturn(new Admission(Outcome.ADMITTED, MEDIA, "@guest:example", 1L));
 
@@ -479,7 +712,7 @@ class CallShareLinkServiceTest {
     joinable(false);
     when(callGuests.admitAs(TENANT, COUNSELLOR, SOURCE, CALL_ID, "guest-1"))
         .thenReturn(new Admission(Outcome.NOT_FOUND, null, null, null));
-    when(callGuests.counsellorsInConversation(TENANT, SOURCE)).thenReturn(List.of());
+    when(callGuests.counsellorsInCall(eq(TENANT), any())).thenReturn(List.of());
 
     assertThatThrownBy(() -> service.join("token-5", guest)).isInstanceOf(NotFoundException.class);
   }

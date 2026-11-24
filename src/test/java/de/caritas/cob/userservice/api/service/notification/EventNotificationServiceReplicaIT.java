@@ -477,6 +477,7 @@ class EventNotificationServiceReplicaIT {
         sessionRepository,
         userRepository,
         consultantRepository,
+        org.mockito.Mockito.mock(org.springframework.beans.factory.ObjectProvider.class),
         identityTombstoneService,
         deduplicationWriter,
         feedUpdateSignalService,

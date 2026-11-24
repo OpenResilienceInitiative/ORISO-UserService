@@ -15,6 +15,7 @@ import de.caritas.cob.userservice.api.adapters.web.dto.ChatDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.ChatInfoResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.ChatMembersResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateChatResponseDTO;
+import de.caritas.cob.userservice.api.adapters.web.dto.InternalChatInvitationDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.InternalSubsetChatDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.UpdateChatResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.mapping.UserDtoMapper;
@@ -27,6 +28,7 @@ import de.caritas.cob.userservice.api.facade.AssignChatFacade;
 import de.caritas.cob.userservice.api.facade.CreateChatFacade;
 import de.caritas.cob.userservice.api.facade.GetChatFacade;
 import de.caritas.cob.userservice.api.facade.GetChatMembersFacade;
+import de.caritas.cob.userservice.api.facade.InternalChatInvitationFacade;
 import de.caritas.cob.userservice.api.facade.InternalSubsetChatFacade;
 import de.caritas.cob.userservice.api.facade.JoinAndLeaveChatFacade;
 import de.caritas.cob.userservice.api.facade.StartChatFacade;
@@ -45,6 +47,7 @@ import de.caritas.cob.userservice.api.service.httpheader.SecurityHeaderSupplier;
 import de.caritas.cob.userservice.api.service.httpheader.TenantHeaderSupplier;
 import de.caritas.cob.userservice.api.service.user.UserAccountService;
 import java.time.LocalDateTime;
+import java.util.List;
 import java.util.Optional;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -78,6 +81,7 @@ class UserChatControllerDelegateTest {
   @Mock private AssignChatFacade assignChatFacade;
   @Mock private CreateChatFacade createChatFacade;
   @Mock private InternalSubsetChatFacade internalSubsetChatFacade;
+  @Mock private InternalChatInvitationFacade internalChatInvitationFacade;
   @Mock private StopChatFacade stopChatFacade;
   @Mock private GetChatMembersFacade getChatMembersFacade;
   @Mock private AccountManaging accountManager;
@@ -88,6 +92,42 @@ class UserChatControllerDelegateTest {
   @Mock private GroupChatPermissionService groupChatPermissionService;
 
   @InjectMocks private UserChatControllerDelegate delegate;
+
+  @Test
+  void inviteInternalChatParticipantAnswersCreatedForANewParticipant() {
+    var consultant = consultant();
+    when(userAccountProvider.retrieveValidatedConsultant()).thenReturn(consultant);
+    when(internalChatInvitationFacade.invite(consultant, 7L, "colleague")).thenReturn(true);
+
+    var response =
+        delegate.inviteInternalChatParticipant(
+            7L, new InternalChatInvitationDTO().consultantId("colleague"));
+
+    assertThat(response.getStatusCode()).isEqualTo(HttpStatus.CREATED);
+  }
+
+  @Test
+  void inviteInternalChatParticipantAnswersOkWhenTheColleagueIsAlreadyIn() {
+    var consultant = consultant();
+    when(userAccountProvider.retrieveValidatedConsultant()).thenReturn(consultant);
+    when(internalChatInvitationFacade.invite(consultant, 7L, "colleague")).thenReturn(false);
+
+    var response =
+        delegate.inviteInternalChatParticipant(
+            7L, new InternalChatInvitationDTO().consultantId("colleague"));
+
+    assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+  }
+
+  @Test
+  void listInternalChatInvitationRecipientsAnswersNoContentWhenNobodyCanJoin() {
+    var consultant = consultant();
+    when(userAccountProvider.retrieveValidatedConsultant()).thenReturn(consultant);
+    when(internalChatInvitationFacade.recipients(consultant, 7L)).thenReturn(List.of());
+
+    assertThat(delegate.listInternalChatInvitationRecipients(7L).getStatusCode())
+        .isEqualTo(HttpStatus.NO_CONTENT);
+  }
 
   @Test
   void createChatV1ShouldReturnCreatedResponseFromFacade() {

@@ -38,10 +38,32 @@ public class AgencyAdminService {
         agencyAdminServiceApiControllerFactory.createControllerApi();
     addDefaultHeaders(controllerApi.getApiClient());
     return requireNonNull(
-            controllerApi.searchAgencies(0, Integer.MAX_VALUE, null, null).getEmbedded())
+            controllerApi
+                .searchAgencies(0, Integer.MAX_VALUE, null, null, null, null)
+                .getEmbedded())
         .stream()
         .map(AgencyAdminFullResponseDTO::getEmbedded)
         .collect(Collectors.toList());
+  }
+
+  /**
+   * Counts the agencies of a Träger that are not deleted, as the calling admin sees them.
+   * AgencyService applies the tenant filter in the query and narrows it to the caller's scope, so
+   * one row is enough to read the total.
+   *
+   * @param tenantId the Träger
+   * @return the number of agencies of the Träger that are not soft-deleted
+   */
+  public long countActiveAgenciesOfTenant(Long tenantId) {
+    AdminAgencyControllerApi controllerApi =
+        agencyAdminServiceApiControllerFactory.createControllerApi();
+    addDefaultHeaders(controllerApi.getApiClient());
+    var result = controllerApi.searchAgencies(1, 1, null, null, true, tenantId);
+    if (result == null || result.getTotal() == null) {
+      throw new IllegalStateException(
+          "AgencyService returned no agency total for tenant " + tenantId);
+    }
+    return result.getTotal();
   }
 
   public void addDefaultHeaders(ApiClient apiClient) {

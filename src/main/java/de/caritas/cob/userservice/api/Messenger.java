@@ -50,7 +50,11 @@ public class Messenger implements Messaging {
   private final MatrixSynapseService matrixSynapseService;
   private final ConsultantActivityRegistry consultantActivityRegistry;
   private final LiveChatDiagnosticMetrics diagnosticMetrics;
+  private final de.caritas.cob.userservice.api.service.livechat.LiveChatQueuePolicy
+      liveChatQueuePolicy;
   private final MembersOnlyChatAccess membersOnlyChatAccess;
+  private final de.caritas.cob.userservice.api.service.matrixrtc.CallParticipantEviction
+      callParticipantEviction;
 
   /**
    * How long a live-chat queue entry stays visible without a sign of life from the guest who is
@@ -114,8 +118,15 @@ public class Messenger implements Messaging {
           chat.getId());
       return false;
     }
-    return matrixSynapseService.banUserFromRoomAsModerator(
-        matrixRoomId, adviceSeeker.getMatrixUserId(), chatOwner.getMatrixUserId());
+    var banned =
+        matrixSynapseService.banUserFromRoomAsModerator(
+            matrixRoomId, adviceSeeker.getMatrixUserId(), chatOwner.getMatrixUserId());
+    if (banned) {
+      // The ban stops new call tokens; a call already running drops them here
+      // (ORISO-Admin#1518 follow-up). Never fails the ban.
+      callParticipantEviction.evictFromRunningCalls(matrixRoomId, adviceSeeker.getMatrixUserId());
+    }
+    return banned;
   }
 
   @Override
@@ -180,7 +191,8 @@ public class Messenger implements Messaging {
         || session.getMainTopicId() == null
         || session.getCreateDate() == null
         || session.getId() == null
-        || !isTopicLiveChat(session)) {
+        || !isTopicLiveChat(session)
+        || liveChatQueuePolicy.freeChoiceEnabled()) {
       return;
     }
     // The accept transactions use READ_COMMITTED. An older assignment that has not committed

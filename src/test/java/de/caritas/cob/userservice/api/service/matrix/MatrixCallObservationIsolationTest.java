@@ -36,7 +36,9 @@ class MatrixCallObservationIsolationTest {
         List.of(
             MatrixCallObservationRepository.class,
             MatrixCallObservationService.class,
-            MatrixCallObservation.class);
+            MatrixCallObservation.class,
+            de.caritas.cob.userservice.api.port.out.MatrixCallObservationEndRepository.class,
+            de.caritas.cob.userservice.api.model.MatrixCallObservationEnd.class);
     for (Field field : consumer.getDeclaredFields()) {
       assertThat(forbidden).as(consumer + "." + field.getName()).doesNotContain(field.getType());
     }
@@ -65,9 +67,14 @@ class MatrixCallObservationIsolationTest {
           Class.forName(candidate.getBeanClassName(), false, getClass().getClassLoader());
       String name = type.getName(); // binary name: also covers nested and anonymous classes
       // Production classes only: the scan also sees test classes on the classpath.
+      // The service's own private nested types (#1628 end/write results) are part of the service.
       if (type == MatrixCallObservationService.class
+          || type.getEnclosingClass() == MatrixCallObservationService.class
           || type == MatrixCallObservation.class
           || type == MatrixCallObservationRepository.class
+          || type == de.caritas.cob.userservice.api.model.MatrixCallObservationEnd.class
+          || type
+              == de.caritas.cob.userservice.api.port.out.MatrixCallObservationEndRepository.class
           || name.matches(".*(IT|Test)(\\$.*)?")) continue;
       boolean holds = false;
       // Walk superclasses too: an abstract parent can carry the field for its subclasses.
@@ -82,10 +89,24 @@ class MatrixCallObservationIsolationTest {
       if (holds) holders.add(type.getName().substring(type.getName().lastIndexOf('.') + 1));
     }
     // The retention service only deletes expired rows; it neither reads nor grants anything.
+    // FE#2209: MatrixSessionCallBindingService reads the row only to REFUSE a binding for a call
+    // that was already ended (#1641 "ending wins"); the row never grants anything there.
+    // FE#2209 round 6: SessionCallRevival reads the stored end rows only to KEEP an ended binding
+    // ended (the assigned counsellor's own end blocks its revival); they never grant anything.
+    // #1662: MatrixGroupCallBindingService reads the rows only to REFUSE binding a group call its
+    // moderator already ended ("ending wins"), as the session path does; they never grant anything.
+    // Frank, 17 Nov 2026: CounsellorStartedCall reads a live row only to tell a counsellor's
+    // running call from an advice seeker's start. It narrows the media gate (before, every member
+    // got media for any call room); it never seats a guest and never passes a rule the gate's
+    // other checks (membership, knock, Träger, account, settings) refuse.
     assertThat(holders)
         .containsExactly(
             "CallObservationRetentionService",
+            "CounsellorStartedCall",
             "MatrixCallStateController",
-            "MatrixCallStateService");
+            "MatrixCallStateService",
+            "MatrixGroupCallBindingService",
+            "MatrixSessionCallBindingService",
+            "SessionCallRevival");
   }
 }

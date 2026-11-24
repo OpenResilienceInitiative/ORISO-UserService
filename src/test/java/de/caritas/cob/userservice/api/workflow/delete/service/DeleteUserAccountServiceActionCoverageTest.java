@@ -16,7 +16,6 @@ import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
 import de.caritas.cob.userservice.api.workflow.delete.action.asker.DeleteAnonymousRegistryIdAction;
-import de.caritas.cob.userservice.api.workflow.delete.action.asker.DeleteAppointmentServiceAskerAction;
 import de.caritas.cob.userservice.api.workflow.delete.action.asker.DeleteAskerDraftMessagesAction;
 import de.caritas.cob.userservice.api.workflow.delete.action.asker.DeleteAskerEventNotificationsAction;
 import de.caritas.cob.userservice.api.workflow.delete.action.asker.DeleteAskerReplyEmailDeliveriesAction;
@@ -25,9 +24,10 @@ import de.caritas.cob.userservice.api.workflow.delete.action.asker.DeleteDatabas
 import de.caritas.cob.userservice.api.workflow.delete.action.asker.DeleteDatabaseAskerAgencyAction;
 import de.caritas.cob.userservice.api.workflow.delete.action.asker.DeleteKeycloakAskerAction;
 import de.caritas.cob.userservice.api.workflow.delete.action.asker.DeleteMatrixAskerAction;
-import de.caritas.cob.userservice.api.workflow.delete.action.consultant.DeleteAppointmentServiceConsultantAction;
+import de.caritas.cob.userservice.api.workflow.delete.action.asker.PublishAskerDeletedEventAction;
 import de.caritas.cob.userservice.api.workflow.delete.action.consultant.DeleteCaseHandoverRequestsForConsultantAction;
 import de.caritas.cob.userservice.api.workflow.delete.action.consultant.DeleteChatAction;
+import de.caritas.cob.userservice.api.workflow.delete.action.consultant.DeleteConsultantCalendarAction;
 import de.caritas.cob.userservice.api.workflow.delete.action.consultant.DeleteConsultantDraftMessagesAction;
 import de.caritas.cob.userservice.api.workflow.delete.action.consultant.DeleteConsultantEventNotificationsAction;
 import de.caritas.cob.userservice.api.workflow.delete.action.consultant.DeleteConsultantMessageEmailDeliveriesAction;
@@ -36,6 +36,7 @@ import de.caritas.cob.userservice.api.workflow.delete.action.consultant.DeleteDa
 import de.caritas.cob.userservice.api.workflow.delete.action.consultant.DeleteDatabaseConsultantAgencyAction;
 import de.caritas.cob.userservice.api.workflow.delete.action.consultant.DeleteKeycloakConsultantAction;
 import de.caritas.cob.userservice.api.workflow.delete.action.consultant.DeleteMatrixConsultantAction;
+import de.caritas.cob.userservice.api.workflow.delete.action.consultant.PublishConsultantDeletedEventAction;
 import de.caritas.cob.userservice.api.workflow.delete.model.AskerDeletionWorkflowDTO;
 import de.caritas.cob.userservice.api.workflow.delete.model.ConsultantDeletionWorkflowDTO;
 import java.util.List;
@@ -70,11 +71,11 @@ class DeleteUserAccountServiceActionCoverageTest {
           DeleteAskerRoomsAndSessionsAction.class,
           DeleteDatabaseAskerAgencyAction.class,
           DeleteAnonymousRegistryIdAction.class,
-          DeleteAppointmentServiceAskerAction.class,
           DeleteAskerDraftMessagesAction.class,
           DeleteAskerEventNotificationsAction.class,
           DeleteAskerReplyEmailDeliveriesAction.class,
-          DeleteDatabaseAskerAction.class);
+          DeleteDatabaseAskerAction.class,
+          PublishAskerDeletedEventAction.class);
 
   private static final List<Class<?>> EXPECTED_CONSULTANT_CHAIN =
       List.of(
@@ -82,13 +83,14 @@ class DeleteUserAccountServiceActionCoverageTest {
           DeleteMatrixConsultantAction.class,
           DeleteDatabaseConsultantAgencyAction.class,
           DeleteChatAction.class,
-          DeleteAppointmentServiceConsultantAction.class,
           DeleteCaseHandoverRequestsForConsultantAction.class,
           DeleteConsultantDraftMessagesAction.class,
           DeleteConsultantEventNotificationsAction.class,
           DeleteConsultantMessageEmailDeliveriesAction.class,
           DeleteConsultantMessageStatsAction.class,
-          DeleteDatabaseConsultantAction.class);
+          DeleteConsultantCalendarAction.class,
+          DeleteDatabaseConsultantAction.class,
+          PublishConsultantDeletedEventAction.class);
 
   @InjectMocks private DeleteUserAccountService deleteUserAccountService;
 

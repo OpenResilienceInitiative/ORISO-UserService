@@ -28,6 +28,7 @@ import de.caritas.cob.userservice.api.service.chat.InternalGroupChatRecipientSco
 import de.caritas.cob.userservice.api.service.chat.MemberSetLock;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
@@ -175,6 +176,67 @@ public class InternalSubsetChatFacade {
         .toList();
   }
 
+  /**
+   * The colleagues {@link #open} would accept for a room with {@code creator} alone
+   * (ORISO-Frontend#2305), by the same rule as {@link #open}: encryption on, the colleague has a
+   * Matrix account, and the centre {@link #open} picks for the two ({@link #centreFor}) has
+   * internal chats switched on and keeps the colleague inside the recipient scope. Answers without
+   * touching Matrix, so the calendar can offer an on-site appointment only where no chat is
+   * possible.
+   *
+   * <p>A switch that cannot be read (for example the TenantService is down) fails the answer; it
+   * never counts as switched off, so a passing outage is not reported as "no chat possible".
+   */
+  public Set<String> reachableColleagues(Consultant creator, Collection<Consultant> colleagues) {
+    if (!matrixConfig.isEncryptionEnabled()) {
+      return Set.of();
+    }
+    var centres = centresOf(creator);
+    if (centres.isEmpty()) {
+      return Set.of();
+    }
+    var scope = recipientScopes.resolve(creator.getTenantId());
+    var switchedOn = new HashMap<Long, Boolean>();
+    var reachable = new LinkedHashSet<String>();
+    for (var colleague : colleagues) {
+      if (colleague == null || !MatrixIds.isUserId(colleague.getMatrixUserId())) {
+        continue;
+      }
+      var centre = centreFor(creator, List.of(colleague), scope, centres);
+      if (permits(creator, colleague, scope, centre)
+          && switchedOn.computeIfAbsent(centre, id -> featureEnabled(creator, id))) {
+        reachable.add(colleague.getId());
+      }
+    }
+    return reachable;
+  }
+
+  /** Switched off answers false; any other failure (the switch is unknown) propagates. */
+  private boolean featureEnabled(Consultant creator, Long agencyId) {
+    try {
+      featureGate.requireEnabled(creator, ChatDTO.builder().agencyId(agencyId).build());
+      return true;
+    } catch (ForbiddenException switchedOff) {
+      return false;
+    }
+  }
+
+  /**
+   * The tenant and centre switch for internal group chats, for a room anchored to {@code anchor}.
+   */
+  void requireFeatureEnabled(Consultant anchor, Long agencyId) {
+    featureGate.requireEnabled(anchor, ChatDTO.builder().agencyId(agencyId).build());
+  }
+
+  /**
+   * Whether {@code colleague} may be in a room anchored to {@code anchor} and {@code agencyId}: the
+   * same rule as for a new chat (ORISO-UserService#1580). For an existing room the anchor is its
+   * owner and its counselling centre, never the person who asks.
+   */
+  boolean permitsRecipient(Consultant anchor, Consultant colleague, Long agencyId) {
+    return permits(anchor, colleague, recipientScopes.resolve(anchor.getTenantId()), agencyId);
+  }
+
   private boolean permits(
       Consultant creator,
       Consultant colleague,
@@ -205,7 +267,7 @@ public class InternalSubsetChatFacade {
     }
   }
 
-  private void requireEncryption() {
+  void requireEncryption() {
     if (!matrixConfig.isEncryptionEnabled()) {
       throw new CustomValidationHttpStatusException(
           HttpStatusExceptionReason.INTERNAL_CHAT_ENCRYPTION_REQUIRED,
@@ -248,20 +310,37 @@ public class InternalSubsetChatFacade {
       requireAgency(creator, request.getAgencyId());
       return request.getAgencyId();
     }
-    var centres =
-        creator.getConsultantAgencies() == null
-            ? List.<Long>of()
-            : creator.getConsultantAgencies().stream()
-                .map(agency -> agency.getAgencyId())
-                .filter(java.util.Objects::nonNull)
-                .sorted(Comparator.naturalOrder())
-                .toList();
+    var centres = centresOf(creator);
     if (centres.isEmpty()) {
       throw new BadRequestException("The caller is not assigned to any counselling centre");
     }
+    return centreFor(creator, looked.values(), scope, centres);
+  }
+
+  /** The creator's counselling centres, by id. */
+  private static List<Long> centresOf(Consultant creator) {
+    return creator.getConsultantAgencies() == null
+        ? List.of()
+        : creator.getConsultantAgencies().stream()
+            .map(agency -> agency.getAgencyId())
+            .filter(java.util.Objects::nonNull)
+            .distinct()
+            .sorted(Comparator.naturalOrder())
+            .toList();
+  }
+
+  /**
+   * The centre a room without a requested centre is anchored to: the first of {@code centres} that
+   * admits every colleague, else the first one. {@link #open} and {@link #reachableColleagues} both
+   * use it, so the calendar never offers a chat that opening it would refuse.
+   */
+  private Long centreFor(
+      Consultant creator,
+      Collection<Consultant> colleagues,
+      InternalGroupChatRecipientScope scope,
+      List<Long> centres) {
     return centres.stream()
-        .filter(
-            centre -> looked.values().stream().allMatch(c -> permits(creator, c, scope, centre)))
+        .filter(centre -> colleagues.stream().allMatch(c -> permits(creator, c, scope, centre)))
         .findFirst()
         .orElse(centres.get(0));
   }

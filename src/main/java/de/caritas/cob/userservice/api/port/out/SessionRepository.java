@@ -21,7 +21,14 @@ import org.springframework.data.repository.CrudRepository;
 import org.springframework.data.repository.query.Param;
 import org.springframework.transaction.annotation.Transactional;
 
-public interface SessionRepository extends CrudRepository<Session, Long> {
+public interface SessionRepository extends CrudRepository<Session, Long>, SessionRowLock {
+
+  /**
+   * FE#2209: whether any session of any tenant uses this Matrix room. Native, so the Hibernate
+   * tenant filter does not apply: a room of another tenant is still an ORISO conversation room.
+   */
+  @Query(value = "SELECT COUNT(*) FROM session WHERE matrix_room_id = :room", nativeQuery = true)
+  long countAnyTenantByMatrixRoomId(@Param("room") String room);
 
   // A known modality is authoritative; the older markers only identify pre-modality rows.
   String LIVE_CHAT_MODALITY =
@@ -40,6 +47,13 @@ public interface SessionRepository extends CrudRepository<Session, Long> {
   @Lock(LockModeType.PESSIMISTIC_WRITE)
   @Query("SELECT session FROM Session session WHERE session.id = :sessionId")
   Optional<Session> findByIdForUpdate(@Param("sessionId") Long sessionId);
+
+  /**
+   * The conversation's row lock alone, without loading it (ORISO-Frontend#2252): a deletion takes
+   * it before it reads the invited members, a join reservation before it writes one.
+   */
+  @Query(value = "SELECT id FROM session WHERE id = :id FOR UPDATE", nativeQuery = true)
+  Optional<Long> lockById(@Param("id") Long id);
 
   /** Scalar lock avoids returning an earlier managed Session snapshot after remote call lookup. */
   @Query(
@@ -77,6 +91,14 @@ public interface SessionRepository extends CrudRepository<Session, Long> {
       "UPDATE Session session SET session.directLinkName = :name"
           + " WHERE session.id = :sessionId AND session.directLinkName IS NULL")
   int recordDirectLinkName(@Param("sessionId") Long sessionId, @Param("name") String name);
+
+  /** ORISO-Frontend#2252: this session is the shared conversation of a direct invitation. */
+  @Transactional
+  @Modifying(flushAutomatically = true)
+  @Query(
+      "UPDATE Session session SET session.directInvitationConversation = true"
+          + " WHERE session.id = :sessionId")
+  int markDirectInvitationConversation(@Param("sessionId") Long sessionId);
 
   /**
    * Write the independent standing preference without changing ownership or its optimistic version.
@@ -227,6 +249,18 @@ public interface SessionRepository extends CrudRepository<Session, Long> {
    */
   List<Session> findByUserUserId(String userId);
 
+  /** One row per session of the given advice seekers that has an agency. */
+  interface UserAgencyId {
+    String getUserId();
+
+    Long getAgencyId();
+  }
+
+  @Query(
+      "select distinct s.user.userId as userId, s.agencyId as agencyId from Session s"
+          + " where s.user.userId in :userIds and s.agencyId is not null")
+  List<UserAgencyId> findAgencyIdsByUserIds(@Param("userIds") Collection<String> userIds);
+
   /**
    * Find the {@link Session}s by user id and pageable.
    *
@@ -256,6 +290,24 @@ public interface SessionRepository extends CrudRepository<Session, Long> {
    * @param sessionStatus {@link SessionStatus}
    * @return A list of {@link Session}s for the specified agency ID
    */
+  /**
+   * Closes the advice seeker's enquiries nobody has taken yet ({@code INITIAL}/{@code NEW} without
+   * a counsellor). Used when the advice seeker is marked for deletion, so the enquiries leave the
+   * counsellors' lists and no longer block deleting an agency's last counsellor.
+   *
+   * @return how many enquiries were closed
+   */
+  @Transactional
+  @Modifying(flushAutomatically = true)
+  @Query(
+      "update Session s set s.status ="
+          + " de.caritas.cob.userservice.api.model.Session.SessionStatus.DONE,"
+          + " s.updateDate = :now, s.rowVersion = s.rowVersion + 1"
+          + " where s.user = :user and s.consultant is null and s.status in"
+          + " (de.caritas.cob.userservice.api.model.Session.SessionStatus.INITIAL,"
+          + " de.caritas.cob.userservice.api.model.Session.SessionStatus.NEW)")
+  int closeUnassignedEnquiries(@Param("user") User user, @Param("now") LocalDateTime now);
+
   List<Session> findByAgencyIdAndStatusAndConsultantIsNull(
       Long agencyId, SessionStatus sessionStatus);
 
@@ -489,15 +541,19 @@ public interface SessionRepository extends CrudRepository<Session, Long> {
       RegistrationType registrationType);
 
   /**
-   * Find one session by assigned consultant and user.
-   *
-   * @param consultant the consultant
-   * @param user the user
-   * @param consultingTypeId the id of the consulting type
-   * @return an {@link Optional} of the result
+   * The person's 1:1 sessions with the counsellor in a consulting type, oldest first, without the
+   * shared conversations of direct invitations with an appointment (ORISO-Frontend#2252): those are
+   * sessions of the same three, and a person can have several. Their mark is on the session, so it
+   * holds after the invitation is deleted; a 1:1 an invitation was created from stays in.
    */
-  Optional<Session> findByConsultantAndUserAndConsultingTypeId(
-      Consultant consultant, User user, Integer consultingTypeId);
+  @Query(
+      "SELECT s FROM Session s WHERE s.consultant = :consultant AND s.user = :user"
+          + " AND s.consultingTypeId = :consultingTypeId"
+          + " AND s.directInvitationConversation = false ORDER BY s.id")
+  List<Session> findOneToOneSessions(
+      @Param("consultant") Consultant consultant,
+      @Param("user") User user,
+      @Param("consultingTypeId") Integer consultingTypeId);
 
   /**
    * Find one session by assigned consultant and user.

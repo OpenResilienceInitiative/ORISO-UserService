@@ -10,6 +10,7 @@ import de.caritas.cob.userservice.api.port.out.UserMobileTokenRepository;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
 import de.caritas.cob.userservice.api.workflow.delete.action.UserContentCleanup;
 import de.caritas.cob.userservice.api.workflow.delete.model.AskerDeletionWorkflowDTO;
+import de.caritas.cob.userservice.api.workflow.delete.model.DeletionFailureSummary;
 import de.caritas.cob.userservice.api.workflow.delete.model.DeletionTargetType;
 import de.caritas.cob.userservice.api.workflow.delete.model.DeletionWorkflowError;
 import de.caritas.cob.userservice.api.workflow.delete.service.IdentityTombstoneService;
@@ -67,7 +68,10 @@ public class DeleteDatabaseAskerAction implements ActionCommand<AskerDeletionWor
                   .deletionSourceType(ASKER)
                   .deletionTargetType(DeletionTargetType.DATABASE)
                   .identifier(actionTarget.getUser().getUserId())
-                  .reason("Unable to delete user")
+                  .reason(
+                      DeletionFailureSummary.blockingReference(e)
+                          .map(reference -> "Unable to delete user: " + reference)
+                          .orElse("Unable to delete user"))
                   .timestamp(nowInUtc())
                   .build());
     }
