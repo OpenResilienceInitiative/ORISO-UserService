@@ -221,7 +221,7 @@ public class CounsellorFreeTime {
         bookingSettings
             .lockById(consultantId)
             .orElseGet(() -> CalendarBookingSetting.defaults(consultantId));
-    return slots(consultantId, start, start.plusNanos(1), setting).stream()
+    return slots(consultantId, start, end, setting).stream()
         .filter(slot -> slot.start().equals(start) && slot.end().equals(end))
         .findFirst();
   }

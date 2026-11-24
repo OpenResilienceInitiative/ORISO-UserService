@@ -6,6 +6,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import de.caritas.cob.userservice.api.adapters.web.dto.CalendarEntryType;
@@ -465,6 +466,18 @@ class CounsellorFreeTimeTest {
     assertThat(freeTime.slots(COUNSELLOR, NOW, NOW.plus(Duration.ofDays(1))))
         .extracting(FreeSlot::mode)
         .containsExactly(BookingMode.REQUEST);
+  }
+
+  @Test
+  void offeredSlot_Should_LookUpOneOffs_OverTheWholeSlot_NotASubMicrosecondWindow() {
+    // MariaDB truncates timestamp parameters to microseconds; a window [start, start+1ns)
+    // collapses to an empty one and finds no one-off for the first slot of a window.
+    when(bookingSettings.lockById(COUNSELLOR)).thenReturn(Optional.empty());
+    once(at(MONDAY, "09:00"), at(MONDAY, "11:00"), 0, false);
+
+    assertThat(freeTime.offeredSlot(COUNSELLOR, at(MONDAY, "09:00"), at(MONDAY, "10:00")))
+        .isPresent();
+    verify(consultationOnce).findOverlapping(COUNSELLOR, at(MONDAY, "09:00"), at(MONDAY, "10:00"));
   }
 
   @Test
