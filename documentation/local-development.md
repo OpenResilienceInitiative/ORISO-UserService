@@ -85,6 +85,18 @@ http://localhost:8082/service
 
 ## 5. Useful Checks
 
+From a dedicated checkout with Java 21 and Python 3, use the same unit gate as
+the GitHub Maven build. Pass one test class for a quick local check.
+
+```bash
+python3 scripts/ci/verify-maven-unit.py --test AccountInviteAccessPolicyTemplateKindTest
+python3 scripts/ci/verify-maven-unit.py
+```
+
+The final JSON line shows the checkout commit, whether it has local changes,
+the selected tests, the Java version and the outcome. A failure identifies
+the failed step. GitHub writes the same report to the check summary.
+
 Check whether UserService is listening:
 
 ```bash
