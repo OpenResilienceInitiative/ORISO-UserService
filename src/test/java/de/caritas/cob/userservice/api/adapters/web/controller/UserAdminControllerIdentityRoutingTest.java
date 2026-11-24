@@ -70,6 +70,9 @@ class UserAdminControllerIdentityRoutingTest {
                 de.caritas.cob.userservice.api.admin.service.tenant.TenantDeletionBlockerService
                     .class),
             mock(
+                de.caritas.cob.userservice.api.admin.service.agency.AgencyDeletionCascadeService
+                    .class),
+            mock(
                 de.caritas.cob.userservice.api.admin.service.contactperson.ContactPersonAdminService
                     .class));
 

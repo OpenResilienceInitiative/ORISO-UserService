@@ -451,6 +451,71 @@ paths:
           description: INTERNAL SERVER ERROR - server encountered unexpected condition
       security:
         - Bearer: [ ]
+  /useradmin/agencies/{agencyId}/deletion:
+    get:
+      tags:
+        - admin-user-controller
+      summary: >-
+        Says what deleting a Beratungsstelle would delete. [Authorization: Role: user-admin,
+        tenant-admin or single-tenant-admin, within the caller's reach]
+      description: >-
+        Shown in the confirmation before an admin deletes a Beratungsstelle (ORISO-Admin#1524).
+      operationId: getAgencyDeletionPreview
+      parameters:
+        - name: agencyId
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        200:
+          description: OK - what goes with the Beratungsstelle
+          content:
+            'application/json':
+              schema:
+                $ref: '#/components/schemas/AgencyDeletionPreviewDTO'
+        401:
+          description: UNAUTHORIZED - no/invalid role/authorization
+        403:
+          description: FORBIDDEN - the Beratungsstelle is outside the caller's reach
+      security:
+        - Bearer: [ ]
+    post:
+      tags:
+        - admin-user-controller
+      summary: >-
+        Marks everything that belongs to a Beratungsstelle for deletion. [Authorization: Role:
+        user-admin, tenant-admin or single-tenant-admin, within the caller's reach]
+      description: >-
+        Called by AgencyService when an admin deletes a Beratungsstelle, after it has taken the
+        Beratungsstelle offline (ORISO-Admin#1524). Revokes its invitations and invite links,
+        closes its open enquiries, marks the advice seekers and counsellors whose only
+        Beratungsstelle it is for deletion, takes the others off it (their sessions there are
+        purged at night), removes the agency admins' assignment and stops its active group
+        chats. Every step skips what is already done, so the call can be repeated; a child that
+        could not be handled is listed and handled on the next call.
+      operationId: markAgencyContentsForDeletion
+      parameters:
+        - name: agencyId
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        200:
+          description: OK - what was marked now, and what could not be
+          content:
+            'application/json':
+              schema:
+                $ref: '#/components/schemas/AgencyDeletionResultDTO'
+        401:
+          description: UNAUTHORIZED - no/invalid role/authorization
+        403:
+          description: FORBIDDEN - the Beratungsstelle is outside the caller's reach
+      security:
+        - Bearer: [ ]
   /useradmin/agencies/{agencyId}/contactperson:
     get:
       tags:
@@ -3442,6 +3507,102 @@ components:
           type: integer
           format: int64
           description: account invitations of the Träger that can still be accepted
+
+    AgencyDeletionPreviewDTO:
+      type: object
+      required: [ adviceSeekers, keptAdviceSeekerSessions, openEnquiries, consultantsDeleted,
+                  consultantsUnassigned, agencyAdmins, groupChats ]
+      properties:
+        adviceSeekers:
+          type: integer
+          format: int64
+          description: advice seekers whose only Beratungsstelle this is; deleted with it
+        keptAdviceSeekerSessions:
+          type: integer
+          format: int64
+          description: sessions here of advice seekers who keep their account; purged at night
+        openEnquiries:
+          type: integer
+          format: int64
+          description: enquiries nobody has taken yet; closed at once
+        consultantsDeleted:
+          type: integer
+          format: int64
+          description: counsellors whose only Beratungsstelle this is; deleted with it
+        consultantsUnassigned:
+          type: integer
+          format: int64
+          description: counsellors who keep their account and only lose this Beratungsstelle
+        agencyAdmins:
+          type: integer
+          format: int64
+          description: agency admins who lose their assignment to this Beratungsstelle
+        groupChats:
+          type: integer
+          format: int64
+          description: active group chats of this Beratungsstelle; stopped at once
+
+    AgencyDeletionResultDTO:
+      type: object
+      required: [ complete, invites, adviceSeekers, keptAdviceSeekerSessions, openEnquiries,
+                  consultantsDeleted, consultantsUnassigned, agencyAdmins, groupChats, failures ]
+      properties:
+        complete:
+          type: boolean
+          description: true when everything of the Beratungsstelle is now marked, closed or gone
+        invites:
+          type: integer
+          format: int64
+          description: invitations revoked and invite links switched off by this call
+        adviceSeekers:
+          type: integer
+          format: int64
+          description: advice seekers whose only Beratungsstelle this is; deleted with it
+        keptAdviceSeekerSessions:
+          type: integer
+          format: int64
+          description: sessions here of advice seekers who keep their account; purged at night
+        openEnquiries:
+          type: integer
+          format: int64
+          description: enquiries nobody has taken yet; closed at once
+        consultantsDeleted:
+          type: integer
+          format: int64
+          description: counsellors whose only Beratungsstelle this is; deleted with it
+        consultantsUnassigned:
+          type: integer
+          format: int64
+          description: counsellors who keep their account and only lose this Beratungsstelle
+        agencyAdmins:
+          type: integer
+          format: int64
+          description: agency admins who lose their assignment to this Beratungsstelle
+        groupChats:
+          type: integer
+          format: int64
+          description: active group chats of this Beratungsstelle; stopped at once
+        failures:
+          type: array
+          items:
+            $ref: '#/components/schemas/AgencyDeletionFailureDTO'
+
+    AgencyDeletionFailureDTO:
+      type: object
+      required:
+        - kind
+        - reason
+      properties:
+        kind:
+          type: string
+          enum: [ INVITES, ENQUIRIES, ADVICE_SEEKER, SESSIONS, MEMBERSHIPS, CONSULTANT,
+                  CONSULTANT_RELATION, AGENCY_ADMIN, GROUP_CHAT ]
+        id:
+          type: string
+          description: the child that could not be handled; empty when its kind could not be read
+        reason:
+          type: string
+          description: the kind of failure (exception type or X-Reason), never personal data
 
     AskerSearchResultDTO:
       type: object

@@ -9,6 +9,8 @@ import de.caritas.cob.userservice.api.adapters.web.dto.AgencyConsultantResponseD
 import de.caritas.cob.userservice.api.adapters.web.dto.AgencyContactCoverageDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.AgencyContactCoverageRequestDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.AgencyContactPersonAdminDTO;
+import de.caritas.cob.userservice.api.adapters.web.dto.AgencyDeletionPreviewDTO;
+import de.caritas.cob.userservice.api.adapters.web.dto.AgencyDeletionResultDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.AgencyTypeDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.AskerFilter;
 import de.caritas.cob.userservice.api.adapters.web.dto.AskerReactivationRequestDTO;
@@ -48,6 +50,7 @@ import de.caritas.cob.userservice.api.admin.facade.AskerUserAdminFacade;
 import de.caritas.cob.userservice.api.admin.facade.ConsultantAdminFacade;
 import de.caritas.cob.userservice.api.admin.hallink.RootDTOBuilder;
 import de.caritas.cob.userservice.api.admin.report.service.ViolationReportGenerator;
+import de.caritas.cob.userservice.api.admin.service.agency.AgencyDeletionCascadeService;
 import de.caritas.cob.userservice.api.admin.service.consultant.create.GrantConsultantIdentityService;
 import de.caritas.cob.userservice.api.admin.service.contactperson.ContactPersonAdminService;
 import de.caritas.cob.userservice.api.admin.service.listpreference.AdminListPreferenceService;
@@ -116,6 +119,7 @@ public class UserAdminController implements UseradminApi {
       accountSetupIssuer;
   private final @NonNull UserHelper userHelper;
   private final @NonNull TenantDeletionBlockerService tenantDeletionBlockerService;
+  private final @NonNull AgencyDeletionCascadeService agencyDeletionCascadeService;
   private final @NonNull ContactPersonAdminService contactPersonAdminService;
 
   /** Never typed by anyone and valid until the setup link expires, so length costs nothing. */
@@ -572,6 +576,19 @@ public class UserAdminController implements UseradminApi {
   @Override
   public ResponseEntity<TenantDeletionBlockersDTO> getTenantDeletionBlockers(final Long tenantId) {
     return ResponseEntity.ok(tenantDeletionBlockerService.findBlockers(tenantId));
+  }
+
+  /** What deleting the Beratungsstelle would delete (ORISO-Admin#1524). */
+  @Override
+  public ResponseEntity<AgencyDeletionPreviewDTO> getAgencyDeletionPreview(final Long agencyId) {
+    return ResponseEntity.ok(agencyDeletionCascadeService.preview(agencyId));
+  }
+
+  /** Deletes what belongs to the Beratungsstelle; called by AgencyService (ORISO-Admin#1524). */
+  @Override
+  public ResponseEntity<AgencyDeletionResultDTO> markAgencyContentsForDeletion(
+      final Long agencyId) {
+    return ResponseEntity.ok(agencyDeletionCascadeService.cascade(agencyId));
   }
 
   /** Contact person of a counselling centre (ORISO-Admin#1534). */

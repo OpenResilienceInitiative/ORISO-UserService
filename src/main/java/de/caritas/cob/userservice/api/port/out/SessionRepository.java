@@ -336,6 +336,60 @@ public interface SessionRepository extends CrudRepository<Session, Long>, Sessio
           + " de.caritas.cob.userservice.api.model.Session.SessionStatus.NEW)")
   int closeUnassignedEnquiries(@Param("user") User user, @Param("now") LocalDateTime now);
 
+  /**
+   * As {@link #closeUnassignedEnquiries(User, LocalDateTime)}, for every enquiry of a
+   * Beratungsstelle that is being deleted (ORISO-Admin#1524).
+   *
+   * @return how many enquiries were closed
+   */
+  @Transactional
+  @Modifying(flushAutomatically = true)
+  @Query(
+      "update Session s set s.status ="
+          + " de.caritas.cob.userservice.api.model.Session.SessionStatus.DONE,"
+          + " s.updateDate = :now, s.rowVersion = s.rowVersion + 1"
+          + " where s.agencyId = :agencyId and s.consultant is null and s.status in"
+          + " (de.caritas.cob.userservice.api.model.Session.SessionStatus.INITIAL,"
+          + " de.caritas.cob.userservice.api.model.Session.SessionStatus.NEW)")
+  int closeUnassignedEnquiriesOfAgency(
+      @Param("agencyId") Long agencyId, @Param("now") LocalDateTime now);
+
+  /** Enquiries of a Beratungsstelle nobody has taken yet; the deletion preview counts them. */
+  @Query(
+      "select count(s) from Session s where s.agencyId = :agencyId and s.consultant is null"
+          + " and s.status in"
+          + " (de.caritas.cob.userservice.api.model.Session.SessionStatus.INITIAL,"
+          + " de.caritas.cob.userservice.api.model.Session.SessionStatus.NEW)")
+  long countUnassignedEnquiriesOfAgency(@Param("agencyId") Long agencyId);
+
+  /**
+   * Marks the sessions a deleted Beratungsstelle leaves behind with advice seekers who keep their
+   * account (ORISO-Admin#1524). Sessions of advice seekers marked for deletion are left to their
+   * own deletion. Repeating it marks nothing twice.
+   *
+   * @return how many sessions were marked
+   */
+  @Transactional
+  @Modifying(flushAutomatically = true)
+  @Query(
+      "update Session s set s.deleteDate = :now, s.updateDate = :now,"
+          + " s.rowVersion = s.rowVersion + 1"
+          + " where s.agencyId = :agencyId and s.deleteDate is null"
+          + " and s.user.userId in (select u.userId from User u where u.deleteDate is null"
+          + " and u.userId not like 'group-chat-system%')")
+  int markSessionsOfKeptAdviceSeekersForDeletion(
+      @Param("agencyId") Long agencyId, @Param("now") LocalDateTime now);
+
+  /** The sessions {@link #markSessionsOfKeptAdviceSeekersForDeletion} would mark. */
+  @Query(
+      "select count(s) from Session s where s.agencyId = :agencyId and s.deleteDate is null"
+          + " and s.user.userId in (select u.userId from User u where u.deleteDate is null"
+          + " and u.userId not like 'group-chat-system%')")
+  long countSessionsOfKeptAdviceSeekers(@Param("agencyId") Long agencyId);
+
+  /** Sessions waiting for the nightly purge (ORISO-Admin#1524). */
+  List<Session> findAllByDeleteDateNotNull();
+
   /** Scoped current read even when a roster transaction has an earlier snapshot. */
   @Lock(LockModeType.PESSIMISTIC_READ)
   @Query(

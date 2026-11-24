@@ -55,6 +55,7 @@ public class DeleteUserAccountServiceTest {
   @Mock private UserHardDeleteClaimService userHardDeleteClaimService;
 
   @Mock private ConsultantHardDeleteClaimService consultantHardDeleteClaimService;
+  @Mock private MarkedSessionPurgeService markedSessionPurgeService;
 
   private final ActionCommandMockProvider commandMockProvider = new ActionCommandMockProvider();
 
