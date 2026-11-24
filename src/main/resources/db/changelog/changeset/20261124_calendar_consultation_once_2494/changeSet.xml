@@ -26,7 +26,6 @@
     </createTable>
     <rollback><dropTable tableName="calendar_consultation_once"/></rollback>
   </changeSet>
-  <!-- The table's rollback removes the index with it, so there is nothing to undo here. -->
   <changeSet id="20261124-calendar-consultation-once-index-2494" author="oriso">
     <preConditions onFail="MARK_RAN">
       <not>
@@ -39,6 +38,9 @@
       <column name="consultant_id"/>
       <column name="end_at"/>
     </createIndex>
-    <rollback/>
+    <rollback>
+      <dropIndex tableName="calendar_consultation_once"
+        indexName="idx_calendar_consultation_once_consultant_end"/>
+    </rollback>
   </changeSet>
 </databaseChangeLog>

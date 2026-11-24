@@ -228,11 +228,57 @@ public class CounsellorFreeTime {
 
   /**
    * Whether nothing but the appointment itself takes the counsellor's time in [start, end): the
-   * check before a counsellor confirms a request, whatever their Sprechstunden say now.
+   * check before a counsellor confirms a request, whatever their Sprechstunden say now. Inside a
+   * one-off released over their own blockers ({@code overBlocker}), those blockers do not take the
+   * time, as when its slots were offered; everything else still does.
    */
   public boolean isFreeBesides(String consultantId, Instant start, Instant end, UUID appointment) {
-    return busyOf(consultantId, start, end, appointment).all().stream()
-        .noneMatch(taken -> taken.start().isBefore(end) && taken.end().isAfter(start));
+    var busy = busyOf(consultantId, start, end, appointment);
+    if (busy.besidesOwnBlockers().stream().anyMatch(taken -> overlaps(taken, start, end))) {
+      return false;
+    }
+    var ownBlockers =
+        busy.ownBlockers().stream().filter(taken -> overlaps(taken, start, end)).toList();
+    if (ownBlockers.isEmpty()) {
+      return true;
+    }
+    var releasedOver =
+        consultationOnce.findOverlapping(consultantId, start, end).stream()
+            .filter(CalendarConsultationOnce::isOverBlocker)
+            .sorted(Comparator.comparing(CalendarConsultationOnce::getStartAt))
+            .toList();
+    return ownBlockers.stream()
+        .allMatch(
+            blocker ->
+                isCovered(
+                    later(blocker.start(), start), earlier(blocker.end(), end), releasedOver));
+  }
+
+  private static boolean overlaps(BusySlot taken, Instant start, Instant end) {
+    return taken.start().isBefore(end) && taken.end().isAfter(start);
+  }
+
+  /** Whether the one-offs, sorted by start, cover [from, to) without a gap. */
+  private static boolean isCovered(
+      Instant from, Instant to, List<CalendarConsultationOnce> sortedOnces) {
+    var cursor = from;
+    for (var once : sortedOnces) {
+      if (!cursor.isBefore(to)) {
+        break;
+      }
+      if (!once.getStartAt().isAfter(cursor) && once.getEndAt().isAfter(cursor)) {
+        cursor = once.getEndAt();
+      }
+    }
+    return !cursor.isBefore(to);
+  }
+
+  private static Instant later(Instant a, Instant b) {
+    return a.isAfter(b) ? a : b;
+  }
+
+  private static Instant earlier(Instant a, Instant b) {
+    return a.isBefore(b) ? a : b;
   }
 
   private CalendarBookingSetting settingOf(String consultantId) {
@@ -281,6 +327,7 @@ public class CounsellorFreeTime {
         () -> {
           var all = new ArrayList<BusySlot>();
           var besidesOwnBlockers = new ArrayList<BusySlot>();
+          var ownBlockers = new ArrayList<BusySlot>();
           var calendar = new ArrayList<CalendarEntry>();
           calendar.addAll(entries.appointmentsOfConsultant(consultantId, from, to));
           calendar.addAll(entries.groupOccurrencesOfConsultant(consultantId, from, to));
@@ -289,7 +336,9 @@ public class CounsellorFreeTime {
             if (!entry.id().equals(skip)) {
               var taken = new BusySlot(entry.start(), entry.end());
               all.add(taken);
-              if (entry.type() != CalendarEntryType.BLOCKER) {
+              if (entry.type() == CalendarEntryType.BLOCKER) {
+                ownBlockers.add(taken);
+              } else {
                 besidesOwnBlockers.add(taken);
               }
             }
@@ -302,13 +351,14 @@ public class CounsellorFreeTime {
               besidesOwnBlockers.add(taken);
             }
           }
-          return new Busy(all, besidesOwnBlockers);
+          return new Busy(all, besidesOwnBlockers, ownBlockers);
         });
   }
 
   /**
-   * The counsellor's busy time: all of it, and all but their own blockers (imported busy times
-   * stay).
+   * The counsellor's busy time: all of it, all but their own blockers (imported busy times stay),
+   * and their own blockers alone.
    */
-  private record Busy(List<BusySlot> all, List<BusySlot> besidesOwnBlockers) {}
+  private record Busy(
+      List<BusySlot> all, List<BusySlot> besidesOwnBlockers, List<BusySlot> ownBlockers) {}
 }

@@ -302,6 +302,64 @@ class CounsellorFreeTimeTest {
   // One-off Sprechstunden (ORISO-Frontend#2494).
 
   @Test
+  void isFreeBesides_Should_IgnoreOwnBlockers_InsideAOneOffReleasedOverThem() {
+    var tuesday = MONDAY.plusDays(1);
+    var own = request(at(tuesday, "14:00"), at(tuesday, "15:00"));
+    requested.add(own);
+    blocked.add(blocker(at(tuesday, "13:00"), at(tuesday, "16:00"), CalendarEntryType.BLOCKER));
+    once(at(tuesday, "14:00"), at(tuesday, "16:00"), 60, true);
+
+    assertThat(
+            freeTime.isFreeBesides(COUNSELLOR, own.getStartTime(), own.getEndTime(), own.getId()))
+        .isTrue();
+  }
+
+  @Test
+  void isFreeBesides_Should_StillRejectOtherTakenTime_InsideAOneOffReleasedOverBlockers() {
+    var tuesday = MONDAY.plusDays(1);
+    var own = request(at(tuesday, "14:00"), at(tuesday, "15:00"));
+    requested.add(own);
+    blocked.add(blocker(at(tuesday, "14:00"), at(tuesday, "15:00"), CalendarEntryType.BLOCKER));
+    once(at(tuesday, "14:00"), at(tuesday, "16:00"), 60, true);
+    taken.add(entry(at(tuesday, "14:30"), at(tuesday, "15:00")));
+
+    assertThat(
+            freeTime.isFreeBesides(COUNSELLOR, own.getStartTime(), own.getEndTime(), own.getId()))
+        .isFalse();
+
+    taken.clear();
+    blocked.add(blocker(at(tuesday, "14:00"), at(tuesday, "14:30"), CalendarEntryType.BUSY));
+    assertThat(
+            freeTime.isFreeBesides(COUNSELLOR, own.getStartTime(), own.getEndTime(), own.getId()))
+        .isFalse();
+  }
+
+  @Test
+  void isFreeBesides_Should_RejectAnOwnBlocker_WithoutAOneOffReleasedOverIt() {
+    var tuesday = MONDAY.plusDays(1);
+    var own = request(at(tuesday, "14:00"), at(tuesday, "15:00"));
+    requested.add(own);
+    blocked.add(blocker(at(tuesday, "14:00"), at(tuesday, "15:00"), CalendarEntryType.BLOCKER));
+
+    assertThat(
+            freeTime.isFreeBesides(COUNSELLOR, own.getStartTime(), own.getEndTime(), own.getId()))
+        .isFalse();
+
+    // A one-off not released over blockers does not exempt them.
+    once(at(tuesday, "14:00"), at(tuesday, "16:00"), 60, false);
+    assertThat(
+            freeTime.isFreeBesides(COUNSELLOR, own.getStartTime(), own.getEndTime(), own.getId()))
+        .isFalse();
+
+    // Released over blockers, but covering only part of the blocked request time.
+    onces.clear();
+    once(at(tuesday, "14:30"), at(tuesday, "16:00"), 60, true);
+    assertThat(
+            freeTime.isFreeBesides(COUNSELLOR, own.getStartTime(), own.getEndTime(), own.getId()))
+        .isFalse();
+  }
+
+  @Test
   void slots_Should_OfferAOneOff_WithoutAnyWeeklySprechstunde() {
     var tuesday = MONDAY.plusDays(1);
     once(at(tuesday, "14:00"), at(tuesday, "16:00"), 60, false);

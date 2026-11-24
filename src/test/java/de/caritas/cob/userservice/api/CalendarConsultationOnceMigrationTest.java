@@ -73,6 +73,55 @@ class CalendarConsultationOnceMigrationTest {
     }
   }
 
+  @Test
+  void update_Should_AddTheIndex_ToATableMadeWithoutIt_And_RollbackDropsOnlyTheIndex()
+      throws Exception {
+    try (Connection c =
+        DriverManager.getConnection(
+            "jdbc:h2:mem:calendar-consultation-once-" + UUID.randomUUID() + ";MODE=MariaDB",
+            "sa",
+            "")) {
+      try (var st = c.createStatement()) {
+        st.execute(
+            "CREATE TABLE calendar_consultation_once (id CHAR(36) NOT NULL PRIMARY KEY,"
+                + " consultant_id VARCHAR(36) NOT NULL, start_at DATETIME(6) NOT NULL,"
+                + " end_at DATETIME(6) NOT NULL, notice_minutes INT NOT NULL,"
+                + " over_blocker BOOLEAN DEFAULT FALSE NOT NULL)");
+      }
+      assertThat(indexColumns(c)).isEmpty();
+      var database =
+          DatabaseFactory.getInstance().findCorrectDatabaseImplementation(new JdbcConnection(c));
+      try (var liquibase = new Liquibase(CHANGELOG, new ClassLoaderResourceAccessor(), database)) {
+        liquibase.update(new Contexts(), new LabelExpression());
+        assertThat(indexColumns(c)).containsExactly("CONSULTANT_ID", "END_AT");
+
+        // Applying it again changes nothing and does not fail.
+        liquibase.update(new Contexts(), new LabelExpression());
+        assertThat(indexColumns(c)).containsExactly("CONSULTANT_ID", "END_AT");
+
+        // Rolling back only the index changeset keeps the table.
+        liquibase.rollback(1, (String) null);
+        assertThat(indexColumns(c)).isEmpty();
+        assertThat(columns(c, "CALENDAR_CONSULTATION_ONCE")).hasSize(6);
+      }
+    }
+  }
+
+  /** The columns of the one-off index, in index order; empty without the index. */
+  private static List<String> indexColumns(Connection c) throws Exception {
+    var names = new ArrayList<String>();
+    try (var rs =
+        c.getMetaData().getIndexInfo(null, null, "CALENDAR_CONSULTATION_ONCE", false, false)) {
+      while (rs.next()) {
+        if ("IDX_CALENDAR_CONSULTATION_ONCE_CONSULTANT_END"
+            .equalsIgnoreCase(rs.getString("INDEX_NAME"))) {
+          names.add(rs.getShort("ORDINAL_POSITION") - 1, rs.getString("COLUMN_NAME").toUpperCase());
+        }
+      }
+    }
+    return names;
+  }
+
   private static List<String> activeIncludes(String changelog) throws Exception {
     var factory = DocumentBuilderFactory.newInstance();
     factory.setFeature("http://apache.org/xml/features/disallow-doctype-decl", true);
