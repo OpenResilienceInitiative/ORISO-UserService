@@ -492,9 +492,23 @@ components:
           $ref: '#/components/schemas/AgencyAdminAllowedPermissionToggles'
         enforcedPermissionToggles:
           $ref: '#/components/schemas/AgencyAdminAllowedPermissionToggles'
+    AgencyCaseSharingPolicy:
+      type: object
+      description: "Effective case sharing mode of the agency (ORISO-TenantService#374)."
+      properties:
+        value:
+          type: string
+          enum: [CASE_HANDOVER, TEAM_COUNSELLING, NONE]
+        mode:
+          type: string
+          enum: [ENFORCED, SUGGESTED]
+        inherited:
+          type: boolean
     Settings:
       type: object
       properties:
+        caseSharing:
+          $ref: '#/components/schemas/AgencyCaseSharingPolicy'
         featureLiveChatFurtherCounsellingEnabled:
           type: boolean
           example: false

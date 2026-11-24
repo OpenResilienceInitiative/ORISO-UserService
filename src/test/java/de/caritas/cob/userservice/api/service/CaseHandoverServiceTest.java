@@ -108,6 +108,8 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
 @MockitoSettings(strictness = Strictness.LENIENT)
 class CaseHandoverServiceTest {
 
+  @Mock private de.caritas.cob.userservice.api.service.agency.CaseSharingGate caseSharingGate;
+
   @InjectMocks private CaseHandoverService caseHandoverService;
 
   @Mock

@@ -351,7 +351,9 @@ class MoveThenTakeoverMatrixMariaDbIT {
         transactionManager,
         mock(AgencyService.class),
         mock(AdminScope.class),
-        mock(MembersOnlyChatAccess.class));
+        mock(MembersOnlyChatAccess.class),
+        org.mockito.Mockito.mock(
+            de.caritas.cob.userservice.api.service.agency.CaseSharingGate.class));
   }
 
   private static Consultant consultant(String id, String matrixUserId, LocalDateTime now) {

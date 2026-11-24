@@ -943,7 +943,9 @@ class SessionOwnershipMariaDbIT {
             transactionManager,
             mock(de.caritas.cob.userservice.api.service.agency.AgencyService.class),
             mock(de.caritas.cob.userservice.api.admin.service.admin.AdminScope.class),
-            mock(de.caritas.cob.userservice.api.service.chat.MembersOnlyChatAccess.class));
+            mock(de.caritas.cob.userservice.api.service.chat.MembersOnlyChatAccess.class),
+            org.mockito.Mockito.mock(
+                de.caritas.cob.userservice.api.service.agency.CaseSharingGate.class));
     var factory = new org.springframework.aop.framework.ProxyFactory(service);
     factory.setProxyTargetClass(true);
     factory.addAdvice(
