@@ -508,7 +508,9 @@ components:
       type: object
       properties:
         caseSharing:
-          $ref: '#/components/schemas/AgencyCaseSharingPolicy'
+          allOf:
+            - $ref: '#/components/schemas/AgencyCaseSharingPolicy'
+          readOnly: true
         featureLiveChatFurtherCounsellingEnabled:
           type: boolean
           example: false

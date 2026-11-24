@@ -128,7 +128,6 @@ class CaseSharingGateTest {
 
   private void givenMode(AgencyCaseSharingPolicy.ValueEnum mode) {
     when(lookup.findEffectiveSettings(5L, 1L))
-        .thenReturn(
-            Optional.of(new Settings().caseSharing(new AgencyCaseSharingPolicy().value(mode))));
+        .thenReturn(Optional.of(new Settings(new AgencyCaseSharingPolicy().value(mode))));
   }
 }
