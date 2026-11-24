@@ -400,9 +400,10 @@ paths:
       tags:
         - calendar-controller
       summary: 'Releases one dated window of the caller''s time for booking once
-        (ORISO-Frontend#2494). Over one of the caller''s own blockers only when overBlocker is true: the
-        counsellor confirmed releasing over their Sperrzeit. [Authorization: counsellor, their own
-        only]'
+        (ORISO-Frontend#2494), start and end cut to the whole minute. Over one of the caller''s own
+        blockers only when overBlocker is true: the counsellor confirmed releasing over their
+        Sperrzeit. Only the blockers inside the window at that moment give way to it; a blocker
+        entered or moved later still takes its time. [Authorization: counsellor, their own only]'
       operationId: createCalendarConsultationOnce
       requestBody:
         required: true
@@ -418,9 +419,27 @@ paths:
               schema:
                 $ref: '#/components/schemas/CalendarConsultationOnceDTO'
         400:
-          description: BAD REQUEST - end not after start, end not in the future, longer than 12
-            hours, noticeMinutes not one of 0, 30, 60, 120, 720, 1440, overlapping another one-off
-            of the caller, or more than 50 upcoming one-offs; nothing is stored
+          description: 'BAD REQUEST - nothing is stored. Start and end are cut to the whole
+            minute first. The X-Reason header names the refusal:
+            CONSULTATION_ONCE_END_NOT_AFTER_START (the end is not after the start),
+            CONSULTATION_ONCE_END_IN_PAST (the end does not lie in the future),
+            CONSULTATION_ONCE_TOO_LONG (longer than 12 hours),
+            CONSULTATION_ONCE_NOTICE_NOT_OFFERED (noticeMinutes not one of 0, 30, 60, 120, 720,
+            1440), CONSULTATION_ONCE_OVERLAP (overlaps another one-off of the caller),
+            CONSULTATION_ONCE_LIMIT_REACHED (the caller has 50 upcoming one-offs already).
+            Without the header: start or end missing or malformed'
+          headers:
+            X-Reason:
+              description: 'Why the one-off was refused, see the description'
+              schema:
+                type: string
+                enum:
+                  - CONSULTATION_ONCE_END_NOT_AFTER_START
+                  - CONSULTATION_ONCE_END_IN_PAST
+                  - CONSULTATION_ONCE_TOO_LONG
+                  - CONSULTATION_ONCE_NOTICE_NOT_OFFERED
+                  - CONSULTATION_ONCE_OVERLAP
+                  - CONSULTATION_ONCE_LIMIT_REACHED
         401:
           description: UNAUTHORIZED - no/invalid Keycloak token
         403:
@@ -1168,7 +1187,8 @@ components:
           format: int32
         overBlocker:
           description: The counsellor confirmed releasing the window over their own blockers
-            (Sperrzeit); those blockers then do not take the window's slots
+            (Sperrzeit); the blockers inside the window at that moment then do not take its
+            slots, one entered or moved later does
           type: boolean
           default: false
     CalendarConsultationOnceDTO:

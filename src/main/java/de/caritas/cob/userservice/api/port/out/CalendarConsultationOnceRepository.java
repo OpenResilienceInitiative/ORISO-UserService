@@ -28,7 +28,22 @@ public interface CalendarConsultationOnceRepository
 
   Optional<CalendarConsultationOnce> findByIdAndConsultantId(UUID id, String consultantId);
 
-  /** Removes every one-off of a counsellor whose account is deleted. */
+  /**
+   * Removes the blockers every one-off of a counsellor was released over; before {@link
+   * #deleteByConsultantId}, which as a bulk delete does not reach them.
+   */
+  @Modifying(clearAutomatically = true, flushAutomatically = true)
+  @Query(
+      value =
+          "DELETE FROM calendar_consultation_once_blocker WHERE once_id IN "
+              + "(SELECT id FROM calendar_consultation_once WHERE consultant_id = :consultantId)",
+      nativeQuery = true)
+  int deleteReleasedOverByConsultantId(@Param("consultantId") String consultantId);
+
+  /**
+   * Removes every one-off of a counsellor whose account is deleted; {@link
+   * #deleteReleasedOverByConsultantId} first.
+   */
   @Modifying(clearAutomatically = true, flushAutomatically = true)
   @Query("DELETE FROM CalendarConsultationOnce o WHERE o.consultantId = :consultantId")
   int deleteByConsultantId(@Param("consultantId") String consultantId);

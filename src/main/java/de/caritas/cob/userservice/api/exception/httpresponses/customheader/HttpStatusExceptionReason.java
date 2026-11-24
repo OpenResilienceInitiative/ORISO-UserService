@@ -149,5 +149,17 @@ public enum HttpStatusExceptionReason {
    * ORISO-Frontend#2494: a one-off Sprechstunde overlaps one of the counsellor's own blockers and
    * they have not confirmed releasing it over their Sperrzeit (overBlocker); nothing is stored.
    */
-  CONSULTATION_ONCE_OVER_BLOCKER
+  CONSULTATION_ONCE_OVER_BLOCKER,
+  /** ORISO-Frontend#2494: the end of a one-off Sprechstunde is not after its start. */
+  CONSULTATION_ONCE_END_NOT_AFTER_START,
+  /** ORISO-Frontend#2494: a one-off Sprechstunde whose end does not lie in the future. */
+  CONSULTATION_ONCE_END_IN_PAST,
+  /** ORISO-Frontend#2494: a one-off Sprechstunde lasts more than 12 hours. */
+  CONSULTATION_ONCE_TOO_LONG,
+  /** ORISO-Frontend#2494: the notice of a one-off is not one of 0, 30, 60, 120, 720, 1440. */
+  CONSULTATION_ONCE_NOTICE_NOT_OFFERED,
+  /** ORISO-Frontend#2494: a one-off Sprechstunde overlaps another one-off of the counsellor. */
+  CONSULTATION_ONCE_OVERLAP,
+  /** ORISO-Frontend#2494: the counsellor has 50 upcoming one-off Sprechstunden already. */
+  CONSULTATION_ONCE_LIMIT_REACHED
 }

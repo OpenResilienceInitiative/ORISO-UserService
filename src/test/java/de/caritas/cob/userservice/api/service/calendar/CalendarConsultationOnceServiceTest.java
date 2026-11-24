@@ -19,6 +19,7 @@ import de.caritas.cob.userservice.api.exception.httpresponses.customheader.HttpS
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.model.CalendarBlocker;
 import de.caritas.cob.userservice.api.model.CalendarConsultationOnce;
+import de.caritas.cob.userservice.api.model.CalendarConsultationOnceBlocker;
 import de.caritas.cob.userservice.api.port.out.CalendarBlockerRepository;
 import de.caritas.cob.userservice.api.port.out.CalendarConsultationOnceRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
@@ -103,13 +104,19 @@ class CalendarConsultationOnceServiceTest {
 
   @Test
   void create_Should_Refuse_When_TheEndIsNotAfterTheStart() {
-    assertBadRequest(request("10:00", "10:00", 0, false));
-    assertBadRequest(request("10:00", "09:00", 0, false));
+    assertRefused(
+        request("10:00", "10:00", 0, false),
+        HttpStatusExceptionReason.CONSULTATION_ONCE_END_NOT_AFTER_START);
+    assertRefused(
+        request("10:00", "09:00", 0, false),
+        HttpStatusExceptionReason.CONSULTATION_ONCE_END_NOT_AFTER_START);
   }
 
   @Test
   void create_Should_Refuse_When_TheEndIsNotInTheFuture() {
-    assertBadRequest(request("06:00", "08:00", 0, false));
+    assertRefused(
+        request("06:00", "08:00", 0, false),
+        HttpStatusExceptionReason.CONSULTATION_ONCE_END_IN_PAST);
   }
 
   @Test
@@ -120,11 +127,12 @@ class CalendarConsultationOnceServiceTest {
   @Test
   void create_Should_Refuse_When_TheWindowIsLongerThanTwelveHours() {
     var start = at("09:00");
-    assertBadRequest(
+    assertRefused(
         new CalendarConsultationOnceCreateDTO()
             .start(start.atOffset(ZoneOffset.UTC))
             .end(start.plus(Duration.ofHours(12)).plusSeconds(60).atOffset(ZoneOffset.UTC))
-            .noticeMinutes(0));
+            .noticeMinutes(0),
+        HttpStatusExceptionReason.CONSULTATION_ONCE_TOO_LONG);
     assertThat(
             service
                 .create(
@@ -139,7 +147,9 @@ class CalendarConsultationOnceServiceTest {
   @Test
   void create_Should_Refuse_ANoticeThatIsNotOffered() {
     for (var notice : new Integer[] {null, -30, 15, 45, 90, 1441, 2880}) {
-      assertBadRequest(request("09:00", "10:00", notice, false));
+      assertRefused(
+          request("09:00", "10:00", notice, false),
+          HttpStatusExceptionReason.CONSULTATION_ONCE_NOTICE_NOT_OFFERED);
     }
     for (var notice : List.of(0, 30, 60, 120, 720, 1440)) {
       assertThat(service.create(request("09:00", "10:00", notice, false)).getNoticeMinutes())
@@ -152,7 +162,8 @@ class CalendarConsultationOnceServiceTest {
     when(onces.findOverlapping(ME, at("09:00"), at("10:00")))
         .thenReturn(List.of(new CalendarConsultationOnce()));
 
-    assertBadRequest(request("09:00", "10:00", 0, false));
+    assertRefused(
+        request("09:00", "10:00", 0, false), HttpStatusExceptionReason.CONSULTATION_ONCE_OVERLAP);
   }
 
   @Test
@@ -160,7 +171,9 @@ class CalendarConsultationOnceServiceTest {
     when(onces.findByConsultantIdAndEndAtAfterOrderByStartAtAsc(ME, NOW))
         .thenReturn(new ArrayList<>(Collections.nCopies(50, new CalendarConsultationOnce())));
 
-    assertBadRequest(request("09:00", "10:00", 0, false));
+    assertRefused(
+        request("09:00", "10:00", 0, false),
+        HttpStatusExceptionReason.CONSULTATION_ONCE_LIMIT_REACHED);
   }
 
   @Test
@@ -238,8 +251,91 @@ class CalendarConsultationOnceServiceTest {
     verify(onces, never()).delete(any());
   }
 
-  private void assertBadRequest(CalendarConsultationOnceCreateDTO request) {
-    assertThatThrownBy(() -> service.create(request)).isInstanceOf(BadRequestException.class);
+  @Test
+  void create_Should_Refuse_AMissingStartOrEnd() {
+    assertThatThrownBy(
+            () -> service.create(new CalendarConsultationOnceCreateDTO().noticeMinutes(0)))
+        .isInstanceOf(BadRequestException.class);
+    verify(onces, never()).save(any());
+  }
+
+  @Test
+  void create_Should_CutStartAndEndToTheWholeMinute() {
+    var result =
+        service.create(
+            new CalendarConsultationOnceCreateDTO()
+                .start(at("09:00").plusSeconds(59).plusNanos(123_456_789).atOffset(ZoneOffset.UTC))
+                .end(at("10:30").plusSeconds(1).plusNanos(1).atOffset(ZoneOffset.UTC))
+                .noticeMinutes(0));
+
+    var stored = ArgumentCaptor.forClass(CalendarConsultationOnce.class);
+    verify(onces).save(stored.capture());
+    assertThat(stored.getValue().getStartAt()).isEqualTo(at("09:00"));
+    assertThat(stored.getValue().getEndAt()).isEqualTo(at("10:30"));
+    assertThat(result.getStart().toInstant()).isEqualTo(at("09:00"));
+    assertThat(result.getEnd().toInstant()).isEqualTo(at("10:30"));
+    // The overlap and blocker checks see the window as it is stored.
+    verify(onces).findOverlapping(ME, at("09:00"), at("10:30"));
+    verify(blockers).findOverlapping(ME, at("09:00"), at("10:30"));
+  }
+
+  @Test
+  void create_Should_Refuse_AWindowLessThanAMinute_AsEndingNotAfterItsStart() {
+    assertRefused(
+        new CalendarConsultationOnceCreateDTO()
+            .start(at("09:00").atOffset(ZoneOffset.UTC))
+            .end(at("09:00").plusSeconds(59).atOffset(ZoneOffset.UTC))
+            .noticeMinutes(0),
+        HttpStatusExceptionReason.CONSULTATION_ONCE_END_NOT_AFTER_START);
+  }
+
+  @Test
+  void create_Should_KeepTheOwnBlockersItIsReleasedOver_AsTheyAreNow() {
+    var own = blocker(CalendarBlocker.Source.ORISO);
+    var imported = blocker(CalendarBlocker.Source.EXTERNAL);
+    when(blockers.findOverlapping(ME, at("09:00"), at("10:00"))).thenReturn(List.of(own, imported));
+
+    service.create(request("09:00", "10:00", 0, true));
+
+    var stored = ArgumentCaptor.forClass(CalendarConsultationOnce.class);
+    verify(onces).save(stored.capture());
+    assertThat(stored.getValue().getReleasedOver())
+        .containsExactly(
+            new CalendarConsultationOnceBlocker(own.getId(), at("09:30"), at("10:30")));
+    assertThat(stored.getValue().isReleasedOver(own.getId().toString(), at("09:30"), at("10:30")))
+        .isTrue();
+    assertThat(stored.getValue().isReleasedOver(own.getId().toString(), at("09:30"), at("11:00")))
+        .as("moved since")
+        .isFalse();
+    assertThat(
+            stored
+                .getValue()
+                .isReleasedOver(UUID.randomUUID().toString(), at("09:30"), at("10:30")))
+        .as("entered since")
+        .isFalse();
+  }
+
+  @Test
+  void create_Should_KeepNoBlockers_WithoutOverBlocker() {
+    when(blockers.findOverlapping(ME, at("09:00"), at("10:00")))
+        .thenReturn(List.of(blocker(CalendarBlocker.Source.EXTERNAL)));
+
+    service.create(request("09:00", "10:00", 0, false));
+
+    var stored = ArgumentCaptor.forClass(CalendarConsultationOnce.class);
+    verify(onces).save(stored.capture());
+    assertThat(stored.getValue().getReleasedOver()).isEmpty();
+  }
+
+  private void assertRefused(
+      CalendarConsultationOnceCreateDTO request, HttpStatusExceptionReason reason) {
+    assertThatThrownBy(() -> service.create(request))
+        .isInstanceOfSatisfying(
+            CustomValidationHttpStatusException.class,
+            e -> {
+              assertThat(e.getHttpStatus()).isEqualTo(HttpStatus.BAD_REQUEST);
+              assertThat(e.getCustomHttpHeaders().getFirst("X-Reason")).isEqualTo(reason.name());
+            });
     verify(onces, never()).save(any());
   }
 
@@ -254,6 +350,7 @@ class CalendarConsultationOnceServiceTest {
 
   private static CalendarBlocker blocker(CalendarBlocker.Source source) {
     var blocker = new CalendarBlocker();
+    blocker.setId(UUID.randomUUID());
     blocker.setConsultantId(ME);
     blocker.setStartTime(at("09:30"));
     blocker.setEndTime(at("10:30"));

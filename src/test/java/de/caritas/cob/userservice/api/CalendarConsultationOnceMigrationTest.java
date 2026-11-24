@@ -26,6 +26,8 @@ class CalendarConsultationOnceMigrationTest {
 
   private static final String CHANGELOG =
       "db/changelog/changeset/20261124_calendar_consultation_once_2494/changeSet.xml";
+  private static final String BLOCKER_CHANGELOG =
+      "db/changelog/changeset/20261124_calendar_consultation_once_blocker_2494/changeSet.xml";
 
   @Test
   void masterChangelog_Should_IncludeTheChangeset_AfterTheWeeklySprechstunden() throws Exception {
@@ -102,6 +104,67 @@ class CalendarConsultationOnceMigrationTest {
         // Rolling back only the index changeset keeps the table.
         liquibase.rollback(1, (String) null);
         assertThat(indexColumns(c)).isEmpty();
+        assertThat(columns(c, "CALENDAR_CONSULTATION_ONCE")).hasSize(6);
+      }
+    }
+  }
+
+  @Test
+  void masterChangelog_Should_IncludeTheReleasedOverBlockers_AfterTheOneOffs() throws Exception {
+    var includes = activeIncludes("db/changelog/userservice-master.xml");
+
+    assertThat(includes.indexOf(BLOCKER_CHANGELOG))
+        .as("released-over blockers changeset included")
+        .isGreaterThan(includes.indexOf(CHANGELOG));
+  }
+
+  @Test
+  void update_Should_CreateTheReleasedOverBlockers_GoneWithTheirOneOff_And_RollbackDropsThem()
+      throws Exception {
+    try (Connection c =
+        DriverManager.getConnection(
+            "jdbc:h2:mem:calendar-consultation-once-blocker-" + UUID.randomUUID() + ";MODE=MariaDB",
+            "sa",
+            "")) {
+      var database =
+          DatabaseFactory.getInstance().findCorrectDatabaseImplementation(new JdbcConnection(c));
+      // Closing a Liquibase closes the shared connection: the one-off changelog stays open.
+      new Liquibase(CHANGELOG, new ClassLoaderResourceAccessor(), database)
+          .update(new Contexts(), new LabelExpression());
+      try (var blockers =
+          new Liquibase(BLOCKER_CHANGELOG, new ClassLoaderResourceAccessor(), database)) {
+        blockers.update(new Contexts(), new LabelExpression());
+        // Applying it again changes nothing and does not fail.
+        blockers.update(new Contexts(), new LabelExpression());
+        assertThat(columns(c, "CALENDAR_CONSULTATION_ONCE_BLOCKER"))
+            .containsExactlyInAnyOrder("ONCE_ID", "BLOCKER_ID", "START_TIME", "END_TIME");
+
+        var onceId = UUID.randomUUID().toString();
+        try (var st = c.createStatement()) {
+          st.execute(
+              "INSERT INTO calendar_consultation_once (id, consultant_id, start_at, end_at,"
+                  + " notice_minutes, over_blocker) VALUES ('"
+                  + onceId
+                  + "', 'synthetic-consultant', '2026-11-24 13:00:00', '2026-11-24 15:00:00',"
+                  + " 30, TRUE)");
+          st.execute(
+              "INSERT INTO calendar_consultation_once_blocker (once_id, blocker_id, start_time,"
+                  + " end_time) VALUES ('"
+                  + onceId
+                  + "', '"
+                  + UUID.randomUUID()
+                  + "', '2026-11-24 13:30:00', '2026-11-24 14:00:00')");
+          st.execute("DELETE FROM calendar_consultation_once WHERE id = '" + onceId + "'");
+          try (var rs =
+              st.executeQuery("SELECT COUNT(*) FROM calendar_consultation_once_blocker")) {
+            assertThat(rs.next()).isTrue();
+            assertThat(rs.getInt(1)).as("rows go with their one-off").isZero();
+          }
+        }
+
+        // The foreign key and the table; the one-off table stays.
+        blockers.rollback(2, (String) null);
+        assertThat(columns(c, "CALENDAR_CONSULTATION_ONCE_BLOCKER")).isEmpty();
         assertThat(columns(c, "CALENDAR_CONSULTATION_ONCE")).hasSize(6);
       }
     }

@@ -659,7 +659,14 @@ class AppointmentSelfBookingControllerIT {
         .perform(createOnce(start, end, 30, false))
         .andExpect(status().isConflict())
         .andExpect(header().string("X-Reason", "CONSULTATION_ONCE_OVER_BLOCKER"));
-    mockMvc.perform(createOnce(start, end, 45, true)).andExpect(status().isBadRequest());
+    mockMvc
+        .perform(createOnce(start, end, 45, true))
+        .andExpect(status().isBadRequest())
+        .andExpect(header().string("X-Reason", "CONSULTATION_ONCE_NOTICE_NOT_OFFERED"));
+    mockMvc
+        .perform(createOnce(start, start.plus(Duration.ofHours(12)).plusSeconds(60), 30, true))
+        .andExpect(status().isBadRequest())
+        .andExpect(header().string("X-Reason", "CONSULTATION_ONCE_TOO_LONG"));
     var created =
         JSON.readValue(
             mockMvc
@@ -674,7 +681,8 @@ class AppointmentSelfBookingControllerIT {
     mockMvc
         .perform(
             createOnce(start.plus(Duration.ofHours(1)), end.plus(Duration.ofHours(1)), 0, true))
-        .andExpect(status().isBadRequest());
+        .andExpect(status().isBadRequest())
+        .andExpect(header().string("X-Reason", "CONSULTATION_ONCE_OVERLAP"));
     var id = (String) created.get("id");
     assertThat(body(get("/users/calendar/consultation-hours/once")))
         .extracting(row -> row.get("id"))
@@ -698,6 +706,31 @@ class AppointmentSelfBookingControllerIT {
             csrf(MockMvcRequestBuilders.delete("/users/calendar/consultation-hours/once/" + id)))
         .andExpect(status().isNoContent());
     assertThat(body(get("/users/calendar/consultation-hours/once"))).isEmpty();
+  }
+
+  @Test
+  void oneOffOverABlocker_Should_GiveWayOnlyToTheBlockersItWasReleasedOver() throws Exception {
+    // Released over the Sperrzeit in its first half hour; a sick leave entered afterwards.
+    var start = Instant.now().truncatedTo(ChronoUnit.HOURS).plus(Duration.ofHours(4));
+    var end = start.plus(Duration.ofHours(2));
+    block(start, start.plus(Duration.ofMinutes(30)));
+    actAsCounsellor(counsellor);
+    mockMvc.perform(createOnce(start, end, 0, true)).andExpect(status().isCreated());
+
+    actAsAsker(asker);
+    assertThat(slotStarts(session.getId(), Instant.now()))
+        .containsExactly(
+            start, start.plus(Duration.ofMinutes(30)), start.plus(Duration.ofHours(1)));
+
+    block(start.plus(Duration.ofHours(1)), start.plus(Duration.ofMinutes(90)));
+
+    assertThat(slotStarts(session.getId(), Instant.now())).containsExactly(start);
+    mockMvc
+        .perform(book(session.getId(), start.plus(Duration.ofHours(1)), end, "VIDEO"))
+        .andExpect(status().isConflict());
+    mockMvc
+        .perform(book(session.getId(), start, start.plus(Duration.ofHours(1)), "VIDEO"))
+        .andExpect(status().isCreated());
   }
 
   @Test

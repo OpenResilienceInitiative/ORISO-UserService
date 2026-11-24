@@ -98,6 +98,7 @@ public class DeleteConsultantCalendarAction
             calendarWorkingDayExceptionRepository.deleteByConsultantId(consultantId);
             calendarWorkingHoursSettingRepository.deleteByConsultantId(consultantId);
             calendarConsultationHoursRepository.deleteByConsultantId(consultantId);
+            calendarConsultationOnceRepository.deleteReleasedOverByConsultantId(consultantId);
             calendarConsultationOnceRepository.deleteByConsultantId(consultantId);
             calendarBookingSettingRepository.deleteByConsultantId(consultantId);
             calendarMoveProposalRepository.deleteByConsultantId(consultantId);

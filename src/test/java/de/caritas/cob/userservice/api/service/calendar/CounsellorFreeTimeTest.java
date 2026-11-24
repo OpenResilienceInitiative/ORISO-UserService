@@ -13,6 +13,7 @@ import de.caritas.cob.userservice.api.adapters.web.dto.CalendarEntryType;
 import de.caritas.cob.userservice.api.model.CalendarBookingSetting;
 import de.caritas.cob.userservice.api.model.CalendarConsultationHours;
 import de.caritas.cob.userservice.api.model.CalendarConsultationOnce;
+import de.caritas.cob.userservice.api.model.CalendarConsultationOnceBlocker;
 import de.caritas.cob.userservice.api.model.CalendarWorkingDayException;
 import de.caritas.cob.userservice.api.model.CalendarWorkingHours;
 import de.caritas.cob.userservice.api.model.CalendarWorkingHoursSetting;
@@ -399,9 +400,87 @@ class CounsellorFreeTimeTest {
     assertThat(starts(freeTime.slots(COUNSELLOR, NOW, NOW.plus(Duration.ofDays(3)))))
         .containsExactly("15:00");
 
-    onces.get(0).setOverBlocker(true);
+    onces.clear();
+    once(at(tuesday, "14:00"), at(tuesday, "16:00"), 60, true);
     assertThat(starts(freeTime.slots(COUNSELLOR, NOW, NOW.plus(Duration.ofDays(3)))))
         .containsExactly("14:00", "14:30", "15:00");
+  }
+
+  @Test
+  void aBlockerEnteredAfterTheRelease_Should_TakeTheTimeOfAOneOffReleasedOverBlockers() {
+    // Released 14:00-16:00 over the Sperrzeit 14:00-14:30; later a sick leave from 15:00.
+    when(bookingSettings.lockById(COUNSELLOR)).thenReturn(Optional.empty());
+    var tuesday = MONDAY.plusDays(1);
+    blocked.add(blocker(at(tuesday, "14:00"), at(tuesday, "14:30"), CalendarEntryType.BLOCKER));
+    once(at(tuesday, "14:00"), at(tuesday, "16:00"), 60, true);
+    var early = request(at(tuesday, "14:00"), at(tuesday, "15:00"));
+    var late = request(at(tuesday, "15:00"), at(tuesday, "16:00"));
+    assertThat(starts(freeTime.slots(COUNSELLOR, NOW, NOW.plus(Duration.ofDays(3)))))
+        .containsExactly("14:00", "14:30", "15:00");
+
+    blocked.add(blocker(at(tuesday, "15:00"), at(tuesday, "15:30"), CalendarEntryType.BLOCKER));
+
+    // Listing: the old Sperrzeit still gives way, the sick leave does not.
+    assertThat(starts(freeTime.slots(COUNSELLOR, NOW, NOW.plus(Duration.ofDays(3)))))
+        .containsExactly("14:00");
+    // Booking: the window is the lead time's question; the slot is no longer offered.
+    assertThat(
+            freeTime.isInsideBookingWindow(COUNSELLOR, at(tuesday, "15:00"), at(tuesday, "16:00")))
+        .isTrue();
+    assertThat(freeTime.offeredSlot(COUNSELLOR, at(tuesday, "15:00"), at(tuesday, "16:00")))
+        .isEmpty();
+    assertThat(freeTime.offeredSlot(COUNSELLOR, at(tuesday, "14:00"), at(tuesday, "15:00")))
+        .isPresent();
+    // Confirming: a request under the sick leave cannot be, one under the old Sperrzeit can.
+    requested.addAll(List.of(early, late));
+    assertThat(
+            freeTime.isFreeBesides(
+                COUNSELLOR, late.getStartTime(), late.getEndTime(), late.getId()))
+        .isFalse();
+    assertThat(
+            freeTime.isFreeBesides(
+                COUNSELLOR, early.getStartTime(), early.getEndTime(), early.getId()))
+        .isTrue();
+  }
+
+  @Test
+  void aBlockerMovedAfterTheRelease_Should_TakeTheTimeOfAOneOffReleasedOverIt() {
+    var tuesday = MONDAY.plusDays(1);
+    var id = UUID.randomUUID().toString();
+    blocked.add(blocker(id, at(tuesday, "14:00"), at(tuesday, "14:30")));
+    once(at(tuesday, "14:00"), at(tuesday, "16:00"), 60, true);
+    assertThat(starts(freeTime.slots(COUNSELLOR, NOW, NOW.plus(Duration.ofDays(3)))))
+        .containsExactly("14:00", "14:30", "15:00");
+
+    // The same blocker, moved to 15:00 after the release.
+    blocked.clear();
+    blocked.add(blocker(id, at(tuesday, "15:00"), at(tuesday, "15:30")));
+
+    assertThat(starts(freeTime.slots(COUNSELLOR, NOW, NOW.plus(Duration.ofDays(3)))))
+        .containsExactly("14:00");
+    var own = request(at(tuesday, "15:00"), at(tuesday, "16:00"));
+    requested.add(own);
+    assertThat(
+            freeTime.isFreeBesides(COUNSELLOR, own.getStartTime(), own.getEndTime(), own.getId()))
+        .isFalse();
+  }
+
+  @Test
+  void isFreeBesides_Should_RejectAnOwnBlocker_InsideAOneOffReleasedOverOtherBlockers() {
+    // Two one-offs back to back: the first released over the blocker, the second over none.
+    var tuesday = MONDAY.plusDays(1);
+    blocked.add(blocker(at(tuesday, "14:30"), at(tuesday, "15:30"), CalendarEntryType.BLOCKER));
+    once(at(tuesday, "14:00"), at(tuesday, "15:00"), 0, true);
+    var second = new ArrayList<>(blocked);
+    blocked.clear();
+    once(at(tuesday, "15:00"), at(tuesday, "16:00"), 0, true);
+    blocked.addAll(second);
+    var own = request(at(tuesday, "14:30"), at(tuesday, "15:30"));
+    requested.add(own);
+
+    assertThat(
+            freeTime.isFreeBesides(COUNSELLOR, own.getStartTime(), own.getEndTime(), own.getId()))
+        .isFalse();
   }
 
   @Test
@@ -508,12 +587,25 @@ class CounsellorFreeTimeTest {
     row.setEndAt(end);
     row.setNoticeMinutes(noticeMinutes);
     row.setOverBlocker(overBlocker);
+    if (overBlocker) {
+      // Released now: over the counsellor's own blockers inside it as they are now.
+      blocked.stream()
+          .filter(b -> b.type() == CalendarEntryType.BLOCKER)
+          .filter(b -> b.start().isBefore(end) && b.end().isAfter(start))
+          .map(
+              b -> new CalendarConsultationOnceBlocker(UUID.fromString(b.id()), b.start(), b.end()))
+          .forEach(row.getReleasedOver()::add);
+    }
     onces.add(row);
   }
 
   private static CalendarEntry blocker(Instant start, Instant end, CalendarEntryType type) {
     return new CalendarEntry(
         UUID.randomUUID().toString(), type, start, end, null, null, null, null);
+  }
+
+  private static CalendarEntry blocker(String id, Instant start, Instant end) {
+    return new CalendarEntry(id, CalendarEntryType.BLOCKER, start, end, null, null, null, null);
   }
 
   private void sprechstunde(int weekday, String start, String end) {

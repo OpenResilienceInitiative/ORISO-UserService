@@ -89,6 +89,7 @@ class DeleteConsultantCalendarActionTest {
     verify(calendarConsultationHoursRepository).deleteByConsultantId(CONSULTANT_ID);
     verify(calendarBookingSettingRepository).deleteByConsultantId(CONSULTANT_ID);
     // One-off Sprechstunden (ORISO-Frontend#2494).
+    verify(calendarConsultationOnceRepository).deleteReleasedOverByConsultantId(CONSULTANT_ID);
     verify(calendarConsultationOnceRepository).deleteByConsultantId(CONSULTANT_ID);
     // Proposals they made and proposals they were asked to decide: one query covers both roles.
     verify(calendarMoveProposalRepository).deleteByConsultantId(CONSULTANT_ID);

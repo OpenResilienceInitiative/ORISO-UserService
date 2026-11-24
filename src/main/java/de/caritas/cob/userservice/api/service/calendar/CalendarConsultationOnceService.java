@@ -10,6 +10,7 @@ import de.caritas.cob.userservice.api.exception.httpresponses.customheader.HttpS
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.model.CalendarBlocker.Source;
 import de.caritas.cob.userservice.api.model.CalendarConsultationOnce;
+import de.caritas.cob.userservice.api.model.CalendarConsultationOnceBlocker;
 import de.caritas.cob.userservice.api.port.out.CalendarBlockerRepository;
 import de.caritas.cob.userservice.api.port.out.CalendarConsultationOnceRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
@@ -17,6 +18,7 @@ import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneOffset;
+import java.time.temporal.ChronoUnit;
 import java.util.List;
 import java.util.Set;
 import java.util.UUID;
@@ -31,9 +33,10 @@ import org.springframework.transaction.annotation.Transactional;
  * notice in minutes before its start. Such a window may lie over the counsellor's own blockers
  * (Sperrzeit) only when they confirmed it ({@code overBlocker}); otherwise the request is refused
  * with {@link HttpStatusExceptionReason#CONSULTATION_ONCE_OVER_BLOCKER}, so the frontend can warn
- * first. Only the counsellor themself reads, creates and removes them; anybody else gets the 404 of
- * a one-off that does not exist. Writes of one counsellor run one at a time under their row lock,
- * the lock a booking holds too.
+ * first; each other refusal names its reason in the X-Reason header too. Only the counsellor
+ * themself reads, creates and removes them; anybody else gets the 404 of a one-off that does not
+ * exist. Writes of one counsellor run one at a time under their row lock, the lock a booking holds
+ * too.
  */
 @Service
 @RequiredArgsConstructor
@@ -62,12 +65,18 @@ public class CalendarConsultationOnceService {
   }
 
   /**
-   * Stores one one-off of the caller; nothing is stored when anything is invalid.
+   * Stores one one-off of the caller, its start and end cut to the whole minute; nothing is stored
+   * when anything is invalid. Released over the caller's own blockers ({@code overBlocker}), it
+   * keeps those blockers as they are now: only they give way to it, not one entered or moved later.
    *
-   * @throws BadRequestException end not after start, end not ahead, longer than 12 hours, a notice
-   *     not offered, overlapping another one-off of the caller, or 50 upcoming one-offs already
-   * @throws CustomValidationHttpStatusException 409 with {@code CONSULTATION_ONCE_OVER_BLOCKER}
-   *     when it overlaps one of the caller's own blockers and overBlocker is not true
+   * @throws BadRequestException start or end missing
+   * @throws CustomValidationHttpStatusException 400 with an X-Reason: {@code
+   *     CONSULTATION_ONCE_END_NOT_AFTER_START}, {@code CONSULTATION_ONCE_END_IN_PAST}, {@code
+   *     CONSULTATION_ONCE_TOO_LONG} (over 12 hours), {@code CONSULTATION_ONCE_NOTICE_NOT_OFFERED},
+   *     {@code CONSULTATION_ONCE_OVERLAP} (another one-off of the caller) or {@code
+   *     CONSULTATION_ONCE_LIMIT_REACHED} (50 upcoming one-offs already); 409 with {@code
+   *     CONSULTATION_ONCE_OVER_BLOCKER} when it overlaps one of the caller's own blockers and
+   *     overBlocker is not true
    */
   @Transactional
   public CalendarConsultationOnceDTO create(CalendarConsultationOnceCreateDTO request) {
@@ -75,21 +84,28 @@ public class CalendarConsultationOnceService {
     if (request == null || request.getStart() == null || request.getEnd() == null) {
       throw new BadRequestException("A one-off Sprechstunde names its start and end.");
     }
-    var start = request.getStart().toInstant();
-    var end = request.getEnd().toInstant();
+    var start = request.getStart().toInstant().truncatedTo(ChronoUnit.MINUTES);
+    var end = request.getEnd().toInstant().truncatedTo(ChronoUnit.MINUTES);
     var now = Instant.now(clock);
     if (!end.isAfter(start)) {
-      throw new BadRequestException("The end of a one-off Sprechstunde must be after its start.");
+      throw refused(
+          HttpStatusExceptionReason.CONSULTATION_ONCE_END_NOT_AFTER_START,
+          "The end of a one-off Sprechstunde must be after its start.");
     }
     if (!end.isAfter(now)) {
-      throw new BadRequestException("A one-off Sprechstunde ends in the future.");
+      throw refused(
+          HttpStatusExceptionReason.CONSULTATION_ONCE_END_IN_PAST,
+          "A one-off Sprechstunde ends in the future.");
     }
     if (Duration.between(start, end).compareTo(MAX_LENGTH) > 0) {
-      throw new BadRequestException("A one-off Sprechstunde lasts at most 12 hours.");
+      throw refused(
+          HttpStatusExceptionReason.CONSULTATION_ONCE_TOO_LONG,
+          "A one-off Sprechstunde lasts at most 12 hours.");
     }
     var notice = request.getNoticeMinutes();
     if (notice == null || !NOTICE_MINUTES.contains(notice)) {
-      throw new BadRequestException(
+      throw refused(
+          HttpStatusExceptionReason.CONSULTATION_ONCE_NOTICE_NOT_OFFERED,
           "A one-off Sprechstunde is bookable until 0, 30, 60, 120, 720 or 1440 minutes before.");
     }
     var overBlocker = Boolean.TRUE.equals(request.getOverBlocker());
@@ -98,15 +114,21 @@ public class CalendarConsultationOnceService {
       throw new ForbiddenException("Only a counsellor keeps Sprechstunden.");
     }
     if (!onces.findOverlapping(consultantId, start, end).isEmpty()) {
-      throw new BadRequestException("One-off Sprechstunden of one counsellor do not overlap.");
+      throw refused(
+          HttpStatusExceptionReason.CONSULTATION_ONCE_OVERLAP,
+          "One-off Sprechstunden of one counsellor do not overlap.");
     }
     if (onces.findByConsultantIdAndEndAtAfterOrderByStartAtAsc(consultantId, now).size()
         >= MAX_UPCOMING) {
-      throw new BadRequestException("At most " + MAX_UPCOMING + " upcoming one-off Sprechstunden.");
+      throw refused(
+          HttpStatusExceptionReason.CONSULTATION_ONCE_LIMIT_REACHED,
+          "At most " + MAX_UPCOMING + " upcoming one-off Sprechstunden.");
     }
-    if (!overBlocker
-        && blockers.findOverlapping(consultantId, start, end).stream()
-            .anyMatch(blocker -> blocker.getSource() == Source.ORISO)) {
+    var ownBlockers =
+        blockers.findOverlapping(consultantId, start, end).stream()
+            .filter(blocker -> blocker.getSource() == Source.ORISO)
+            .toList();
+    if (!overBlocker && !ownBlockers.isEmpty()) {
       throw new CustomValidationHttpStatusException(
           HttpStatusExceptionReason.CONSULTATION_ONCE_OVER_BLOCKER,
           HttpStatus.CONFLICT,
@@ -118,7 +140,17 @@ public class CalendarConsultationOnceService {
     once.setEndAt(end);
     once.setNoticeMinutes(notice);
     once.setOverBlocker(overBlocker);
+    if (overBlocker) {
+      ownBlockers.stream()
+          .map(CalendarConsultationOnceBlocker::of)
+          .forEach(once.getReleasedOver()::add);
+    }
     return toDto(onces.save(once));
+  }
+
+  private static CustomValidationHttpStatusException refused(
+      HttpStatusExceptionReason reason, String message) {
+    return new CustomValidationHttpStatusException(reason, HttpStatus.BAD_REQUEST, message);
   }
 
   /** Removes one one-off of the caller; appointments booked in it stay. */

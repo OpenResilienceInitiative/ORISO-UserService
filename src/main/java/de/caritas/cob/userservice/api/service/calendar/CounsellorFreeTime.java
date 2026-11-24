@@ -49,8 +49,9 @@ import org.springframework.stereotype.Component;
  * it, its slots start no earlier than its own notice in minutes from now (in place of the minimum
  * lead time), and they are booked at once when the counsellor accepts automatically, else as a
  * request (the notice period in days does not apply). A one-off released over the counsellor's
- * Sperrzeit ({@code overBlocker}) is not taken by their own blockers; everything else still takes
- * it. A weekly and a one-off slot of the same start and end are offered once, as the one-off's.
+ * Sperrzeit ({@code overBlocker}) is not taken by the own blockers it was released over, as they
+ * were then; a blocker entered or moved after the release, and everything else, still takes it. A
+ * weekly and a one-off slot of the same start and end are offered once, as the one-off's.
  *
  * <p>No slot starts at or after the horizon or before the window. Every read is bounded by the
  * window and runs one query per source, whatever the number of slots.
@@ -186,7 +187,7 @@ public class CounsellorFreeTime {
     }
     var onceMode = setting.isAutoAccept() ? BookingMode.INSTANT : BookingMode.REQUEST;
     for (var once : onces) {
-      var taken = once.isOverBlocker() ? busy.besidesOwnBlockers() : busy.all();
+      var taken = once.isOverBlocker() ? busy.takenInside(once) : busy.all();
       var notice = now.plus(Duration.ofMinutes(once.getNoticeMinutes()));
       for (var slot : onceSlotsOf(once, taken, from, to, notice, length, slotStep)) {
         // The one-off is the explicit release: its mode wins over a weekly slot of the same time.
@@ -230,7 +231,8 @@ public class CounsellorFreeTime {
    * Whether nothing but the appointment itself takes the counsellor's time in [start, end): the
    * check before a counsellor confirms a request, whatever their Sprechstunden say now. Inside a
    * one-off released over their own blockers ({@code overBlocker}), those blockers do not take the
-   * time, as when its slots were offered; everything else still does.
+   * time, as when its slots were offered: only those it was released over, unmoved since; a blocker
+   * entered or moved later, and everything else, still does.
    */
   public boolean isFreeBesides(String consultantId, Instant start, Instant end, UUID appointment) {
     var busy = busyOf(consultantId, start, end, appointment);
@@ -238,7 +240,7 @@ public class CounsellorFreeTime {
       return false;
     }
     var ownBlockers =
-        busy.ownBlockers().stream().filter(taken -> overlaps(taken, start, end)).toList();
+        busy.ownBlockers().stream().filter(own -> overlaps(own.slot(), start, end)).toList();
     if (ownBlockers.isEmpty()) {
       return true;
     }
@@ -249,9 +251,11 @@ public class CounsellorFreeTime {
             .toList();
     return ownBlockers.stream()
         .allMatch(
-            blocker ->
+            own ->
                 isCovered(
-                    later(blocker.start(), start), earlier(blocker.end(), end), releasedOver));
+                    later(own.slot().start(), start),
+                    earlier(own.slot().end(), end),
+                    releasedOver.stream().filter(own::isReleasedOverBy).toList()));
   }
 
   private static boolean overlaps(BusySlot taken, Instant start, Instant end) {
@@ -327,7 +331,7 @@ public class CounsellorFreeTime {
         () -> {
           var all = new ArrayList<BusySlot>();
           var besidesOwnBlockers = new ArrayList<BusySlot>();
-          var ownBlockers = new ArrayList<BusySlot>();
+          var ownBlockers = new ArrayList<OwnBlocker>();
           var calendar = new ArrayList<CalendarEntry>();
           calendar.addAll(entries.appointmentsOfConsultant(consultantId, from, to));
           calendar.addAll(entries.groupOccurrencesOfConsultant(consultantId, from, to));
@@ -337,7 +341,7 @@ public class CounsellorFreeTime {
               var taken = new BusySlot(entry.start(), entry.end());
               all.add(taken);
               if (entry.type() == CalendarEntryType.BLOCKER) {
-                ownBlockers.add(taken);
+                ownBlockers.add(new OwnBlocker(entry.id(), taken));
               } else {
                 besidesOwnBlockers.add(taken);
               }
@@ -360,5 +364,28 @@ public class CounsellorFreeTime {
    * and their own blockers alone.
    */
   private record Busy(
-      List<BusySlot> all, List<BusySlot> besidesOwnBlockers, List<BusySlot> ownBlockers) {}
+      List<BusySlot> all, List<BusySlot> besidesOwnBlockers, List<OwnBlocker> ownBlockers) {
+
+    /**
+     * What takes the time inside a one-off released over blockers: all but the own blockers it was
+     * released over, as they were then.
+     */
+    List<BusySlot> takenInside(CalendarConsultationOnce once) {
+      var taken = new ArrayList<>(besidesOwnBlockers);
+      for (var own : ownBlockers) {
+        if (!own.isReleasedOverBy(once)) {
+          taken.add(own.slot());
+        }
+      }
+      return taken;
+    }
+  }
+
+  /** One of the counsellor's own blockers, by its id. */
+  private record OwnBlocker(String id, BusySlot slot) {
+
+    boolean isReleasedOverBy(CalendarConsultationOnce once) {
+      return once.isReleasedOver(id, slot.start(), slot.end());
+    }
+  }
 }
