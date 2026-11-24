@@ -6,6 +6,7 @@ import com.neovisionaries.i18n.LanguageCode;
 import de.caritas.cob.userservice.api.config.JpaAuditingConfiguration;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.ConsultantAgency;
+import de.caritas.cob.userservice.api.model.DraftMessage;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.Session.SessionStatus;
 import de.caritas.cob.userservice.api.model.User;
@@ -41,6 +42,7 @@ class AgencyDeletionQueriesIT {
   @Autowired private UserAgencyRepository userAgencyRepository;
   @Autowired private ConsultantRepository consultantRepository;
   @Autowired private ConsultantAgencyRepository consultantAgencyRepository;
+  @Autowired private DraftMessageRepository draftMessageRepository;
   @Autowired private EntityManager entityManager;
 
   private User onlyBySession;
@@ -119,6 +121,44 @@ class AgencyDeletionQueriesIT {
     assertThat(userRepository.findActiveAdviceSeekersOnlyInAgency(OTHER_AGENCY))
         .extracting(User::getUserId)
         .contains(alsoElsewhereBySession.getUserId());
+  }
+
+  @Test
+  void deleteLegacyDraftsOfSession_Should_removeOnlyTheDraftsWrittenInThatSession() {
+    var bySessionId = draft("asker", keptSessionHere.getId(), null, null);
+    var byRoomOnly = draft("counsellor", null, "!kept-here:matrix", null);
+    var otherSession = draft("asker", keptSessionElsewhere.getId(), null, null);
+    var otherRoom = draft("asker", null, "!elsewhere:matrix", null);
+    var otherSessionSameRoomRef =
+        draft("asker", keptSessionElsewhere.getId(), "!kept-here:matrix", null);
+    var noReference = draft("asker", null, null, null);
+    var protectedDraft = draft("asker", null, null, "draft.v1." + "a".repeat(43));
+    entityManager.flush();
+
+    int deleted =
+        draftMessageRepository.deleteLegacyDraftsOfSession(
+            keptSessionHere.getId(), "!kept-here:matrix");
+
+    assertThat(deleted).isEqualTo(2);
+    assertThat(draftMessageRepository.findAll())
+        .extracting(DraftMessage::getId)
+        .contains(
+            otherSession.getId(),
+            otherRoom.getId(),
+            otherSessionSameRoomRef.getId(),
+            noReference.getId(),
+            protectedDraft.getId())
+        .doesNotContain(bySessionId.getId(), byRoomOnly.getId());
+  }
+
+  @Test
+  void deleteLegacyDraftsOfSession_Should_matchNoRoomlessDraft_When_theSessionHasNoRoom() {
+    var noReference = draft("asker", null, null, null);
+    entityManager.flush();
+
+    assertThat(draftMessageRepository.deleteLegacyDraftsOfSession(keptSessionHere.getId(), null))
+        .isZero();
+    assertThat(draftMessageRepository.findById(noReference.getId())).isPresent();
   }
 
   @Test
@@ -257,6 +297,24 @@ class AgencyDeletionQueriesIT {
 
   private Consultant counsellor() {
     return consultantRepository.findAll().iterator().next();
+  }
+
+  private DraftMessage draft(
+      String userId, Long sourceSessionId, String roomRef, String protectedScopeKey) {
+    var draft =
+        DraftMessage.builder()
+            .userId(userId)
+            .tenantId(TENANT)
+            .scopeKey(protectedScopeKey != null ? protectedScopeKey : UUID.randomUUID().toString())
+            .protectedScopeKey(protectedScopeKey)
+            .text("synthetic draft")
+            .sourceSessionId(sourceSessionId)
+            .roomRef(roomRef)
+            .createDate(NOW)
+            .updateDate(NOW)
+            .build();
+    entityManager.persist(draft);
+    return draft;
   }
 
   private User asker() {

@@ -7,6 +7,7 @@ import java.util.Optional;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Lock;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.transaction.annotation.Transactional;
@@ -83,4 +84,20 @@ public interface DraftMessageRepository extends JpaRepository<DraftMessage, Long
    */
   @Transactional
   void deleteByUserId(String userId);
+
+  /**
+   * Removes the drafts anyone wrote in a session that is being purged (ORISO-Admin#1524): those
+   * that name the session, and those without a session id that name its Matrix room. Protected
+   * drafts carry no routing metadata and cannot be tied to a session; they go with their account.
+   */
+  @Modifying(flushAutomatically = true, clearAutomatically = true)
+  @Query(
+      """
+      delete from DraftMessage draft
+      where draft.protectedScopeKey is null
+        and (draft.sourceSessionId = :sessionId
+             or (draft.sourceSessionId is null and draft.roomRef = :matrixRoomId))
+      """)
+  int deleteLegacyDraftsOfSession(
+      @Param("sessionId") Long sessionId, @Param("matrixRoomId") String matrixRoomId);
 }

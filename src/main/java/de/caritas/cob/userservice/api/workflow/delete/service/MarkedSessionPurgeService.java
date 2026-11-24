@@ -5,6 +5,7 @@ import static org.apache.commons.lang3.StringUtils.isNotBlank;
 
 import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
 import de.caritas.cob.userservice.api.model.Session;
+import de.caritas.cob.userservice.api.port.out.DraftMessageRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.workflow.delete.model.DeletionSourceType;
 import de.caritas.cob.userservice.api.workflow.delete.model.DeletionTargetType;
@@ -34,6 +35,7 @@ public class MarkedSessionPurgeService {
   private final @NonNull SessionRepository sessionRepository;
   private final @NonNull MatrixSynapseService matrixSynapseService;
   private final @NonNull DeleteSessionService deleteSessionService;
+  private final @NonNull DraftMessageRepository draftMessageRepository;
   private final @NonNull PlatformTransactionManager transactionManager;
 
   /**
@@ -65,9 +67,16 @@ public class MarkedSessionPurgeService {
     var sessionErrors = new ArrayList<DeletionWorkflowError>();
     try {
       transaction.executeWithoutResult(
-          status ->
-              sessionErrors.addAll(
-                  deleteSessionService.performSessionDeletionKeepingFailed(session)));
+          status -> {
+            var childErrors = deleteSessionService.performSessionDeletionKeepingFailed(session);
+            sessionErrors.addAll(childErrors);
+            if (childErrors.isEmpty()) {
+              // The session row is gone, and so go the drafts written in it. Same transaction:
+              // a failure here keeps the session for the next run.
+              draftMessageRepository.deleteLegacyDraftsOfSession(
+                  session.getId(), isNotBlank(roomId) ? roomId : null);
+            }
+          });
     } finally {
       // A step that failed may have marked the transaction for rollback; its error still counts.
       errors.addAll(sessionErrors);

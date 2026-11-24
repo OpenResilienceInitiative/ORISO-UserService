@@ -46,11 +46,7 @@ class AgencyGroupChatDeleterTest {
   void setUp() {
     deleter =
         new AgencyGroupChatDeleter(
-            chatRepository,
-            chatService,
-            roomHistory,
-            matrixCleanup,
-            transactionManager);
+            chatRepository, chatService, roomHistory, matrixCleanup, transactionManager);
   }
 
   @Test

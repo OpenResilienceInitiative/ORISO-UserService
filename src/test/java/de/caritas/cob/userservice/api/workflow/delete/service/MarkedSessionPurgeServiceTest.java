@@ -2,6 +2,7 @@ package de.caritas.cob.userservice.api.workflow.delete.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -9,6 +10,7 @@ import static org.mockito.Mockito.when;
 
 import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
 import de.caritas.cob.userservice.api.model.Session;
+import de.caritas.cob.userservice.api.port.out.DraftMessageRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.workflow.delete.model.DeletionSourceType;
 import de.caritas.cob.userservice.api.workflow.delete.model.DeletionTargetType;
@@ -27,6 +29,7 @@ class MarkedSessionPurgeServiceTest {
   @Mock private SessionRepository sessionRepository;
   @Mock private MatrixSynapseService matrixSynapseService;
   @Mock private DeleteSessionService deleteSessionService;
+  @Mock private DraftMessageRepository draftMessageRepository;
   @Mock private PlatformTransactionManager transactionManager;
   @InjectMocks private MarkedSessionPurgeService service;
 
@@ -84,6 +87,26 @@ class MarkedSessionPurgeServiceTest {
 
     assertThat(errors).containsExactly(childError);
     verify(deleteSessionService).performSessionDeletionKeepingFailed(fine);
+    // The kept session keeps its drafts; the purged one loses them.
+    verify(draftMessageRepository, never()).deleteLegacyDraftsOfSession(eq(1L), any());
+    verify(draftMessageRepository).deleteLegacyDraftsOfSession(2L, null);
+  }
+
+  @Test
+  void purgeMarkedSessions_Should_deleteTheDraftsOfAPurgedSession_inItsTransaction() {
+    var session = session(1L, "!room:matrix");
+    when(sessionRepository.findAllByDeleteDateNotNull()).thenReturn(List.of(session));
+    when(matrixSynapseService.purgeRoom("!room:matrix")).thenReturn(true);
+    when(deleteSessionService.performSessionDeletionKeepingFailed(session)).thenReturn(List.of());
+
+    var errors = service.purgeMarkedSessions();
+
+    assertThat(errors).isEmpty();
+    var order = inOrder(transactionManager, deleteSessionService, draftMessageRepository);
+    order.verify(transactionManager).getTransaction(any());
+    order.verify(deleteSessionService).performSessionDeletionKeepingFailed(session);
+    order.verify(draftMessageRepository).deleteLegacyDraftsOfSession(1L, "!room:matrix");
+    order.verify(transactionManager).commit(any());
   }
 
   @Test
