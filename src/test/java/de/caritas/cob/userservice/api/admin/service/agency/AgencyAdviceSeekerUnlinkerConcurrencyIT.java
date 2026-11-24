@@ -220,6 +220,9 @@ class AgencyAdviceSeekerUnlinkerConcurrencyIT {
     session.setLanguageCode(LanguageCode.de);
     session.setIsConsultantDirectlySet(false);
     session.setRegistrationType(Session.RegistrationType.REGISTERED);
+    // NOT NULL on MariaDB, unlike the H2 schema.
+    session.setCreateDate(NOW.minusDays(1));
+    session.setUpdateDate(NOW.minusDays(1));
     var id = sessionRepository.save(session).getId();
     createdSessions.add(id);
     return id;
