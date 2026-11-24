@@ -1831,22 +1831,35 @@ public class CreateUserFacadeTest {
 
   @Test
   void aTypedGuestNameIsRefusedBeforeAnythingIsCreated() {
-    var names = mock(de.caritas.cob.userservice.api.service.SessionDataService.class);
-    doThrow(new de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException("typed"))
-        .when(names)
-        .requireGeneratedUsername(GUEST_USERNAME);
+    // The real name rule, not a stub: a typed name is refused, a rolled handle is accepted.
+    var names =
+        new de.caritas.cob.userservice.api.service.SessionDataService(
+            mock(de.caritas.cob.userservice.api.port.out.SessionDataRepository.class),
+            mock(de.caritas.cob.userservice.api.helper.SessionDataProvider.class),
+            sessionService,
+            mock(de.caritas.cob.userservice.api.helper.AuthenticatedUser.class),
+            tenantService,
+            new de.caritas.cob.userservice.api.service.GeneratedPseudonyms(),
+            mock(de.caritas.cob.userservice.api.service.chat.MembersOnlyChatAccess.class),
+            mock(org.springframework.transaction.PlatformTransactionManager.class));
     org.springframework.test.util.ReflectionTestUtils.setField(
         createUserFacade, "sessionDataService", names);
+    var typed = guestRegistration();
+    typed.setUsername(
+        new de.caritas.cob.userservice.api.helper.UsernameTranscoder()
+            .encodeUsername("max_mustermann"));
 
     assertThrows(
         de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException.class,
         () ->
             createUserFacade.createUserAccountWithInitializedConsultingType(
-                guestRegistration(), RegistrationType.ANONYMOUS));
+                typed, RegistrationType.ANONYMOUS));
 
     verify(identityClient, never()).createUser(any());
     org.mockito.Mockito.verifyNoInteractions(
         matrixSynapseService, identityAuthentication, anonymousConversationCreatorService);
+    org.junit.jupiter.api.Assertions.assertDoesNotThrow(
+        () -> names.requireGeneratedUsername(GUEST_USERNAME));
   }
 
   @Test

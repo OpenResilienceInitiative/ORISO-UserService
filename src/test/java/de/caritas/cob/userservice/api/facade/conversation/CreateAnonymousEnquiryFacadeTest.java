@@ -146,25 +146,21 @@ public class CreateAnonymousEnquiryFacadeTest {
   @Test
   public void
       createAnonymousEnquiry_Should_ThrowBadRequestException_When_GivenConsultingTypeDoesNotSupportAnonymousConversations() {
+    CreateAnonymousEnquiryDTO anonymousEnquiryDTO =
+        easyRandom.nextObject(CreateAnonymousEnquiryDTO.class);
+    anonymousEnquiryDTO.setConsultingType(CONSULTING_TYPE_ID_KREUZBUND);
+    var consultingTypeResponseDTO = easyRandom.nextObject(ExtendedConsultingTypeResponseDTO.class);
+    consultingTypeResponseDTO.setIsAnonymousConversationAllowed(false);
+    when(consultingTypeManager.getConsultingTypeSettings(anonymousEnquiryDTO.getConsultingType()))
+        .thenReturn(consultingTypeResponseDTO);
+
     assertThrows(
         BadRequestException.class,
-        () -> {
-          CreateAnonymousEnquiryDTO anonymousEnquiryDTO =
-              easyRandom.nextObject(CreateAnonymousEnquiryDTO.class);
-          anonymousEnquiryDTO.setConsultingType(CONSULTING_TYPE_ID_KREUZBUND);
-          var consultingTypeResponseDTO =
-              easyRandom.nextObject(ExtendedConsultingTypeResponseDTO.class);
-          consultingTypeResponseDTO.setIsAnonymousConversationAllowed(false);
-          when(consultingTypeManager.getConsultingTypeSettings(
-                  anonymousEnquiryDTO.getConsultingType()))
-              .thenReturn(consultingTypeResponseDTO);
+        () -> createAnonymousEnquiryFacade.createAnonymousEnquiry(anonymousEnquiryDTO, false));
 
-          createAnonymousEnquiryFacade.createAnonymousEnquiry(anonymousEnquiryDTO, false);
-
-          verifyNoInteractions(createUserFacade);
-          verifyNoInteractions(usernameRegistry);
-          verifyNoInteractions(userHelper);
-        });
+    verifyNoInteractions(createUserFacade);
+    verifyNoInteractions(usernameRegistry);
+    verifyNoInteractions(userHelper);
   }
 
   @Test
