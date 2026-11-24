@@ -5,27 +5,29 @@ import static org.apache.commons.lang3.BooleanUtils.isFalse;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateAnonymousEnquiryDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateAnonymousEnquiryResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.UserDTO;
-import de.caritas.cob.userservice.api.conversation.model.AnonymousUserCredentials;
-import de.caritas.cob.userservice.api.conversation.service.AnonymousConversationCreatorService;
-import de.caritas.cob.userservice.api.conversation.service.user.anonymous.AnonymousUserCreatorService;
 import de.caritas.cob.userservice.api.conversation.service.user.anonymous.AnonymousUsernameRegistry;
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
+import de.caritas.cob.userservice.api.facade.CreateUserFacade;
 import de.caritas.cob.userservice.api.helper.UserHelper;
 import de.caritas.cob.userservice.api.manager.consultingtype.ConsultingTypeManager;
+import de.caritas.cob.userservice.api.model.Session.RegistrationType;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
-/** Facade to encapsulate the steps of creating a new anonymous conversation. */
+/**
+ * Opens a live chat for a guest. The guest account itself is created by the one registration entry,
+ * {@link CreateUserFacade}; this facade only decides whether a guest may enter and under which
+ * name.
+ */
 @Service
 @RequiredArgsConstructor
 public class CreateAnonymousEnquiryFacade {
 
-  private final @NonNull AnonymousUserCreatorService anonymousUserCreatorService;
+  private final @NonNull CreateUserFacade createUserFacade;
   private final @NonNull de.caritas.cob.userservice.api.service.dpa.NewCounsellingDpaPolicy
       dpaPolicy;
-  private final @NonNull AnonymousConversationCreatorService anonymousConversationCreatorService;
   private final @NonNull AnonymousUsernameRegistry usernameRegistry;
   private final @NonNull UserHelper userHelper;
   private final @NonNull ConsultingTypeManager consultingTypeManager;
@@ -63,17 +65,17 @@ public class CreateAnonymousEnquiryFacade {
 
     dpaPolicy.requireForTenant(TenantContext.getCurrentTenant());
     var userDto = buildUserDto(createAnonymousEnquiryDTO, chosenUsername);
-    AnonymousUserCredentials credentials = anonymousUserCreatorService.createAnonymousUser(userDto);
-    var session =
-        anonymousConversationCreatorService.createAnonymousConversation(userDto, credentials);
+    var guest =
+        createUserFacade.createUserAccountWithInitializedConsultingType(
+            userDto, RegistrationType.ANONYMOUS);
 
     return new CreateAnonymousEnquiryResponseDTO()
         .userName(userDto.getUsername())
-        .accessToken(credentials.getAccessToken())
-        .refreshToken(credentials.getRefreshToken())
-        .expiresIn(credentials.getExpiresIn())
-        .refreshExpiresIn(credentials.getRefreshExpiresIn())
-        .sessionId(session.getId());
+        .accessToken(guest.login().accessToken())
+        .refreshToken(guest.login().refreshToken())
+        .expiresIn(guest.login().expiresIn())
+        .refreshExpiresIn(guest.login().refreshExpiresIn())
+        .sessionId(guest.sessionId());
   }
 
   private void checkIfConsultingTypeHasAnonymousConsulting(int consultingTypeId) {

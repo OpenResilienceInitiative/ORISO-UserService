@@ -142,6 +142,8 @@ class CaseHandoverCoAccessHttpSynapseIT {
   @Autowired JdbcTemplate jdbc;
   @MockitoBean JwtDecoder jwtDecoder;
   @MockitoBean TenantCaseHandoverPolicyReadClient policyReader;
+  // the centre's case sharing mode (#1687) is covered by CaseSharingGateTest
+  @MockitoBean de.caritas.cob.userservice.api.service.agency.CaseSharingGate caseSharingGate;
   private TenantPermissionPolicies resolvedPolicy;
   private TransactionTemplate transactions;
   private Long sessionId;

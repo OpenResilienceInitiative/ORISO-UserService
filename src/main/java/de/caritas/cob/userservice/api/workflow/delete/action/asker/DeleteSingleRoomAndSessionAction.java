@@ -58,7 +58,9 @@ public class DeleteSingleRoomAndSessionAction extends DeleteRoomsAndSessionActio
     // ADR-034: capture the ids while the row exists, announce session.deleted once it is gone.
     var deletedSession = DeletedSession.of(actionTarget.getSession());
     if (performSessionDeletion(
-        actionTarget.getSession(), actionTarget.getDeletionWorkflowErrors())) {
+        actionTarget.getSession(),
+        actionTarget.getDeletionWorkflowErrors(),
+        actionTarget.isKeepSessionOnChildFailure())) {
       lifecycleEventPublisher.sessionDeleted(deletedSession);
     }
   }

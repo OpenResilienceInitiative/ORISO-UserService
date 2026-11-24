@@ -14,6 +14,15 @@ public interface ConsultantAgencyRepository extends CrudRepository<ConsultantAge
 
   List<ConsultantAgency> findByAgencyIdAndDeleteDateIsNull(Long agencyId);
 
+  /**
+   * Ids of the counsellors with an active relation to the Beratungsstelle, without loading the
+   * relations and their eagerly fetched counsellors (ORISO-Admin#1524).
+   */
+  @Query(
+      "select distinct ca.consultant.id from ConsultantAgency ca"
+          + " where ca.agencyId = :agencyId and ca.deleteDate is null")
+  List<String> findActiveConsultantIdsByAgencyId(@Param("agencyId") Long agencyId);
+
   List<ConsultantAgency> findByConsultantIdAndDeleteDateIsNull(String consultantId);
 
   /** The relations removed together with the consultant, i.e. stamped with its delete date. */

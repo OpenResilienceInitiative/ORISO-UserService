@@ -323,4 +323,5 @@
   <include file="db/changelog/changeset/20261123_team_discussion_agency_2491/changeSet.xml"/>
   <include file="db/changelog/changeset/20261124_calendar_consultation_once_2494/changeSet.xml"/>
   <include file="db/changelog/changeset/20261124_calendar_consultation_once_blocker_2494/changeSet.xml"/>
+  <include file="db/changelog/changeset/20261124_session_delete_date_1524/changeSet.xml"/>
 </databaseChangeLog>

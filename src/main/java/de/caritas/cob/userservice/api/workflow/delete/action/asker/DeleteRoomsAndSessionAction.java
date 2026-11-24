@@ -138,12 +138,28 @@ abstract class DeleteRoomsAndSessionAction {
   }
 
   boolean performSessionDeletion(Session session, List<DeletionWorkflowError> workflowErrors) {
+    return performSessionDeletion(session, workflowErrors, false);
+  }
 
+  /**
+   * @param keepSessionOnChildFailure when true, a failed child step leaves the session row in
+   *     place, so a later run can retry the cleanup
+   * @return whether the session row was deleted
+   */
+  boolean performSessionDeletion(
+      Session session,
+      List<DeletionWorkflowError> workflowErrors,
+      boolean keepSessionOnChildFailure) {
+
+    int errorsBefore = workflowErrors.size();
     deleteSessionData(session, workflowErrors);
     deleteSessionSupervisors(session, workflowErrors);
     deleteSessionTopics(session, workflowErrors);
     deleteCaseHandoverRequests(session, workflowErrors);
     deleteTeamDiscussion(session, workflowErrors);
+    if (keepSessionOnChildFailure && workflowErrors.size() > errorsBefore) {
+      return false;
+    }
     return deleteSession(session, workflowErrors);
   }
 }

@@ -2,10 +2,7 @@ package de.caritas.cob.userservice.api.conversation.service;
 
 import de.caritas.cob.userservice.api.adapters.web.dto.AgencyDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.UserDTO;
-import de.caritas.cob.userservice.api.conversation.model.AnonymousUserCredentials;
 import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException;
-import de.caritas.cob.userservice.api.facade.rollback.RollbackFacade;
-import de.caritas.cob.userservice.api.facade.rollback.RollbackUserAccountInformation;
 import de.caritas.cob.userservice.api.model.ConsultantAgency;
 import de.caritas.cob.userservice.api.model.ConversationType;
 import de.caritas.cob.userservice.api.model.Session;
@@ -17,7 +14,6 @@ import de.caritas.cob.userservice.api.service.agency.AgencyService;
 import de.caritas.cob.userservice.api.service.consultingtype.TopicConsultantRoutingService;
 import de.caritas.cob.userservice.api.service.notification.EventNotificationService;
 import de.caritas.cob.userservice.api.service.session.SessionService;
-import de.caritas.cob.userservice.api.service.user.UserService;
 import java.util.List;
 import java.util.stream.Collectors;
 import lombok.NonNull;
@@ -31,26 +27,22 @@ import org.springframework.stereotype.Service;
 @Slf4j
 public class AnonymousConversationCreatorService {
 
-  private final @NonNull UserService userService;
   private final @NonNull SessionService sessionService;
-  private final @NonNull RollbackFacade rollbackFacade;
   private final @NonNull AgencyService agencyService;
   private final @NonNull ConsultantAgencyService consultantAgencyService;
   private final @NonNull EventNotificationService eventNotificationService;
   private final @NonNull TopicConsultantRoutingService topicConsultantRoutingService;
 
   /**
-   * Creates a new anonymous waiting session. Its Matrix room is provisioned by the assignment
-   * workflow.
+   * Creates the waiting session of a live-chat guest. Its Matrix room is provisioned by the
+   * assignment workflow. Called by the registration entry only, which undoes the guest account when
+   * this fails — there is no rollback of its own here.
    *
-   * @param userDTO {@link UserDTO}
-   * @param credentials {@link AnonymousUserCredentials}
+   * @param userDTO the guest registration
+   * @param user the guest account the registration entry just created
    * @return {@link Session}
    */
-  public Session createAnonymousConversation(
-      UserDTO userDTO, AnonymousUserCredentials credentials) {
-
-    var user = obtainAnonymousUser(credentials);
+  public Session createAnonymousConversation(UserDTO userDTO, User user) {
     List<ConsultantAgency> consultantAgencies;
     Session session;
 
@@ -61,28 +53,13 @@ public class AnonymousConversationCreatorService {
       session.setConversationType(ConversationType.LIVE_CHAT);
       consultantAgencies = obtainConsultants(session);
       sessionService.saveSession(session);
-
     } catch (Exception ex) {
-      rollBackAnonymousConversation(userDTO, user);
-      throw new InternalServerErrorException(
-          String.format(
-              "Could not create session for user %s. %s", user.getUsername(), ex.getMessage()));
+      throw new InternalServerErrorException("Could not create the live-chat session", ex);
     }
 
     persistWaitingRoomNotifications(session, consultantAgencies);
 
     return session;
-  }
-
-  private User obtainAnonymousUser(AnonymousUserCredentials credentials) {
-    return userService
-        .getUser(credentials.getUserId())
-        .orElseThrow(
-            () ->
-                new InternalServerErrorException(
-                    String.format(
-                        "Could not get user %s to create a new anonymous conversation.",
-                        credentials.getUserId())));
   }
 
   private List<ConsultantAgency> obtainConsultants(Session session) {
@@ -104,15 +81,6 @@ public class AnonymousConversationCreatorService {
             .collect(Collectors.toList());
 
     return consultantAgencyService.getConsultantsOfAgencies(agencyList);
-  }
-
-  private void rollBackAnonymousConversation(UserDTO userDTO, User user) {
-    rollbackFacade.rollBackUserAccount(
-        RollbackUserAccountInformation.builder()
-            .userId(user.getUserId())
-            .user(user)
-            .rollBackUserAccount(Boolean.parseBoolean(userDTO.getTermsAccepted()))
-            .build());
   }
 
   private void persistWaitingRoomNotifications(

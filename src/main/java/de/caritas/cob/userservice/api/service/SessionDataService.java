@@ -103,6 +103,14 @@ public class SessionDataService {
     return normalizedAlias;
   }
 
+  /** A live-chat guest always carries a rolled User-ID, whatever the tenant allows elsewhere. */
+  public void requireGeneratedUsername(String username) {
+    if (username == null
+        || !generatedPseudonyms.containsHandle(new UsernameTranscoder().decodeUsername(username))) {
+      throw new BadRequestException("The guest name was not rolled by the name generator");
+    }
+  }
+
   /** Internal creation path: the trusted creator supplies the actual new owner, not a login. */
   public void saveInitialSessionData(Session session, User newOwner, SessionDataDTO data) {
     assertInitialOwner(session, newOwner);
