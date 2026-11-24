@@ -176,6 +176,21 @@ public interface UserRepository extends CrudRepository<User, String> {
   long countActiveAdviceSeekersOfTenant(@Param("tenantId") Long tenantId);
 
   /**
+   * Advice seekers of a Träger, marked or not, without the technical group-chat users; the Träger
+   * row goes only once this is 0 (ORISO-Admin#1525).
+   */
+  @Query(
+      "SELECT COUNT(u) FROM User u WHERE u.tenantId = :tenantId"
+          + " AND u.userId NOT LIKE 'group-chat-system%'")
+  long countAdviceSeekersOfTenant(@Param("tenantId") Long tenantId);
+
+  /** The technical group-chat users of a Träger; they go with it, last (ORISO-Admin#1525). */
+  @Query(
+      "SELECT u FROM User u WHERE u.tenantId = :tenantId"
+          + " AND u.userId LIKE 'group-chat-system%'")
+  List<User> findTechnicalUsersOfTenant(@Param("tenantId") Long tenantId);
+
+  /**
    * Active advice seekers linked to the given Beratungsstelle by a session or membership
    * (ORISO-Admin#1524). The cascade decides about each of them with {@code
    * AgencyAdviceSeekerUnlinker}.
@@ -204,4 +219,12 @@ public interface UserRepository extends CrudRepository<User, String> {
           + " AND NOT EXISTS (SELECT 1 FROM UserAgency ua2 WHERE ua2.user = u"
           + " AND ua2.agencyId <> :agencyId)")
   long countActiveAdviceSeekersOnlyInAgency(@Param("agencyId") Long agencyId);
+
+  /**
+   * The advice seekers {@link #countActiveAdviceSeekersOfTenant(Long)} counts (ORISO-Admin#1525).
+   */
+  @Query(
+      "SELECT u FROM User u WHERE u.tenantId = :tenantId AND u.deleteDate IS NULL"
+          + " AND u.userId NOT LIKE 'group-chat-system%'")
+  List<User> findActiveAdviceSeekersOfTenant(@Param("tenantId") Long tenantId);
 }

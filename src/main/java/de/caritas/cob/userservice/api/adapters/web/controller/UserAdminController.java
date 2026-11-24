@@ -37,6 +37,7 @@ import de.caritas.cob.userservice.api.adapters.web.dto.Sort;
 import de.caritas.cob.userservice.api.adapters.web.dto.TenantAdminLoginEmailsDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.TenantContactPersonDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.TenantDeletionBlockersDTO;
+import de.caritas.cob.userservice.api.adapters.web.dto.TenantDeletionResultDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.UpdateAdminConsultantDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.UpdateAgencyAdminDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.UpdateContactPersonDTO;
@@ -57,6 +58,7 @@ import de.caritas.cob.userservice.api.admin.service.listpreference.AdminListPref
 import de.caritas.cob.userservice.api.admin.service.listpreference.AdminListPreferenceService.ListSort;
 import de.caritas.cob.userservice.api.admin.service.session.SessionAdminService;
 import de.caritas.cob.userservice.api.admin.service.tenant.TenantDeletionBlockerService;
+import de.caritas.cob.userservice.api.admin.service.tenant.TenantDeletionCascadeService;
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.helper.PasswordPolicy;
@@ -120,6 +122,7 @@ public class UserAdminController implements UseradminApi {
   private final @NonNull UserHelper userHelper;
   private final @NonNull TenantDeletionBlockerService tenantDeletionBlockerService;
   private final @NonNull AgencyDeletionCascadeService agencyDeletionCascadeService;
+  private final @NonNull TenantDeletionCascadeService tenantDeletionCascadeService;
   private final @NonNull ContactPersonAdminService contactPersonAdminService;
 
   /** Never typed by anyone and valid until the setup link expires, so length costs nothing. */
@@ -589,6 +592,13 @@ public class UserAdminController implements UseradminApi {
   public ResponseEntity<AgencyDeletionResultDTO> markAgencyContentsForDeletion(
       final Long agencyId) {
     return ResponseEntity.ok(agencyDeletionCascadeService.cascade(agencyId));
+  }
+
+  /** Marks everything of the Träger for deletion; called by TenantService (ORISO-Admin#1525). */
+  @Override
+  public ResponseEntity<TenantDeletionResultDTO> markTenantContentsForDeletion(
+      final Long tenantId) {
+    return ResponseEntity.ok(tenantDeletionCascadeService.cascade(tenantId));
   }
 
   /** Contact person of a counselling centre (ORISO-Admin#1534). */

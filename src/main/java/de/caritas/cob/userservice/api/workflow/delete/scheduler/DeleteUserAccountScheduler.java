@@ -4,6 +4,7 @@ import de.caritas.cob.userservice.api.admin.service.IdentityReactivationRepairSe
 import de.caritas.cob.userservice.api.tenant.TenantContextProvider;
 import de.caritas.cob.userservice.api.workflow.delete.service.ConsultantHardDeleteClaimService;
 import de.caritas.cob.userservice.api.workflow.delete.service.DeleteUserAccountService;
+import de.caritas.cob.userservice.api.workflow.delete.service.TenantDeletionFinisher;
 import de.caritas.cob.userservice.api.workflow.delete.service.UserHardDeleteClaimService;
 import de.caritas.cob.userservice.api.workflow.scheduling.ScheduledTaskClaimService;
 import java.time.Duration;
@@ -21,6 +22,7 @@ public class DeleteUserAccountScheduler {
   private static final String TASK_NAME = "account-deletion";
 
   private final @NonNull DeleteUserAccountService deleteUserAccountService;
+  private final @NonNull TenantDeletionFinisher tenantDeletionFinisher;
   private final @NonNull TenantContextProvider tenantContextProvider;
   private final @NonNull ScheduledTaskClaimService taskClaimService;
   private final @NonNull UserHardDeleteClaimService userHardDeleteClaimService;
@@ -41,5 +43,7 @@ public class DeleteUserAccountScheduler {
     userHardDeleteClaimService.releaseInterruptedClaims();
     consultantHardDeleteClaimService.releaseInterruptedClaims();
     this.deleteUserAccountService.deleteUserAccounts();
+    // Last: a Träger in deletion goes once the run above has removed everything in it (#1525).
+    this.tenantDeletionFinisher.finishMarkedTenants();
   }
 }
