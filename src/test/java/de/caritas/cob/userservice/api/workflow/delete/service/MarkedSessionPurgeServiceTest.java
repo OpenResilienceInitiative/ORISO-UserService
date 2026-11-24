@@ -10,13 +10,16 @@ import static org.mockito.Mockito.when;
 import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
+import de.caritas.cob.userservice.api.workflow.delete.model.DeletionSourceType;
 import de.caritas.cob.userservice.api.workflow.delete.model.DeletionTargetType;
+import de.caritas.cob.userservice.api.workflow.delete.model.DeletionWorkflowError;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.transaction.PlatformTransactionManager;
 
 @ExtendWith(MockitoExtension.class)
 class MarkedSessionPurgeServiceTest {
@@ -24,6 +27,7 @@ class MarkedSessionPurgeServiceTest {
   @Mock private SessionRepository sessionRepository;
   @Mock private MatrixSynapseService matrixSynapseService;
   @Mock private DeleteSessionService deleteSessionService;
+  @Mock private PlatformTransactionManager transactionManager;
   @InjectMocks private MarkedSessionPurgeService service;
 
   @Test
@@ -39,6 +43,47 @@ class MarkedSessionPurgeServiceTest {
     var order = inOrder(matrixSynapseService, deleteSessionService);
     order.verify(matrixSynapseService).purgeRoom("!room:matrix");
     order.verify(deleteSessionService).performSessionDeletionKeepingFailed(session);
+  }
+
+  @Test
+  void purgeMarkedSessions_Should_runEachSessionsCleanupInATransactionOfItsOwn() {
+    var first = session(1L, null);
+    var second = session(2L, null);
+    when(sessionRepository.findAllByDeleteDateNotNull()).thenReturn(List.of(first, second));
+    when(deleteSessionService.performSessionDeletionKeepingFailed(any())).thenReturn(List.of());
+
+    service.purgeMarkedSessions();
+
+    // The bulk deletes of supervisors and handover requests need an active transaction.
+    var order = inOrder(transactionManager, deleteSessionService);
+    order.verify(transactionManager).getTransaction(any());
+    order.verify(deleteSessionService).performSessionDeletionKeepingFailed(first);
+    order.verify(transactionManager).commit(any());
+    order.verify(transactionManager).getTransaction(any());
+    order.verify(deleteSessionService).performSessionDeletionKeepingFailed(second);
+    order.verify(transactionManager).commit(any());
+  }
+
+  @Test
+  void purgeMarkedSessions_Should_returnAChildCleanupError_andGoOnWithTheNextSession() {
+    var failing = session(1L, null);
+    var fine = session(2L, null);
+    var childError =
+        DeletionWorkflowError.builder()
+            .deletionSourceType(DeletionSourceType.ASKER)
+            .deletionTargetType(DeletionTargetType.DATABASE)
+            .identifier("1")
+            .reason("Unable to delete supervisors for session")
+            .build();
+    when(sessionRepository.findAllByDeleteDateNotNull()).thenReturn(List.of(failing, fine));
+    when(deleteSessionService.performSessionDeletionKeepingFailed(failing))
+        .thenReturn(List.of(childError));
+    when(deleteSessionService.performSessionDeletionKeepingFailed(fine)).thenReturn(List.of());
+
+    var errors = service.purgeMarkedSessions();
+
+    assertThat(errors).containsExactly(childError);
+    verify(deleteSessionService).performSessionDeletionKeepingFailed(fine);
   }
 
   @Test

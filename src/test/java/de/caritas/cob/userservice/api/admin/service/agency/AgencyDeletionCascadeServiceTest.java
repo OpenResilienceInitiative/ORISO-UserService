@@ -83,7 +83,7 @@ class AgencyDeletionCascadeServiceTest {
     when(inviteRevocation.revokeForAgency(AGENCY)).thenReturn(new Revoked(1, 1));
     when(sessionRepository.closeUnassignedEnquiriesOfAgency(AGENCY, NOW_UTC)).thenReturn(3);
     when(userRepository.findActiveAdviceSeekersOnlyInAgency(AGENCY))
-        .thenReturn(List.of(asker("only-here")));
+        .thenReturn(List.of(asker("only-here")), List.of());
     when(sessionRepository.markSessionsOfKeptAdviceSeekersForDeletion(AGENCY, NOW_UTC))
         .thenReturn(2);
     when(consultantAgencyRepository.findActiveConsultantIdsByAgencyId(AGENCY))
@@ -133,6 +133,25 @@ class AgencyDeletionCascadeServiceTest {
 
     // A counsellor who also works elsewhere keeps the account (AC 2).
     verify(consultantAdminFacade, never()).markConsultantForDeletion(eq("shared"), any());
+  }
+
+  @Test
+  void cascade_Should_markAKeptAdviceSeeker_Whom_aConcurrentDeletionLeftOnlyHere() {
+    when(inviteRevocation.revokeForAgency(AGENCY)).thenReturn(new Revoked(0, 0));
+    // Kept at first: another Beratungsstelle still had a session. That one was deleted at the
+    // same time, so after this one's sessions were marked the advice seeker is only here.
+    when(userRepository.findActiveAdviceSeekersOnlyInAgency(AGENCY))
+        .thenReturn(List.of(), List.of(asker("shared")));
+    when(groupChatDeleter.deleteChatsOf(AGENCY)).thenReturn(new Deleted(0, List.of()));
+
+    var result = service.cascade(AGENCY);
+
+    assertThat(result.getComplete()).isTrue();
+    assertThat(result.getAdviceSeekers()).isEqualTo(1L);
+    var order = inOrder(sessionRepository, userAgencyRepository, askerUserAdminFacade);
+    order.verify(sessionRepository).markSessionsOfKeptAdviceSeekersForDeletion(AGENCY, NOW_UTC);
+    order.verify(userAgencyRepository).deleteMembershipsOfKeptAdviceSeekers(AGENCY);
+    order.verify(askerUserAdminFacade).markAskerForDeletion("shared");
   }
 
   @Test

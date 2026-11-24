@@ -15,12 +15,16 @@ import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionDefinition;
+import org.springframework.transaction.support.TransactionTemplate;
 
 /**
  * Purges the sessions a deleted Beratungsstelle left with advice seekers who keep their account
  * (ORISO-Admin#1524). Runs in the nightly account-deletion job. The Matrix room goes first: a room
  * that cannot be purged keeps its session, so the next night tries again; a room Synapse no longer
- * knows counts as gone.
+ * knows counts as gone. The database cleanup of each session runs in a transaction of its own: its
+ * bulk deletes need one, and one session that fails does not undo the others.
  */
 @Slf4j
 @Service
@@ -30,15 +34,18 @@ public class MarkedSessionPurgeService {
   private final @NonNull SessionRepository sessionRepository;
   private final @NonNull MatrixSynapseService matrixSynapseService;
   private final @NonNull DeleteSessionService deleteSessionService;
+  private final @NonNull PlatformTransactionManager transactionManager;
 
   /**
    * @return the errors of this run; the affected sessions stay marked for the next run
    */
   public List<DeletionWorkflowError> purgeMarkedSessions() {
     var errors = new ArrayList<DeletionWorkflowError>();
+    var transaction = new TransactionTemplate(transactionManager);
+    transaction.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
     for (Session session : sessionRepository.findAllByDeleteDateNotNull()) {
       try {
-        purge(session, errors);
+        purge(session, transaction, errors);
       } catch (RuntimeException e) {
         log.error("Could not purge marked session {}", session.getId(), e);
         errors.add(error(session, DeletionTargetType.DATABASE, "Unable to purge marked session"));
@@ -47,14 +54,24 @@ public class MarkedSessionPurgeService {
     return errors;
   }
 
-  private void purge(Session session, List<DeletionWorkflowError> errors) {
+  private void purge(
+      Session session, TransactionTemplate transaction, List<DeletionWorkflowError> errors) {
     var roomId = session.getMatrixRoomId();
     if (isNotBlank(roomId) && !matrixSynapseService.purgeRoom(roomId)) {
       errors.add(
           error(session, DeletionTargetType.MATRIX, "Unable to purge Matrix room of session"));
       return;
     }
-    errors.addAll(deleteSessionService.performSessionDeletionKeepingFailed(session));
+    var sessionErrors = new ArrayList<DeletionWorkflowError>();
+    try {
+      transaction.executeWithoutResult(
+          status ->
+              sessionErrors.addAll(
+                  deleteSessionService.performSessionDeletionKeepingFailed(session)));
+    } finally {
+      // A step that failed may have marked the transaction for rollback; its error still counts.
+      errors.addAll(sessionErrors);
+    }
   }
 
   private static DeletionWorkflowError error(

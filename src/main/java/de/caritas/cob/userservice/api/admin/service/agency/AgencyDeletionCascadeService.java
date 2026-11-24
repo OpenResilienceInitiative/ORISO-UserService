@@ -127,6 +127,17 @@ public class AgencyDeletionCascadeService {
           KindEnum.MEMBERSHIPS,
           () -> (long) userAgencyRepository.deleteMembershipsOfKeptAdviceSeekers(agencyId),
           failures);
+      // Asked again now that this Beratungsstelle's sessions and memberships are gone: a
+      // Beratungsstelle deleted at the same time may have taken the advice seeker's last other
+      // session or membership after the first answer. Of two such cascades, the one asking last
+      // sees what both took away, so the account is marked by one of them.
+      result.adviceSeekers(
+          result.getAdviceSeekers()
+              + forEach(
+                  KindEnum.ADVICE_SEEKER,
+                  idsOf(() -> userRepository.findActiveAdviceSeekersOnlyInAgency(agencyId)),
+                  askerUserAdminFacade::markAskerForDeletion,
+                  failures));
     } else {
       // An advice seeker whose marker did not commit still looks "kept" to both queries; taking
       // their sessions and membership now would leave them deactivated or unreachable by the next
