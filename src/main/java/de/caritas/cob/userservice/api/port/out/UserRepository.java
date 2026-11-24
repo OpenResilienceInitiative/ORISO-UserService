@@ -191,23 +191,23 @@ public interface UserRepository extends CrudRepository<User, String> {
   List<User> findTechnicalUsersOfTenant(@Param("tenantId") Long tenantId);
 
   /**
-   * Advice seekers whose only Beratungsstelle is the given one, by session or membership
-   * (ORISO-Admin#1524). Deleting the Beratungsstelle deletes them; the technical group-chat users
-   * go with their Träger only.
+   * Active advice seekers linked to the given Beratungsstelle by a session or membership
+   * (ORISO-Admin#1524). The cascade decides about each of them with {@code
+   * AgencyAdviceSeekerUnlinker}.
    */
   @Query(
-      "SELECT u "
+      "SELECT u.userId "
           + "FROM User u WHERE u.deleteDate IS NULL"
           + " AND u.userId NOT LIKE 'group-chat-system%'"
           + " AND (EXISTS (SELECT 1 FROM Session s WHERE s.user = u AND s.agencyId = :agencyId)"
-          + " OR EXISTS (SELECT 1 FROM UserAgency ua WHERE ua.user = u AND ua.agencyId = :agencyId))"
-          + " AND NOT EXISTS (SELECT 1 FROM Session s2 WHERE s2.user = u"
-          + " AND s2.agencyId <> :agencyId AND s2.deleteDate IS NULL)"
-          + " AND NOT EXISTS (SELECT 1 FROM UserAgency ua2 WHERE ua2.user = u"
-          + " AND ua2.agencyId <> :agencyId)")
-  List<User> findActiveAdviceSeekersOnlyInAgency(@Param("agencyId") Long agencyId);
+          + " OR EXISTS (SELECT 1 FROM UserAgency ua WHERE ua.user = u AND ua.agencyId = :agencyId))")
+  List<String> findActiveAdviceSeekerIdsLinkedToAgency(@Param("agencyId") Long agencyId);
 
-  /** How many {@link #findActiveAdviceSeekersOnlyInAgency(Long)} returns. */
+  /**
+   * Advice seekers whose only Beratungsstelle is the given one, by session or membership
+   * (ORISO-Admin#1524): deleting the Beratungsstelle deletes them. The technical group-chat users
+   * go with their Träger only. Counted for the deletion preview.
+   */
   @Query(
       "SELECT COUNT(u) "
           + "FROM User u WHERE u.deleteDate IS NULL"

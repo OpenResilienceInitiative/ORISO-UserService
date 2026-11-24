@@ -10,20 +10,17 @@ import de.caritas.cob.userservice.api.admin.service.admin.AdminAgencyRelationSer
 import de.caritas.cob.userservice.api.admin.service.admin.AdminScope;
 import de.caritas.cob.userservice.api.admin.service.admin.AdminScope.Target;
 import de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHttpStatusException;
-import de.caritas.cob.userservice.api.model.ConsultantAgency;
-import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.out.AdminAgencyRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantAgencyRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
-import de.caritas.cob.userservice.api.port.out.UserAgencyRepository;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
 import de.caritas.cob.userservice.api.service.accountinvite.DeletedUnitInviteRevocation;
 import java.time.Clock;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.List;
-import java.util.Objects;
 import java.util.function.Consumer;
 import java.util.function.Supplier;
 import lombok.NonNull;
@@ -45,7 +42,8 @@ import org.springframework.stereotype.Service;
  *   <li>Counsellors whose only Beratungsstelle this is are marked for deletion; the others only
  *       lose this one.
  *   <li>Agency admins lose their assignment to it; their account stays.
- *   <li>Active group chats are stopped.
+ *   <li>Its group chats are deleted with their Matrix rooms: scheduled and running ones, and whole
+ *       recurring series, without creating a next occurrence.
  * </ul>
  *
  * <p>Enquiries and advice seekers go before the counsellors: UserService refuses to take the last
@@ -62,13 +60,13 @@ public class AgencyDeletionCascadeService {
   private final @NonNull DeletedUnitInviteRevocation inviteRevocation;
   private final @NonNull SessionRepository sessionRepository;
   private final @NonNull UserRepository userRepository;
-  private final @NonNull UserAgencyRepository userAgencyRepository;
+  private final @NonNull AgencyAdviceSeekerUnlinker adviceSeekerUnlinker;
   private final @NonNull AskerUserAdminFacade askerUserAdminFacade;
   private final @NonNull ConsultantAgencyRepository consultantAgencyRepository;
   private final @NonNull ConsultantAdminFacade consultantAdminFacade;
   private final @NonNull AdminAgencyRepository adminAgencyRepository;
   private final @NonNull AdminAgencyRelationService adminAgencyRelationService;
-  private final @NonNull AgencyGroupChatStopper groupChatStopper;
+  private final @NonNull AgencyGroupChatDeleter groupChatDeleter;
   private final @NonNull Clock clock;
 
   /** What deleting the Beratungsstelle would do; shown before the admin confirms. */
@@ -82,7 +80,7 @@ public class AgencyDeletionCascadeService {
         .consultantsDeleted((long) counsellors.onlyHere().size())
         .consultantsUnassigned((long) counsellors.alsoElsewhere().size())
         .agencyAdmins((long) adminAgencyRepository.findAgencyAdminIdsByAgencyId(agencyId).size())
-        .groupChats(groupChatStopper.countActiveChatsOf(agencyId));
+        .groupChats(groupChatDeleter.countChatsOf(agencyId));
   }
 
   /**
@@ -108,22 +106,7 @@ public class AgencyDeletionCascadeService {
             KindEnum.ENQUIRIES,
             () -> (long) sessionRepository.closeUnassignedEnquiriesOfAgency(agencyId, now),
             failures));
-    result.adviceSeekers(
-        forEach(
-            KindEnum.ADVICE_SEEKER,
-            idsOf(() -> userRepository.findActiveAdviceSeekersOnlyInAgency(agencyId)),
-            askerUserAdminFacade::markAskerForDeletion,
-            failures));
-    result.keptAdviceSeekerSessions(
-        count(
-            KindEnum.SESSIONS,
-            () ->
-                (long) sessionRepository.markSessionsOfKeptAdviceSeekersForDeletion(agencyId, now),
-            failures));
-    count(
-        KindEnum.MEMBERSHIPS,
-        () -> (long) userAgencyRepository.deleteMembershipsOfKeptAdviceSeekers(agencyId),
-        failures);
+    handleAdviceSeekers(agencyId, now, result, failures);
 
     Counsellors counsellors;
     try {
@@ -154,7 +137,7 @@ public class AgencyDeletionCascadeService {
             id -> adminAgencyRelationService.deleteAdminAgencyRelation(id, agencyId),
             failures));
 
-    result.groupChats(stopGroupChats(agencyId, failures));
+    result.groupChats(deleteGroupChats(agencyId, failures));
 
     if (!failures.isEmpty()) {
       log.warn(
@@ -170,10 +153,10 @@ public class AgencyDeletionCascadeService {
     adminScope.assertMay(Target.removedAgencies(List.of(agencyId)));
   }
 
-  private long stopGroupChats(Long agencyId, List<AgencyDeletionFailureDTO> failures) {
+  private long deleteGroupChats(Long agencyId, List<AgencyDeletionFailureDTO> failures) {
     try {
-      var stopped = groupChatStopper.stopActiveChatsOf(agencyId);
-      stopped
+      var deleted = groupChatDeleter.deleteChatsOf(agencyId);
+      deleted
           .failedChatIds()
           .forEach(
               id ->
@@ -181,8 +164,8 @@ public class AgencyDeletionCascadeService {
                       new AgencyDeletionFailureDTO()
                           .kind(KindEnum.GROUP_CHAT)
                           .id(String.valueOf(id))
-                          .reason("NotStopped")));
-      return stopped.count();
+                          .reason("NotDeleted")));
+      return deleted.count();
     } catch (RuntimeException e) {
       failures.add(failure(KindEnum.GROUP_CHAT, null, e));
       return 0L;
@@ -193,24 +176,66 @@ public class AgencyDeletionCascadeService {
   private record Counsellors(List<String> onlyHere, List<String> alsoElsewhere) {}
 
   private Counsellors splitCounsellors(Long agencyId) {
-    var ids = new LinkedHashSet<String>();
-    consultantAgencyRepository.findByAgencyIdAndDeleteDateIsNull(agencyId).stream()
-        .map(ConsultantAgency::getConsultant)
-        .filter(Objects::nonNull)
-        .forEach(consultant -> ids.add(consultant.getId()));
+    // Two id-only queries, whatever the number of counsellors: loading ConsultantAgency entities
+    // would also load each eagerly fetched Consultant with its own select.
+    var ids =
+        new LinkedHashSet<>(consultantAgencyRepository.findActiveConsultantIdsByAgencyId(agencyId));
+    if (ids.isEmpty()) {
+      return new Counsellors(List.of(), List.of());
+    }
+    var withOtherAgency = new HashSet<String>();
+    consultantAgencyRepository.findByConsultantIdInAndDeleteDateIsNull(List.copyOf(ids)).stream()
+        .filter(relation -> !agencyId.equals(relation.getAgencyId()))
+        .forEach(relation -> withOtherAgency.add(relation.getConsultantId()));
     var onlyHere = new ArrayList<String>();
     var alsoElsewhere = new ArrayList<String>();
     for (String id : ids) {
-      boolean elsewhere =
-          consultantAgencyRepository.findByConsultantIdAndDeleteDateIsNull(id).stream()
-              .anyMatch(relation -> !agencyId.equals(relation.getAgencyId()));
-      (elsewhere ? alsoElsewhere : onlyHere).add(id);
+      (withOtherAgency.contains(id) ? alsoElsewhere : onlyHere).add(id);
     }
     return new Counsellors(onlyHere, alsoElsewhere);
   }
 
-  private static Supplier<List<String>> idsOf(Supplier<List<User>> users) {
-    return () -> users.get().stream().map(User::getUserId).toList();
+  /**
+   * Each advice seeker linked here is decided on its own, under their row lock: one who belongs
+   * only here is marked for deletion and keeps their link here until that succeeded, so a failed
+   * mark is found again by the next call; one who belongs elsewhere too loses their sessions and
+   * membership here.
+   */
+  private void handleAdviceSeekers(
+      Long agencyId,
+      LocalDateTime now,
+      AgencyDeletionResultDTO result,
+      List<AgencyDeletionFailureDTO> failures) {
+    List<String> linked;
+    try {
+      linked = userRepository.findActiveAdviceSeekerIdsLinkedToAgency(agencyId);
+    } catch (RuntimeException e) {
+      failures.add(failure(KindEnum.ADVICE_SEEKER, null, e));
+      result.adviceSeekers(0L).keptAdviceSeekerSessions(0L);
+      return;
+    }
+    long marked = 0;
+    long keptSessions = 0;
+    for (String userId : linked) {
+      try {
+        var outcome = adviceSeekerUnlinker.unlink(userId, agencyId, now);
+        if (outcome instanceof AgencyAdviceSeekerUnlinker.OnlyHere) {
+          askerUserAdminFacade.markAskerForDeletion(userId);
+          marked++;
+        } else if (outcome instanceof AgencyAdviceSeekerUnlinker.Kept kept) {
+          keptSessions += kept.markedSessions();
+        }
+      } catch (RuntimeException e) {
+        // Ids only: the privacy filter would drop a message carrying personal data.
+        log.warn(
+            "Could not handle {} {} for agency deletion: {}",
+            KindEnum.ADVICE_SEEKER,
+            userId,
+            reasonOf(e));
+        failures.add(failure(KindEnum.ADVICE_SEEKER, userId, e));
+      }
+    }
+    result.adviceSeekers(marked).keptAdviceSeekerSessions(keptSessions);
   }
 
   private static long count(

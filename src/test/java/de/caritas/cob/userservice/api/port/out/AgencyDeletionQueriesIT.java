@@ -5,6 +5,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 import com.neovisionaries.i18n.LanguageCode;
 import de.caritas.cob.userservice.api.config.JpaAuditingConfiguration;
 import de.caritas.cob.userservice.api.model.Consultant;
+import de.caritas.cob.userservice.api.model.ConsultantAgency;
+import de.caritas.cob.userservice.api.model.DraftMessage;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.Session.SessionStatus;
 import de.caritas.cob.userservice.api.model.User;
@@ -39,6 +41,8 @@ class AgencyDeletionQueriesIT {
   @Autowired private UserRepository userRepository;
   @Autowired private UserAgencyRepository userAgencyRepository;
   @Autowired private ConsultantRepository consultantRepository;
+  @Autowired private ConsultantAgencyRepository consultantAgencyRepository;
+  @Autowired private DraftMessageRepository draftMessageRepository;
   @Autowired private EntityManager entityManager;
 
   private User onlyBySession;
@@ -84,45 +88,113 @@ class AgencyDeletionQueriesIT {
   }
 
   @Test
-  void findActiveAdviceSeekersOnlyInAgency_Should_findThoseWithNoOtherAgency() {
-    assertThat(userRepository.findActiveAdviceSeekersOnlyInAgency(AGENCY))
-        .extracting(User::getUserId)
-        .containsExactlyInAnyOrder(onlyBySession.getUserId(), onlyByMembership.getUserId());
+  void countActiveAdviceSeekersOnlyInAgency_Should_countThoseWithNoOtherAgency() {
     assertThat(userRepository.countActiveAdviceSeekersOnlyInAgency(AGENCY)).isEqualTo(2L);
   }
 
   @Test
-  void markSessionsOfKeptAdviceSeekersForDeletion_Should_markOnlyTheirSessionsHere() {
-    // As in the cascade: those deleted with the Beratungsstelle are marked first.
-    onlyBySession.setDeleteDate(NOW);
-    onlyByMembership.setDeleteDate(NOW);
-    entityManager.flush();
-    assertThat(sessionRepository.countSessionsOfKeptAdviceSeekers(AGENCY)).isEqualTo(2L);
+  void
+      findActiveAdviceSeekerIdsLinkedToAgency_Should_listActiveAdviceSeekersBySessionOrMembership() {
+    assertThat(userRepository.findActiveAdviceSeekerIdsLinkedToAgency(AGENCY))
+        .containsExactlyInAnyOrder(
+            onlyBySession.getUserId(),
+            onlyByMembership.getUserId(),
+            alsoElsewhereBySession.getUserId(),
+            alsoElsewhereByMembership.getUserId());
+  }
 
-    int marked = sessionRepository.markSessionsOfKeptAdviceSeekersForDeletion(AGENCY, NOW);
+  @Test
+  void outsideAgencyChecks_Should_seeOnlyLinksElsewhere_andIgnoreMarkedSessions() {
+    assertThat(
+            sessionRepository.hasActiveSessionOutsideAgency(
+                alsoElsewhereBySession.getUserId(), AGENCY))
+        .isTrue();
+    assertThat(sessionRepository.hasActiveSessionOutsideAgency(onlyBySession.getUserId(), AGENCY))
+        .isFalse();
+    assertThat(
+            userAgencyRepository.hasMembershipOutsideAgency(
+                alsoElsewhereByMembership.getUserId(), AGENCY))
+        .isTrue();
+    assertThat(
+            userAgencyRepository.hasMembershipOutsideAgency(onlyByMembership.getUserId(), AGENCY))
+        .isFalse();
+
+    keptSessionElsewhere.setDeleteDate(NOW);
+    entityManager.flush();
+    assertThat(
+            sessionRepository.hasActiveSessionOutsideAgency(
+                alsoElsewhereBySession.getUserId(), AGENCY))
+        .isFalse();
+  }
+
+  @Test
+  void deleteLegacyDraftsOfSession_Should_removeOnlyTheDraftsWrittenInThatSession() {
+    var bySessionId = draft("asker", keptSessionHere.getId(), null, null);
+    var byRoomOnly = draft("counsellor", null, "!kept-here:matrix", null);
+    var otherSession = draft("asker", keptSessionElsewhere.getId(), null, null);
+    var otherRoom = draft("asker", null, "!elsewhere:matrix", null);
+    var otherSessionSameRoomRef =
+        draft("asker", keptSessionElsewhere.getId(), "!kept-here:matrix", null);
+    var noReference = draft("asker", null, null, null);
+    var protectedDraft = draft("asker", null, null, "draft.v1." + "a".repeat(43));
+    entityManager.flush();
+
+    int deleted =
+        draftMessageRepository.deleteLegacyDraftsOfSession(
+            keptSessionHere.getId(), "!kept-here:matrix");
+
+    assertThat(deleted).isEqualTo(2);
+    assertThat(draftMessageRepository.findAll())
+        .extracting(DraftMessage::getId)
+        .contains(
+            otherSession.getId(),
+            otherRoom.getId(),
+            otherSessionSameRoomRef.getId(),
+            noReference.getId(),
+            protectedDraft.getId())
+        .doesNotContain(bySessionId.getId(), byRoomOnly.getId());
+  }
+
+  @Test
+  void deleteLegacyDraftsOfSession_Should_matchNoRoomlessDraft_When_theSessionHasNoRoom() {
+    var noReference = draft("asker", null, null, null);
+    entityManager.flush();
+
+    assertThat(draftMessageRepository.deleteLegacyDraftsOfSession(keptSessionHere.getId(), null))
+        .isZero();
+    assertThat(draftMessageRepository.findById(noReference.getId())).isPresent();
+  }
+
+  @Test
+  void countSessionsOfKeptAdviceSeekers_Should_leaveOutThoseDeletedWithTheAgency_BeforeMarking() {
+    // The preview runs before the cascade marks anybody: onlyBySession's session goes with the
+    // account, so only the sessions of advice seekers who belong elsewhere are counted.
+    assertThat(sessionRepository.countSessionsOfKeptAdviceSeekers(AGENCY)).isEqualTo(2L);
+  }
+
+  @Test
+  void markSessionsOfUserInAgencyForDeletion_Should_markOnlyTheirSessionsHere() {
+    int marked =
+        sessionRepository.markSessionsOfUserInAgencyForDeletion(
+            alsoElsewhereBySession.getUserId(), AGENCY, NOW);
     entityManager.clear();
 
-    // keptSessionHere and the DONE session of alsoElsewhereByMembership. The technical
-    // group-chat user's session backs a group chat and goes with its Träger only.
-    assertThat(marked).isEqualTo(2);
+    assertThat(marked).isEqualTo(1);
     assertThat(deleteDate(keptSessionHere)).isEqualTo(NOW);
     assertThat(deleteDate(keptSessionElsewhere)).isNull();
     assertThat(deleteDate(markedAskersSession)).isNull();
     assertThat(deleteDate(technicalSession)).isNull();
-    assertThat(sessionRepository.findAllByDeleteDateNotNull())
-        .extracting(Session::getAgencyId)
-        .containsOnly(AGENCY);
-
-    assertThat(sessionRepository.markSessionsOfKeptAdviceSeekersForDeletion(AGENCY, NOW)).isZero();
+    assertThat(
+            sessionRepository.markSessionsOfUserInAgencyForDeletion(
+                alsoElsewhereBySession.getUserId(), AGENCY, NOW))
+        .isZero();
   }
 
   @Test
-  void deleteMembershipsOfKeptAdviceSeekers_Should_removeOnlyThisAgencysMemberships() {
-    onlyByMembership.setDeleteDate(NOW);
-    entityManager.flush();
-    assertThat(userAgencyRepository.countMembershipsOfKeptAdviceSeekers(AGENCY)).isEqualTo(1L);
-
-    int removed = userAgencyRepository.deleteMembershipsOfKeptAdviceSeekers(AGENCY);
+  void deleteMembershipsOfUserInAgency_Should_removeOnlyThisAgencysMembership() {
+    int removed =
+        userAgencyRepository.deleteMembershipsOfUserInAgency(
+            alsoElsewhereByMembership.getUserId(), AGENCY);
     entityManager.clear();
 
     assertThat(removed).isEqualTo(1);
@@ -131,12 +203,25 @@ class AgencyDeletionQueriesIT {
                 java.util.List.of(alsoElsewhereByMembership.getUserId())))
         .extracting(UserAgency::getAgencyId)
         .containsExactly(OTHER_AGENCY);
-    // The marked advice seeker's membership goes with their own deletion.
     assertThat(
             userAgencyRepository.findByUserUserIdIn(
                 java.util.List.of(onlyByMembership.getUserId())))
         .extracting(UserAgency::getAgencyId)
         .containsExactly(AGENCY);
+  }
+
+  @Test
+  void deleteLegacyDraftsOfSession_Should_matchTheRoomExactly() {
+    var exact = draft("asker", null, "!CaseRoom:matrix", null);
+    var otherCase = draft("asker", null, "!caseroom:matrix", null);
+    entityManager.flush();
+
+    assertThat(draftMessageRepository.deleteLegacyDraftsOfSession(-1L, "!CaseRoom:matrix"))
+        .isEqualTo(1);
+    entityManager.flush();
+    entityManager.clear();
+    assertThat(draftMessageRepository.findById(exact.getId())).isEmpty();
+    assertThat(draftMessageRepository.findById(otherCase.getId())).isPresent();
   }
 
   @Test
@@ -154,12 +239,90 @@ class AgencyDeletionQueriesIT {
         .isEqualTo(SessionStatus.IN_PROGRESS);
   }
 
+  @Test
+  void closeUnassignedEnquiriesOfAgency_Should_checkTheConsultantAndTheStatusIndependently() {
+    var assignedNew = session(asker(), AGENCY, SessionStatus.NEW, counsellor());
+    var unassignedInitial = session(asker(), AGENCY, SessionStatus.INITIAL, null);
+    entityManager.flush();
+
+    int closed = sessionRepository.closeUnassignedEnquiriesOfAgency(AGENCY, NOW);
+    entityManager.clear();
+
+    // The NEW enquiry of onlyBySession and the INITIAL one; a taken enquiry stays open.
+    assertThat(closed).isEqualTo(2);
+    assertThat(status(assignedNew)).isEqualTo(SessionStatus.NEW);
+    assertThat(status(unassignedInitial)).isEqualTo(SessionStatus.DONE);
+  }
+
+  @Test
+  void counsellorLookups_Should_runTwoStatements_WhateverTheNumberOfCounsellors() {
+    var counsellors = new java.util.ArrayList<Consultant>();
+    consultantRepository.findAll().forEach(counsellors::add);
+    assertThat(counsellors).hasSizeGreaterThanOrEqualTo(3);
+    counsellors.subList(0, 3).forEach(counsellor -> relation(counsellor, AGENCY));
+    relation(counsellors.get(0), OTHER_AGENCY);
+    entityManager.flush();
+    entityManager.clear();
+    var statistics =
+        entityManager
+            .getEntityManagerFactory()
+            .unwrap(org.hibernate.SessionFactory.class)
+            .getStatistics();
+    statistics.setStatisticsEnabled(true);
+    statistics.clear();
+
+    var ids = consultantAgencyRepository.findActiveConsultantIdsByAgencyId(AGENCY);
+    var relations = consultantAgencyRepository.findByConsultantIdInAndDeleteDateIsNull(ids);
+
+    // Id-only projections: no Consultant is loaded, so no select per counsellor.
+    assertThat(statistics.getPrepareStatementCount()).isEqualTo(2L);
+    assertThat(statistics.getEntityLoadCount()).isZero();
+    statistics.setStatisticsEnabled(false);
+    assertThat(ids)
+        .containsExactlyInAnyOrderElementsOf(
+            counsellors.subList(0, 3).stream().map(Consultant::getId).toList());
+    assertThat(relations)
+        .filteredOn(relation -> relation.getAgencyId() == OTHER_AGENCY)
+        .extracting(ConsultantAgency.ConsultantAgencyBase::getConsultantId)
+        .containsExactly(counsellors.get(0).getId());
+  }
+
+  private void relation(Consultant counsellor, long agencyId) {
+    var relation = new ConsultantAgency();
+    relation.setConsultant(counsellor);
+    relation.setAgencyId(agencyId);
+    relation.setTenantId(TENANT);
+    entityManager.persist(relation);
+  }
+
+  private SessionStatus status(Session session) {
+    return sessionRepository.findById(session.getId()).orElseThrow().getStatus();
+  }
+
   private LocalDateTime deleteDate(Session session) {
     return sessionRepository.findById(session.getId()).orElseThrow().getDeleteDate();
   }
 
   private Consultant counsellor() {
     return consultantRepository.findAll().iterator().next();
+  }
+
+  private DraftMessage draft(
+      String userId, Long sourceSessionId, String roomRef, String protectedScopeKey) {
+    var draft =
+        DraftMessage.builder()
+            .userId(userId)
+            .tenantId(TENANT)
+            .scopeKey(protectedScopeKey != null ? protectedScopeKey : UUID.randomUUID().toString())
+            .protectedScopeKey(protectedScopeKey)
+            .text("synthetic draft")
+            .sourceSessionId(sourceSessionId)
+            .roomRef(roomRef)
+            .createDate(NOW)
+            .updateDate(NOW)
+            .build();
+    entityManager.persist(draft);
+    return draft;
   }
 
   private User asker() {

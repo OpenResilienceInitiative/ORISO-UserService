@@ -7,6 +7,7 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -16,15 +17,14 @@ import de.caritas.cob.userservice.api.admin.facade.AskerUserAdminFacade;
 import de.caritas.cob.userservice.api.admin.facade.ConsultantAdminFacade;
 import de.caritas.cob.userservice.api.admin.service.admin.AdminAgencyRelationService;
 import de.caritas.cob.userservice.api.admin.service.admin.AdminScope;
-import de.caritas.cob.userservice.api.admin.service.agency.AgencyGroupChatStopper.Stopped;
+import de.caritas.cob.userservice.api.admin.service.agency.AgencyAdviceSeekerUnlinker.Kept;
+import de.caritas.cob.userservice.api.admin.service.agency.AgencyAdviceSeekerUnlinker.OnlyHere;
+import de.caritas.cob.userservice.api.admin.service.agency.AgencyGroupChatDeleter.Deleted;
 import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
-import de.caritas.cob.userservice.api.model.Consultant;
-import de.caritas.cob.userservice.api.model.ConsultantAgency;
-import de.caritas.cob.userservice.api.model.User;
+import de.caritas.cob.userservice.api.model.ConsultantAgency.ConsultantAgencyBase;
 import de.caritas.cob.userservice.api.port.out.AdminAgencyRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantAgencyRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
-import de.caritas.cob.userservice.api.port.out.UserAgencyRepository;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
 import de.caritas.cob.userservice.api.service.accountinvite.DeletedUnitInviteRevocation;
 import de.caritas.cob.userservice.api.service.accountinvite.DeletedUnitInviteRevocation.Revoked;
@@ -51,13 +51,13 @@ class AgencyDeletionCascadeServiceTest {
   @Mock private DeletedUnitInviteRevocation inviteRevocation;
   @Mock private SessionRepository sessionRepository;
   @Mock private UserRepository userRepository;
-  @Mock private UserAgencyRepository userAgencyRepository;
+  @Mock private AgencyAdviceSeekerUnlinker adviceSeekerUnlinker;
   @Mock private AskerUserAdminFacade askerUserAdminFacade;
   @Mock private ConsultantAgencyRepository consultantAgencyRepository;
   @Mock private ConsultantAdminFacade consultantAdminFacade;
   @Mock private AdminAgencyRepository adminAgencyRepository;
   @Mock private AdminAgencyRelationService adminAgencyRelationService;
-  @Mock private AgencyGroupChatStopper groupChatStopper;
+  @Mock private AgencyGroupChatDeleter groupChatDeleter;
 
   private AgencyDeletionCascadeService service;
 
@@ -69,13 +69,13 @@ class AgencyDeletionCascadeServiceTest {
             inviteRevocation,
             sessionRepository,
             userRepository,
-            userAgencyRepository,
+            adviceSeekerUnlinker,
             askerUserAdminFacade,
             consultantAgencyRepository,
             consultantAdminFacade,
             adminAgencyRepository,
             adminAgencyRelationService,
-            groupChatStopper,
+            groupChatDeleter,
             Clock.fixed(NOW, ZoneOffset.UTC));
   }
 
@@ -83,18 +83,18 @@ class AgencyDeletionCascadeServiceTest {
   void cascade_Should_handleEveryChildOfTheAgency_inOrder() {
     when(inviteRevocation.revokeForAgency(AGENCY)).thenReturn(new Revoked(1, 1));
     when(sessionRepository.closeUnassignedEnquiriesOfAgency(AGENCY, NOW_UTC)).thenReturn(3);
-    when(userRepository.findActiveAdviceSeekersOnlyInAgency(AGENCY))
-        .thenReturn(List.of(asker("only-here")));
-    when(sessionRepository.markSessionsOfKeptAdviceSeekersForDeletion(AGENCY, NOW_UTC))
-        .thenReturn(2);
-    when(consultantAgencyRepository.findByAgencyIdAndDeleteDateIsNull(AGENCY))
-        .thenReturn(List.of(relation("solo", AGENCY), relation("shared", AGENCY)));
-    when(consultantAgencyRepository.findByConsultantIdAndDeleteDateIsNull("solo"))
-        .thenReturn(List.of(relation("solo", AGENCY)));
-    when(consultantAgencyRepository.findByConsultantIdAndDeleteDateIsNull("shared"))
-        .thenReturn(List.of(relation("shared", AGENCY), relation("shared", OTHER_AGENCY)));
+    when(userRepository.findActiveAdviceSeekerIdsLinkedToAgency(AGENCY))
+        .thenReturn(List.of("only-here", "also-elsewhere"));
+    when(adviceSeekerUnlinker.unlink("only-here", AGENCY, NOW_UTC)).thenReturn(new OnlyHere());
+    when(adviceSeekerUnlinker.unlink("also-elsewhere", AGENCY, NOW_UTC)).thenReturn(new Kept(2));
+    when(consultantAgencyRepository.findActiveConsultantIdsByAgencyId(AGENCY))
+        .thenReturn(List.of("solo", "shared"));
+    when(consultantAgencyRepository.findByConsultantIdInAndDeleteDateIsNull(
+            List.of("solo", "shared")))
+        .thenReturn(
+            List.of(base("solo", AGENCY), base("shared", AGENCY), base("shared", OTHER_AGENCY)));
     when(adminAgencyRepository.findAgencyAdminIdsByAgencyId(AGENCY)).thenReturn(List.of("aa1"));
-    when(groupChatStopper.stopActiveChatsOf(AGENCY)).thenReturn(new Stopped(1, List.of()));
+    when(groupChatDeleter.deleteChatsOf(AGENCY)).thenReturn(new Deleted(1, List.of()));
 
     var result = service.cascade(AGENCY);
 
@@ -116,54 +116,118 @@ class AgencyDeletionCascadeServiceTest {
             adminScope,
             inviteRevocation,
             sessionRepository,
+            adviceSeekerUnlinker,
             askerUserAdminFacade,
-            userAgencyRepository,
             consultantAdminFacade,
             adminAgencyRelationService,
-            groupChatStopper);
+            groupChatDeleter);
     order.verify(adminScope).assertMay(any());
     order.verify(inviteRevocation).revokeForAgency(AGENCY);
     order.verify(sessionRepository).closeUnassignedEnquiriesOfAgency(AGENCY, NOW_UTC);
+    order.verify(adviceSeekerUnlinker).unlink("only-here", AGENCY, NOW_UTC);
     order.verify(askerUserAdminFacade).markAskerForDeletion("only-here");
-    order.verify(sessionRepository).markSessionsOfKeptAdviceSeekersForDeletion(AGENCY, NOW_UTC);
-    order.verify(userAgencyRepository).deleteMembershipsOfKeptAdviceSeekers(AGENCY);
+    order.verify(adviceSeekerUnlinker).unlink("also-elsewhere", AGENCY, NOW_UTC);
     order.verify(consultantAdminFacade).markConsultantForDeletion("solo", true);
     order.verify(consultantAdminFacade).markConsultantAgencyForDeletion("shared", AGENCY);
     order.verify(adminAgencyRelationService).deleteAdminAgencyRelation("aa1", AGENCY);
-    order.verify(groupChatStopper).stopActiveChatsOf(AGENCY);
+    order.verify(groupChatDeleter).deleteChatsOf(AGENCY);
 
-    // A counsellor who also works elsewhere keeps the account (AC 2).
+    // Advice seekers and counsellors who also belong elsewhere keep their account (AC 2).
+    verify(askerUserAdminFacade, never()).markAskerForDeletion("also-elsewhere");
     verify(consultantAdminFacade, never()).markConsultantForDeletion(eq("shared"), any());
+  }
+
+  @Test
+  void cascade_Should_findAnAdviceSeekerAgain_When_markingTheirAccountFailed() {
+    when(inviteRevocation.revokeForAgency(AGENCY)).thenReturn(new Revoked(0, 0));
+    // The other Beratungsstelle, deleted at the same time, already took its link: the advice
+    // seeker belongs only here, and this link is not taken while their account is not marked.
+    when(userRepository.findActiveAdviceSeekerIdsLinkedToAgency(AGENCY))
+        .thenReturn(List.of("shared"));
+    when(adviceSeekerUnlinker.unlink("shared", AGENCY, NOW_UTC)).thenReturn(new OnlyHere());
+    doThrow(new IllegalStateException("Keycloak down"))
+        .doNothing()
+        .when(askerUserAdminFacade)
+        .markAskerForDeletion("shared");
+    when(groupChatDeleter.deleteChatsOf(AGENCY)).thenReturn(new Deleted(0, List.of()));
+
+    var first = service.cascade(AGENCY);
+
+    assertThat(first.getComplete()).isFalse();
+    assertThat(first.getFailures())
+        .extracting("kind", "id")
+        .containsExactly(tuple(KindEnum.ADVICE_SEEKER, "shared"));
+
+    var retry = service.cascade(AGENCY);
+
+    assertThat(retry.getComplete()).isTrue();
+    assertThat(retry.getAdviceSeekers()).isEqualTo(1L);
+    verify(askerUserAdminFacade, times(2)).markAskerForDeletion("shared");
+  }
+
+  @Test
+  void cascade_Should_reportTheAdviceSeekers_When_theyCannotBeListed() {
+    when(inviteRevocation.revokeForAgency(AGENCY)).thenReturn(new Revoked(0, 0));
+    when(userRepository.findActiveAdviceSeekerIdsLinkedToAgency(AGENCY))
+        .thenThrow(new IllegalStateException("db"));
+    when(groupChatDeleter.deleteChatsOf(AGENCY)).thenReturn(new Deleted(0, List.of()));
+
+    var result = service.cascade(AGENCY);
+
+    assertThat(result.getComplete()).isFalse();
+    assertThat(result.getFailures())
+        .extracting("kind", "id", "reason")
+        .containsExactly(tuple(KindEnum.ADVICE_SEEKER, null, "IllegalStateException"));
+    verifyNoInteractions(adviceSeekerUnlinker);
   }
 
   @Test
   void cascade_Should_carryOnAndReportEachFailure() {
     when(inviteRevocation.revokeForAgency(AGENCY)).thenReturn(new Revoked(0, 0));
-    when(userRepository.findActiveAdviceSeekersOnlyInAgency(AGENCY))
-        .thenReturn(List.of(asker("u1"), asker("u2")));
+    when(userRepository.findActiveAdviceSeekerIdsLinkedToAgency(AGENCY))
+        .thenReturn(List.of("u1", "u2", "u3"));
+    when(adviceSeekerUnlinker.unlink(any(), eq(AGENCY), eq(NOW_UTC))).thenReturn(new OnlyHere());
+    when(adviceSeekerUnlinker.unlink("u3", AGENCY, NOW_UTC))
+        .thenThrow(new IllegalStateException("lock timeout"));
     doThrow(new IllegalStateException("Keycloak down"))
         .when(askerUserAdminFacade)
         .markAskerForDeletion("u1");
-    when(consultantAgencyRepository.findByAgencyIdAndDeleteDateIsNull(AGENCY))
-        .thenReturn(List.of(relation("solo", AGENCY)));
-    when(consultantAgencyRepository.findByConsultantIdAndDeleteDateIsNull("solo"))
-        .thenReturn(List.of(relation("solo", AGENCY)));
+    when(consultantAgencyRepository.findActiveConsultantIdsByAgencyId(AGENCY))
+        .thenReturn(List.of("solo"));
+    when(consultantAgencyRepository.findByConsultantIdInAndDeleteDateIsNull(List.of("solo")))
+        .thenReturn(List.of(base("solo", AGENCY)));
     doThrow(new IllegalStateException("Matrix down"))
         .when(consultantAdminFacade)
         .markConsultantForDeletion("solo", true);
-    when(groupChatStopper.stopActiveChatsOf(AGENCY)).thenReturn(new Stopped(0, List.of(42L)));
+    when(groupChatDeleter.deleteChatsOf(AGENCY)).thenReturn(new Deleted(0, List.of(42L)));
 
     var result = service.cascade(AGENCY);
 
     assertThat(result.getComplete()).isFalse();
     assertThat(result.getAdviceSeekers()).isEqualTo(1L);
+    assertThat(result.getKeptAdviceSeekerSessions()).isZero();
     assertThat(result.getFailures())
         .extracting("kind", "id", "reason")
         .containsExactly(
             tuple(KindEnum.ADVICE_SEEKER, "u1", "IllegalStateException"),
+            tuple(KindEnum.ADVICE_SEEKER, "u3", "IllegalStateException"),
             tuple(KindEnum.CONSULTANT, "solo", "IllegalStateException"),
-            tuple(KindEnum.GROUP_CHAT, "42", "NotStopped"));
+            tuple(KindEnum.GROUP_CHAT, "42", "NotDeleted"));
     verify(askerUserAdminFacade).markAskerForDeletion("u2");
+  }
+
+  @Test
+  void preview_Should_lookUpTheCounsellorsRelationsInOneQuery() {
+    when(consultantAgencyRepository.findActiveConsultantIdsByAgencyId(AGENCY))
+        .thenReturn(List.of("solo", "shared"));
+    when(consultantAgencyRepository.findByConsultantIdInAndDeleteDateIsNull(
+            List.of("solo", "shared")))
+        .thenReturn(List.of(base("solo", AGENCY), base("shared", OTHER_AGENCY)));
+
+    service.preview(AGENCY);
+
+    verify(consultantAgencyRepository, never()).findByConsultantIdAndDeleteDateIsNull(any());
+    verify(consultantAgencyRepository, never()).findByAgencyIdAndDeleteDateIsNull(any());
   }
 
   @Test
@@ -178,7 +242,7 @@ class AgencyDeletionCascadeServiceTest {
         sessionRepository,
         askerUserAdminFacade,
         consultantAdminFacade,
-        groupChatStopper);
+        groupChatDeleter);
   }
 
   @Test
@@ -186,14 +250,14 @@ class AgencyDeletionCascadeServiceTest {
     when(userRepository.countActiveAdviceSeekersOnlyInAgency(AGENCY)).thenReturn(4L);
     when(sessionRepository.countSessionsOfKeptAdviceSeekers(AGENCY)).thenReturn(2L);
     when(sessionRepository.countUnassignedEnquiriesOfAgency(AGENCY)).thenReturn(3L);
-    when(consultantAgencyRepository.findByAgencyIdAndDeleteDateIsNull(AGENCY))
-        .thenReturn(List.of(relation("solo", AGENCY), relation("shared", AGENCY)));
-    when(consultantAgencyRepository.findByConsultantIdAndDeleteDateIsNull("solo"))
-        .thenReturn(List.of(relation("solo", AGENCY)));
-    when(consultantAgencyRepository.findByConsultantIdAndDeleteDateIsNull("shared"))
-        .thenReturn(List.of(relation("shared", AGENCY), relation("shared", OTHER_AGENCY)));
+    when(consultantAgencyRepository.findActiveConsultantIdsByAgencyId(AGENCY))
+        .thenReturn(List.of("solo", "shared"));
+    when(consultantAgencyRepository.findByConsultantIdInAndDeleteDateIsNull(
+            List.of("solo", "shared")))
+        .thenReturn(
+            List.of(base("solo", AGENCY), base("shared", AGENCY), base("shared", OTHER_AGENCY)));
     when(adminAgencyRepository.findAgencyAdminIdsByAgencyId(AGENCY)).thenReturn(List.of("a", "b"));
-    when(groupChatStopper.countActiveChatsOf(AGENCY)).thenReturn(1L);
+    when(groupChatDeleter.countChatsOf(AGENCY)).thenReturn(1L);
 
     var preview = service.preview(AGENCY);
 
@@ -208,18 +272,27 @@ class AgencyDeletionCascadeServiceTest {
     verifyNoInteractions(askerUserAdminFacade, consultantAdminFacade, inviteRevocation);
   }
 
-  private static User asker(String id) {
-    var user = new User();
-    user.setUserId(id);
-    return user;
-  }
+  private static ConsultantAgencyBase base(String consultantId, long agencyId) {
+    return new ConsultantAgencyBase() {
+      @Override
+      public Long getId() {
+        return null;
+      }
 
-  private static ConsultantAgency relation(String consultantId, long agencyId) {
-    var consultant = new Consultant();
-    consultant.setId(consultantId);
-    var relation = new ConsultantAgency();
-    relation.setConsultant(consultant);
-    relation.setAgencyId(agencyId);
-    return relation;
+      @Override
+      public Long getAgencyId() {
+        return agencyId;
+      }
+
+      @Override
+      public String getConsultantId() {
+        return consultantId;
+      }
+
+      @Override
+      public LocalDateTime getDeleteDate() {
+        return null;
+      }
+    };
   }
 }
