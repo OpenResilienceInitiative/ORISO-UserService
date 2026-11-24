@@ -39,10 +39,10 @@ jobs:
       uses: actions/checkout@v6
       with:
         repository: OpenResilienceInitiative/ORISO-AgencyService
-        # AgencyService #389 head (featureTeamDiscussionEnabled / featureTeamDiscussionAfterAcceptEnabled,
-        # ORISO-Frontend#2491) includes the previous provider. Merge AgencyService #389 before this PR so
-        # the push-to-dev run against AgencyService dev stays green.
-        ref: ${{ github.event_name != 'push' && 'c50ca29c8c63f600e6af350db5ff693a7fed3503' || 'dev' }}
+        # AgencyService #391 head (settings.caseSharing, ORISO-Frontend#2494) includes #389 and the
+        # previous providers. Merge AgencyService #391 before this PR so the push-to-dev run against
+        # AgencyService dev stays green.
+        ref: ${{ github.event_name != 'push' && 'dafed89251de9dd7f4cb4c91f4f211a700297b7b' || 'dev' }}
         path: .providers/agency
         persist-credentials: false
 
