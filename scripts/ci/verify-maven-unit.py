@@ -69,10 +69,9 @@ def main():
     args = parser.parse_args()
     start = time.monotonic()
     revision = git("rev-parse", "HEAD")
-    dirty = bool(git("status", "--porcelain"))
-    target = ROOT / "target"
-    target.mkdir(exist_ok=True)
-    with (target / ".verification.lock").open("a") as lock:
+    dirty = bool(git("status", "--porcelain", "--untracked-files=normal"))
+    lock_path = ROOT / git("rev-parse", "--git-path", "oriso-maven-verification.lock")
+    with lock_path.open("a") as lock:
         try:
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:

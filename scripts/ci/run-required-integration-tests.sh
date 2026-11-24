@@ -142,7 +142,7 @@ fi
 # Both modes clean target/. Hold the lock outside it until report validation finishes.
 if [[ -n "${revision}" ]]; then
   failed_step=checkout-busy
-  exec 9>"$(git rev-parse --git-path oriso-integration-verification.lock)"
+  exec 9>"$(git rev-parse --git-path oriso-maven-verification.lock)"
   if ! python3 -c 'import fcntl; fcntl.flock(9, fcntl.LOCK_EX | fcntl.LOCK_NB)' 2>/dev/null; then
     echo "Integration verification could not lock this checkout. Use a separate worktree or wait." >&2
     exit 1

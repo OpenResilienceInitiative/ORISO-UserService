@@ -116,7 +116,8 @@ scripts/ci/run-required-integration-tests.sh --test AgencyDeletionCascadeAuthori
 
 The command cleans this checkout’s Maven output and ends with a JSON result
 containing the Git revision, whether it has local changes, the test selection
-and the failure phase. Use separate worktrees for concurrent Maven runs.
+and the failure phase. The unit and integration starters share a per-worktree lock.
+Use separate worktrees for concurrent Maven runs.
 GitHub runs the full integration assignment through the same script.
 
 ## Frontend Pairing

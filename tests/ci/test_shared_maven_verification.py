@@ -1,3 +1,4 @@
+import fcntl
 import json
 import os
 from pathlib import Path
@@ -108,6 +109,25 @@ if mode in ("green", "skipped"):
         result, report = self.run_check("empty")
         self.assertEqual(1, result.returncode)
         self.assertEqual("unit-test-inventory", report["failedStep"])
+
+    def test_unit_and_integration_runners_refuse_the_same_busy_checkout(self):
+        lock_path = self.root / ".git/oriso-maven-verification.lock"
+        with lock_path.open("a") as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            unit, unit_report = self.run_check("failed", "--test", "SampleTest")
+            integration = subprocess.run(
+                [ROOT / "scripts/ci/run-required-integration-tests.sh"],
+                cwd=self.root,
+                env={**os.environ, "ORISO_MAVEN_WRAPPER": str(self.root / "mvnw")},
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+        self.assertEqual(1, unit.returncode)
+        self.assertEqual("checkout-busy", unit_report["failedStep"])
+        integration_report = json.loads(integration.stdout.splitlines()[-1])
+        self.assertEqual(1, integration.returncode)
+        self.assertEqual("checkout-busy", integration_report["failedStep"])
 
     def test_all_skipped_cases_fail_the_current_run(self):
         result, report = self.run_check("skipped")
