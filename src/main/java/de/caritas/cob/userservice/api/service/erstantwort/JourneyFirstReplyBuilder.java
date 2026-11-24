@@ -9,12 +9,14 @@ import de.caritas.cob.userservice.api.service.journey.PublicJourneyService;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.jsoup.Jsoup;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
@@ -28,13 +30,19 @@ import org.springframework.stereotype.Component;
  *       journey that keeps it says the same words as version 1.
  *   <li>A panel step sends one panel per aspect; a message step sends its text.
  *   <li>Only steps sent <em>with the greeting</em> belong here; later and manual steps do not.
- *   <li><b>Emergency numbers are always sent.</b> When no section is marked as safety, the platform
- *       emergency panel is appended (decision 42 amends decision 6 for the first reply).
+ *   <li><b>The platform emergency numbers are always sent.</b> Unless a safety section already
+ *       carries the platform's emergency text, the platform emergency panel is added before the
+ *       first optional action (decision 42 amends decision 6 for the first reply; order as in
+ *       ADR-018). An own safety text never replaces it: it could say anything.
+ *   <li>The second-factor invitation („Zugang, zusätzlich geschützt") is not part of the first
+ *       reply (Frank, 2026-10-14), exactly as version 1 silences it in the Frontend.
+ *   <li>Link targets travel as {@code links} ({@code [{label, url}]}) beside the plain text, so the
+ *       Frontend can draw them as links.
  * </ul>
  *
- * <p>No journey for the topic, or the switch off, means no answer here: the caller sends version 1
- * unchanged. The switch exists so this can be enabled per environment once the Frontend renders
- * version 2.
+ * <p>No journey for the topic, an on-board phase that sends nothing of its own, an error while
+ * building, or the switch off, means no answer here: the caller sends version 1 unchanged. The
+ * switch exists so this can be enabled per environment once the Frontend renders version 2.
  */
 @Component
 @RequiredArgsConstructor
@@ -46,6 +54,13 @@ public class JourneyFirstReplyBuilder {
   static final String GREETING_CORE = "agencyGreeting";
   static final String WITH_GREETING = "withGreeting";
   static final String EMERGENCY_BAUSTEIN = "emergencyNumbers";
+
+  /** Silenced in version 1 by the Frontend (Frank, 2026-10-14); never sent in version 2. */
+  static final Set<String> SILENCED_BAUSTEINE = Set.of("accountProtection");
+
+  /** Link targets the Frontend may open; anything else stays text. */
+  private static final List<String> LINK_SCHEMES =
+      List.of("https://", "http://", "mailto:", "tel:");
 
   /** Bausteine that carry emergency contacts: drawn as safety panels. */
   private static final Set<String> SAFETY_BAUSTEINE =
@@ -75,11 +90,21 @@ public class JourneyFirstReplyBuilder {
       log.warn("Journey for topic {} not readable, sending the version-1 first reply", topicId);
       return Optional.empty();
     }
-    return journey.map(found -> build(found.journey(), context));
+    try {
+      return journey.flatMap(found -> build(found.journey(), context));
+    } catch (RuntimeException broken) {
+      // A journey we cannot turn into a first reply must not cost the person theirs either.
+      log.warn("Journey first reply for topic {} failed, sending version 1", topicId, broken);
+      return Optional.empty();
+    }
   }
 
-  /** The version-2 body for the given (effective, public) journey. */
-  public String build(Map<String, Object> journey, ErstantwortContext context) {
+  /**
+   * The version-2 body for the given (effective, public) journey, or empty when its on-board phase
+   * sends nothing of its own (missing, empty, or only steps of a later slice): then version 1 is
+   * the better first reply, not one that holds only the emergency numbers.
+   */
+  public Optional<String> build(Map<String, Object> journey, ErstantwortContext context) {
     var bausteine = payloadBuilder.buildBausteine(context);
     var sections = new ArrayList<Map<String, Object>>();
     for (var step : onBoardSteps(journey)) {
@@ -88,20 +113,44 @@ public class JourneyFirstReplyBuilder {
       }
       sections.addAll(sectionsOf(step, bausteine, context));
     }
-    if (sections.stream().noneMatch(section -> Boolean.TRUE.equals(section.get("safety")))) {
-      emergencyPanel(bausteine).ifPresent(sections::add);
+    if (sections.isEmpty()) {
+      return Optional.empty();
     }
+    emergencyPanel(bausteine)
+        .filter(platform -> !carriesPlatformEmergencyText(sections, platform))
+        .ifPresent(platform -> sections.add(beforeFirstAction(sections), platform));
     var payload = new LinkedHashMap<String, Object>();
     payload.put("type", FIRST_RESPONSE_TYPE);
     payload.put("version", MODULE_PAYLOAD_VERSION);
     payload.put("conversationType", CONVERSATION_TYPE);
     payload.put("sections", sections);
     try {
-      return SYSTEM_NOTIFICATION_PREFIX + OBJECT_MAPPER.writeValueAsString(payload);
+      return Optional.of(SYSTEM_NOTIFICATION_PREFIX + OBJECT_MAPPER.writeValueAsString(payload));
     } catch (JsonProcessingException exception) {
-      log.warn("Could not serialize the journey first reply", exception);
-      return null;
+      log.warn("Could not serialize the journey first reply, sending version 1", exception);
+      return Optional.empty();
     }
+  }
+
+  /** A safety section that already says the platform's emergency text. */
+  private static boolean carriesPlatformEmergencyText(
+      List<Map<String, Object>> sections, Map<String, Object> platform) {
+    var platformText = String.valueOf(platform.get("body"));
+    return sections.stream()
+        .filter(section -> Boolean.TRUE.equals(section.get("safety")))
+        .anyMatch(section -> String.valueOf(section.get("body")).contains(platformText));
+  }
+
+  /** Safety comes before every optional action (ADR-018): the e-mail, the closing. */
+  private static int beforeFirstAction(List<Map<String, Object>> sections) {
+    for (var index = 0; index < sections.size(); index++) {
+      var section = sections.get(index);
+      if ("fixed".equals(section.get("kind"))
+          || String.valueOf(section.get("id")).endsWith(":closing")) {
+        return index;
+      }
+    }
+    return sections.size();
   }
 
   @SuppressWarnings("unchecked")
@@ -130,38 +179,50 @@ public class JourneyFirstReplyBuilder {
       return greetingSections(id, bausteine);
     }
     if ("core".equals(kind) && "email".equals(step.get("core"))) {
-      return List.of(fixed(id, "email", text(step.get("title"), context)));
+      return List.of(fixed(id, "email", plain(step.get("title"), context), null));
     }
     if ("addon".equals(kind) && "accountCompletion".equals(step.get("addon"))) {
-      return List.of(fixed(id, "accountCompletion", text(step.get("title"), context)));
+      return List.of(fixed(id, "accountCompletion", plain(step.get("title"), context), null));
     }
     if ("panel".equals(kind)) {
       return panelSections(step, context);
     }
     if ("message".equals(kind)) {
-      var body = text(step.get("body"), context);
-      return body == null ? List.of() : List.of(message(id, body));
+      var html = html(step.get("body"), context);
+      return html == null
+          ? List.of()
+          : List.of(
+              withLinks(
+                  message(id, ErstantwortTenantTextResolver.toPlainText(html)), linksOf(html)));
     }
     // Questions and ratings follow in a later slice; other core steps send nothing here.
     return List.of();
   }
 
-  /** Today's Bausteine as sections: with a headline a panel, without one a message. */
+  /**
+   * Today's Bausteine as sections: with a headline a panel, without one a message; the e-mail
+   * Baustein becomes the fixed e-mail module and keeps its explanation.
+   */
   private static List<Map<String, Object>> greetingSections(
       String stepId, List<Map<String, Object>> bausteine) {
     var sections = new ArrayList<Map<String, Object>>();
     for (var baustein : bausteine) {
       var bausteinId = String.valueOf(baustein.get("id"));
+      if (SILENCED_BAUSTEINE.contains(bausteinId)) {
+        continue;
+      }
       var id = stepId + ":" + bausteinId;
       var headline = baustein.get("headline") instanceof String value ? value : null;
-      var body = withLinks(String.valueOf(baustein.get("body")), baustein.get("links"));
+      var body = String.valueOf(baustein.get("body"));
+      Map<String, Object> section;
       if ("emailNotification".equals(bausteinId)) {
-        sections.add(fixed(id, "email", headline));
+        section = fixed(id, "email", headline, body);
       } else if (headline == null) {
-        sections.add(message(id, body));
+        section = message(id, body);
       } else {
-        sections.add(panel(id, headline, body, "collapsed", SAFETY_BAUSTEINE.contains(bausteinId)));
+        section = panel(id, headline, body, "collapsed", SAFETY_BAUSTEINE.contains(bausteinId));
       }
+      sections.add(withLinks(section, bausteinLinks(baustein.get("links"))));
     }
     return sections;
   }
@@ -179,17 +240,19 @@ public class JourneyFirstReplyBuilder {
         continue;
       }
       var aspect = (Map<String, Object>) raw;
-      var title = text(aspect.get("title"), context);
-      var body = text(aspect.get("body"), context);
+      var title = plain(aspect.get("title"), context);
+      var html = html(aspect.get("body"), context);
       // The Frontend drops a panel without title or text; so does the payload.
-      if (title != null && body != null) {
+      if (title != null && html != null) {
         sections.add(
-            panel(
-                String.valueOf(aspect.get("id")),
-                title,
-                body,
-                display,
-                Boolean.TRUE.equals(aspect.get("safety"))));
+            withLinks(
+                panel(
+                    String.valueOf(aspect.get("id")),
+                    title,
+                    ErstantwortTenantTextResolver.toPlainText(html),
+                    display,
+                    Boolean.TRUE.equals(aspect.get("safety"))),
+                linksOf(html)));
       }
     }
     return sections;
@@ -210,8 +273,14 @@ public class JourneyFirstReplyBuilder {
   }
 
   /** A journey text ({@code {de: "<p>…</p>", en: …}}) in the reader's language, as plain text. */
+  private static String plain(Object langMap, ErstantwortContext context) {
+    var html = html(langMap, context);
+    return html == null ? null : ErstantwortTenantTextResolver.toPlainText(html);
+  }
+
+  /** A journey text in the reader's language, as stored (HTML). */
   @SuppressWarnings("unchecked")
-  private static String text(Object langMap, ErstantwortContext context) {
+  private static String html(Object langMap, ErstantwortContext context) {
     if (!(langMap instanceof Map<?, ?> map)) {
       return null;
     }
@@ -223,21 +292,50 @@ public class JourneyFirstReplyBuilder {
                 texts.put(key, html);
               }
             });
-    return ErstantwortTenantTextResolver.pick(texts, context.getLocale(), context.isInformal());
+    return ErstantwortTenantTextResolver.pickHtml(texts, context.getLocale(), context.isInformal());
   }
 
-  /** Version 2 has no link field: the privacy and imprint addresses travel in the text. */
-  private static String withLinks(String body, Object links) {
-    if (!(links instanceof List<?> list) || list.isEmpty()) {
-      return body;
+  /** The editor's links ({@code <a href>}): plain text would otherwise lose where they lead. */
+  private static List<Map<String, String>> linksOf(String html) {
+    var links = new ArrayList<Map<String, String>>();
+    for (var anchor : Jsoup.parseBodyFragment(html).select("a[href]")) {
+      var url = anchor.attr("href").trim();
+      var label = anchor.text().isBlank() ? url : anchor.text().strip();
+      link(url, label).ifPresent(links::add);
     }
-    var text = new StringBuilder(body);
-    for (var entry : list) {
-      if (entry instanceof Map<?, ?> link) {
-        text.append('\n').append(link.get("label")).append(": ").append(link.get("url"));
+    return links;
+  }
+
+  /** The privacy and imprint links of a version-1 Baustein. */
+  private static List<Map<String, String>> bausteinLinks(Object raw) {
+    var links = new ArrayList<Map<String, String>>();
+    if (raw instanceof List<?> list) {
+      for (var entry : list) {
+        if (entry instanceof Map<?, ?> link) {
+          link(String.valueOf(link.get("url")), String.valueOf(link.get("label")))
+              .ifPresent(links::add);
+        }
       }
     }
-    return text.toString();
+    return links;
+  }
+
+  private static Optional<Map<String, String>> link(String url, String label) {
+    if (url == null || LINK_SCHEMES.stream().noneMatch(url.toLowerCase(Locale.ROOT)::startsWith)) {
+      return Optional.empty();
+    }
+    var link = new LinkedHashMap<String, String>();
+    link.put("label", label);
+    link.put("url", url);
+    return Optional.of(link);
+  }
+
+  private static Map<String, Object> withLinks(
+      Map<String, Object> section, List<Map<String, String>> links) {
+    if (!links.isEmpty()) {
+      section.put("links", links);
+    }
+    return section;
   }
 
   private static Map<String, Object> message(String id, String body) {
@@ -262,13 +360,16 @@ public class JourneyFirstReplyBuilder {
     return section;
   }
 
-  private static Map<String, Object> fixed(String id, String module, String title) {
+  private static Map<String, Object> fixed(String id, String module, String title, String body) {
     var section = new LinkedHashMap<String, Object>();
     section.put("id", id);
     section.put("kind", "fixed");
     section.put("module", module);
     if (title != null) {
       section.put("title", title);
+    }
+    if (body != null) {
+      section.put("body", body);
     }
     return section;
   }

@@ -66,6 +66,10 @@ class JourneyFirstReplyBuilderTest {
     return Map.of("id", id, "kind", "panel", "display", "open", "aspects", List.of(aspect));
   }
 
+  private String reply(Map<String, Object> journey, ErstantwortContext context) {
+    return builder.build(journey, context).orElseThrow();
+  }
+
   private static JsonNode sections(String body) throws Exception {
     assertThat(body).startsWith(ErstantwortPayloadBuilder.SYSTEM_NOTIFICATION_PREFIX);
     var payload =
@@ -85,7 +89,7 @@ class JourneyFirstReplyBuilderTest {
 
   @Test
   void theGreetingStepSendsTodaysBausteineAsSections() throws Exception {
-    var sections = sections(builder.build(journey(greeting()), context()));
+    var sections = sections(reply(journey(greeting()), context()));
 
     assertThat(ids(sections))
         .startsWith("j:agencyGreeting:greeting")
@@ -99,21 +103,73 @@ class JourneyFirstReplyBuilderTest {
     assertThat(ids(sections)).doesNotContain("platform:emergencyNumbers");
   }
 
+  /** Frank, 2026-10-14: the second-factor invitation is not part of the first reply. */
+  @Test
+  void theAccountProtectionInvitationIsNotSent() throws Exception {
+    var body = reply(journey(greeting()), context());
+
+    assertThat(ids(sections(body))).doesNotContain("j:agencyGreeting:accountProtection");
+    assertThat(body).doesNotContain("zusätzlich geschützt").doesNotContain("ENABLE_2FA");
+  }
+
+  @Test
+  void privacyAndImprintStayLinks() throws Exception {
+    var withLinks =
+        ErstantwortContext.builder()
+            .modality(ErstantwortModality.AGENCY_COUNSELLING)
+            .locale("de")
+            .dataPrivacyUrl("https://example.org/datenschutz")
+            .imprintUrl("https://example.org/impressum")
+            .build();
+
+    var sections = sections(reply(journey(greeting()), withLinks));
+
+    var privacy = sections.get(ids(sections).indexOf("j:agencyGreeting:dataProtection"));
+    assertThat(privacy.path("links").get(0).path("url").asText())
+        .isEqualTo("https://example.org/datenschutz");
+    assertThat(privacy.path("links").get(1).path("label").asText()).isEqualTo("Impressum");
+    assertThat(privacy.path("body").asText()).doesNotContain("https://");
+  }
+
+  @Test
+  void anEditorsLinkKeepsWhereItLeads() throws Exception {
+    var step =
+        Map.<String, Object>of(
+            "id",
+            "m",
+            "kind",
+            "message",
+            "body",
+            Map.of(
+                "de",
+                "<p>Mehr unter <a href=\"https://example.org/hilfe\">Hilfe</a>"
+                    + " und <a href=\"javascript:alert(1)\">nicht das</a></p>"));
+
+    var message = sections(reply(journey(step), context())).get(0);
+
+    assertThat(message.path("body").asText()).isEqualTo("Mehr unter Hilfe und nicht das");
+    assertThat(message.path("links")).hasSize(1);
+    assertThat(message.path("links").get(0).path("url").asText())
+        .isEqualTo("https://example.org/hilfe");
+    assertThat(message.path("links").get(0).path("label").asText()).isEqualTo("Hilfe");
+  }
+
   @Test
   void theEMailBausteinBecomesTheFixedEMailModule() throws Exception {
-    var sections = sections(builder.build(journey(greeting()), context()));
+    var sections = sections(reply(journey(greeting()), context()));
 
     var email = sections.get(ids(sections).indexOf("j:agencyGreeting:emailNotification"));
     assertThat(email.path("kind").asText()).isEqualTo("fixed");
     assertThat(email.path("module").asText()).isEqualTo("email");
+    // The explanation of version 1 stays with the module.
+    assertThat(email.path("body").asText()).contains("Der Inhalt der Beratung steht nie");
   }
 
   /** Frank's demo: new panel in, old greeting out. */
   @Test
   void aPanelThatReplacesTheGreetingIsSentAsWritten() throws Exception {
     var sections =
-        sections(
-            builder.build(journey(panel("u25:info", "Neu bei U25", "Hallo!", false)), context()));
+        sections(reply(journey(panel("u25:info", "Neu bei U25", "Hallo!", false)), context()));
 
     var first = sections.get(0);
     assertThat(first.path("id").asText()).isEqualTo("u25:info:aspect");
@@ -131,13 +187,12 @@ class JourneyFirstReplyBuilderTest {
   void emergencyNumbersAreAlwaysInTheFirstReply() throws Exception {
     var withoutSafety =
         List.of(
-            journey(),
             journey(panel("u25:info", "Neu bei U25", "Hallo!", false)),
             journey(Map.of("id", "m", "kind", "message", "body", Map.of("de", "Nur Text"))),
             journey(greeting()));
 
     for (var journey : withoutSafety) {
-      var body = builder.build(journey, context());
+      var body = reply(journey, context());
       assertThat(body).contains(EMERGENCY_NUMBER);
       var sections = sections(body);
       assertThat(sections)
@@ -149,16 +204,38 @@ class JourneyFirstReplyBuilderTest {
     }
   }
 
+  /** An own safety text can say anything ("Ruf uns an"): the platform numbers still go out. */
   @Test
-  void anOwnSafetyPanelReplacesThePlatformOne() throws Exception {
+  void anOwnSafetyPanelDoesNotReplaceThePlatformNumbers() throws Exception {
+    var sections =
+        sections(reply(journey(panel("u25:sos", "Krise", "Ruf uns an", true)), context()));
+
+    assertThat(ids(sections)).containsExactly("u25:sos:aspect", "platform:emergencyNumbers");
+    assertThat(sections.get(1).path("body").asText()).contains(EMERGENCY_NUMBER);
+  }
+
+  /** Only "send no personal data" kept, emergency numbers removed: the numbers come back. */
+  @Test
+  void anotherSafetySectionDoesNotCountAsTheEmergencyNumbers() throws Exception {
     var sections =
         sections(
-            builder.build(
-                journey(panel("u25:sos", "Krise", "Nummer gegen Kummer 116 111", true)),
+            reply(
+                journey(panel("u25:data", "Keine Daten", "Bitte keine Adresse.", true)),
                 context()));
 
-    assertThat(ids(sections)).containsExactly("u25:sos:aspect");
-    assertThat(sections.get(0).path("safety").asBoolean()).isTrue();
+    assertThat(ids(sections)).contains("platform:emergencyNumbers");
+  }
+
+  /** ADR-018: the emergency numbers come before the optional actions (e-mail, closing). */
+  @Test
+  void thePlatformNumbersComeBeforeTheEMail() throws Exception {
+    var email = Map.<String, Object>of("id", "mail", "kind", "core", "core", "email");
+    var info = panel("u25:info", "Neu bei U25", "Hallo!", false);
+
+    var sections = sections(reply(journey(info, email), context()));
+
+    assertThat(ids(sections))
+        .containsExactly("u25:info:aspect", "platform:emergencyNumbers", "mail");
   }
 
   @Test
@@ -194,7 +271,7 @@ class JourneyFirstReplyBuilderTest {
             "body",
             Map.of("de", "<p>Jetzt</p>"));
 
-    var sections = sections(builder.build(journey(later, manual, now), context()));
+    var sections = sections(reply(journey(later, manual, now), context()));
 
     assertThat(ids(sections)).containsExactly("now", "platform:emergencyNumbers");
     assertThat(sections.get(0).path("body").asText()).isEqualTo("Jetzt");
@@ -214,21 +291,37 @@ class JourneyFirstReplyBuilderTest {
             .build();
     var journey = journey(panel("p", "Titel", "Text", false));
 
-    assertThat(sections(builder.build(journey, english)).get(0).path("title").asText())
+    assertThat(sections(reply(journey, english)).get(0).path("title").asText())
         .isEqualTo("Titel (en)");
     // No Turkish text: the reader gets English before German, as for the Träger's own texts.
-    assertThat(sections(builder.build(journey, turkish)).get(0).path("title").asText())
+    assertThat(sections(reply(journey, turkish)).get(0).path("title").asText())
         .isEqualTo("Titel (en)");
   }
 
+  /** Nothing of the journey's own to say: version 1, never a reply of emergency numbers only. */
   @Test
-  void questionsAndOtherCoreStepsAreNotPartOfThisSlice() throws Exception {
+  void anOnBoardPhaseThatSendsNothingMeansVersionOne() {
     var enquiry = Map.<String, Object>of("id", "enquiry", "kind", "core", "core", "enquiry");
     var question = Map.<String, Object>of("id", "q", "kind", "question", "questions", List.of());
 
-    var sections = sections(builder.build(journey(enquiry, question), context()));
+    assertThat(builder.build(journey(enquiry, question), context())).isEmpty();
+    assertThat(builder.build(journey(), context())).isEmpty();
+    assertThat(builder.build(Map.of("phases", Map.of()), context())).isEmpty();
+    assertThat(builder.build(Map.of(), context())).isEmpty();
+  }
 
-    assertThat(ids(sections)).containsExactly("platform:emergencyNumbers");
+  @Test
+  void anErrorWhileBuildingMeansVersionOne() {
+    var broken = new java.util.HashMap<String, Object>();
+    broken.put("phases", Map.of("flight", List.of(greeting())));
+    var failingPayload = mock(ErstantwortPayloadBuilder.class);
+    when(failingPayload.buildBausteine(any())).thenThrow(new IllegalStateException("boom"));
+    var failing = new JourneyFirstReplyBuilder(journeys, failingPayload);
+    ReflectionTestUtils.setField(failing, "enabled", true);
+    when(journeys.forRegistration(5L, 1L))
+        .thenReturn(Optional.of(new PublicJourney("j", broken, null)));
+
+    assertThat(failing.buildFor(5L, 1L, context())).isEmpty();
   }
 
   @Test
