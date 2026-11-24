@@ -42,7 +42,7 @@ jobs:
         # AgencyService #391 head (settings.caseSharing, ORISO-Frontend#2494) includes #389 and the
         # previous providers. Merge AgencyService #391 before this PR so the push-to-dev run against
         # AgencyService dev stays green.
-        ref: ${{ github.event_name != 'push' && 'dafed89251de9dd7f4cb4c91f4f211a700297b7b' || 'dev' }}
+        ref: ${{ github.event_name != 'push' && 'a8a427247fd89daa35bc1b66689207aee4869016' || 'dev' }}
         path: .providers/agency
         persist-credentials: false
 
