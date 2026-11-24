@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+  xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-3.2.xsd">
+  <!-- ORISO-Frontend#2494: the counsellor's own blockers a one-off Sprechstunde was released over
+       (over_blocker), as they were at that moment: id, start_time and end_time. Only such a
+       blocker gives way to the one-off; one entered later, or one moved since (other times),
+       still takes the time. Rows go with their one-off (ON DELETE CASCADE). Additive: the
+       one-off table is unchanged. Table and foreign key are separate changesets, each guarded. -->
+  <changeSet id="20261124-calendar-consultation-once-blocker-2494" author="oriso">
+    <preConditions onFail="MARK_RAN">
+      <not>
+        <tableExists tableName="calendar_consultation_once_blocker"/>
+      </not>
+    </preConditions>
+    <createTable tableName="calendar_consultation_once_blocker">
+      <column name="once_id" type="CHAR(36)"><constraints nullable="false"/></column>
+      <column name="blocker_id" type="CHAR(36)"><constraints nullable="false"/></column>
+      <column name="start_time" type="DATETIME(6)"><constraints nullable="false"/></column>
+      <column name="end_time" type="DATETIME(6)"><constraints nullable="false"/></column>
+    </createTable>
+    <addPrimaryKey tableName="calendar_consultation_once_blocker"
+      columnNames="once_id, blocker_id" constraintName="pk_calendar_consultation_once_blocker"/>
+    <rollback><dropTable tableName="calendar_consultation_once_blocker"/></rollback>
+  </changeSet>
+  <changeSet id="20261124-calendar-consultation-once-blocker-fk-2494" author="oriso">
+    <preConditions onFail="MARK_RAN">
+      <not>
+        <foreignKeyConstraintExists foreignKeyTableName="calendar_consultation_once_blocker"
+          foreignKeyName="fk_calendar_consultation_once_blocker_once"/>
+      </not>
+    </preConditions>
+    <addForeignKeyConstraint baseTableName="calendar_consultation_once_blocker"
+      baseColumnNames="once_id" constraintName="fk_calendar_consultation_once_blocker_once"
+      referencedTableName="calendar_consultation_once" referencedColumnNames="id"
+      onDelete="CASCADE"/>
+    <rollback>
+      <dropForeignKeyConstraint baseTableName="calendar_consultation_once_blocker"
+        constraintName="fk_calendar_consultation_once_blocker_once"/>
+    </rollback>
+  </changeSet>
+</databaseChangeLog>
