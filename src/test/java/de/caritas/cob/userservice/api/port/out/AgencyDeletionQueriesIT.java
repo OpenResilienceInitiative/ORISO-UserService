@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import com.neovisionaries.i18n.LanguageCode;
 import de.caritas.cob.userservice.api.config.JpaAuditingConfiguration;
 import de.caritas.cob.userservice.api.model.Consultant;
+import de.caritas.cob.userservice.api.model.ConsultantAgency;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.Session.SessionStatus;
 import de.caritas.cob.userservice.api.model.User;
@@ -39,6 +40,7 @@ class AgencyDeletionQueriesIT {
   @Autowired private UserRepository userRepository;
   @Autowired private UserAgencyRepository userAgencyRepository;
   @Autowired private ConsultantRepository consultantRepository;
+  @Autowired private ConsultantAgencyRepository consultantAgencyRepository;
   @Autowired private EntityManager entityManager;
 
   private User onlyBySession;
@@ -174,6 +176,47 @@ class AgencyDeletionQueriesIT {
     assertThat(closed).isEqualTo(2);
     assertThat(status(assignedNew)).isEqualTo(SessionStatus.NEW);
     assertThat(status(unassignedInitial)).isEqualTo(SessionStatus.DONE);
+  }
+
+  @Test
+  void counsellorLookups_Should_runTwoStatements_WhateverTheNumberOfCounsellors() {
+    var counsellors = new java.util.ArrayList<Consultant>();
+    consultantRepository.findAll().forEach(counsellors::add);
+    assertThat(counsellors).hasSizeGreaterThanOrEqualTo(3);
+    counsellors.subList(0, 3).forEach(counsellor -> relation(counsellor, AGENCY));
+    relation(counsellors.get(0), OTHER_AGENCY);
+    entityManager.flush();
+    entityManager.clear();
+    var statistics =
+        entityManager
+            .getEntityManagerFactory()
+            .unwrap(org.hibernate.SessionFactory.class)
+            .getStatistics();
+    statistics.setStatisticsEnabled(true);
+    statistics.clear();
+
+    var ids = consultantAgencyRepository.findActiveConsultantIdsByAgencyId(AGENCY);
+    var relations = consultantAgencyRepository.findByConsultantIdInAndDeleteDateIsNull(ids);
+
+    // Id-only projections: no Consultant is loaded, so no select per counsellor.
+    assertThat(statistics.getPrepareStatementCount()).isEqualTo(2L);
+    assertThat(statistics.getEntityLoadCount()).isZero();
+    statistics.setStatisticsEnabled(false);
+    assertThat(ids)
+        .containsExactlyInAnyOrderElementsOf(
+            counsellors.subList(0, 3).stream().map(Consultant::getId).toList());
+    assertThat(relations)
+        .filteredOn(relation -> relation.getAgencyId() == OTHER_AGENCY)
+        .extracting(ConsultantAgency.ConsultantAgencyBase::getConsultantId)
+        .containsExactly(counsellors.get(0).getId());
+  }
+
+  private void relation(Consultant counsellor, long agencyId) {
+    var relation = new ConsultantAgency();
+    relation.setConsultant(counsellor);
+    relation.setAgencyId(agencyId);
+    relation.setTenantId(TENANT);
+    entityManager.persist(relation);
   }
 
   private SessionStatus status(Session session) {

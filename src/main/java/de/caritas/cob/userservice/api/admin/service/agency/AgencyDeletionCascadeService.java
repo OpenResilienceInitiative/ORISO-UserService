@@ -10,7 +10,6 @@ import de.caritas.cob.userservice.api.admin.service.admin.AdminAgencyRelationSer
 import de.caritas.cob.userservice.api.admin.service.admin.AdminScope;
 import de.caritas.cob.userservice.api.admin.service.admin.AdminScope.Target;
 import de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHttpStatusException;
-import de.caritas.cob.userservice.api.model.ConsultantAgency;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.out.AdminAgencyRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantAgencyRepository;
@@ -24,7 +23,6 @@ import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.List;
-import java.util.Objects;
 import java.util.function.Consumer;
 import java.util.function.Supplier;
 import lombok.NonNull;
@@ -203,20 +201,17 @@ public class AgencyDeletionCascadeService {
   private record Counsellors(List<String> onlyHere, List<String> alsoElsewhere) {}
 
   private Counsellors splitCounsellors(Long agencyId) {
-    var ids = new LinkedHashSet<String>();
-    consultantAgencyRepository.findByAgencyIdAndDeleteDateIsNull(agencyId).stream()
-        .map(ConsultantAgency::getConsultant)
-        .filter(Objects::nonNull)
-        .forEach(consultant -> ids.add(consultant.getId()));
+    // Two id-only queries, whatever the number of counsellors: loading ConsultantAgency entities
+    // would also load each eagerly fetched Consultant with its own select.
+    var ids =
+        new LinkedHashSet<>(consultantAgencyRepository.findActiveConsultantIdsByAgencyId(agencyId));
     if (ids.isEmpty()) {
       return new Counsellors(List.of(), List.of());
     }
-    // One query for all their active relations instead of one per counsellor.
     var withOtherAgency = new HashSet<String>();
-    consultantAgencyRepository.findByConsultantIdInAndDeleteDateIsNull(ids).stream()
-        .filter(relation -> relation.getConsultant() != null)
+    consultantAgencyRepository.findByConsultantIdInAndDeleteDateIsNull(List.copyOf(ids)).stream()
         .filter(relation -> !agencyId.equals(relation.getAgencyId()))
-        .forEach(relation -> withOtherAgency.add(relation.getConsultant().getId()));
+        .forEach(relation -> withOtherAgency.add(relation.getConsultantId()));
     var onlyHere = new ArrayList<String>();
     var alsoElsewhere = new ArrayList<String>();
     for (String id : ids) {

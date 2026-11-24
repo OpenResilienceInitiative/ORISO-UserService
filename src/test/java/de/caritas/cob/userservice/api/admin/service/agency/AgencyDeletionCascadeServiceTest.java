@@ -18,8 +18,7 @@ import de.caritas.cob.userservice.api.admin.service.admin.AdminAgencyRelationSer
 import de.caritas.cob.userservice.api.admin.service.admin.AdminScope;
 import de.caritas.cob.userservice.api.admin.service.agency.AgencyGroupChatStopper.Stopped;
 import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
-import de.caritas.cob.userservice.api.model.Consultant;
-import de.caritas.cob.userservice.api.model.ConsultantAgency;
+import de.caritas.cob.userservice.api.model.ConsultantAgency.ConsultantAgencyBase;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.out.AdminAgencyRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantAgencyRepository;
@@ -33,7 +32,6 @@ import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.util.List;
-import java.util.Set;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -88,15 +86,12 @@ class AgencyDeletionCascadeServiceTest {
         .thenReturn(List.of(asker("only-here")));
     when(sessionRepository.markSessionsOfKeptAdviceSeekersForDeletion(AGENCY, NOW_UTC))
         .thenReturn(2);
-    when(consultantAgencyRepository.findByAgencyIdAndDeleteDateIsNull(AGENCY))
-        .thenReturn(List.of(relation("solo", AGENCY), relation("shared", AGENCY)));
+    when(consultantAgencyRepository.findActiveConsultantIdsByAgencyId(AGENCY))
+        .thenReturn(List.of("solo", "shared"));
     when(consultantAgencyRepository.findByConsultantIdInAndDeleteDateIsNull(
-            Set.of("solo", "shared")))
+            List.of("solo", "shared")))
         .thenReturn(
-            List.of(
-                relation("solo", AGENCY),
-                relation("shared", AGENCY),
-                relation("shared", OTHER_AGENCY)));
+            List.of(base("solo", AGENCY), base("shared", AGENCY), base("shared", OTHER_AGENCY)));
     when(adminAgencyRepository.findAgencyAdminIdsByAgencyId(AGENCY)).thenReturn(List.of("aa1"));
     when(groupChatStopper.stopActiveChatsOf(AGENCY)).thenReturn(new Stopped(1, List.of()));
 
@@ -148,10 +143,10 @@ class AgencyDeletionCascadeServiceTest {
     doThrow(new IllegalStateException("Keycloak down"))
         .when(askerUserAdminFacade)
         .markAskerForDeletion("u1");
-    when(consultantAgencyRepository.findByAgencyIdAndDeleteDateIsNull(AGENCY))
-        .thenReturn(List.of(relation("solo", AGENCY)));
-    when(consultantAgencyRepository.findByConsultantIdInAndDeleteDateIsNull(Set.of("solo")))
-        .thenReturn(List.of(relation("solo", AGENCY)));
+    when(consultantAgencyRepository.findActiveConsultantIdsByAgencyId(AGENCY))
+        .thenReturn(List.of("solo"));
+    when(consultantAgencyRepository.findByConsultantIdInAndDeleteDateIsNull(List.of("solo")))
+        .thenReturn(List.of(base("solo", AGENCY)));
     doThrow(new IllegalStateException("Matrix down"))
         .when(consultantAdminFacade)
         .markConsultantForDeletion("solo", true);
@@ -176,15 +171,16 @@ class AgencyDeletionCascadeServiceTest {
 
   @Test
   void preview_Should_lookUpTheCounsellorsRelationsInOneQuery() {
-    when(consultantAgencyRepository.findByAgencyIdAndDeleteDateIsNull(AGENCY))
-        .thenReturn(List.of(relation("solo", AGENCY), relation("shared", AGENCY)));
+    when(consultantAgencyRepository.findActiveConsultantIdsByAgencyId(AGENCY))
+        .thenReturn(List.of("solo", "shared"));
     when(consultantAgencyRepository.findByConsultantIdInAndDeleteDateIsNull(
-            Set.of("solo", "shared")))
-        .thenReturn(List.of(relation("solo", AGENCY), relation("shared", OTHER_AGENCY)));
+            List.of("solo", "shared")))
+        .thenReturn(List.of(base("solo", AGENCY), base("shared", OTHER_AGENCY)));
 
     service.preview(AGENCY);
 
     verify(consultantAgencyRepository, never()).findByConsultantIdAndDeleteDateIsNull(any());
+    verify(consultantAgencyRepository, never()).findByAgencyIdAndDeleteDateIsNull(any());
   }
 
   @Test
@@ -207,15 +203,12 @@ class AgencyDeletionCascadeServiceTest {
     when(userRepository.countActiveAdviceSeekersOnlyInAgency(AGENCY)).thenReturn(4L);
     when(sessionRepository.countSessionsOfKeptAdviceSeekers(AGENCY)).thenReturn(2L);
     when(sessionRepository.countUnassignedEnquiriesOfAgency(AGENCY)).thenReturn(3L);
-    when(consultantAgencyRepository.findByAgencyIdAndDeleteDateIsNull(AGENCY))
-        .thenReturn(List.of(relation("solo", AGENCY), relation("shared", AGENCY)));
+    when(consultantAgencyRepository.findActiveConsultantIdsByAgencyId(AGENCY))
+        .thenReturn(List.of("solo", "shared"));
     when(consultantAgencyRepository.findByConsultantIdInAndDeleteDateIsNull(
-            Set.of("solo", "shared")))
+            List.of("solo", "shared")))
         .thenReturn(
-            List.of(
-                relation("solo", AGENCY),
-                relation("shared", AGENCY),
-                relation("shared", OTHER_AGENCY)));
+            List.of(base("solo", AGENCY), base("shared", AGENCY), base("shared", OTHER_AGENCY)));
     when(adminAgencyRepository.findAgencyAdminIdsByAgencyId(AGENCY)).thenReturn(List.of("a", "b"));
     when(groupChatStopper.countActiveChatsOf(AGENCY)).thenReturn(1L);
 
@@ -238,12 +231,27 @@ class AgencyDeletionCascadeServiceTest {
     return user;
   }
 
-  private static ConsultantAgency relation(String consultantId, long agencyId) {
-    var consultant = new Consultant();
-    consultant.setId(consultantId);
-    var relation = new ConsultantAgency();
-    relation.setConsultant(consultant);
-    relation.setAgencyId(agencyId);
-    return relation;
+  private static ConsultantAgencyBase base(String consultantId, long agencyId) {
+    return new ConsultantAgencyBase() {
+      @Override
+      public Long getId() {
+        return null;
+      }
+
+      @Override
+      public Long getAgencyId() {
+        return agencyId;
+      }
+
+      @Override
+      public String getConsultantId() {
+        return consultantId;
+      }
+
+      @Override
+      public LocalDateTime getDeleteDate() {
+        return null;
+      }
+    };
   }
 }
