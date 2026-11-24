@@ -16,7 +16,7 @@ import de.caritas.cob.userservice.api.admin.facade.AskerUserAdminFacade;
 import de.caritas.cob.userservice.api.admin.facade.ConsultantAdminFacade;
 import de.caritas.cob.userservice.api.admin.service.admin.AdminAgencyRelationService;
 import de.caritas.cob.userservice.api.admin.service.admin.AdminScope;
-import de.caritas.cob.userservice.api.admin.service.agency.AgencyGroupChatStopper.Stopped;
+import de.caritas.cob.userservice.api.admin.service.agency.AgencyGroupChatDeleter.Deleted;
 import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
 import de.caritas.cob.userservice.api.model.ConsultantAgency.ConsultantAgencyBase;
 import de.caritas.cob.userservice.api.model.User;
@@ -56,7 +56,7 @@ class AgencyDeletionCascadeServiceTest {
   @Mock private ConsultantAdminFacade consultantAdminFacade;
   @Mock private AdminAgencyRepository adminAgencyRepository;
   @Mock private AdminAgencyRelationService adminAgencyRelationService;
-  @Mock private AgencyGroupChatStopper groupChatStopper;
+  @Mock private AgencyGroupChatDeleter groupChatDeleter;
 
   private AgencyDeletionCascadeService service;
 
@@ -74,7 +74,7 @@ class AgencyDeletionCascadeServiceTest {
             consultantAdminFacade,
             adminAgencyRepository,
             adminAgencyRelationService,
-            groupChatStopper,
+            groupChatDeleter,
             Clock.fixed(NOW, ZoneOffset.UTC));
   }
 
@@ -93,7 +93,7 @@ class AgencyDeletionCascadeServiceTest {
         .thenReturn(
             List.of(base("solo", AGENCY), base("shared", AGENCY), base("shared", OTHER_AGENCY)));
     when(adminAgencyRepository.findAgencyAdminIdsByAgencyId(AGENCY)).thenReturn(List.of("aa1"));
-    when(groupChatStopper.stopActiveChatsOf(AGENCY)).thenReturn(new Stopped(1, List.of()));
+    when(groupChatDeleter.deleteChatsOf(AGENCY)).thenReturn(new Deleted(1, List.of()));
 
     var result = service.cascade(AGENCY);
 
@@ -119,7 +119,7 @@ class AgencyDeletionCascadeServiceTest {
             userAgencyRepository,
             consultantAdminFacade,
             adminAgencyRelationService,
-            groupChatStopper);
+            groupChatDeleter);
     order.verify(adminScope).assertMay(any());
     order.verify(inviteRevocation).revokeForAgency(AGENCY);
     order.verify(sessionRepository).closeUnassignedEnquiriesOfAgency(AGENCY, NOW_UTC);
@@ -129,7 +129,7 @@ class AgencyDeletionCascadeServiceTest {
     order.verify(consultantAdminFacade).markConsultantForDeletion("solo", true);
     order.verify(consultantAdminFacade).markConsultantAgencyForDeletion("shared", AGENCY);
     order.verify(adminAgencyRelationService).deleteAdminAgencyRelation("aa1", AGENCY);
-    order.verify(groupChatStopper).stopActiveChatsOf(AGENCY);
+    order.verify(groupChatDeleter).deleteChatsOf(AGENCY);
 
     // A counsellor who also works elsewhere keeps the account (AC 2).
     verify(consultantAdminFacade, never()).markConsultantForDeletion(eq("shared"), any());
@@ -150,7 +150,7 @@ class AgencyDeletionCascadeServiceTest {
     doThrow(new IllegalStateException("Matrix down"))
         .when(consultantAdminFacade)
         .markConsultantForDeletion("solo", true);
-    when(groupChatStopper.stopActiveChatsOf(AGENCY)).thenReturn(new Stopped(0, List.of(42L)));
+    when(groupChatDeleter.deleteChatsOf(AGENCY)).thenReturn(new Deleted(0, List.of(42L)));
 
     var result = service.cascade(AGENCY);
 
@@ -161,7 +161,7 @@ class AgencyDeletionCascadeServiceTest {
         .containsExactly(
             tuple(KindEnum.ADVICE_SEEKER, "u1", "IllegalStateException"),
             tuple(KindEnum.CONSULTANT, "solo", "IllegalStateException"),
-            tuple(KindEnum.GROUP_CHAT, "42", "NotStopped"));
+            tuple(KindEnum.GROUP_CHAT, "42", "NotDeleted"));
     verify(askerUserAdminFacade).markAskerForDeletion("u2");
     // u1's marker did not commit: its sessions and membership wait for the next call.
     verify(sessionRepository, never()).markSessionsOfKeptAdviceSeekersForDeletion(any(), any());
@@ -195,7 +195,7 @@ class AgencyDeletionCascadeServiceTest {
         sessionRepository,
         askerUserAdminFacade,
         consultantAdminFacade,
-        groupChatStopper);
+        groupChatDeleter);
   }
 
   @Test
@@ -210,7 +210,7 @@ class AgencyDeletionCascadeServiceTest {
         .thenReturn(
             List.of(base("solo", AGENCY), base("shared", AGENCY), base("shared", OTHER_AGENCY)));
     when(adminAgencyRepository.findAgencyAdminIdsByAgencyId(AGENCY)).thenReturn(List.of("a", "b"));
-    when(groupChatStopper.countActiveChatsOf(AGENCY)).thenReturn(1L);
+    when(groupChatDeleter.countChatsOf(AGENCY)).thenReturn(1L);
 
     var preview = service.preview(AGENCY);
 

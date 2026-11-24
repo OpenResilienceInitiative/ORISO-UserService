@@ -3540,7 +3540,9 @@ components:
         groupChats:
           type: integer
           format: int64
-          description: active group chats of this Beratungsstelle; stopped at once
+          description: >-
+            group chats of this Beratungsstelle, scheduled and recurring ones included; deleted
+            with their Matrix rooms, without a next occurrence
 
     AgencyDeletionResultDTO:
       type: object
@@ -3581,7 +3583,8 @@ components:
         groupChats:
           type: integer
           format: int64
-          description: active group chats of this Beratungsstelle; stopped at once
+          description: >-
+            group chats of this Beratungsstelle deleted with their Matrix rooms by this call
         failures:
           type: array
           items:

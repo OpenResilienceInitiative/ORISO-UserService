@@ -44,7 +44,8 @@ import org.springframework.stereotype.Service;
  *   <li>Counsellors whose only Beratungsstelle this is are marked for deletion; the others only
  *       lose this one.
  *   <li>Agency admins lose their assignment to it; their account stays.
- *   <li>Active group chats are stopped.
+ *   <li>Its group chats are deleted with their Matrix rooms: scheduled and running ones, and whole
+ *       recurring series, without creating a next occurrence.
  * </ul>
  *
  * <p>Enquiries and advice seekers go before the counsellors: UserService refuses to take the last
@@ -67,7 +68,7 @@ public class AgencyDeletionCascadeService {
   private final @NonNull ConsultantAdminFacade consultantAdminFacade;
   private final @NonNull AdminAgencyRepository adminAgencyRepository;
   private final @NonNull AdminAgencyRelationService adminAgencyRelationService;
-  private final @NonNull AgencyGroupChatStopper groupChatStopper;
+  private final @NonNull AgencyGroupChatDeleter groupChatDeleter;
   private final @NonNull Clock clock;
 
   /** What deleting the Beratungsstelle would do; shown before the admin confirms. */
@@ -81,7 +82,7 @@ public class AgencyDeletionCascadeService {
         .consultantsDeleted((long) counsellors.onlyHere().size())
         .consultantsUnassigned((long) counsellors.alsoElsewhere().size())
         .agencyAdmins((long) adminAgencyRepository.findAgencyAdminIdsByAgencyId(agencyId).size())
-        .groupChats(groupChatStopper.countActiveChatsOf(agencyId));
+        .groupChats(groupChatDeleter.countChatsOf(agencyId));
   }
 
   /**
@@ -162,7 +163,7 @@ public class AgencyDeletionCascadeService {
             id -> adminAgencyRelationService.deleteAdminAgencyRelation(id, agencyId),
             failures));
 
-    result.groupChats(stopGroupChats(agencyId, failures));
+    result.groupChats(deleteGroupChats(agencyId, failures));
 
     if (!failures.isEmpty()) {
       log.warn(
@@ -178,10 +179,10 @@ public class AgencyDeletionCascadeService {
     adminScope.assertMay(Target.removedAgencies(List.of(agencyId)));
   }
 
-  private long stopGroupChats(Long agencyId, List<AgencyDeletionFailureDTO> failures) {
+  private long deleteGroupChats(Long agencyId, List<AgencyDeletionFailureDTO> failures) {
     try {
-      var stopped = groupChatStopper.stopActiveChatsOf(agencyId);
-      stopped
+      var deleted = groupChatDeleter.deleteChatsOf(agencyId);
+      deleted
           .failedChatIds()
           .forEach(
               id ->
@@ -189,8 +190,8 @@ public class AgencyDeletionCascadeService {
                       new AgencyDeletionFailureDTO()
                           .kind(KindEnum.GROUP_CHAT)
                           .id(String.valueOf(id))
-                          .reason("NotStopped")));
-      return stopped.count();
+                          .reason("NotDeleted")));
+      return deleted.count();
     } catch (RuntimeException e) {
       failures.add(failure(KindEnum.GROUP_CHAT, null, e));
       return 0L;
