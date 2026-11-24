@@ -2,13 +2,13 @@ package de.caritas.cob.userservice.api.service.session;
 
 import static org.apache.commons.lang3.StringUtils.isBlank;
 
-import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.SessionSupervisor;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.port.out.SessionSupervisorRepository;
+import de.caritas.cob.userservice.api.port.out.TeamSessionRoomAccess;
 import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.Map;
@@ -37,7 +37,7 @@ public class TeamSessionReadOnlyService {
 
   public static final int READER_POWER_LEVEL = -1;
 
-  private final @NonNull MatrixSynapseService matrix;
+  private final @NonNull TeamSessionRoomAccess matrix;
   private final @NonNull ConsultantRepository consultants;
   private final @NonNull SessionSupervisorRepository supervisors;
   private final @NonNull SessionRepository sessions;

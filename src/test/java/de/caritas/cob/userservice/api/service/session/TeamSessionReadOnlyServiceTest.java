@@ -10,7 +10,6 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
-import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.SessionSupervisor;
@@ -18,6 +17,7 @@ import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.port.out.SessionSupervisorRepository;
+import de.caritas.cob.userservice.api.port.out.TeamSessionRoomAccess;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -38,7 +38,7 @@ class TeamSessionReadOnlyServiceTest {
   private static final String SUPERVISOR = "@supervisor:matrix.example";
   private static final String TECHNICAL = "@agency:matrix.example";
 
-  @Mock MatrixSynapseService matrix;
+  @Mock TeamSessionRoomAccess matrix;
   @Mock ConsultantRepository consultants;
   @Mock SessionSupervisorRepository supervisors;
   @Mock SessionRepository sessions;

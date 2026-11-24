@@ -435,7 +435,7 @@ class AgencyPasswordFreeSynapseIT {
     when(sessionRepository.findById(session.getId())).thenReturn(Optional.of(session));
     var readOnly =
         new de.caritas.cob.userservice.api.service.session.TeamSessionReadOnlyService(
-            matrix, consultants, supervisors, sessionRepository);
+            new MatrixTeamSessionRoomAccess(matrix), consultants, supervisors, sessionRepository);
     var facade =
         new AssignEnquiryFacade(
             sessions,
