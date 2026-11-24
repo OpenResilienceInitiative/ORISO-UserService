@@ -17,10 +17,9 @@ class MatrixOnlyAnonymousEnquiryContractTest {
   void anonymousAccountAndEnquiryCreationMustBeMatrixOnly() throws IOException {
     for (var sourcePath :
         new String[] {
-          "src/main/java/de/caritas/cob/userservice/api/conversation/service/user/anonymous/"
-              + "AnonymousUserCreatorService.java",
-          "src/main/java/de/caritas/cob/userservice/api/conversation/model/"
-              + "AnonymousUserCredentials.java",
+          "src/main/java/de/caritas/cob/userservice/api/facade/CreateUserFacade.java",
+          "src/main/java/de/caritas/cob/userservice/api/conversation/service/"
+              + "AnonymousConversationCreatorService.java",
           "src/main/java/de/caritas/cob/userservice/api/conversation/facade/"
               + "CreateAnonymousEnquiryFacade.java"
         }) {
