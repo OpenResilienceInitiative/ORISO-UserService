@@ -44,8 +44,9 @@ public class CaseSharingGate {
       throw featureDisabled();
     }
     AgencyCaseSharingPolicy caseSharing = settings.getCaseSharing();
-    var mode = caseSharing == null ? null : caseSharing.getValue();
-    if (mode != null && mode != AgencyCaseSharingPolicy.ValueEnum.CASE_HANDOVER) {
+    // Only an absent block is the legacy fallback; a served policy must name case handover.
+    if (caseSharing != null
+        && caseSharing.getValue() != AgencyCaseSharingPolicy.ValueEnum.CASE_HANDOVER) {
       throw featureDisabled();
     }
   }

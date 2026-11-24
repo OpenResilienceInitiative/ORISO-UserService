@@ -71,6 +71,14 @@ class CaseSharingGateTest {
   }
 
   @Test
+  void refusesCaseHandover_whenAServedPolicyHasNoValue() {
+    when(lookup.findEffectiveSettings(5L, 1L))
+        .thenReturn(Optional.of(new Settings(new AgencyCaseSharingPolicy())));
+
+    assertFeatureDisabled();
+  }
+
+  @Test
   void refusesCaseHandover_whenTheCentresSettingsAreNotServed() {
     when(lookup.findEffectiveSettings(5L, 1L)).thenReturn(Optional.empty());
 
