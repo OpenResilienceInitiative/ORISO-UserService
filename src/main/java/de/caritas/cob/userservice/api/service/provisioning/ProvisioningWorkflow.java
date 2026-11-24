@@ -4,6 +4,7 @@ import java.util.Locale;
 
 public enum ProvisioningWorkflow {
   REGISTERED_USER,
+  LIVE_CHAT_GUEST,
   LEGACY_ASKER_WITHOUT_SESSION,
   LEGACY_ASKER_WITH_SESSION;
 
