@@ -240,6 +240,9 @@ public interface ConsultantRepository
 
   long countByTenantIdAndDeleteDateIsNull(Long tenantId);
 
+  /** Counsellors of a Träger not yet marked for deletion; the Träger deletion marks them. */
+  List<Consultant> findByTenantIdAndDeleteDateIsNull(Long tenantId);
+
   /**
    * Opens the account-setup gate once the counsellor has reset their own password (#1699). Native
    * SQL on purpose: a public reset link runs with the link's tenant, and the tenant filter would

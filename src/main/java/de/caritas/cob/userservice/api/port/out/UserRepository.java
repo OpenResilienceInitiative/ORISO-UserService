@@ -204,4 +204,12 @@ public interface UserRepository extends CrudRepository<User, String> {
           + " AND NOT EXISTS (SELECT 1 FROM UserAgency ua2 WHERE ua2.user = u"
           + " AND ua2.agencyId <> :agencyId)")
   long countActiveAdviceSeekersOnlyInAgency(@Param("agencyId") Long agencyId);
+
+  /**
+   * The advice seekers {@link #countActiveAdviceSeekersOfTenant(Long)} counts (ORISO-Admin#1525).
+   */
+  @Query(
+      "SELECT u FROM User u WHERE u.tenantId = :tenantId AND u.deleteDate IS NULL"
+          + " AND u.userId NOT LIKE 'group-chat-system%'")
+  List<User> findActiveAdviceSeekersOfTenant(@Param("tenantId") Long tenantId);
 }
