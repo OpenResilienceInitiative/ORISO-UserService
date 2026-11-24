@@ -14,6 +14,7 @@ import java.util.List;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.core.env.Environment;
 import org.springframework.stereotype.Service;
 
 /**
@@ -54,8 +55,20 @@ public class TenantDeletionFinisher {
   private final @NonNull DeletionLifecycleService deletionLifecycleService;
   private final @NonNull DeletionAuditService deletionAuditService;
   private final @NonNull IdentityClientConfig identity;
+  private final @NonNull Environment environment;
+
+  /**
+   * Switched by the Helm value tenantService.tenantDeletionFinishEnabled, which also makes
+   * TenantService require TENANT_DELETION. It can switch the step off, never on without
+   * FIVE_ACTORS.
+   */
+  static final String ENABLED = "deletion.tenant-finish.enabled";
 
   public List<Outcome> finishMarkedTenants() {
+    if (Boolean.FALSE.equals(environment.getProperty(ENABLED, Boolean.class))) {
+      log.info("Träger deletions are not finished: {} is false", ENABLED);
+      return List.of();
+    }
     if (!fiveActorMode()) {
       log.info("Träger deletions are not finished: TASK_IDENTITY_MODEL is not FIVE_ACTORS");
       return List.of();

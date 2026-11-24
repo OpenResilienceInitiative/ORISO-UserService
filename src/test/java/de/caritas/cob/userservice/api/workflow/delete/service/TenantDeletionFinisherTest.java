@@ -44,6 +44,7 @@ class TenantDeletionFinisherTest {
   @Mock private DeletionLifecycleService deletionLifecycleService;
   @Mock private DeletionAuditService deletionAuditService;
   @Mock private IdentityClientConfig identity;
+  @Mock private org.springframework.core.env.Environment environment;
   @InjectMocks private TenantDeletionFinisher finisher;
 
   @BeforeEach
@@ -121,6 +122,15 @@ class TenantDeletionFinisherTest {
   @Test
   void finish_Should_doNothing_Without_fiveActorMode() {
     when(identity.isFiveActorMode()).thenReturn(false);
+
+    assertThat(finisher.finishMarkedTenants()).isEmpty();
+
+    verifyNoInteractions(tenantService, deletionAuditService);
+  }
+
+  @Test
+  void finish_Should_doNothing_When_switchedOff() {
+    when(environment.getProperty(TenantDeletionFinisher.ENABLED, Boolean.class)).thenReturn(false);
 
     assertThat(finisher.finishMarkedTenants()).isEmpty();
 
