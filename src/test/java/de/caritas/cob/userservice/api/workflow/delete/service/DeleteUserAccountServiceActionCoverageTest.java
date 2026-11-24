@@ -107,6 +107,7 @@ class DeleteUserAccountServiceActionCoverageTest {
   @Mock private UserHardDeleteClaimService userHardDeleteClaimService;
 
   @Mock private ConsultantHardDeleteClaimService consultantHardDeleteClaimService;
+  @Mock private MarkedSessionPurgeService markedSessionPurgeService;
 
   @Mock private ActionContainer<AskerDeletionWorkflowDTO> askerContainer;
 

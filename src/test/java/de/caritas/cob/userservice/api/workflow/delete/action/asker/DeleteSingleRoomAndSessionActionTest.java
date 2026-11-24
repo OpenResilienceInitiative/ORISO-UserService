@@ -287,4 +287,40 @@ class DeleteSingleRoomAndSessionActionTest {
 
     verify(this.lifecycleEventPublisher, never()).sessionDeleted(any());
   }
+
+  @Test
+  void execute_Should_keepTheSession_When_aChildStepFailsAndTheFlagIsSet() {
+    Session session = new EasyRandom().nextObject(Session.class);
+    doThrow(new RuntimeException()).when(this.sessionTopicRepository).deleteAllBySessionId(any());
+    var workflowDTO = new SessionDeletionWorkflowDTO(session, new ArrayList<>(), true);
+
+    this.deleteSingleRoomAndSessionAction.execute(workflowDTO);
+
+    assertThat(workflowDTO.getDeletionWorkflowErrors(), hasSize(1));
+    verify(this.sessionRepository, never()).delete(any());
+    verify(this.lifecycleEventPublisher, never()).sessionDeleted(any());
+  }
+
+  @Test
+  void execute_Should_deleteTheSession_When_everyChildStepSucceedsAndTheFlagIsSet() {
+    Session session = new EasyRandom().nextObject(Session.class);
+    var workflowDTO = new SessionDeletionWorkflowDTO(session, new ArrayList<>(), true);
+
+    this.deleteSingleRoomAndSessionAction.execute(workflowDTO);
+
+    assertThat(workflowDTO.getDeletionWorkflowErrors(), hasSize(0));
+    verify(this.sessionRepository).delete(session);
+    verify(this.lifecycleEventPublisher).sessionDeleted(any());
+  }
+
+  @Test
+  void execute_Should_stillDeleteTheSession_When_aChildStepFailsWithoutTheFlag() {
+    Session session = new EasyRandom().nextObject(Session.class);
+    doThrow(new RuntimeException()).when(this.sessionTopicRepository).deleteAllBySessionId(any());
+
+    this.deleteSingleRoomAndSessionAction.execute(
+        new SessionDeletionWorkflowDTO(session, new ArrayList<>()));
+
+    verify(this.sessionRepository).delete(session);
+  }
 }

@@ -55,11 +55,14 @@ public class DeleteUserAccountService {
   private final @NonNull DeletionLifecycleService deletionLifecycleService;
   private final @NonNull UserHardDeleteClaimService userHardDeleteClaimService;
   private final @NonNull ConsultantHardDeleteClaimService consultantHardDeleteClaimService;
+  private final @NonNull MarkedSessionPurgeService markedSessionPurgeService;
 
   /** Deletes all user accounts marked as deleted in database. */
   public void deleteUserAccounts() {
     var workflowErrors = deleteAskersAndCollectPossibleErrors();
     workflowErrors.addAll(deleteConsultantsAndCollectPossibleErrors());
+    // Sessions a deleted Beratungsstelle left with advice seekers who keep their account (#1524).
+    workflowErrors.addAll(markedSessionPurgeService.purgeMarkedSessions());
 
     if (isNotEmpty(workflowErrors)) {
       this.workflowErrorMailService.buildAndSendErrorMail(workflowErrors);

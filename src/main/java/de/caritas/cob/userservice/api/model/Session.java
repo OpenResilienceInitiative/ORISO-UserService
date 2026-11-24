@@ -199,6 +199,13 @@ public class Session implements TenantAware, SessionRoom {
   @Column(name = "update_date", columnDefinition = "datetime")
   private LocalDateTime updateDate;
 
+  /**
+   * Set when the session's Beratungsstelle is deleted while its advice seeker keeps the account
+   * (ORISO-Admin#1524). The nightly deletion job purges the session and its Matrix room.
+   */
+  @Column(name = "delete_date", columnDefinition = "datetime")
+  private LocalDateTime deleteDate;
+
   @Column(name = "tenant_id")
   private Long tenantId;
 
