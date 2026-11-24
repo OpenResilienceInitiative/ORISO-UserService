@@ -33,6 +33,7 @@ import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.util.List;
+import java.util.Set;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -89,10 +90,13 @@ class AgencyDeletionCascadeServiceTest {
         .thenReturn(2);
     when(consultantAgencyRepository.findByAgencyIdAndDeleteDateIsNull(AGENCY))
         .thenReturn(List.of(relation("solo", AGENCY), relation("shared", AGENCY)));
-    when(consultantAgencyRepository.findByConsultantIdAndDeleteDateIsNull("solo"))
-        .thenReturn(List.of(relation("solo", AGENCY)));
-    when(consultantAgencyRepository.findByConsultantIdAndDeleteDateIsNull("shared"))
-        .thenReturn(List.of(relation("shared", AGENCY), relation("shared", OTHER_AGENCY)));
+    when(consultantAgencyRepository.findByConsultantIdInAndDeleteDateIsNull(
+            Set.of("solo", "shared")))
+        .thenReturn(
+            List.of(
+                relation("solo", AGENCY),
+                relation("shared", AGENCY),
+                relation("shared", OTHER_AGENCY)));
     when(adminAgencyRepository.findAgencyAdminIdsByAgencyId(AGENCY)).thenReturn(List.of("aa1"));
     when(groupChatStopper.stopActiveChatsOf(AGENCY)).thenReturn(new Stopped(1, List.of()));
 
@@ -146,7 +150,7 @@ class AgencyDeletionCascadeServiceTest {
         .markAskerForDeletion("u1");
     when(consultantAgencyRepository.findByAgencyIdAndDeleteDateIsNull(AGENCY))
         .thenReturn(List.of(relation("solo", AGENCY)));
-    when(consultantAgencyRepository.findByConsultantIdAndDeleteDateIsNull("solo"))
+    when(consultantAgencyRepository.findByConsultantIdInAndDeleteDateIsNull(Set.of("solo")))
         .thenReturn(List.of(relation("solo", AGENCY)));
     doThrow(new IllegalStateException("Matrix down"))
         .when(consultantAdminFacade)
@@ -164,6 +168,23 @@ class AgencyDeletionCascadeServiceTest {
             tuple(KindEnum.CONSULTANT, "solo", "IllegalStateException"),
             tuple(KindEnum.GROUP_CHAT, "42", "NotStopped"));
     verify(askerUserAdminFacade).markAskerForDeletion("u2");
+    // u1's marker did not commit: its sessions and membership wait for the next call.
+    verify(sessionRepository, never()).markSessionsOfKeptAdviceSeekersForDeletion(any(), any());
+    verify(userAgencyRepository, never()).deleteMembershipsOfKeptAdviceSeekers(any());
+    assertThat(result.getKeptAdviceSeekerSessions()).isZero();
+  }
+
+  @Test
+  void preview_Should_lookUpTheCounsellorsRelationsInOneQuery() {
+    when(consultantAgencyRepository.findByAgencyIdAndDeleteDateIsNull(AGENCY))
+        .thenReturn(List.of(relation("solo", AGENCY), relation("shared", AGENCY)));
+    when(consultantAgencyRepository.findByConsultantIdInAndDeleteDateIsNull(
+            Set.of("solo", "shared")))
+        .thenReturn(List.of(relation("solo", AGENCY), relation("shared", OTHER_AGENCY)));
+
+    service.preview(AGENCY);
+
+    verify(consultantAgencyRepository, never()).findByConsultantIdAndDeleteDateIsNull(any());
   }
 
   @Test
@@ -188,10 +209,13 @@ class AgencyDeletionCascadeServiceTest {
     when(sessionRepository.countUnassignedEnquiriesOfAgency(AGENCY)).thenReturn(3L);
     when(consultantAgencyRepository.findByAgencyIdAndDeleteDateIsNull(AGENCY))
         .thenReturn(List.of(relation("solo", AGENCY), relation("shared", AGENCY)));
-    when(consultantAgencyRepository.findByConsultantIdAndDeleteDateIsNull("solo"))
-        .thenReturn(List.of(relation("solo", AGENCY)));
-    when(consultantAgencyRepository.findByConsultantIdAndDeleteDateIsNull("shared"))
-        .thenReturn(List.of(relation("shared", AGENCY), relation("shared", OTHER_AGENCY)));
+    when(consultantAgencyRepository.findByConsultantIdInAndDeleteDateIsNull(
+            Set.of("solo", "shared")))
+        .thenReturn(
+            List.of(
+                relation("solo", AGENCY),
+                relation("shared", AGENCY),
+                relation("shared", OTHER_AGENCY)));
     when(adminAgencyRepository.findAgencyAdminIdsByAgencyId(AGENCY)).thenReturn(List.of("a", "b"));
     when(groupChatStopper.countActiveChatsOf(AGENCY)).thenReturn(1L);
 

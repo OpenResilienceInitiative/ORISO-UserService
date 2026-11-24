@@ -92,6 +92,13 @@ class AgencyDeletionQueriesIT {
   }
 
   @Test
+  void countSessionsOfKeptAdviceSeekers_Should_leaveOutThoseDeletedWithTheAgency_BeforeMarking() {
+    // The preview runs before the cascade marks anybody: onlyBySession's session goes with the
+    // account, so only the sessions of advice seekers who belong elsewhere are counted.
+    assertThat(sessionRepository.countSessionsOfKeptAdviceSeekers(AGENCY)).isEqualTo(2L);
+  }
+
+  @Test
   void markSessionsOfKeptAdviceSeekersForDeletion_Should_markOnlyTheirSessionsHere() {
     // As in the cascade: those deleted with the Beratungsstelle are marked first.
     onlyBySession.setDeleteDate(NOW);
@@ -152,6 +159,25 @@ class AgencyDeletionQueriesIT {
         .isEqualTo(SessionStatus.NEW);
     assertThat(sessionRepository.findById(keptSessionHere.getId()).orElseThrow().getStatus())
         .isEqualTo(SessionStatus.IN_PROGRESS);
+  }
+
+  @Test
+  void closeUnassignedEnquiriesOfAgency_Should_checkTheConsultantAndTheStatusIndependently() {
+    var assignedNew = session(asker(), AGENCY, SessionStatus.NEW, counsellor());
+    var unassignedInitial = session(asker(), AGENCY, SessionStatus.INITIAL, null);
+    entityManager.flush();
+
+    int closed = sessionRepository.closeUnassignedEnquiriesOfAgency(AGENCY, NOW);
+    entityManager.clear();
+
+    // The NEW enquiry of onlyBySession and the INITIAL one; a taken enquiry stays open.
+    assertThat(closed).isEqualTo(2);
+    assertThat(status(assignedNew)).isEqualTo(SessionStatus.NEW);
+    assertThat(status(unassignedInitial)).isEqualTo(SessionStatus.DONE);
+  }
+
+  private SessionStatus status(Session session) {
+    return sessionRepository.findById(session.getId()).orElseThrow().getStatus();
   }
 
   private LocalDateTime deleteDate(Session session) {

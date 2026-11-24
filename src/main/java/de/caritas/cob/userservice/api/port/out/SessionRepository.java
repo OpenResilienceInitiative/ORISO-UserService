@@ -380,11 +380,19 @@ public interface SessionRepository extends CrudRepository<Session, Long>, Sessio
   int markSessionsOfKeptAdviceSeekersForDeletion(
       @Param("agencyId") Long agencyId, @Param("now") LocalDateTime now);
 
-  /** The sessions {@link #markSessionsOfKeptAdviceSeekersForDeletion} would mark. */
+  /**
+   * The sessions {@link #markSessionsOfKeptAdviceSeekersForDeletion} will mark, counted before the
+   * cascade runs: advice seekers who belong to no other Beratungsstelle are left out, because the
+   * cascade marks their account first and their sessions go with it.
+   */
   @Query(
       "select count(s) from Session s where s.agencyId = :agencyId and s.deleteDate is null"
           + " and s.user.userId in (select u.userId from User u where u.deleteDate is null"
-          + " and u.userId not like 'group-chat-system%')")
+          + " and u.userId not like 'group-chat-system%')"
+          + " and (exists (select 1 from Session s2 where s2.user = s.user"
+          + " and s2.agencyId <> :agencyId and s2.deleteDate is null)"
+          + " or exists (select 1 from UserAgency ua2 where ua2.user = s.user"
+          + " and ua2.agencyId <> :agencyId))")
   long countSessionsOfKeptAdviceSeekers(@Param("agencyId") Long agencyId);
 
   /** Sessions waiting for the nightly purge (ORISO-Admin#1524). */

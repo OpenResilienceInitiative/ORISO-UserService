@@ -31,14 +31,14 @@ class MarkedSessionPurgeServiceTest {
     var session = session(1L, "!room:matrix");
     when(sessionRepository.findAllByDeleteDateNotNull()).thenReturn(List.of(session));
     when(matrixSynapseService.purgeRoom("!room:matrix")).thenReturn(true);
-    when(deleteSessionService.performSessionDeletion(session)).thenReturn(List.of());
+    when(deleteSessionService.performSessionDeletionKeepingFailed(session)).thenReturn(List.of());
 
     var errors = service.purgeMarkedSessions();
 
     assertThat(errors).isEmpty();
     var order = inOrder(matrixSynapseService, deleteSessionService);
     order.verify(matrixSynapseService).purgeRoom("!room:matrix");
-    order.verify(deleteSessionService).performSessionDeletion(session);
+    order.verify(deleteSessionService).performSessionDeletionKeepingFailed(session);
   }
 
   @Test
@@ -47,7 +47,7 @@ class MarkedSessionPurgeServiceTest {
     var fine = session(2L, null);
     when(sessionRepository.findAllByDeleteDateNotNull()).thenReturn(List.of(failing, fine));
     when(matrixSynapseService.purgeRoom("!stuck:matrix")).thenReturn(false);
-    when(deleteSessionService.performSessionDeletion(fine)).thenReturn(List.of());
+    when(deleteSessionService.performSessionDeletionKeepingFailed(fine)).thenReturn(List.of());
 
     var errors = service.purgeMarkedSessions();
 
@@ -58,8 +58,8 @@ class MarkedSessionPurgeServiceTest {
               assertThat(error.getIdentifier()).isEqualTo("1");
               assertThat(error.getDeletionTargetType()).isEqualTo(DeletionTargetType.MATRIX);
             });
-    verify(deleteSessionService, never()).performSessionDeletion(failing);
-    verify(deleteSessionService).performSessionDeletion(fine);
+    verify(deleteSessionService, never()).performSessionDeletionKeepingFailed(failing);
+    verify(deleteSessionService).performSessionDeletionKeepingFailed(fine);
   }
 
   @Test
@@ -67,14 +67,14 @@ class MarkedSessionPurgeServiceTest {
     var broken = session(1L, null);
     var fine = session(2L, null);
     when(sessionRepository.findAllByDeleteDateNotNull()).thenReturn(List.of(broken, fine));
-    when(deleteSessionService.performSessionDeletion(broken))
+    when(deleteSessionService.performSessionDeletionKeepingFailed(broken))
         .thenThrow(new IllegalStateException("db"));
-    when(deleteSessionService.performSessionDeletion(fine)).thenReturn(List.of());
+    when(deleteSessionService.performSessionDeletionKeepingFailed(fine)).thenReturn(List.of());
 
     var errors = service.purgeMarkedSessions();
 
     assertThat(errors).hasSize(1);
-    verify(deleteSessionService).performSessionDeletion(fine);
+    verify(deleteSessionService).performSessionDeletionKeepingFailed(fine);
     verify(matrixSynapseService, never()).purgeRoom(any());
   }
 

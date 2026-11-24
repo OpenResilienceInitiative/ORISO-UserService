@@ -54,7 +54,7 @@ public class MarkedSessionPurgeService {
           error(session, DeletionTargetType.MATRIX, "Unable to purge Matrix room of session"));
       return;
     }
-    errors.addAll(deleteSessionService.performSessionDeletion(session));
+    errors.addAll(deleteSessionService.performSessionDeletionKeepingFailed(session));
   }
 
   private static DeletionWorkflowError error(

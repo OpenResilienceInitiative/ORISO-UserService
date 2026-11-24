@@ -21,6 +21,7 @@ import de.caritas.cob.userservice.api.service.accountinvite.DeletedUnitInviteRev
 import java.time.Clock;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Objects;
@@ -108,22 +109,31 @@ public class AgencyDeletionCascadeService {
             KindEnum.ENQUIRIES,
             () -> (long) sessionRepository.closeUnassignedEnquiriesOfAgency(agencyId, now),
             failures));
+    int failuresBeforeAdviceSeekers = failures.size();
     result.adviceSeekers(
         forEach(
             KindEnum.ADVICE_SEEKER,
             idsOf(() -> userRepository.findActiveAdviceSeekersOnlyInAgency(agencyId)),
             askerUserAdminFacade::markAskerForDeletion,
             failures));
-    result.keptAdviceSeekerSessions(
-        count(
-            KindEnum.SESSIONS,
-            () ->
-                (long) sessionRepository.markSessionsOfKeptAdviceSeekersForDeletion(agencyId, now),
-            failures));
-    count(
-        KindEnum.MEMBERSHIPS,
-        () -> (long) userAgencyRepository.deleteMembershipsOfKeptAdviceSeekers(agencyId),
-        failures);
+    if (failures.size() == failuresBeforeAdviceSeekers) {
+      result.keptAdviceSeekerSessions(
+          count(
+              KindEnum.SESSIONS,
+              () ->
+                  (long)
+                      sessionRepository.markSessionsOfKeptAdviceSeekersForDeletion(agencyId, now),
+              failures));
+      count(
+          KindEnum.MEMBERSHIPS,
+          () -> (long) userAgencyRepository.deleteMembershipsOfKeptAdviceSeekers(agencyId),
+          failures);
+    } else {
+      // An advice seeker whose marker did not commit still looks "kept" to both queries; taking
+      // their sessions and membership now would leave them deactivated or unreachable by the next
+      // call. Both steps wait for the call in which every advice seeker was marked.
+      result.keptAdviceSeekerSessions(0L);
+    }
 
     Counsellors counsellors;
     try {
@@ -198,13 +208,19 @@ public class AgencyDeletionCascadeService {
         .map(ConsultantAgency::getConsultant)
         .filter(Objects::nonNull)
         .forEach(consultant -> ids.add(consultant.getId()));
+    if (ids.isEmpty()) {
+      return new Counsellors(List.of(), List.of());
+    }
+    // One query for all their active relations instead of one per counsellor.
+    var withOtherAgency = new HashSet<String>();
+    consultantAgencyRepository.findByConsultantIdInAndDeleteDateIsNull(ids).stream()
+        .filter(relation -> relation.getConsultant() != null)
+        .filter(relation -> !agencyId.equals(relation.getAgencyId()))
+        .forEach(relation -> withOtherAgency.add(relation.getConsultant().getId()));
     var onlyHere = new ArrayList<String>();
     var alsoElsewhere = new ArrayList<String>();
     for (String id : ids) {
-      boolean elsewhere =
-          consultantAgencyRepository.findByConsultantIdAndDeleteDateIsNull(id).stream()
-              .anyMatch(relation -> !agencyId.equals(relation.getAgencyId()));
-      (elsewhere ? alsoElsewhere : onlyHere).add(id);
+      (withOtherAgency.contains(id) ? alsoElsewhere : onlyHere).add(id);
     }
     return new Counsellors(onlyHere, alsoElsewhere);
   }
