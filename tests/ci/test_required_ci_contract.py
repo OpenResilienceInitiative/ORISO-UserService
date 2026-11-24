@@ -1,3 +1,4 @@
+import json
 import os
 from pathlib import Path
 import re
@@ -65,6 +66,67 @@ class RequiredCiContractTest(unittest.TestCase):
         )
         self.assertIn("Integration reports contain 4 skipped tests.", result.stderr)
 
+    def test_targeted_h2_case_requires_fresh_passing_evidence(self):
+        runner = ROOT / "scripts/ci/run-required-integration-tests.sh"
+        class_name = "AgencyDeletionCascadeAuthorizationIT"
+        for mode, expected_step in (
+            ("pass", None),
+            ("skipped", "integration-report"),
+            ("stale", "integration-report"),
+            ("other", "integration-report"),
+            ("missing", "integration-report"),
+            ("empty", "integration-report"),
+            ("mismatch", "integration-report"),
+        ):
+            with self.subTest(mode=mode), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                subprocess.run(["git", "init", "-q", root], check=True)
+                subprocess.run(
+                    ["git", "-c", "user.name=Fixture", "-c", "user.email=fixture@invalid",
+                     "commit", "-q", "--allow-empty", "-m", "fixture"],
+                    cwd=root, check=True,
+                )
+                source = root / "src/test/java" / f"{class_name}.java"
+                source.parent.mkdir(parents=True)
+                source.touch()
+                maven = root / "mvnw"
+                maven.write_text(
+                    '#!/usr/bin/env python3\n'
+                    'import os, sys\n'
+                    'from pathlib import Path\n'
+                    f'assert "-Dtest={class_name}" in sys.argv\n'
+                    'assert "clean" in sys.argv and "integration-test" in sys.argv\n'
+                    f'case = "{class_name}"\n'
+                    'mode = os.environ["MOCK_REPORT_MODE"]\n'
+                    'if mode == "missing": sys.exit(0)\n'
+                    'if mode == "other": case = "UnrelatedIT"\n'
+                    'count = int(mode == "skipped")\n'
+                    'report = Path("target/surefire-reports") / f"TEST-{case}.xml"\n'
+                    'report.parent.mkdir(parents=True)\n'
+                    'row_class = "UnrelatedIT" if mode == "mismatch" else case\n'
+                    'row = f\'<testcase classname="{row_class}" name="case">\'\n'
+                    'if count: row += "<skipped/>"\n'
+                    'row += "</testcase>"\n'
+                    'if mode == "empty": row = ""\n'
+                    'report.write_text(\n'
+                    '    f\'<testsuite name="{case}" tests="1" failures="0" errors="0" skipped="{count}">\'\n'
+                    '    f"{row}</testsuite>"\n'
+                    ')\n'
+                    'if mode == "stale": os.utime(report, (1, 1))\n'
+                )
+                maven.chmod(0o755)
+                result = subprocess.run(
+                    [runner, "--test", class_name], cwd=root, check=False,
+                    env={**os.environ, "ORISO_MAVEN_WRAPPER": str(maven),
+                         "MOCK_REPORT_MODE": mode},
+                    capture_output=True, text=True,
+                )
+                self.assertEqual(0 if expected_step is None else 1, result.returncode)
+                report = json.loads(result.stdout.splitlines()[-1])
+                self.assertEqual(class_name, report["selection"])
+                self.assertEqual(expected_step, report["failedStep"])
+                self.assertRegex(report["revision"], r"^[0-9a-f]{40}$")
+
     def test_integration_tests_preserve_the_configured_test_database(self):
         test_root = ROOT / "src/test/java"
         offenders = []
@@ -102,7 +164,7 @@ class RequiredCiContractTest(unittest.TestCase):
             env = os.environ.copy()
             env["ORISO_MAVEN_WRAPPER"] = str(fake_maven)
 
-            result = subprocess.run([runner], cwd=ROOT, env=env, check=False)
+            result = subprocess.run([runner], cwd=temp_dir, env=env, check=False)
 
         self.assertEqual(23, result.returncode)
 
