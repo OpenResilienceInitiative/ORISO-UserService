@@ -240,6 +240,9 @@ public interface ConsultantRepository
 
   long countByTenantIdAndDeleteDateIsNull(Long tenantId);
 
+  /** Counsellors of a Träger, marked or not; its row goes only once this is 0 (Admin#1525). */
+  long countByTenantId(Long tenantId);
+
   /** Counsellors of a Träger not yet marked for deletion; the Träger deletion marks them. */
   List<Consultant> findByTenantIdAndDeleteDateIsNull(Long tenantId);
 

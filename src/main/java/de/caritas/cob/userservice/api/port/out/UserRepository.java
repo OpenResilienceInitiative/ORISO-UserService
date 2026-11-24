@@ -176,6 +176,21 @@ public interface UserRepository extends CrudRepository<User, String> {
   long countActiveAdviceSeekersOfTenant(@Param("tenantId") Long tenantId);
 
   /**
+   * Advice seekers of a Träger, marked or not, without the technical group-chat users; the Träger
+   * row goes only once this is 0 (ORISO-Admin#1525).
+   */
+  @Query(
+      "SELECT COUNT(u) FROM User u WHERE u.tenantId = :tenantId"
+          + " AND u.userId NOT LIKE 'group-chat-system%'")
+  long countAdviceSeekersOfTenant(@Param("tenantId") Long tenantId);
+
+  /** The technical group-chat users of a Träger; they go with it, last (ORISO-Admin#1525). */
+  @Query(
+      "SELECT u FROM User u WHERE u.tenantId = :tenantId"
+          + " AND u.userId LIKE 'group-chat-system%'")
+  List<User> findTechnicalUsersOfTenant(@Param("tenantId") Long tenantId);
+
+  /**
    * Advice seekers whose only Beratungsstelle is the given one, by session or membership
    * (ORISO-Admin#1524). Deleting the Beratungsstelle deletes them; the technical group-chat users
    * go with their Träger only.
