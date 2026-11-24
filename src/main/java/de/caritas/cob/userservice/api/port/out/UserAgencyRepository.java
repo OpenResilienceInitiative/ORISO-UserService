@@ -17,23 +17,21 @@ public interface UserAgencyRepository extends CrudRepository<UserAgency, Long> {
   List<UserAgency> findByUserUserIdIn(Collection<String> userIds);
 
   /**
-   * Removes the memberships a deleted Beratungsstelle leaves with advice seekers who keep their
-   * account (ORISO-Admin#1524). Those of advice seekers marked for deletion go with them.
+   * Removes an advice seeker's membership in a Beratungsstelle that is being deleted, when they
+   * keep their account (ORISO-Admin#1524).
    *
    * @return how many memberships were removed
    */
   @Transactional
   @Modifying(flushAutomatically = true)
-  @Query(
-      "delete from UserAgency ua where ua.agencyId = :agencyId"
-          + " and ua.user.userId in (select u.userId from User u where u.deleteDate is null"
-          + " and u.userId not like 'group-chat-system%')")
-  int deleteMembershipsOfKeptAdviceSeekers(@Param("agencyId") Long agencyId);
+  @Query("delete from UserAgency ua where ua.agencyId = :agencyId and ua.user.userId = :userId")
+  int deleteMembershipsOfUserInAgency(
+      @Param("userId") String userId, @Param("agencyId") Long agencyId);
 
-  /** Advice seekers who keep their account but lose this membership (ORISO-Admin#1524). */
+  /** Whether the advice seeker is a member of another Beratungsstelle. */
   @Query(
-      "select count(ua) from UserAgency ua where ua.agencyId = :agencyId"
-          + " and ua.user.userId in (select u.userId from User u where u.deleteDate is null"
-          + " and u.userId not like 'group-chat-system%')")
-  long countMembershipsOfKeptAdviceSeekers(@Param("agencyId") Long agencyId);
+      "select count(ua) > 0 from UserAgency ua where ua.user.userId = :userId"
+          + " and ua.agencyId <> :agencyId")
+  boolean hasMembershipOutsideAgency(
+      @Param("userId") String userId, @Param("agencyId") Long agencyId);
 }

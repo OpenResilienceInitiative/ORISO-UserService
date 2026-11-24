@@ -363,9 +363,8 @@ public interface SessionRepository extends CrudRepository<Session, Long>, Sessio
   long countUnassignedEnquiriesOfAgency(@Param("agencyId") Long agencyId);
 
   /**
-   * Marks the sessions a deleted Beratungsstelle leaves behind with advice seekers who keep their
-   * account (ORISO-Admin#1524). Sessions of advice seekers marked for deletion are left to their
-   * own deletion. Repeating it marks nothing twice.
+   * Marks an advice seeker's sessions at a Beratungsstelle that is being deleted, when they keep
+   * their account (ORISO-Admin#1524). Repeating it marks nothing twice.
    *
    * @return how many sessions were marked
    */
@@ -375,13 +374,21 @@ public interface SessionRepository extends CrudRepository<Session, Long>, Sessio
       "update Session s set s.deleteDate = :now, s.updateDate = :now,"
           + " s.rowVersion = s.rowVersion + 1"
           + " where s.agencyId = :agencyId and s.deleteDate is null"
-          + " and s.user.userId in (select u.userId from User u where u.deleteDate is null"
-          + " and u.userId not like 'group-chat-system%')")
-  int markSessionsOfKeptAdviceSeekersForDeletion(
-      @Param("agencyId") Long agencyId, @Param("now") LocalDateTime now);
+          + " and s.user.userId = :userId")
+  int markSessionsOfUserInAgencyForDeletion(
+      @Param("userId") String userId,
+      @Param("agencyId") Long agencyId,
+      @Param("now") LocalDateTime now);
+
+  /** Whether the advice seeker has a session outside the Beratungsstelle that is not marked. */
+  @Query(
+      "select count(s) > 0 from Session s where s.user.userId = :userId"
+          + " and s.agencyId <> :agencyId and s.deleteDate is null")
+  boolean hasActiveSessionOutsideAgency(
+      @Param("userId") String userId, @Param("agencyId") Long agencyId);
 
   /**
-   * The sessions {@link #markSessionsOfKeptAdviceSeekersForDeletion} will mark, counted before the
+   * The sessions {@link #markSessionsOfUserInAgencyForDeletion} will mark, counted before the
    * cascade runs: advice seekers who belong to no other Beratungsstelle are left out, because the
    * cascade marks their account first and their sessions go with it.
    */

@@ -89,15 +89,34 @@ public interface DraftMessageRepository extends JpaRepository<DraftMessage, Long
    * Removes the drafts anyone wrote in a session that is being purged (ORISO-Admin#1524): those
    * that name the session, and those without a session id that name its Matrix room. Protected
    * drafts carry no routing metadata and cannot be tied to a session; they go with their account.
+   *
+   * <p>Matrix room ids are case-sensitive while the column's collation may not be, so the room
+   * match is made exact here rather than by the database.
+   *
+   * @return how many drafts were removed
    */
+  default int deleteLegacyDraftsOfSession(Long sessionId, String matrixRoomId) {
+    int deleted = deleteLegacyDraftsBySourceSessionId(sessionId);
+    if (matrixRoomId == null || matrixRoomId.isBlank()) {
+      return deleted;
+    }
+    var sameRoom =
+        findLegacyDraftsWithoutSessionByRoomRef(matrixRoomId).stream()
+            .filter(draft -> matrixRoomId.equals(draft.getRoomRef()))
+            .toList();
+    deleteAll(sameRoom);
+    return deleted + sameRoom.size();
+  }
+
   @Modifying(flushAutomatically = true, clearAutomatically = true)
   @Query(
-      """
-      delete from DraftMessage draft
-      where draft.protectedScopeKey is null
-        and (draft.sourceSessionId = :sessionId
-             or (draft.sourceSessionId is null and draft.roomRef = :matrixRoomId))
-      """)
-  int deleteLegacyDraftsOfSession(
-      @Param("sessionId") Long sessionId, @Param("matrixRoomId") String matrixRoomId);
+      "delete from DraftMessage draft where draft.protectedScopeKey is null"
+          + " and draft.sourceSessionId = :sessionId")
+  int deleteLegacyDraftsBySourceSessionId(@Param("sessionId") Long sessionId);
+
+  /** May also return room refs that differ only in case, depending on the collation. */
+  @Query(
+      "select draft from DraftMessage draft where draft.protectedScopeKey is null"
+          + " and draft.sourceSessionId is null and draft.roomRef = :roomRef")
+  List<DraftMessage> findLegacyDraftsWithoutSessionByRoomRef(@Param("roomRef") String roomRef);
 }
