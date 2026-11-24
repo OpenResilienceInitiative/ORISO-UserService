@@ -214,6 +214,36 @@ public class EventNotificationService {
   }
 
   /**
+   * ORISO-Frontend#2494 *6: one entry for the advice seeker when the counsellor replaced the
+   * supervisor and chose to tell them. Names are the Matrix display names the room already shows
+   * (ADR-002 §2), never a real name.
+   */
+  @Transactional
+  public void createSupervisorReplacedNotification(
+      Session session, String recipientUserId, String previousName, String supervisorName) {
+    if (session == null || recipientUserId == null || recipientUserId.isBlank()) {
+      return;
+    }
+    Map<String, Object> params = baseParams(session);
+    putIfPresent(params, "supervisorName", supervisorName);
+    putIfPresent(params, "previousSupervisorName", previousName);
+    createEvent(
+        recipientUserId,
+        "supervisor.replaced",
+        CATEGORY_SYSTEM,
+        "Supervisor changed",
+        String.format(
+            "%s now supervises chat #%s in place of %s.",
+            safeValue(supervisorName, "A supervisor"),
+            session.getId(),
+            safeValue(previousName, "the previous supervisor")),
+        serializeParams(params),
+        buildSessionActionPath(session),
+        session.getId(),
+        session.getTenantId());
+  }
+
+  /**
    * ADR-002 §2 / ORISO-UserService#1201: the recipient of this entry is the <b>advice seeker</b>,
    * so it carries no counsellor name — neither the previous one nor the current one.
    *

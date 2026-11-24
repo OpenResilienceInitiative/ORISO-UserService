@@ -59,26 +59,31 @@ public class SupervisorLogsService {
             .addValue("offset", offset);
     agencyIds.ifPresent(ids -> params.addValue("agencyIds", ids));
 
-    // Total count for pagination: added events + removed events (only where removed_date exists).
+    // ORISO-Frontend#2494 *6: a swap is ONE event. The new row (it carries
+    // replaces_session_supervisor_id) is listed as REPLACED with the previous supervisor; the
+    // removal half of the old row is not listed on its own. Removals name who made them
+    // (removed_by_consultant_id; NULL for rows recorded before, shown as unknown).
+    final String tenantFilter =
+        "(:tenantId IS NULL OR s.tenant_id = :tenantId OR (:tenantId = 1 AND s.tenant_id IS NULL))"
+            + agencyFilter;
+    final String notReplaced =
+        "NOT EXISTS (SELECT 1 FROM session_supervisor nx"
+            + " WHERE nx.replaces_session_supervisor_id = ss.id)";
+
     Long total =
         namedParameterJdbcTemplate.queryForObject(
             "SELECT\n"
-                + "  (\n"
-                + "    SELECT COUNT(*)\n"
-                + "    FROM session_supervisor ss\n"
-                + "    JOIN session s ON s.id = ss.session_id\n"
-                + "    WHERE (:tenantId IS NULL OR s.tenant_id = :tenantId OR (:tenantId = 1 AND s.tenant_id IS NULL))"
-                + agencyFilter
-                + "\n  )\n"
+                + "  (SELECT COUNT(*) FROM session_supervisor ss JOIN session s ON s.id = ss.session_id\n"
+                + "   WHERE "
+                + tenantFilter
+                + ")\n"
                 + "  +\n"
-                + "  (\n"
-                + "    SELECT COUNT(*)\n"
-                + "    FROM session_supervisor ss\n"
-                + "    JOIN session s ON s.id = ss.session_id\n"
-                + "    WHERE ss.removed_date IS NOT NULL\n"
-                + "      AND (:tenantId IS NULL OR s.tenant_id = :tenantId OR (:tenantId = 1 AND s.tenant_id IS NULL))"
-                + agencyFilter
-                + "\n  ) AS total",
+                + "  (SELECT COUNT(*) FROM session_supervisor ss JOIN session s ON s.id = ss.session_id\n"
+                + "   WHERE ss.removed_date IS NOT NULL AND "
+                + notReplaced
+                + " AND "
+                + tenantFilter
+                + ") AS total",
             params,
             Long.class);
 
@@ -89,21 +94,32 @@ public class SupervisorLogsService {
                 + "  SELECT\n"
                 + "    ss.id AS relationId,\n"
                 + "    ss.session_id AS sessionId,\n"
-                + "    'ADDED' AS action,\n"
+                + "    CASE WHEN ss.replaces_session_supervisor_id IS NULL THEN 'ADDED' ELSE 'REPLACED' END AS action,\n"
                 + "    ss.added_date AS eventDate,\n"
                 + "    ss.supervisor_consultant_id AS supervisorConsultantId,\n"
                 + "    sup.username AS supervisorUsername,\n"
-                + "    COALESCE(NULLIF(sup.display_name, ''), CONCAT(sup.first_name, ' ', sup.last_name)) AS supervisorName,\n"
+                + "    "
+                + nameOf("sup")
+                + " AS supervisorName,\n"
+                + "    prev.consultant_id AS previousSupervisorConsultantId,\n"
+                + "    prev.username AS previousSupervisorUsername,\n"
+                + "    "
+                + nameOf("prev")
+                + " AS previousSupervisorName,\n"
                 + "    ss.added_by_consultant_id AS actorConsultantId,\n"
                 + "    act.username AS actorUsername,\n"
-                + "    COALESCE(NULLIF(act.display_name, ''), CONCAT(act.first_name, ' ', act.last_name)) AS actorName,\n"
+                + "    "
+                + nameOf("act")
+                + " AS actorName,\n"
                 + "    ss.notes AS notes\n"
                 + "  FROM session_supervisor ss\n"
                 + "  JOIN session s ON s.id = ss.session_id\n"
                 + "  JOIN consultant sup ON sup.consultant_id = ss.supervisor_consultant_id\n"
                 + "  JOIN consultant act ON act.consultant_id = ss.added_by_consultant_id\n"
-                + "  WHERE (:tenantId IS NULL OR s.tenant_id = :tenantId OR (:tenantId = 1 AND s.tenant_id IS NULL))"
-                + agencyFilter
+                + "  LEFT JOIN session_supervisor pss ON pss.id = ss.replaces_session_supervisor_id\n"
+                + "  LEFT JOIN consultant prev ON prev.consultant_id = pss.supervisor_consultant_id\n"
+                + "  WHERE "
+                + tenantFilter
                 + "\n"
                 + "\n"
                 + "  UNION ALL\n"
@@ -115,18 +131,28 @@ public class SupervisorLogsService {
                 + "    ss.removed_date AS eventDate,\n"
                 + "    ss.supervisor_consultant_id AS supervisorConsultantId,\n"
                 + "    sup.username AS supervisorUsername,\n"
-                + "    COALESCE(NULLIF(sup.display_name, ''), CONCAT(sup.first_name, ' ', sup.last_name)) AS supervisorName,\n"
-                + "    ss.added_by_consultant_id AS actorConsultantId,\n"
-                + "    act.username AS actorUsername,\n"
-                + "    COALESCE(NULLIF(act.display_name, ''), CONCAT(act.first_name, ' ', act.last_name)) AS actorName,\n"
+                + "    "
+                + nameOf("sup")
+                + " AS supervisorName,\n"
+                + "    NULL AS previousSupervisorConsultantId,\n"
+                + "    NULL AS previousSupervisorUsername,\n"
+                + "    NULL AS previousSupervisorName,\n"
+                + "    ss.removed_by_consultant_id AS actorConsultantId,\n"
+                + "    rem.username AS actorUsername,\n"
+                + "    "
+                + nameOf("rem")
+                + " AS actorName,\n"
                 + "    ss.notes AS notes\n"
                 + "  FROM session_supervisor ss\n"
                 + "  JOIN session s ON s.id = ss.session_id\n"
                 + "  JOIN consultant sup ON sup.consultant_id = ss.supervisor_consultant_id\n"
-                + "  JOIN consultant act ON act.consultant_id = ss.added_by_consultant_id\n"
+                + "  LEFT JOIN consultant rem ON rem.consultant_id = ss.removed_by_consultant_id\n"
                 + "  WHERE ss.removed_date IS NOT NULL\n"
-                + "    AND (:tenantId IS NULL OR s.tenant_id = :tenantId OR (:tenantId = 1 AND s.tenant_id IS NULL))"
-                + agencyFilter
+                + "    AND "
+                + notReplaced
+                + "\n"
+                + "    AND "
+                + tenantFilter
                 + "\n) e\n"
                 + "ORDER BY e.eventDate DESC\n"
                 + "LIMIT :limit OFFSET :offset",
@@ -139,6 +165,19 @@ public class SupervisorLogsService {
         .page(safePage)
         .perPage(safePerPage)
         .build();
+  }
+
+  /** A person's shown name in the log: display name, else first and last name. */
+  private static String nameOf(String alias) {
+    return "CASE WHEN "
+        + alias
+        + ".consultant_id IS NULL THEN NULL ELSE COALESCE(NULLIF("
+        + alias
+        + ".display_name, ''), CONCAT("
+        + alias
+        + ".first_name, ' ', "
+        + alias
+        + ".last_name)) END";
   }
 
   private static class SupervisorLogEntryRowMapper implements RowMapper<SupervisorLogEntry> {
@@ -157,6 +196,9 @@ public class SupervisorLogsService {
           .supervisorConsultantId(rs.getString("supervisorConsultantId"))
           .supervisorUsername(rs.getString("supervisorUsername"))
           .supervisorName(rs.getString("supervisorName"))
+          .previousSupervisorConsultantId(rs.getString("previousSupervisorConsultantId"))
+          .previousSupervisorUsername(rs.getString("previousSupervisorUsername"))
+          .previousSupervisorName(rs.getString("previousSupervisorName"))
           .actorConsultantId(rs.getString("actorConsultantId"))
           .actorUsername(rs.getString("actorUsername"))
           .actorName(rs.getString("actorName"))
@@ -172,11 +214,15 @@ public class SupervisorLogsService {
   public static class SupervisorLogEntry {
     private Long relationId;
     private Long sessionId;
-    private String action; // ADDED | REMOVED
+    private String action; // ADDED | REMOVED | REPLACED (#2494 *6)
     private LocalDateTime eventDate;
     private String supervisorConsultantId;
     private String supervisorUsername;
     private String supervisorName;
+    // REPLACED only: the supervisor who was replaced.
+    private String previousSupervisorConsultantId;
+    private String previousSupervisorUsername;
+    private String previousSupervisorName;
     private String actorConsultantId;
     private String actorUsername;
     private String actorName;

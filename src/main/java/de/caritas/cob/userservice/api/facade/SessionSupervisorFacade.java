@@ -8,6 +8,7 @@ import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
 import de.caritas.cob.userservice.api.exception.matrix.MatrixInviteRateLimitedException;
 import de.caritas.cob.userservice.api.exception.matrix.MatrixInviteUserException;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
+import de.caritas.cob.userservice.api.helper.ConsultantDisplayNameResolver;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.ConsultantAgency;
 import de.caritas.cob.userservice.api.model.Session;
@@ -109,6 +110,29 @@ public class SessionSupervisorFacade {
    */
   @Transactional
   public SessionSupervisor addSupervisor(
+      Long sessionId,
+      String supervisorConsultantId,
+      Consultant addedByConsultant,
+      String reasonCode,
+      String notes) {
+    AddPlan plan =
+        prepareAdd(sessionId, supervisorConsultantId, addedByConsultant, reasonCode, notes);
+    return provisionAndSave(plan, addedByConsultant, null, null);
+  }
+
+  /** What an add needs once every check has passed. */
+  private record AddPlan(
+      Session session,
+      Consultant supervisorConsultant,
+      String encodedNotes,
+      String matrixRoomId,
+      String supervisorMatrixUserId) {}
+
+  /**
+   * Every check of an add, and nothing that changes state: a swap runs it for the new supervisor
+   * before the old one is touched, so a refused candidate leaves the case as it was.
+   */
+  private AddPlan prepareAdd(
       Long sessionId,
       String supervisorConsultantId,
       Consultant addedByConsultant,
@@ -232,6 +256,25 @@ public class SessionSupervisorFacade {
           ConsultantChatIdentityService.missingChatIdentityMessage(
               "Consultant adding the supervisor", addedByConsultant.getId()));
     }
+    return new AddPlan(
+        session, supervisorConsultant, encodedNotes, matrixRoomId, supervisorMatrixUserId);
+  }
+
+  /**
+   * Provisions Matrix access for a checked add and stores the active row.
+   *
+   * @param preferredSideRoomId the side room to keep (a swap keeps the case's one); null reuses an
+   *     active supervisor's side room or creates one
+   * @param replacesId the row this one replaces in a swap; null for a plain add
+   */
+  private SessionSupervisor provisionAndSave(
+      AddPlan plan, Consultant addedByConsultant, String preferredSideRoomId, Long replacesId) {
+    Session session = plan.session();
+    Long sessionId = session.getId();
+    Consultant supervisorConsultant = plan.supervisorConsultant();
+    String encodedNotes = plan.encodedNotes();
+    String matrixRoomId = plan.matrixRoomId();
+    String supervisorMatrixUserId = plan.supervisorMatrixUserId();
 
     SessionSupervisor.SessionSupervisorBuilder builder =
         SessionSupervisor.builder()
@@ -239,6 +282,7 @@ public class SessionSupervisorFacade {
             .supervisorConsultant(supervisorConsultant)
             .addedByConsultant(addedByConsultant)
             .addedDate(LocalDateTime.now())
+            .replacesSessionSupervisorId(replacesId)
             .notes(encodedNotes);
 
     // Consent model (grill 2026-07-13, supersedes the ADR-008 item-4 per-reason PENDING gate):
@@ -249,7 +293,12 @@ public class SessionSupervisorFacade {
     matrixRepairService.cancelPendingRemovals(sessionId, supervisorMatrixUserId);
     ProvisionedRooms rooms =
         provisionSupervisorRooms(
-            session, addedByConsultant, supervisorConsultant, supervisorMatrixUserId, matrixRoomId);
+            session,
+            addedByConsultant,
+            supervisorConsultant,
+            supervisorMatrixUserId,
+            matrixRoomId,
+            preferredSideRoomId);
     SessionSupervisor saved =
         sessionSupervisorRepository.save(
             builder.isActive(true).matrixRoomId(rooms.sideRoomId()).build());
@@ -283,7 +332,8 @@ public class SessionSupervisorFacade {
       Consultant addedByConsultant,
       Consultant supervisorConsultant,
       String supervisorMatrixUserId,
-      String matrixRoomId) {
+      String matrixRoomId,
+      String preferredSideRoomId) {
     String consultantToken =
         matrixSynapseService.loginAsUserAccessToken(addedByConsultant.getMatrixUserId());
     if (consultantToken == null) {
@@ -301,7 +351,8 @@ public class SessionSupervisorFacade {
             addedByConsultant,
             supervisorConsultant,
             supervisorMatrixUserId,
-            consultantToken);
+            consultantToken,
+            preferredSideRoomId);
 
     // Invite supervisor to the CLIENT room as a read-only observer.
     boolean invited =
@@ -342,6 +393,155 @@ public class SessionSupervisorFacade {
       }
     }
     return new ProvisionedRooms(sideRoomId, false);
+  }
+
+  /** The outcome of a swap: the new active row and the row it replaced. */
+  public record SupervisorReplacement(SessionSupervisor added, SessionSupervisor replaced) {}
+
+  /**
+   * ORISO-Frontend#2494 *6: replace one supervisor of a session by another in one step.
+   *
+   * <p>The new supervisor is checked first (the same checks as an add), so a refused candidate
+   * leaves the case unchanged. Then the old supervisor leaves both rooms, the new one joins the
+   * SAME side room (the counsellor keeps the conversation), the new row records which row it
+   * replaced and the old row who removed it, and one system notice is posted into the side room.
+   * The old supervisor has left by then and the client is never in that room, so only the
+   * counsellor and the new supervisor read it. The client room gets nothing.
+   *
+   * @param sessionId the session
+   * @param supervisorId the active supervisor row to replace
+   * @param newSupervisorConsultantId the consultant who supervises from now on
+   * @param actor the counsellor making the change
+   * @param reasonCode optional ADR-008 reason code
+   * @param notes the justification
+   * @return the new and the replaced row
+   */
+  @Transactional
+  public SupervisorReplacement replaceSupervisor(
+      Long sessionId,
+      Long supervisorId,
+      String newSupervisorConsultantId,
+      Consultant actor,
+      String reasonCode,
+      String notes) {
+    SessionSupervisor old =
+        sessionSupervisorRepository
+            .findById(supervisorId)
+            .orElseThrow(() -> new NotFoundException("Supervisor not found: " + supervisorId));
+    if (old.getSession() == null || !sessionId.equals(old.getSession().getId())) {
+      throw new BadRequestException("Supervisor does not belong to this session");
+    }
+    if (!Boolean.TRUE.equals(old.getIsActive())) {
+      throw new BadRequestException("Supervisor is already removed");
+    }
+    if (old.getSupervisorConsultant() != null
+        && newSupervisorConsultantId != null
+        && newSupervisorConsultantId.equals(old.getSupervisorConsultant().getId())) {
+      throw new BadRequestException("The new supervisor is the current supervisor");
+    }
+
+    // All checks of an add, including permission and the feature gate, before anything changes.
+    AddPlan plan = prepareAdd(sessionId, newSupervisorConsultantId, actor, reasonCode, notes);
+    Session session = plan.session();
+
+    String clientRoomId = session.getMatrixRoomId();
+    String sideRoomId = old.getMatrixRoomId();
+    if (sideRoomId != null && sideRoomId.equals(clientRoomId)) {
+      // Pre-ADR-008 rows stored the client room here; that is never a side room to keep.
+      sideRoomId = null;
+    }
+
+    String oldMatrixUserId =
+        old.getSupervisorConsultant() != null
+            ? old.getSupervisorConsultant().getMatrixUserId()
+            : null;
+    if (oldMatrixUserId != null && !oldMatrixUserId.isEmpty()) {
+      List<String> operators = kickOperatorsOf(session, actor);
+      removeFromRoomOrQueue(sideRoomId, oldMatrixUserId, operators, old, "supervision side");
+      removeFromRoomOrQueue(observedRoomOf(session), oldMatrixUserId, operators, old, "client");
+    }
+    old.setIsActive(false);
+    old.setRemovedDate(LocalDateTime.now());
+    old.setRemovedByConsultantId(actor.getId());
+    sessionSupervisorRepository.save(old);
+
+    SessionSupervisor added = provisionAndSave(plan, actor, sideRoomId, old.getId());
+    postReplacedNotice(added, old, actor, notes);
+    log.info(
+        "Replaced supervisor {} by {} on session {} by consultant {}",
+        old.getSupervisorConsultant() != null ? old.getSupervisorConsultant().getUsername() : null,
+        plan.supervisorConsultant().getUsername(),
+        sessionId,
+        actor.getUsername());
+    return new SupervisorReplacement(added, old);
+  }
+
+  /** Type of the side-room notice; the web client words it (supervisorReplacedNotice.ts). */
+  public static final String SUPERVISOR_REPLACED_TYPE = "SUPERVISOR_REPLACED";
+
+  private static final com.fasterxml.jackson.databind.ObjectMapper NOTICE_JSON =
+      new com.fasterxml.jackson.databind.ObjectMapper();
+
+  /** Colleague-facing names (#996): internal display name, public one, then the username. */
+  private final ConsultantDisplayNameResolver displayNames = new ConsultantDisplayNameResolver();
+
+  /**
+   * One system notice in the side room, posted as the counsellor. Best effort: the swap stands
+   * whether or not Matrix accepts the event, and a failure is logged.
+   */
+  private void postReplacedNotice(
+      SessionSupervisor added, SessionSupervisor old, Consultant actor, String notes) {
+    String roomId = added.getMatrixRoomId();
+    if (roomId == null || roomId.isEmpty()) {
+      return;
+    }
+    try {
+      String body =
+          buildReplacedNoticeBody(
+              displayNames.resolveInternalDisplayName(old.getSupervisorConsultant()),
+              displayNames.resolveInternalDisplayName(added.getSupervisorConsultant()),
+              notes);
+      String token = matrixSynapseService.loginAsUserAccessToken(actor.getMatrixUserId());
+      if (body == null || token == null) {
+        log.warn("Supervisor-replaced notice skipped for session {}", added.getSession().getId());
+        return;
+      }
+      var response = matrixSynapseService.sendMessage(roomId, body, token);
+      if (response != null && response.containsKey("error")) {
+        log.warn(
+            "Supervisor-replaced notice for session {} failed: {}",
+            added.getSession().getId(),
+            response.get("error"));
+      }
+    } catch (RuntimeException e) {
+      log.warn("Supervisor-replaced notice for session {} failed", added.getSession().getId(), e);
+    }
+  }
+
+  /**
+   * The notice carries the names and the reason; title and description are a German fallback for
+   * previews and older clients, the app words the notice in the reader's language.
+   */
+  static String buildReplacedNoticeBody(String previousName, String newName, String reason) {
+    if (previousName == null || newName == null) {
+      return null;
+    }
+    var payload = new java.util.LinkedHashMap<String, String>();
+    payload.put("type", SUPERVISOR_REPLACED_TYPE);
+    payload.put("previousName", previousName);
+    payload.put("newName", newName);
+    if (reason != null && !reason.isBlank()) {
+      payload.put("reason", reason.trim());
+    }
+    payload.put("title", "Supervision gewechselt");
+    payload.put(
+        "description",
+        newName + " supervidiert diesen Chat jetzt anstelle von " + previousName + ".");
+    try {
+      return "[SYSTEM_NOTIFICATION]" + NOTICE_JSON.writeValueAsString(payload);
+    } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
+      return null;
+    }
   }
 
   /**
@@ -400,6 +600,7 @@ public class SessionSupervisorFacade {
     // Deactivate supervisor
     supervisor.setIsActive(false);
     supervisor.setRemovedDate(LocalDateTime.now());
+    supervisor.setRemovedByConsultantId(removedByConsultant.getId());
     sessionSupervisorRepository.save(supervisor);
 
     log.info(
@@ -587,9 +788,25 @@ public class SessionSupervisorFacade {
       Consultant addedByConsultant,
       Consultant supervisorConsultant,
       String supervisorMatrixUserId,
-      String consultantToken) {
+      String consultantToken,
+      String preferredSideRoomId) {
 
     String clientRoomId = session.getMatrixRoomId();
+
+    // ORISO-Frontend#2494 *6: a swap keeps the case's side room, so the counsellor keeps the
+    // conversation and the new supervisor continues it (Frank, 2026-11-24). Before, the old row was
+    // deactivated first and the lookup below found no active row, so every swap created a new room.
+    if (preferredSideRoomId != null
+        && !preferredSideRoomId.isEmpty()
+        && !preferredSideRoomId.equals(clientRoomId)) {
+      inviteAndJoin(preferredSideRoomId, supervisorMatrixUserId, consultantToken);
+      log.info(
+          "Supervisor {} continues supervision side room {} for session {}",
+          supervisorConsultant.getUsername(),
+          preferredSideRoomId,
+          session.getId());
+      return preferredSideRoomId;
+    }
 
     // Reuse an existing side room if another active supervisor already has one for
     // this session.
