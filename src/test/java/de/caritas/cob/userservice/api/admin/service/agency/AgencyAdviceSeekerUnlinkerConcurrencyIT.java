@@ -11,6 +11,7 @@ import de.caritas.cob.userservice.api.admin.service.agency.AgencyAdviceSeekerUnl
 import de.caritas.cob.userservice.api.admin.service.agency.AgencyAdviceSeekerUnlinker.OnlyHere;
 import de.caritas.cob.userservice.api.admin.service.agency.AgencyAdviceSeekerUnlinker.Outcome;
 import de.caritas.cob.userservice.api.config.JpaAuditingConfiguration;
+import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.model.UserAgency;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
@@ -35,7 +36,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 /**
  * Two Beratungsstellen deleted at the same time, each in its own committed transaction, deciding
- * about an advice seeker who belongs to both by membership only (ORISO-Admin#1524).
+ * about an advice seeker who belongs to both (ORISO-Admin#1524).
  */
 @DataJpaTest
 @ActiveProfiles("testing")
@@ -55,20 +56,72 @@ class AgencyAdviceSeekerUnlinkerConcurrencyIT {
   @Autowired private PlatformTransactionManager transactionManager;
 
   private final List<String> created = new java.util.ArrayList<>();
+  private final List<Long> createdSessions = new java.util.ArrayList<>();
 
   @AfterEach
   void cleanUp() {
+    sessionRepository.deleteAllById(createdSessions);
     userAgencyRepository.deleteAll(userAgencyRepository.findByUserUserIdIn(created));
     userRepository.deleteAllById(created);
   }
 
   @Test
-  void unlink_Should_letExactlyOneOfTwoConcurrentDeletionsFindTheAdviceSeekerOnlyThere()
+  void
+      unlink_Should_letExactlyOneOfTwoConcurrentDeletionsFindTheAdviceSeekerOnlyThere_byMemberships()
+          throws Exception {
+    var userId = adviceSeeker();
+    membership(userId, AGENCY);
+    membership(userId, OTHER_AGENCY);
+
+    var onlyThere = runConcurrently(userId);
+
+    // The side that found them only there kept its membership: until their account is marked,
+    // it is how the next call finds them again.
+    assertThat(userAgencyRepository.findByUserUserIdIn(List.of(userId)))
+        .extracting(UserAgency::getAgencyId)
+        .containsExactly(onlyThere);
+  }
+
+  @Test
+  void unlink_Should_letExactlyOneOfTwoConcurrentDeletionsFindTheAdviceSeekerOnlyThere_bySessions()
       throws Exception {
-    var userId = membershipsOnlyAdviceSeeker();
+    var userId = adviceSeeker();
+    var here = session(userId, AGENCY);
+    var there = session(userId, OTHER_AGENCY);
+
+    var onlyThere = runConcurrently(userId);
+
+    // The kept side marked its session; the other side's session stays unmarked with the
+    // account, which is marked next.
+    var unmarked = onlyThere == AGENCY ? here : there;
+    var marked = onlyThere == AGENCY ? there : here;
+    assertThat(sessionRepository.findById(unmarked).orElseThrow().getDeleteDate()).isNull();
+    assertThat(sessionRepository.findById(marked).orElseThrow().getDeleteDate()).isEqualTo(NOW);
+  }
+
+  @Test
+  void unlink_Should_findTheAdviceSeekerAgain_When_markingTheirAccountFailed() {
+    var userId = adviceSeeker();
+    membership(userId, AGENCY);
+    membership(userId, OTHER_AGENCY);
+    var unlinker = unlinker(new CountDownLatch(0));
+    assertThat(unlinker.unlink(userId, OTHER_AGENCY, NOW)).isInstanceOf(Kept.class);
+
+    assertThat(unlinker.unlink(userId, AGENCY, NOW)).isInstanceOf(OnlyHere.class);
+    // Marking the account failed here, so nothing about the advice seeker changed. The next
+    // call lists them again from the committed data and comes to the same decision.
+    assertThat(userRepository.findActiveAdviceSeekerIdsLinkedToAgency(AGENCY)).contains(userId);
+    assertThat(unlinker.unlink(userId, AGENCY, NOW)).isInstanceOf(OnlyHere.class);
+    assertThat(userAgencyRepository.findByUserUserIdIn(List.of(userId)))
+        .extracting(UserAgency::getAgencyId)
+        .containsExactly(AGENCY);
+  }
+
+  /** Both deletions decide at once; returns the agency that found the advice seeker only there. */
+  private long runConcurrently(String userId) throws Exception {
     // Each side waits, after asking whether the advice seeker is linked elsewhere, until the
     // other side asked too. Under the row lock the other side cannot ask before this one
-    // committed, so the wait times out; without it both would see the other's membership.
+    // committed, so the wait times out; without it both would see the other's link.
     var bothAsked = new CountDownLatch(2);
     var here = unlinker(bothAsked);
     var there = unlinker(bothAsked);
@@ -83,36 +136,31 @@ class AgencyAdviceSeekerUnlinkerConcurrencyIT {
     }
 
     assertThat(List.of(atHere, atThere))
-        .hasSize(2)
         .satisfiesExactlyInAnyOrder(
             outcome -> assertThat(outcome).isInstanceOf(Kept.class),
             outcome -> assertThat(outcome).isInstanceOf(OnlyHere.class));
-    // The side that found them only there kept its membership: until their account is marked,
-    // it is how the next call finds them again.
-    var onlyThere = atHere instanceof OnlyHere ? AGENCY : OTHER_AGENCY;
-    assertThat(userAgencyRepository.findByUserUserIdIn(List.of(userId)))
-        .extracting(UserAgency::getAgencyId)
-        .containsExactly(onlyThere);
+    return atHere instanceof OnlyHere ? AGENCY : OTHER_AGENCY;
   }
 
   private AgencyAdviceSeekerUnlinker unlinker(CountDownLatch bothAsked) {
-    var memberships = mock(UserAgencyRepository.class, delegatesTo(userAgencyRepository));
+    // The session check is the first question asked under the lock, whatever links there are.
+    var sessions = mock(SessionRepository.class, delegatesTo(sessionRepository));
     doAnswer(
             call -> {
               boolean elsewhere =
-                  userAgencyRepository.hasMembershipOutsideAgency(
+                  sessionRepository.hasActiveSessionOutsideAgency(
                       call.getArgument(0), call.getArgument(1));
               bothAsked.countDown();
               bothAsked.await(1, TimeUnit.SECONDS);
               return elsewhere;
             })
-        .when(memberships)
-        .hasMembershipOutsideAgency(any(), any());
+        .when(sessions)
+        .hasActiveSessionOutsideAgency(any(), any());
     return new AgencyAdviceSeekerUnlinker(
-        userRepository, sessionRepository, memberships, transactionManager);
+        userRepository, sessions, userAgencyRepository, transactionManager);
   }
 
-  private String membershipsOnlyAdviceSeeker() {
+  private String adviceSeeker() {
     var id = UUID.randomUUID().toString();
     var user = new User();
     user.setUserId(id);
@@ -124,12 +172,28 @@ class AgencyAdviceSeekerUnlinkerConcurrencyIT {
     user.setLanguageCode(LanguageCode.de);
     userRepository.save(user);
     created.add(id);
-    for (long agencyId : new long[] {AGENCY, OTHER_AGENCY}) {
-      var membership = new UserAgency();
-      membership.setUser(user);
-      membership.setAgencyId(agencyId);
-      userAgencyRepository.save(membership);
-    }
+    return id;
+  }
+
+  private void membership(String userId, long agencyId) {
+    var membership = new UserAgency();
+    membership.setUser(userRepository.findById(userId).orElseThrow());
+    membership.setAgencyId(agencyId);
+    userAgencyRepository.save(membership);
+  }
+
+  private Long session(String userId, long agencyId) {
+    var session = new Session();
+    session.setUser(userRepository.findById(userId).orElseThrow());
+    session.setPostcode("12345");
+    session.setAgencyId(agencyId);
+    session.setStatus(Session.SessionStatus.IN_PROGRESS);
+    session.setTenantId(TENANT);
+    session.setLanguageCode(LanguageCode.de);
+    session.setIsConsultantDirectlySet(false);
+    session.setRegistrationType(Session.RegistrationType.REGISTERED);
+    var id = sessionRepository.save(session).getId();
+    createdSessions.add(id);
     return id;
   }
 }
