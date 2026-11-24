@@ -72,6 +72,11 @@ class CreateEnquiryMessageFacadeErstantwortTest {
   private de.caritas.cob.userservice.api.service.erstantwort.ErstantwortPlatformTextService
       platformTextService;
 
+  @Mock private de.caritas.cob.userservice.api.service.journey.PublicJourneyService journeys;
+
+  private de.caritas.cob.userservice.api.service.erstantwort.JourneyFirstReplyBuilder
+      journeyFirstReplyBuilder;
+
   private CreateEnquiryMessageFacade facade;
 
   private Session session;
@@ -79,6 +84,11 @@ class CreateEnquiryMessageFacadeErstantwortTest {
 
   @BeforeEach
   void setUp() {
+    journeyFirstReplyBuilder =
+        new de.caritas.cob.userservice.api.service.erstantwort.JourneyFirstReplyBuilder(
+            journeys, new ErstantwortPayloadBuilder());
+    org.springframework.test.util.ReflectionTestUtils.setField(
+        journeyFirstReplyBuilder, "enabled", true);
     facade =
         new CreateEnquiryMessageFacade(
             sessionService,
@@ -92,7 +102,8 @@ class CreateEnquiryMessageFacadeErstantwortTest {
             erstantwortPayloadBuilder,
             matrixSessionSystemMessageService,
             new ErstantwortTenantTextResolver(tenantContentClient),
-            platformTextService);
+            platformTextService,
+            journeyFirstReplyBuilder);
     user = new User();
     user.setUserId("asker-1");
     user.setMatrixUserId("@asker:matrix.test");
@@ -129,6 +140,56 @@ class CreateEnquiryMessageFacadeErstantwortTest {
     when(consultantAgencyService.findConsultantsByAgencyId(1L))
         .thenReturn(List.<ConsultantAgency>of());
     when(erstantwortPayloadBuilder.buildFirstResponseBody(any())).thenReturn(BODY);
+  }
+
+  /** ADR-036 decision 42: a topic that no journey reaches keeps the version-1 first reply. */
+  @Test
+  void aTopicWithoutAJourneyKeepsTheVersionOneFirstReply() {
+    session.setMainTopicId(5L);
+    when(journeys.forRegistration(5L, 1L)).thenReturn(Optional.empty());
+
+    facade.createEnquiryMessage(enquiryData());
+
+    verify(erstantwortPayloadBuilder).buildFirstResponseBody(any());
+    verify(matrixSessionSystemMessageService).postFirstResponseMessage(session, BODY);
+  }
+
+  /** ADR-036 decision 42: a topic a journey reaches gets the journey's on-board steps. */
+  @Test
+  void aTopicWithAJourneyGetsTheJourneysOnBoardSteps() {
+    session.setMainTopicId(5L);
+    var panel =
+        Map.<String, Object>of(
+            "id",
+            "u25:info",
+            "kind",
+            "panel",
+            "aspects",
+            List.of(
+                Map.of(
+                    "id",
+                    "u25:aspect",
+                    "title",
+                    Map.of("de", "Neu bei U25"),
+                    "body",
+                    Map.of("de", "<p>Wir antworten Dir bald.</p>"))));
+    when(journeys.forRegistration(5L, 1L))
+        .thenReturn(
+            Optional.of(
+                new de.caritas.cob.userservice.api.service.journey.PublicJourneyService
+                    .PublicJourney(
+                    "j1", Map.of("phases", Map.of("flight", List.of(panel))), null)));
+
+    facade.createEnquiryMessage(enquiryData());
+
+    verify(erstantwortPayloadBuilder, org.mockito.Mockito.never()).buildFirstResponseBody(any());
+    var body = ArgumentCaptor.forClass(String.class);
+    verify(matrixSessionSystemMessageService).postFirstResponseMessage(eq(session), body.capture());
+    assertThat(body.getValue())
+        .contains("\"version\":2")
+        .contains("Neu bei U25")
+        .contains("Wir antworten Dir bald.")
+        .contains("0800 111 0 111");
   }
 
   private EnquiryData enquiryData() {
