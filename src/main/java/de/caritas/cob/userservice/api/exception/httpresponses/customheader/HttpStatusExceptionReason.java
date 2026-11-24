@@ -144,5 +144,10 @@ public enum HttpStatusExceptionReason {
    * ORISO-Frontend#2287: the requested time has passed or something else takes it now, so the
    * request cannot be confirmed; the counsellor declines it instead.
    */
-  REQUESTED_TIME_TAKEN
+  REQUESTED_TIME_TAKEN,
+  /**
+   * ORISO-Frontend#2494: a one-off Sprechstunde overlaps one of the counsellor's own blockers and
+   * they have not confirmed releasing it over their Sperrzeit (overBlocker); nothing is stored.
+   */
+  CONSULTATION_ONCE_OVER_BLOCKER
 }

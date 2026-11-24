@@ -7,6 +7,8 @@ import de.caritas.cob.userservice.api.adapters.web.dto.BlockerTimeDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.CalendarAutoAcceptDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.CalendarColleaguesDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.CalendarConsultationHoursDTO;
+import de.caritas.cob.userservice.api.adapters.web.dto.CalendarConsultationOnceCreateDTO;
+import de.caritas.cob.userservice.api.adapters.web.dto.CalendarConsultationOnceDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.CalendarEntryDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.CalendarImportDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.CalendarMoveProposalCreateDTO;
@@ -20,6 +22,7 @@ import de.caritas.cob.userservice.api.adapters.web.dto.ColleagueAppointmentCreat
 import de.caritas.cob.userservice.api.service.calendar.CalendarBlockerService;
 import de.caritas.cob.userservice.api.service.calendar.CalendarColleagueAppointmentService;
 import de.caritas.cob.userservice.api.service.calendar.CalendarConsultationHoursService;
+import de.caritas.cob.userservice.api.service.calendar.CalendarConsultationOnceService;
 import de.caritas.cob.userservice.api.service.calendar.CalendarFeedService;
 import de.caritas.cob.userservice.api.service.calendar.CalendarMoveProposalService;
 import de.caritas.cob.userservice.api.service.calendar.CalendarService;
@@ -56,6 +59,7 @@ public class CalendarController implements UsersApi {
   private final CalendarFeedService feed;
   private final CalendarWorkingHoursService workingHours;
   private final CalendarConsultationHoursService consultationHours;
+  private final CalendarConsultationOnceService consultationOnce;
   private final CalendarMoveProposalService proposals;
   private final CalendarColleagueAppointmentService meetings;
 
@@ -121,6 +125,23 @@ public class CalendarController implements UsersApi {
   public ResponseEntity<CalendarConsultationHoursDTO> setCalendarConsultationHours(
       CalendarConsultationHoursDTO request) {
     return ResponseEntity.ok(consultationHours.replace(request));
+  }
+
+  @Override
+  public ResponseEntity<List<CalendarConsultationOnceDTO>> getCalendarConsultationOnce() {
+    return ResponseEntity.ok(consultationOnce.upcoming());
+  }
+
+  @Override
+  public ResponseEntity<CalendarConsultationOnceDTO> createCalendarConsultationOnce(
+      CalendarConsultationOnceCreateDTO request) {
+    return new ResponseEntity<>(consultationOnce.create(request), HttpStatus.CREATED);
+  }
+
+  @Override
+  public ResponseEntity<Void> deleteCalendarConsultationOnce(UUID onceId) {
+    consultationOnce.delete(onceId);
+    return ResponseEntity.noContent().build();
   }
 
   @Override

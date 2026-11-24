@@ -37,6 +37,11 @@ class DeleteConsultantCalendarActionTest {
   @Mock private CalendarWorkingHoursSettingRepository calendarWorkingHoursSettingRepository;
   @Mock private CalendarMoveProposalRepository calendarMoveProposalRepository;
   @Mock private CalendarConsultationHoursRepository calendarConsultationHoursRepository;
+
+  @Mock
+  private de.caritas.cob.userservice.api.port.out.CalendarConsultationOnceRepository
+      calendarConsultationOnceRepository;
+
   @Mock private CalendarBookingSettingRepository calendarBookingSettingRepository;
 
   @Mock
@@ -62,6 +67,7 @@ class DeleteConsultantCalendarActionTest {
             calendarWorkingHoursSettingRepository,
             calendarMoveProposalRepository,
             calendarConsultationHoursRepository,
+            calendarConsultationOnceRepository,
             calendarBookingSettingRepository,
             calendarColleagueAppointmentRepository,
             calendarAutoAcceptRepository,
@@ -82,6 +88,8 @@ class DeleteConsultantCalendarActionTest {
     // Sprechstunden and booking settings (ORISO-Frontend#2287).
     verify(calendarConsultationHoursRepository).deleteByConsultantId(CONSULTANT_ID);
     verify(calendarBookingSettingRepository).deleteByConsultantId(CONSULTANT_ID);
+    // One-off Sprechstunden (ORISO-Frontend#2494).
+    verify(calendarConsultationOnceRepository).deleteByConsultantId(CONSULTANT_ID);
     // Proposals they made and proposals they were asked to decide: one query covers both roles.
     verify(calendarMoveProposalRepository).deleteByConsultantId(CONSULTANT_ID);
     verify(calendarColleagueAppointmentRepository).deleteByConsultantId(CONSULTANT_ID);

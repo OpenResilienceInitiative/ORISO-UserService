@@ -30,6 +30,7 @@ import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.out.CalendarBlockerRepository;
 import de.caritas.cob.userservice.api.port.out.CalendarBookingSettingRepository;
 import de.caritas.cob.userservice.api.port.out.CalendarConsultationHoursRepository;
+import de.caritas.cob.userservice.api.port.out.CalendarConsultationOnceRepository;
 import de.caritas.cob.userservice.api.port.out.CalendarWorkingHoursRepository;
 import de.caritas.cob.userservice.api.port.out.CaseHandoverRequestRepository;
 import de.caritas.cob.userservice.api.port.out.SessionAppointmentRepository;
@@ -104,6 +105,7 @@ class AppointmentSelfBookingControllerIT {
   @Autowired private CalendarWorkingHoursRepository workingHours;
   @Autowired private CalendarBlockerRepository blockers;
   @Autowired private CalendarConsultationHoursRepository consultationHours;
+  @Autowired private CalendarConsultationOnceRepository consultationOnce;
   @Autowired private CalendarBookingSettingRepository bookingSettings;
   @Autowired private SessionAppointmentRepository appointmentRepository;
   @Autowired private AppointmentRequestExpiry requestExpiry;
@@ -148,6 +150,9 @@ class AppointmentSelfBookingControllerIT {
               consultationHours.findByConsultantIdOrderByWeekdayAscStartTimeAscEndTimeAsc(
                   counsellor.getId()));
           for (var id : List.of(counsellor.getId(), otherCounsellor.getId())) {
+            consultationOnce.deleteAll(
+                consultationOnce.findByConsultantIdAndEndAtAfterOrderByStartAtAsc(
+                    id, Instant.EPOCH));
             consultationHours.deleteAll(
                 consultationHours.findByConsultantIdOrderByWeekdayAscStartTimeAscEndTimeAsc(id));
             bookingSettings.findById(id).ifPresent(bookingSettings::delete);
@@ -643,6 +648,91 @@ class AppointmentSelfBookingControllerIT {
   }
 
   @Test
+  void consultationOnce_Should_BeTheCounsellorsOwn_And_AskBeforeLyingOverABlocker()
+      throws Exception {
+    actAsCounsellor(counsellor);
+    var start = Instant.now().truncatedTo(ChronoUnit.HOURS).plus(Duration.ofHours(3));
+    var end = start.plus(Duration.ofHours(2));
+    block(start, start.plus(Duration.ofMinutes(30)));
+
+    mockMvc
+        .perform(createOnce(start, end, 30, false))
+        .andExpect(status().isConflict())
+        .andExpect(header().string("X-Reason", "CONSULTATION_ONCE_OVER_BLOCKER"));
+    mockMvc.perform(createOnce(start, end, 45, true)).andExpect(status().isBadRequest());
+    var created =
+        JSON.readValue(
+            mockMvc
+                .perform(createOnce(start, end, 30, true))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.noticeMinutes").value(30))
+                .andExpect(jsonPath("$.overBlocker").value(true))
+                .andReturn()
+                .getResponse()
+                .getContentAsString(),
+            Map.class);
+    mockMvc
+        .perform(
+            createOnce(start.plus(Duration.ofHours(1)), end.plus(Duration.ofHours(1)), 0, true))
+        .andExpect(status().isBadRequest());
+    var id = (String) created.get("id");
+    assertThat(body(get("/users/calendar/consultation-hours/once")))
+        .extracting(row -> row.get("id"))
+        .containsExactly(id);
+
+    actAsCounsellor(otherCounsellor);
+    assertThat(body(get("/users/calendar/consultation-hours/once"))).isEmpty();
+    mockMvc
+        .perform(
+            csrf(MockMvcRequestBuilders.delete("/users/calendar/consultation-hours/once/" + id)))
+        .andExpect(status().isNotFound());
+
+    actAsAsker(asker);
+    mockMvc
+        .perform(get("/users/calendar/consultation-hours/once"))
+        .andExpect(status().isForbidden());
+
+    actAsCounsellor(counsellor);
+    mockMvc
+        .perform(
+            csrf(MockMvcRequestBuilders.delete("/users/calendar/consultation-hours/once/" + id)))
+        .andExpect(status().isNoContent());
+    assertThat(body(get("/users/calendar/consultation-hours/once"))).isEmpty();
+  }
+
+  @Test
+  void book_Should_TakeAOneOffSlot_InsideTheMinimumLeadTime_AfterItsOwnNotice() throws Exception {
+    // No weekly Sprechstunden; a one-off starting in about an hour, bookable until 30 min before.
+    var start = Instant.now().truncatedTo(ChronoUnit.MINUTES).plus(Duration.ofMinutes(61));
+    var end = start.plus(Duration.ofHours(1));
+    actAsCounsellor(counsellor);
+    mockMvc.perform(createOnce(start, end, 30, false)).andExpect(status().isCreated());
+
+    actAsAsker(asker);
+    var now = Instant.now();
+    assertThat(slotStarts(session.getId(), now)).containsExactly(start);
+    mockMvc
+        .perform(book(session.getId(), start, end, "VIDEO"))
+        .andExpect(status().isCreated())
+        .andExpect(jsonPath("$.status").value("SCHEDULED"));
+  }
+
+  @Test
+  void book_Should_RefuseAOneOffSlot_InsideItsOwnNotice() throws Exception {
+    var start = Instant.now().truncatedTo(ChronoUnit.MINUTES).plus(Duration.ofMinutes(61));
+    var end = start.plus(Duration.ofHours(1));
+    actAsCounsellor(counsellor);
+    mockMvc.perform(createOnce(start, end, 120, false)).andExpect(status().isCreated());
+
+    actAsAsker(asker);
+    assertThat(slotStarts(session.getId(), Instant.now())).isEmpty();
+    mockMvc
+        .perform(book(session.getId(), start, end, "VIDEO"))
+        .andExpect(status().isConflict())
+        .andExpect(header().string("X-Reason", "SLOT_OUTSIDE_BOOKING_WINDOW"));
+  }
+
+  @Test
   void book_Should_Refuse_When_TheTimeIsTakenMeanwhile() throws Exception {
     opensEveryDay("00:00", "23:30");
     var otherSession = fixtures.session(otherAsker, AGENCY, counsellor);
@@ -950,6 +1040,18 @@ class AppointmentSelfBookingControllerIT {
     return csrf(post("/users/sessions/" + sessionId + "/appointment-slots/booking"))
         .contentType(MediaType.APPLICATION_JSON)
         .content(times(start, end, kind));
+  }
+
+  private MockHttpServletRequestBuilder createOnce(
+      Instant start, Instant end, int noticeMinutes, boolean overBlocker) throws Exception {
+    var body = new HashMap<String, Object>();
+    body.put("start", start.toString());
+    body.put("end", end.toString());
+    body.put("noticeMinutes", noticeMinutes);
+    body.put("overBlocker", overBlocker);
+    return csrf(post("/users/calendar/consultation-hours/once"))
+        .contentType(MediaType.APPLICATION_JSON)
+        .content(JSON.writeValueAsString(body));
   }
 
   private void opensEveryDay(String start, String end) {

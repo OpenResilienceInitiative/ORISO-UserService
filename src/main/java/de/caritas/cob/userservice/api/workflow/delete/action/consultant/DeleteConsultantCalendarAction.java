@@ -10,6 +10,7 @@ import de.caritas.cob.userservice.api.port.out.CalendarBlockerRepository;
 import de.caritas.cob.userservice.api.port.out.CalendarBookingSettingRepository;
 import de.caritas.cob.userservice.api.port.out.CalendarColleagueAppointmentRepository;
 import de.caritas.cob.userservice.api.port.out.CalendarConsultationHoursRepository;
+import de.caritas.cob.userservice.api.port.out.CalendarConsultationOnceRepository;
 import de.caritas.cob.userservice.api.port.out.CalendarMoveProposalRepository;
 import de.caritas.cob.userservice.api.port.out.CalendarSyncRepository;
 import de.caritas.cob.userservice.api.port.out.CalendarWorkingDayExceptionRepository;
@@ -26,9 +27,10 @@ import org.springframework.transaction.support.TransactionTemplate;
 /**
  * Deletes the calendar of a consultant (ADR-032): the calendar connections with the private address
  * of their own calendar, their blockers with notes and imported busy times, their working hours
- * with the exceptions on single dates, their holiday region, and the move proposals they made or
- * were asked to decide, their appointments with colleagues (both sides) and the auto-accept lists
- * that name them (ORISO-Frontend#2305).
+ * with the exceptions on single dates, their holiday region, their weekly and one-off Sprechstunden
+ * (ORISO-Frontend#2287, #2494), and the move proposals they made or were asked to decide, their
+ * appointments with colleagues (both sides) and the auto-accept lists that name them
+ * (ORISO-Frontend#2305).
  *
  * <p>None of these tables has a foreign key to the consultant, so without this action the rows
  * would outlive the account. All go in one transaction. A failure counts as user content, so the
@@ -46,6 +48,7 @@ public class DeleteConsultantCalendarAction
   private final CalendarWorkingHoursSettingRepository calendarWorkingHoursSettingRepository;
   private final CalendarMoveProposalRepository calendarMoveProposalRepository;
   private final CalendarConsultationHoursRepository calendarConsultationHoursRepository;
+  private final CalendarConsultationOnceRepository calendarConsultationOnceRepository;
   private final CalendarBookingSettingRepository calendarBookingSettingRepository;
   private final CalendarColleagueAppointmentRepository calendarColleagueAppointmentRepository;
   private final CalendarAutoAcceptRepository calendarAutoAcceptRepository;
@@ -59,6 +62,7 @@ public class DeleteConsultantCalendarAction
       CalendarWorkingHoursSettingRepository calendarWorkingHoursSettingRepository,
       CalendarMoveProposalRepository calendarMoveProposalRepository,
       CalendarConsultationHoursRepository calendarConsultationHoursRepository,
+      CalendarConsultationOnceRepository calendarConsultationOnceRepository,
       CalendarBookingSettingRepository calendarBookingSettingRepository,
       CalendarColleagueAppointmentRepository calendarColleagueAppointmentRepository,
       CalendarAutoAcceptRepository calendarAutoAcceptRepository,
@@ -70,6 +74,7 @@ public class DeleteConsultantCalendarAction
     this.calendarWorkingHoursSettingRepository = calendarWorkingHoursSettingRepository;
     this.calendarMoveProposalRepository = calendarMoveProposalRepository;
     this.calendarConsultationHoursRepository = calendarConsultationHoursRepository;
+    this.calendarConsultationOnceRepository = calendarConsultationOnceRepository;
     this.calendarBookingSettingRepository = calendarBookingSettingRepository;
     this.calendarColleagueAppointmentRepository = calendarColleagueAppointmentRepository;
     this.calendarAutoAcceptRepository = calendarAutoAcceptRepository;
@@ -93,6 +98,7 @@ public class DeleteConsultantCalendarAction
             calendarWorkingDayExceptionRepository.deleteByConsultantId(consultantId);
             calendarWorkingHoursSettingRepository.deleteByConsultantId(consultantId);
             calendarConsultationHoursRepository.deleteByConsultantId(consultantId);
+            calendarConsultationOnceRepository.deleteByConsultantId(consultantId);
             calendarBookingSettingRepository.deleteByConsultantId(consultantId);
             calendarMoveProposalRepository.deleteByConsultantId(consultantId);
             calendarColleagueAppointmentRepository.deleteByConsultantId(consultantId);

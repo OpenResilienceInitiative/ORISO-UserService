@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+  xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-3.2.xsd">
+  <!-- ORISO-Frontend#2494 (product owner, 23 Nov 2026): one-off Sprechstunden. A counsellor
+       releases one dated window of their time for booking once, at short notice; each slot is
+       bookable until notice_minutes before its start. over_blocker: the counsellor confirmed
+       releasing it over their own blockers. start_at and end_at are UTC instants, typed like the
+       blockers' times. Table and index are separate changesets, each guarded, so a table made by
+       hand still gets its index. -->
+  <changeSet id="20261124-calendar-consultation-once-2494" author="oriso">
+    <preConditions onFail="MARK_RAN">
+      <not>
+        <tableExists tableName="calendar_consultation_once"/>
+      </not>
+    </preConditions>
+    <createTable tableName="calendar_consultation_once">
+      <column name="id" type="CHAR(36)"><constraints primaryKey="true" nullable="false"/></column>
+      <column name="consultant_id" type="VARCHAR(36)"><constraints nullable="false"/></column>
+      <column name="start_at" type="DATETIME(6)"><constraints nullable="false"/></column>
+      <column name="end_at" type="DATETIME(6)"><constraints nullable="false"/></column>
+      <column name="notice_minutes" type="INT"><constraints nullable="false"/></column>
+      <column name="over_blocker" type="BOOLEAN" defaultValueBoolean="false">
+        <constraints nullable="false"/>
+      </column>
+    </createTable>
+    <rollback><dropTable tableName="calendar_consultation_once"/></rollback>
+  </changeSet>
+  <!-- The table's rollback removes the index with it, so there is nothing to undo here. -->
+  <changeSet id="20261124-calendar-consultation-once-index-2494" author="oriso">
+    <preConditions onFail="MARK_RAN">
+      <not>
+        <indexExists tableName="calendar_consultation_once"
+          indexName="idx_calendar_consultation_once_consultant_end"/>
+      </not>
+    </preConditions>
+    <createIndex tableName="calendar_consultation_once"
+      indexName="idx_calendar_consultation_once_consultant_end">
+      <column name="consultant_id"/>
+      <column name="end_at"/>
+    </createIndex>
+    <rollback/>
+  </changeSet>
+</databaseChangeLog>
