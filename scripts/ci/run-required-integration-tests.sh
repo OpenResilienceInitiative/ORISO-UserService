@@ -60,7 +60,7 @@ if [[ -z "${ORISO_MAVEN_WRAPPER:-}" && "$(pwd -P)" != "${repository_root}" ]]; t
   exit 1
 fi
 if revision=$(git rev-parse --verify HEAD 2>/dev/null); then
-  checkout_state=$(git status --porcelain)
+  checkout_state=$(git status --porcelain --untracked-files=normal)
   dirty=false
   if [[ -n "${checkout_state}" ]]; then dirty=true; fi
 fi

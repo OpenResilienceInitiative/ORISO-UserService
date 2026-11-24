@@ -86,6 +86,10 @@ class RequiredCiContractTest(unittest.TestCase):
                      "commit", "-q", "--allow-empty", "-m", "fixture"],
                     cwd=root, check=True,
                 )
+                subprocess.run(
+                    ["git", "config", "--local", "status.showUntrackedFiles", "no"],
+                    cwd=root, check=True,
+                )
                 source = root / "src/test/java" / f"{class_name}.java"
                 source.parent.mkdir(parents=True)
                 source.touch()
@@ -126,6 +130,7 @@ class RequiredCiContractTest(unittest.TestCase):
                 self.assertEqual(class_name, report["selection"])
                 self.assertEqual(expected_step, report["failedStep"])
                 self.assertRegex(report["revision"], r"^[0-9a-f]{40}$")
+                self.assertIs(report["dirty"], True)
 
     def test_integration_tests_preserve_the_configured_test_database(self):
         test_root = ROOT / "src/test/java"
