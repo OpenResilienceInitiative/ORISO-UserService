@@ -169,6 +169,31 @@ class TeamSessionReadOnlyServiceTest {
   }
 
   @Test
+  void aReassignmentCommittedDuringTheRestoreUndoesTheRaise() {
+    var session = session();
+    var reassigned = session();
+    reassigned.setConsultant(consultant(FORMER_OWNER));
+    // The owner is still current at the first check, but not any more right after the raise.
+    when(sessions.findById(42L)).thenReturn(Optional.of(session), Optional.of(reassigned));
+    when(matrix.getRoomMembers(ROOM)).thenReturn(Optional.of(List.of(OWNER, FORMER_OWNER)));
+    when(consultants.findAllByMatrixUserIdInAndDeleteDateIsNull(List.of(FORMER_OWNER)))
+        .thenReturn(List.of(consultant(FORMER_OWNER)));
+    when(matrix.loginAsUserAccessToken(OWNER)).thenReturn("owner-token");
+    when(matrix.loginAsUserAccessToken(FORMER_OWNER)).thenReturn("former-token");
+    when(matrix.getPowerLevels(ROOM, "owner-token"))
+        .thenReturn(Optional.of(Map.of("users", Map.of(OWNER, -1, FORMER_OWNER, 100))));
+    when(matrix.setUserPowerLevel(ROOM, OWNER, 100, "former-token")).thenReturn(true);
+    when(matrix.setUserPowerLevel(ROOM, OWNER, -1, "owner-token")).thenReturn(true);
+
+    assertThat(service.enforce(session)).isFalse();
+
+    var order = org.mockito.Mockito.inOrder(matrix);
+    order.verify(matrix).setUserPowerLevel(ROOM, OWNER, 100, "former-token");
+    order.verify(matrix).setUserPowerLevel(ROOM, OWNER, -1, "owner-token");
+    verify(matrix, never()).makeUserReadOnly(any(), any(), eq(-1), any(), any(), any());
+  }
+
+  @Test
   void aDemotedOwnerIsNotRestoredOnceTheCaseBelongsToSomebodyElse() {
     var session = session();
     var reassigned = session();

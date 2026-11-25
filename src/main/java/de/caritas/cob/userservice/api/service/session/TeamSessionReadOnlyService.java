@@ -140,6 +140,18 @@ public class TeamSessionReadOnlyService {
         log.warn("Team read-only access for session {}: owner not restored", session.getId());
         return false;
       }
+      // A reassignment may have committed between the check and the raise. Checking again after
+      // the raise closes that gap: a commit after this check is followed by the reassignment's own
+      // after-commit run, which sees the raised former owner and lowers it.
+      if (!ownerStillIs(session.getId(), owner.getMatrixUserId(), highest)) {
+        boolean undone =
+            matrix.setUserPowerLevel(roomId, owner.getMatrixUserId(), ownerPower, ownerToken);
+        log.warn(
+            "Team read-only access for session {}: the owner changed during the restore, undo {}",
+            session.getId(),
+            undone ? "done" : "pending");
+        return false;
+      }
       ownerPower = highestPower;
     }
     if (!lowerColleagues) {
