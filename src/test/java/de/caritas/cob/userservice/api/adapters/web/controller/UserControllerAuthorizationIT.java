@@ -2700,8 +2700,10 @@ class UserControllerAuthorizationIT {
   void getUserData_Should_ReturnOK_When_AnonymousAuthority() throws Exception {
 
     when(this.authenticatedUser.getRoles()).thenReturn(Set.of(UserRole.ANONYMOUS.getValue()));
-    when(this.userAccountService.retrieveValidatedUser())
-        .thenReturn(new EasyRandom().nextObject(User.class));
+    // A live account: the random fill would also mark it as a deleted temporary account.
+    var liveUser = new EasyRandom().nextObject(User.class);
+    liveUser.setTemporaryAccountSnapshot(null);
+    when(this.userAccountService.retrieveValidatedUser()).thenReturn(liveUser);
     when(askerDataProvider.retrieveData(any()))
         .thenReturn(easyRandom.nextObject(UserDataResponseDTO.class));
 
