@@ -432,7 +432,7 @@ public class SessionSupervisorFacade {
 
     SessionSupervisor old =
         sessionSupervisorRepository
-            .findById(supervisorId)
+            .findByIdForUpdate(supervisorId)
             .filter(row -> row.getSession() != null && sessionId.equals(row.getSession().getId()))
             .orElseThrow(() -> new NotFoundException("Supervisor not found: " + supervisorId));
     if (!Boolean.TRUE.equals(old.getIsActive())) {
@@ -451,6 +451,10 @@ public class SessionSupervisorFacade {
       sideRoomId = null;
     }
 
+    // The successor first (#2494 *6): if provisioning fails, the transaction rolls back and the
+    // old supervisor still has both rooms; Matrix kicks could not be undone.
+    SessionSupervisor added = provisionAndSave(plan, actor, sideRoomId, old.getId());
+
     String oldMatrixUserId =
         old.getSupervisorConsultant() != null
             ? old.getSupervisorConsultant().getMatrixUserId()
@@ -465,7 +469,6 @@ public class SessionSupervisorFacade {
     old.setRemovedByConsultantId(actor.getId());
     sessionSupervisorRepository.save(old);
 
-    SessionSupervisor added = provisionAndSave(plan, actor, sideRoomId, old.getId());
     postReplacedNotice(added, old, actor, notes);
     log.info(
         "Replaced supervisor {} by {} on session {} by consultant {}",

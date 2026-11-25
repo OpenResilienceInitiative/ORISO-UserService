@@ -1386,7 +1386,7 @@ class SessionSupervisorFacadeTest {
   @Test
   void replaceSupervisor_Should_keepTheSideRoom_linkTheRows_andPostOneNotice() throws Exception {
     SessionSupervisor old = activeSupervisorRow(1L);
-    when(sessionSupervisorRepository.findById(1L)).thenReturn(Optional.of(old));
+    when(sessionSupervisorRepository.findByIdForUpdate(1L)).thenReturn(Optional.of(old));
     when(matrixSynapseService.removeUserFromRoom(any(), any(), any())).thenReturn(true);
     newSupervisorInSameAgency();
 
@@ -1418,7 +1418,7 @@ class SessionSupervisorFacadeTest {
   @Test
   void replaceSupervisor_Should_changeNothing_whenTheNewPersonIsRefused() {
     SessionSupervisor old = activeSupervisorRow(1L);
-    when(sessionSupervisorRepository.findById(1L)).thenReturn(Optional.of(old));
+    when(sessionSupervisorRepository.findByIdForUpdate(1L)).thenReturn(Optional.of(old));
     newSupervisorInSameAgency();
     when(consultantAgencyRepository.findByConsultantIdAndDeleteDateIsNull(NEW_SUPERVISOR_ID))
         .thenReturn(List.of(ConsultantAgency.builder().agencyId(99L).build()));
@@ -1436,7 +1436,8 @@ class SessionSupervisorFacadeTest {
 
   @Test
   void replaceSupervisor_Should_refuseTheSamePerson() {
-    when(sessionSupervisorRepository.findById(1L)).thenReturn(Optional.of(activeSupervisorRow(1L)));
+    when(sessionSupervisorRepository.findByIdForUpdate(1L))
+        .thenReturn(Optional.of(activeSupervisorRow(1L)));
 
     assertThatThrownBy(
             () ->
@@ -1451,7 +1452,7 @@ class SessionSupervisorFacadeTest {
     newSupervisorInSameAgency();
     SessionSupervisor inactive = activeSupervisorRow(1L);
     inactive.setIsActive(false);
-    when(sessionSupervisorRepository.findById(1L)).thenReturn(Optional.of(inactive));
+    when(sessionSupervisorRepository.findByIdForUpdate(1L)).thenReturn(Optional.of(inactive));
 
     assertThatThrownBy(
             () ->
@@ -1468,7 +1469,7 @@ class SessionSupervisorFacadeTest {
     Session other = new Session();
     other.setId(SESSION_ID + 1);
     foreign.setSession(other);
-    when(sessionSupervisorRepository.findById(1L)).thenReturn(Optional.of(foreign));
+    when(sessionSupervisorRepository.findByIdForUpdate(1L)).thenReturn(Optional.of(foreign));
 
     assertThatThrownBy(
             () ->
@@ -1490,14 +1491,49 @@ class SessionSupervisorFacadeTest {
                 facade.replaceSupervisor(
                     SESSION_ID, 1L, NEW_SUPERVISOR_ID, stranger, "PEER_SUPPORT", "x"))
         .isInstanceOf(RuntimeException.class);
-    verify(sessionSupervisorRepository, never()).findById(any());
+    verify(sessionSupervisorRepository, never()).findByIdForUpdate(any());
     verify(matrixSynapseService, never()).removeUserFromRoom(any(), any(), any());
+  }
+
+  @Test
+  void replaceSupervisor_Should_leaveTheOldSupervisorsRoomsAlone_whenTheNewOneCannotBeProvisioned()
+      throws Exception {
+    SessionSupervisor old = activeSupervisorRow(1L);
+    when(sessionSupervisorRepository.findByIdForUpdate(1L)).thenReturn(Optional.of(old));
+    newSupervisorInSameAgency();
+    org.mockito.Mockito.doThrow(new MatrixInviteUserException("synapse down"))
+        .when(matrixSynapseService)
+        .inviteUserToRoom(eq(SIDE_ROOM), eq(NEW_SUPERVISOR_MXID), any());
+
+    assertThatThrownBy(
+            () ->
+                facade.replaceSupervisor(
+                    SESSION_ID, 1L, NEW_SUPERVISOR_ID, addedBy, "PEER_SUPPORT", "x"))
+        .isInstanceOf(RuntimeException.class);
+
+    // Matrix kicks cannot be rolled back, so none may happen before the successor is in place.
+    verify(matrixSynapseService, never()).removeUserFromRoom(any(), any(), any());
+    verify(matrixSynapseService, never()).leaveRoom(any(), any());
+    assertThat(old.getIsActive()).isTrue();
+  }
+
+  @Test
+  void replaceSupervisor_Should_readTheOldRowWithALock() throws Exception {
+    SessionSupervisor old = activeSupervisorRow(1L);
+    when(sessionSupervisorRepository.findByIdForUpdate(1L)).thenReturn(Optional.of(old));
+    when(matrixSynapseService.removeUserFromRoom(any(), any(), any())).thenReturn(true);
+    newSupervisorInSameAgency();
+
+    facade.replaceSupervisor(SESSION_ID, 1L, NEW_SUPERVISOR_ID, addedBy, "PEER_SUPPORT", "x");
+
+    verify(sessionSupervisorRepository).findByIdForUpdate(1L);
+    verify(sessionSupervisorRepository, never()).findById(1L);
   }
 
   @Test
   void replaceSupervisor_Should_standEvenWhenTheNoticeCannotBePosted() throws Exception {
     SessionSupervisor old = activeSupervisorRow(1L);
-    when(sessionSupervisorRepository.findById(1L)).thenReturn(Optional.of(old));
+    when(sessionSupervisorRepository.findByIdForUpdate(1L)).thenReturn(Optional.of(old));
     when(matrixSynapseService.removeUserFromRoom(any(), any(), any())).thenReturn(true);
     newSupervisorInSameAgency();
     when(matrixSynapseService.sendMessage(any(), any(), any()))
