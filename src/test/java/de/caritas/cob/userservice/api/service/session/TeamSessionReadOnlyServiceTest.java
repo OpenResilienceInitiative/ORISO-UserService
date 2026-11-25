@@ -122,25 +122,66 @@ class TeamSessionReadOnlyServiceTest {
   }
 
   @Test
-  void theSweepNeverLowersAnEqualPeer_soAnUnseenReassignmentKeepsTheNewOwnerWriting() {
+  void theSweepLowersAFormerOwnerWhoseAfterCommitRunFailed() {
     var session = current(session());
-    when(sessions.findById(42L)).thenReturn(Optional.of(session));
-    when(matrix.getRoomMembers(ROOM))
-        .thenReturn(Optional.of(List.of(OWNER, COLLEAGUE, FORMER_OWNER)));
-    when(consultants.findAllByMatrixUserIdInAndDeleteDateIsNull(List.of(COLLEAGUE, FORMER_OWNER)))
-        .thenReturn(List.of(consultant(COLLEAGUE), consultant(FORMER_OWNER)));
+    when(matrix.getRoomMembers(ROOM)).thenReturn(Optional.of(List.of(OWNER, FORMER_OWNER)));
+    when(consultants.findAllByMatrixUserIdInAndDeleteDateIsNull(List.of(FORMER_OWNER)))
+        .thenReturn(List.of(consultant(FORMER_OWNER)));
     when(matrix.loginAsUserAccessToken(OWNER)).thenReturn("owner-token");
+    when(matrix.loginAsUserAccessToken(FORMER_OWNER)).thenReturn("former-token");
     when(matrix.getPowerLevels(ROOM, "owner-token"))
         .thenReturn(Optional.of(Map.of("users", Map.of(OWNER, 100, FORMER_OWNER, 100))));
-    when(matrix.makeUserReadOnly(ROOM, COLLEAGUE, -1, OWNER, "owner-token", null))
+    when(matrix.makeUserReadOnly(ROOM, FORMER_OWNER, -1, OWNER, "owner-token", "former-token"))
         .thenReturn(Optional.of(-1));
 
     service.repairSafely(42L);
 
-    verify(matrix).makeUserReadOnly(ROOM, COLLEAGUE, -1, OWNER, "owner-token", null);
+    verify(matrix).makeUserReadOnly(ROOM, FORMER_OWNER, -1, OWNER, "owner-token", "former-token");
     verify(matrix, never())
-        .makeUserReadOnly(eq(ROOM), eq(FORMER_OWNER), eq(-1), any(), any(), any());
-    verify(matrix, never()).loginAsUserAccessToken(FORMER_OWNER);
+        .setUserPowerLevel(any(), any(), org.mockito.ArgumentMatchers.anyInt(), any());
+  }
+
+  @Test
+  void anOwnerLoweredByARacingRunIsRestoredBeforeTheFormerOwnerIsLowered() {
+    // A sweep saw the old owner and lowered the incoming one before the reassignment committed.
+    var session = current(session());
+    when(matrix.getRoomMembers(ROOM)).thenReturn(Optional.of(List.of(OWNER, FORMER_OWNER)));
+    when(consultants.findAllByMatrixUserIdInAndDeleteDateIsNull(List.of(FORMER_OWNER)))
+        .thenReturn(List.of(consultant(FORMER_OWNER)));
+    when(matrix.loginAsUserAccessToken(OWNER)).thenReturn("owner-token");
+    when(matrix.loginAsUserAccessToken(FORMER_OWNER)).thenReturn("former-token");
+    when(matrix.getPowerLevels(ROOM, "owner-token"))
+        .thenReturn(Optional.of(Map.of("users", Map.of(OWNER, -1, FORMER_OWNER, 100))));
+    when(matrix.setUserPowerLevel(ROOM, OWNER, 100, "former-token")).thenReturn(true);
+    when(matrix.makeUserReadOnly(ROOM, FORMER_OWNER, -1, OWNER, "owner-token", "former-token"))
+        .thenReturn(Optional.of(-1));
+
+    assertThat(service.enforce(session)).isTrue();
+
+    var order = org.mockito.Mockito.inOrder(matrix);
+    order.verify(matrix).setUserPowerLevel(ROOM, OWNER, 100, "former-token");
+    order
+        .verify(matrix)
+        .makeUserReadOnly(ROOM, FORMER_OWNER, -1, OWNER, "owner-token", "former-token");
+  }
+
+  @Test
+  void aDemotedOwnerIsNotRestoredOnceTheCaseBelongsToSomebodyElse() {
+    var session = session();
+    var reassigned = session();
+    reassigned.setConsultant(consultant(FORMER_OWNER));
+    when(sessions.findById(42L)).thenReturn(Optional.of(reassigned));
+    when(matrix.getRoomMembers(ROOM)).thenReturn(Optional.of(List.of(OWNER, FORMER_OWNER)));
+    when(consultants.findAllByMatrixUserIdInAndDeleteDateIsNull(List.of(FORMER_OWNER)))
+        .thenReturn(List.of(consultant(FORMER_OWNER)));
+    when(matrix.loginAsUserAccessToken(OWNER)).thenReturn("owner-token");
+    when(matrix.getPowerLevels(ROOM, "owner-token"))
+        .thenReturn(Optional.of(Map.of("users", Map.of(OWNER, -1, FORMER_OWNER, 100))));
+
+    assertThat(service.enforce(session)).isFalse();
+    verify(matrix, never())
+        .setUserPowerLevel(any(), any(), org.mockito.ArgumentMatchers.anyInt(), any());
+    verify(matrix, never()).makeUserReadOnly(any(), any(), eq(-1), any(), any(), any());
   }
 
   @Test

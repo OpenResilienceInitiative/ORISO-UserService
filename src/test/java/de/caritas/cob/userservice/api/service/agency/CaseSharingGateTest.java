@@ -140,6 +140,25 @@ class CaseSharingGateTest {
     assertThat(gate.isTeamCounselling(5L, 1L)).isFalse();
   }
 
+  @Test
+  void isTeamCounselling_isFalseWithoutSettings() {
+    when(lookup.findEffectiveSettings(5L, 1L)).thenReturn(Optional.empty());
+    assertThat(gate.isTeamCounselling(5L, 1L)).isFalse();
+  }
+
+  @Test
+  void isTeamCounselling_keepsTheLegacyDefaultWhenNoPolicyIsServed() {
+    when(lookup.findEffectiveSettings(5L, 1L)).thenReturn(Optional.of(new Settings()));
+    assertThat(gate.isTeamCounselling(5L, 1L)).isTrue();
+  }
+
+  @Test
+  void isTeamCounselling_isFalseForAServedPolicyWithoutAValue() {
+    when(lookup.findEffectiveSettings(5L, 1L))
+        .thenReturn(Optional.of(new Settings(new AgencyCaseSharingPolicy())));
+    assertThat(gate.isTeamCounselling(5L, 1L)).isFalse();
+  }
+
   private void requireMailberatung() {
     gate.requireCaseHandover(5L, 1L, ConversationType.AGENCY_COUNSELLING);
   }

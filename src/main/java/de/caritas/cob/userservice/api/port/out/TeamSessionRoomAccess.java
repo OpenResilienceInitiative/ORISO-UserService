@@ -20,6 +20,9 @@ public interface TeamSessionRoomAccess {
   /** The room's power-level state, or empty when it could not be read. */
   Optional<Map<String, Object>> getPowerLevels(String roomId, String accessToken);
 
+  /** Sets {@code userId}'s power level with {@code accessToken}; false when it was refused. */
+  boolean setUserPowerLevel(String roomId, String userId, int powerLevel, String accessToken);
+
   /**
    * Lowers {@code userId} to {@code readerPower}. {@code memberToken} is used only when the member
    * holds the owner's level and must lower itself.

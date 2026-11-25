@@ -34,7 +34,9 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
  * cannot leave anybody writing. Read access, which does depend on the model, is decided in {@code
  * CaseHandoverService}.
  *
- * <p>Only ever lowers a power level, so it is safe to repeat. Matrix is the only hard boundary for
+ * <p>Lowers colleagues; the only raise restores an owner that a run racing a reassignment left
+ * below a colleague. Every change re-reads the committed owner first, so it is safe to repeat and
+ * the repair sweep can also lower an equal-power former owner. Matrix is the only hard boundary for
  * sending: there is no REST send endpoint.
  */
 @Service
@@ -67,24 +69,15 @@ public class TeamSessionReadOnlyService {
         });
   }
 
+  /** The repair sweep's entry; same as {@link #enforceSafely}. */
+  public void repairSafely(Long sessionId) {
+    enforceSafely(sessionId);
+  }
+
   /** Never throws; a failure stays for the repair job. */
   public void enforceSafely(Long sessionId) {
-    enforceSafely(sessionId, true);
-  }
-
-  /**
-   * The repair sweep's entry: it lowers only colleagues below the owner. Matrix itself refuses an
-   * owner token that lowers an equal peer, so a counsellor promoted by a reassignment the sweep did
-   * not see stays writable. Equal-power former owners are lowered by the ownership change's own
-   * after-commit run ({@link #enforceAfterCommit}), which sees the committed owner.
-   */
-  public void repairSafely(Long sessionId) {
-    enforceSafely(sessionId, false);
-  }
-
-  private void enforceSafely(Long sessionId, boolean lowerEqualPeers) {
     try {
-      sessions.findById(sessionId).ifPresent(session -> enforce(session, lowerEqualPeers));
+      sessions.findById(sessionId).ifPresent(this::enforce);
     } catch (RuntimeException failure) {
       log.warn(
           "Team read-only access for session {} remains pending ({})",
@@ -98,10 +91,6 @@ public class TeamSessionReadOnlyService {
    *     when Matrix could not be read or a colleague could not be lowered
    */
   public boolean enforce(Session session) {
-    return enforce(session, true);
-  }
-
-  boolean enforce(Session session, boolean lowerEqualPeers) {
     if (session == null || !session.isTeamCounsellingCase()) {
       return true;
     }
@@ -127,13 +116,29 @@ public class TeamSessionReadOnlyService {
       return false;
     }
     int ownerPower = power(powerLevels.get(), owner.getMatrixUserId());
+    // A run that raced a reassignment may have lowered the incoming owner before its commit. The
+    // owner must never sit below a colleague: restore it first, with that colleague's token.
+    String highest = highestColleague(powerLevels.get(), colleagueIds);
+    int highestPower = highest == null ? Integer.MIN_VALUE : power(powerLevels.get(), highest);
+    if (highestPower > ownerPower) {
+      if (!ownerStillIs(session.getId(), owner.getMatrixUserId(), highest)) {
+        log.warn(
+            "Team read-only access for session {} stopped: the owner changed", session.getId());
+        return false;
+      }
+      String colleagueToken = matrix.loginAsUserAccessToken(highest);
+      if (isBlank(colleagueToken)
+          || !matrix.setUserPowerLevel(
+              roomId, owner.getMatrixUserId(), highestPower, colleagueToken)) {
+        log.warn("Team read-only access for session {}: owner not restored", session.getId());
+        return false;
+      }
+      ownerPower = highestPower;
+    }
     boolean complete = true;
     for (String colleagueId : colleagueIds) {
       int colleaguePower = power(powerLevels.get(), colleagueId);
       if (colleaguePower <= READER_POWER_LEVEL) {
-        continue;
-      }
-      if (colleaguePower >= ownerPower && !lowerEqualPeers) {
         continue;
       }
       // A reassignment may have happened since the room was read: never lower the current owner.
@@ -188,6 +193,16 @@ public class TeamSessionReadOnlyService {
         .filter(id -> !isBlank(id) && !exempt.contains(id))
         .forEach(colleagues::add);
     return colleagues;
+  }
+
+  private static String highestColleague(Map<String, Object> powerLevels, Set<String> ids) {
+    String highest = null;
+    for (String id : ids) {
+      if (highest == null || power(powerLevels, id) > power(powerLevels, highest)) {
+        highest = id;
+      }
+    }
+    return highest;
   }
 
   private boolean ownerStillIs(Long sessionId, String ownerMatrixId, String colleagueId) {

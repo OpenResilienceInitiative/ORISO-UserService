@@ -30,6 +30,12 @@ public class MatrixTeamSessionRoomAccess implements TeamSessionRoomAccess {
   }
 
   @Override
+  public boolean setUserPowerLevel(
+      String roomId, String userId, int powerLevel, String accessToken) {
+    return matrixSynapseService.setUserPowerLevel(roomId, userId, powerLevel, accessToken);
+  }
+
+  @Override
   public Optional<Integer> makeUserReadOnly(
       String roomId,
       String userId,
