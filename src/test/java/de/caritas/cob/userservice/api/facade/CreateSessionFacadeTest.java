@@ -17,7 +17,6 @@ import static de.caritas.cob.userservice.api.testHelper.TestConstants.USER_SESSI
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.is;
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
@@ -239,13 +238,14 @@ class CreateSessionFacadeTest {
     createSessionFacade.createUserSession(
         USER_DTO_SUCHT, USER, CONSULTING_TYPE_SETTINGS_SUCHT, validationConstraints);
 
-    assertEquals(
-        de.caritas.cob.userservice.api.model.CaseSharingModel.NONE, created.getCaseSharingModel());
-    verify(sessionService).saveSession(created);
+    // the write-once stamp goes through the repository update, never a whole-entity save
+    verify(sessionService)
+        .stampCaseSharingModel(created, de.caritas.cob.userservice.api.model.CaseSharingModel.NONE);
+    verify(sessionService, never()).saveSession(created);
   }
 
   @Test
-  void createUserSession_Should_LeaveTheStampToTheSnapshot_When_TheSettingIsUnreadable() {
+  void createUserSession_Should_NotFailTheRegistration_When_TheStampCannotBeWritten() {
     var created = new EasyRandom().nextObject(Session.class);
     created.setTeamSession(false);
     created.setCaseSharingModel(null);
@@ -253,14 +253,44 @@ class CreateSessionFacadeTest {
         .thenReturn(USER_SESSION_RESPONSE_DTO_LIST_U25);
     when(agencyVerifier.getVerifiedAgency(AGENCY_ID, 0)).thenReturn(AGENCY_DTO_U25);
     when(sessionService.initializeSession(any(), any(), any(Boolean.class))).thenReturn(created);
+    when(caseSharingGate.modelForNewCase(created.getAgencyId(), created.getTenantId(), false))
+        .thenReturn(de.caritas.cob.userservice.api.model.CaseSharingModel.NONE);
+    org.mockito.Mockito.doThrow(new IllegalStateException("db"))
+        .when(sessionService)
+        .stampCaseSharingModel(created, de.caritas.cob.userservice.api.model.CaseSharingModel.NONE);
 
     Long result =
         createSessionFacade.createUserSession(
             USER_DTO_SUCHT, USER, CONSULTING_TYPE_SETTINGS_SUCHT, validationConstraints);
 
     assertEquals(created.getId(), result);
-    assertNull(created.getCaseSharingModel());
-    verify(sessionService, never()).saveSession(created);
+  }
+
+  @Test
+  void createDirectUserSession_Should_StampTheModelAfterTheCaseIsSaved() {
+    var agencyDTO = new EasyRandom().nextObject(AgencyDTO.class);
+    agencyDTO.setTenantId(41L);
+    var session = new EasyRandom().nextObject(Session.class);
+    session.setTeamSession(true);
+    session.setCaseSharingModel(null);
+    when(agencyVerifier.getVerifiedAgency(anyLong(), anyInt())).thenReturn(agencyDTO);
+    when(sessionService.findSessionByConsultantAndUserAndConsultingType(any(), any(), any()))
+        .thenReturn(Optional.empty());
+    when(sessionService.initializeDirectSession(any(), any(), any(), anyBoolean()))
+        .thenReturn(session);
+    when(sessionService.saveSession(session)).thenReturn(session);
+    when(caseSharingGate.modelForNewCase(session.getAgencyId(), session.getTenantId(), true))
+        .thenReturn(de.caritas.cob.userservice.api.model.CaseSharingModel.TEAM_COUNSELLING);
+
+    createSessionFacade.createDirectUserSession(
+        null, mock(UserDTO.class), null, mock(ExtendedConsultingTypeResponseDTO.class));
+
+    var order = org.mockito.Mockito.inOrder(sessionService);
+    order.verify(sessionService).saveSession(session);
+    order
+        .verify(sessionService)
+        .stampCaseSharingModel(
+            session, de.caritas.cob.userservice.api.model.CaseSharingModel.TEAM_COUNSELLING);
   }
 
   @Test

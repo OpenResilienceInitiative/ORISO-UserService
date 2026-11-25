@@ -162,8 +162,7 @@ public class ConsultantAgencyAdminUserServiceTenantAwareIT {
   }
 
   @Test
-  public void
-      removeConsultantsFromTeamSessionsByAgencyId_Should_removeTeamConsultantFlagAndCallServices() {
+  public void endTeamCounsellingForNewCases_Should_removeTeamConsultantFlagAndCallServices() {
     givenAValidConsultantPersisted(CONSULTANT1_ID, true);
     when(this.agencyService.getAgency(any())).thenReturn(new AgencyDTO().teamAgency(false));
 
@@ -174,7 +173,7 @@ public class ConsultantAgencyAdminUserServiceTenantAwareIT {
             .filter(Consultant::isTeamConsultant)
             .count();
 
-    this.consultantAgencyAdminService.removeConsultantsFromTeamSessionsByAgencyId(1L);
+    this.consultantAgencyAdminService.endTeamCounsellingForNewCases(1L);
 
     long teamConsultantsAfter =
         this.consultantRepository

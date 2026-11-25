@@ -135,28 +135,28 @@ class ConsultantAgencyAdminServiceTest {
   }
 
   // ---------------------------------------------------------------------------
-  // removeConsultantsFromTeamSessionsByAgencyId
+  // endTeamCounsellingForNewCases
   // ---------------------------------------------------------------------------
 
   @Test
-  void removeConsultantsFromTeamSessionsByAgencyId_Should_ChangeSessionsToNonTeam() {
+  void endTeamCounsellingForNewCases_Should_LeaveRunningTeamCasesAndTeamFlagsAlone() {
     var session = new Session();
     session.setTeamSession(true);
     when(sessionRepository.findByAgencyIdAndStatusAndTeamSessionIsTrue(
             10L, SessionStatus.IN_PROGRESS))
         .thenReturn(List.of(session));
-    when(consultantRepository.findByConsultantAgenciesAgencyIdInAndDeleteDateIsNull(List.of(10L)))
-        .thenReturn(List.of());
 
-    consultantAgencyAdminService.removeConsultantsFromTeamSessionsByAgencyId(10L);
+    consultantAgencyAdminService.endTeamCounsellingForNewCases(10L);
 
-    assertThat(session.isTeamSession()).isFalse();
-    verify(sessionRepository).save(session);
-    verify(removeFromSessionRoomsService).removeConsultantFromSessions(List.of(session));
+    assertThat(session.isTeamSession()).isTrue();
+    verify(sessionRepository, never()).save(any());
+    verifyNoInteractions(removeFromSessionRoomsService);
+    verify(consultantRepository, never())
+        .findByConsultantAgenciesAgencyIdInAndDeleteDateIsNull(any());
   }
 
   @Test
-  void removeConsultantsFromTeamSessionsByAgencyId_Should_RemoveTeamFlag_When_NoOtherTeamAgency() {
+  void endTeamCounsellingForNewCases_Should_RemoveTeamFlag_When_NoOtherTeamAgency() {
     var consultantAgency = new ConsultantAgency();
     consultantAgency.setAgencyId(10L);
 
@@ -179,15 +179,14 @@ class ConsultantAgencyAdminServiceTest {
     // noOtherTeamAgency filters out agencyId == 10L, leaving nothing — noneMatch returns true.
     // agencyService.getAgency is never called because the stream filters it out.
 
-    consultantAgencyAdminService.removeConsultantsFromTeamSessionsByAgencyId(10L);
+    consultantAgencyAdminService.endTeamCounsellingForNewCases(10L);
 
     assertThat(consultant.isTeamConsultant()).isFalse();
     verify(consultantRepository).save(consultant);
   }
 
   @Test
-  void
-      removeConsultantsFromTeamSessionsByAgencyId_Should_KeepTeamFlag_When_ConsultantHasOtherTeamAgency() {
+  void endTeamCounsellingForNewCases_Should_KeepTeamFlag_When_ConsultantHasOtherTeamAgency() {
     var convertedAgencyRelation = new ConsultantAgency();
     convertedAgencyRelation.setAgencyId(10L);
     var otherAgencyRelation = new ConsultantAgency();
@@ -210,7 +209,7 @@ class ConsultantAgencyAdminServiceTest {
         .thenReturn(List.of(convertedAgencyRelation, otherAgencyRelation));
     when(agencyService.getAgency(20L)).thenReturn(otherTeamAgency);
 
-    consultantAgencyAdminService.removeConsultantsFromTeamSessionsByAgencyId(10L);
+    consultantAgencyAdminService.endTeamCounsellingForNewCases(10L);
 
     assertThat(consultant.isTeamConsultant()).isTrue();
     verify(consultantRepository, never()).save(consultant);

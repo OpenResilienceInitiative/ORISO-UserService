@@ -71,20 +71,23 @@ public class CaseSharingGate {
   }
 
   /**
-   * FE#2494 *4: the centre's current case sharing model, to stamp on a case. Empty when the setting
-   * could not be read or was not served, so the caller retries instead of guessing. An
-   * AgencyService that predates #374 serves no {@code caseSharing}: that legacy centre offered case
-   * handover under the Traeger master switch, which the handover caller still checks.
+   * FE#2494 *4: the centre's current case sharing model, to stamp on a case. Empty only while the
+   * setting is temporarily unreachable, so the caller retries instead of guessing. A setting that
+   * is refused or no longer served (a deleted centre) is "none": it can never offer case handover.
+   * An AgencyService that predates #374 serves no {@code caseSharing}: that legacy centre offered
+   * case handover under the Traeger master switch, which the handover caller still checks.
    */
   public Optional<CaseSharingModel> currentModel(Long agencyId, Long tenantId) {
     Settings settings;
     try {
       settings = readSettings(agencyId, tenantId);
-    } catch (RuntimeException unavailableOrRefused) {
+    } catch (ServiceUnavailableException unavailable) {
       return Optional.empty();
+    } catch (RuntimeException refused) {
+      return Optional.of(CaseSharingModel.NONE);
     }
     if (settings == null) {
-      return Optional.empty();
+      return Optional.of(CaseSharingModel.NONE);
     }
     AgencyCaseSharingPolicy caseSharing = settings.getCaseSharing();
     if (caseSharing == null) {
@@ -101,18 +104,19 @@ public class CaseSharingGate {
    * FE#2494 *4: the model to stamp on a case being created. A team flag means Teamberatung without
    * a further read. Otherwise the centre's current model; a non-team case in a centre that reads as
    * Teamberatung in this instant is stamped "none", never case handover: a handover right is never
-   * inferred. Null when the setting cannot be read; the snapshot job stamps such a case later.
+   * inferred. A case whose centre setting cannot be read now is stamped "none" as well, so no later
+   * read can grant it case handover.
    */
   public CaseSharingModel modelForNewCase(Long agencyId, Long tenantId, boolean teamSession) {
     if (teamSession) {
       return CaseSharingModel.TEAM_COUNSELLING;
     }
     if (agencyId == null) {
-      return null;
+      return CaseSharingModel.NONE;
     }
     return currentModel(agencyId, tenantId)
         .map(model -> model == CaseSharingModel.TEAM_COUNSELLING ? CaseSharingModel.NONE : model)
-        .orElse(null);
+        .orElse(CaseSharingModel.NONE);
   }
 
   private Settings readSettings(Long agencyId, Long tenantId) {

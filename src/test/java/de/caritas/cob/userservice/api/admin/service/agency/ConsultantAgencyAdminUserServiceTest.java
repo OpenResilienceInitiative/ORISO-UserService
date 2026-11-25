@@ -92,14 +92,14 @@ public class ConsultantAgencyAdminUserServiceTest {
   }
 
   @Test
-  public void removeConsultantsFromTeamSessionsByAgencyId_Should_changeTeamSessionToSession() {
+  public void endTeamCounsellingForNewCases_Should_changeTeamSessionToSession() {
     Session session = new EasyRandom().nextObject(Session.class);
     session.setTeamSession(true);
 
     when(this.sessionRepository.findByAgencyIdAndStatusAndTeamSessionIsTrue(any(), any()))
         .thenReturn(singletonList(session));
 
-    this.consultantAgencyAdminService.removeConsultantsFromTeamSessionsByAgencyId(1L);
+    this.consultantAgencyAdminService.endTeamCounsellingForNewCases(1L);
 
     verify(this.sessionRepository, times(1)).save(any());
     verify(this.removeFromSessionRoomsService, times(1)).removeConsultantFromSessions(any());
@@ -107,7 +107,7 @@ public class ConsultantAgencyAdminUserServiceTest {
 
   @Test
   public void
-      removeConsultantsFromTeamSessionsByAgencyId_Should_removeTeamConsultingFlag_When_theyAreNotInAnotherTeamAgency() {
+      endTeamCounsellingForNewCases_Should_removeTeamConsultingFlag_When_theyAreNotInAnotherTeamAgency() {
     Session session = new EasyRandom().nextObject(Session.class);
     session.setTeamSession(true);
     List<Consultant> consultants =
@@ -125,14 +125,14 @@ public class ConsultantAgencyAdminUserServiceTest {
         .thenAnswer(invocation -> singleOtherAgencyRelation());
     when(this.agencyService.getAgency(any())).thenReturn(agencyDTO);
 
-    this.consultantAgencyAdminService.removeConsultantsFromTeamSessionsByAgencyId(1L);
+    this.consultantAgencyAdminService.endTeamCounsellingForNewCases(1L);
 
     verify(this.consultantRepository, times(10)).save(any());
   }
 
   @Test
   public void
-      removeConsultantsFromTeamSessionsByAgencyId_Should_throwInternalServerErrorException_When_agencyServiceFails() {
+      endTeamCounsellingForNewCases_Should_throwInternalServerErrorException_When_agencyServiceFails() {
     assertThrows(
         InternalServerErrorException.class,
         () -> {
@@ -150,7 +150,7 @@ public class ConsultantAgencyAdminUserServiceTest {
               .thenAnswer(invocation -> singleOtherAgencyRelation());
           when(this.agencyService.getAgency(any())).thenThrow(new InternalServerErrorException(""));
 
-          this.consultantAgencyAdminService.removeConsultantsFromTeamSessionsByAgencyId(1L);
+          this.consultantAgencyAdminService.endTeamCounsellingForNewCases(1L);
         });
   }
 

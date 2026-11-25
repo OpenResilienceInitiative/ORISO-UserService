@@ -22,6 +22,7 @@ import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.manager.consultingtype.ConsultingTypeManager;
+import de.caritas.cob.userservice.api.model.CaseSharingModel;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.ConsultantAgency;
 import de.caritas.cob.userservice.api.model.ConversationType;
@@ -383,6 +384,18 @@ public class SessionService {
     current.setEnquiryMessageDate(nowInUtc());
     if (language != null) current.setLanguageCode(LanguageCode.getByCode(language));
     return saveSession(current);
+  }
+
+  /**
+   * FE#2494 *4: stamps the case sharing model once. The column is write-once, so this repository
+   * update is the only way the stamp is set and a later whole-entity save cannot overwrite it.
+   */
+  public void stampCaseSharingModel(Session session, CaseSharingModel model) {
+    if (session == null || session.getId() == null || model == null) {
+      return;
+    }
+    sessionRepository.stampCaseSharingModel(session.getId(), model);
+    session.setCaseSharingModel(model);
   }
 
   /**

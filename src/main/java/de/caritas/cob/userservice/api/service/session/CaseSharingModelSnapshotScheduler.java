@@ -1,17 +1,21 @@
 package de.caritas.cob.userservice.api.service.session;
 
 import de.caritas.cob.userservice.api.model.CaseSharingModel;
-import de.caritas.cob.userservice.api.model.Session;
+import de.caritas.cob.userservice.api.model.Session.RegistrationType;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
+import de.caritas.cob.userservice.api.port.out.SessionRepository.UnstampedCase;
 import de.caritas.cob.userservice.api.service.agency.CaseSharingGate;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
 import de.caritas.cob.userservice.api.workflow.scheduling.ScheduledTaskClaimService;
+import java.time.Clock;
 import java.time.Duration;
+import java.time.Instant;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Optional;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Profile;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
@@ -23,43 +27,77 @@ import org.springframework.stereotype.Component;
  * model was stamped get it once from their centre's model at the time of this snapshot. A case that
  * was not created as a team case is never stamped as Teamberatung: a running case stays as it is
  * when the centre switches. A handover right is never inferred. Only the stamp is written; no
- * Matrix power level and no access changes. Once every case is stamped, a run finds nothing and
- * does nothing.
+ * Matrix power level and no access changes.
+ *
+ * <p>A centre whose setting is refused or no longer served (for example a deleted centre) is
+ * stamped "none" by {@link CaseSharingGate#currentModel}. A centre that is unreachable is retried
+ * in later runs; after {@value #MAX_UNREACHABLE_RUNS} such runs its cases are stamped "none" too,
+ * so no row is retried forever. Once a full pass finds nothing, the job rests for {@code
+ * case-sharing.model-snapshot.idle-ms} (default six hours) before it looks again.
  */
 @Component
 @Profile("!testing")
-@RequiredArgsConstructor
 @Slf4j
 public class CaseSharingModelSnapshotScheduler {
 
   public static final String TASK = "case-sharing-model-snapshot";
   static final Pageable BATCH = PageRequest.of(0, 50);
+  static final int MAX_UNREACHABLE_RUNS = 10;
 
   private final SessionRepository sessions;
   private final CaseSharingGate caseSharing;
   private final ScheduledTaskClaimService claims;
+  private final Clock clock;
+  private final Duration idle;
 
   private long cursor;
+  private boolean foundInThisPass;
+  private Instant restUntil = Instant.MIN;
+  private final Map<String, Integer> unreachableRuns = new HashMap<>();
+
+  @Autowired
+  public CaseSharingModelSnapshotScheduler(
+      SessionRepository sessions,
+      CaseSharingGate caseSharing,
+      ScheduledTaskClaimService claims,
+      @Value("${case-sharing.model-snapshot.idle-ms:21600000}") long idleMs) {
+    this(sessions, caseSharing, claims, Clock.systemUTC(), Duration.ofMillis(idleMs));
+  }
+
+  CaseSharingModelSnapshotScheduler(
+      SessionRepository sessions,
+      CaseSharingGate caseSharing,
+      ScheduledTaskClaimService claims,
+      Clock clock,
+      Duration idle) {
+    this.sessions = sessions;
+    this.caseSharing = caseSharing;
+    this.claims = claims;
+    this.clock = clock;
+    this.idle = idle;
+  }
 
   @Scheduled(fixedDelayString = "${case-sharing.model-snapshot.delay-ms:60000}")
   public void snapshot() {
+    if (clock.instant().isBefore(restUntil)) return;
     var lease = claims.tryClaimLease(TASK, Duration.ofMinutes(2));
     if (lease.isEmpty()) return;
     try {
       TenantContext.setCurrentTenant(TenantContext.TECHNICAL_TENANT_ID);
-      var ids = sessions.findUnstampedCaseIds(cursor, BATCH);
-      if (ids.isEmpty()) {
-        cursor = 0;
+      var cases = sessions.findUnstampedCases(cursor, RegistrationType.ANONYMOUS, BATCH);
+      if (cases.isEmpty()) {
+        endPass();
         return;
       }
+      foundInThisPass = true;
       Map<String, Optional<CaseSharingModel>> centres = new HashMap<>();
-      for (Long id : ids) {
+      for (UnstampedCase unstamped : cases) {
         try {
-          if (!claims.runIfHeld(lease.get(), () -> stamp(id, centres))) break;
+          if (!claims.runIfHeld(lease.get(), () -> stamp(unstamped, centres))) break;
         } catch (RuntimeException failure) {
-          log.warn("Case sharing model snapshot remains pending for session {}", id);
+          log.warn("Case sharing model snapshot remains pending for session {}", unstamped.getId());
         }
-        cursor = id;
+        cursor = unstamped.getId();
       }
     } finally {
       TenantContext.clear();
@@ -67,14 +105,18 @@ public class CaseSharingModelSnapshotScheduler {
     }
   }
 
-  private void stamp(Long id, Map<String, Optional<CaseSharingModel>> centres) {
-    sessions
-        .findById(id)
-        .filter(session -> session.getCaseSharingModel() == null)
-        .ifPresent(
-            session ->
-                modelAtSnapshot(session, centres)
-                    .ifPresent(model -> sessions.stampCaseSharingModel(id, model)));
+  /** A pass that found nothing to stamp rests; one that did starts over for the cases it left. */
+  private void endPass() {
+    if (!foundInThisPass) {
+      restUntil = clock.instant().plus(idle);
+    }
+    cursor = 0;
+    foundInThisPass = false;
+  }
+
+  private void stamp(UnstampedCase unstamped, Map<String, Optional<CaseSharingModel>> centres) {
+    modelAtSnapshot(unstamped, centres)
+        .ifPresent(model -> sessions.stampCaseSharingModel(unstamped.getId(), model));
   }
 
   /**
@@ -84,14 +126,29 @@ public class CaseSharingModelSnapshotScheduler {
    * handover right is never inferred.
    */
   Optional<CaseSharingModel> modelAtSnapshot(
-      Session session, Map<String, Optional<CaseSharingModel>> centres) {
-    if (session.isTeamCounsellingCase()) {
+      UnstampedCase unstamped, Map<String, Optional<CaseSharingModel>> centres) {
+    if (unstamped.isTeamSession()) {
       return Optional.of(CaseSharingModel.TEAM_COUNSELLING);
     }
     return centres
         .computeIfAbsent(
-            session.getAgencyId() + "/" + session.getTenantId(),
-            key -> caseSharing.currentModel(session.getAgencyId(), session.getTenantId()))
+            unstamped.getAgencyId() + "/" + unstamped.getTenantId(),
+            key -> readCentre(key, unstamped))
         .map(model -> model == CaseSharingModel.TEAM_COUNSELLING ? CaseSharingModel.NONE : model);
+  }
+
+  /** Read once per centre and run; an unreachable centre counts one run towards "none". */
+  private Optional<CaseSharingModel> readCentre(String key, UnstampedCase unstamped) {
+    var model = caseSharing.currentModel(unstamped.getAgencyId(), unstamped.getTenantId());
+    if (model.isPresent()) {
+      unreachableRuns.remove(key);
+      return model;
+    }
+    if (unreachableRuns.merge(key, 1, Integer::sum) >= MAX_UNREACHABLE_RUNS) {
+      unreachableRuns.remove(key);
+      log.warn("Centre {} stayed unreachable; its unstamped cases are stamped none", key);
+      return Optional.of(CaseSharingModel.NONE);
+    }
+    return Optional.empty();
   }
 }

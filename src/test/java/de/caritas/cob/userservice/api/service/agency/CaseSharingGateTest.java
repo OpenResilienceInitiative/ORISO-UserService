@@ -167,12 +167,18 @@ class CaseSharingGateTest {
   }
 
   @Test
-  void currentModel_isUnknownWhenTheSettingCannotBeReadOrIsNotServed() {
+  void currentModel_isUnknownOnlyWhileTheSettingIsUnreachable() {
+    when(lookup.findEffectiveSettings(5L, 1L)).thenThrow(new ResourceAccessException("down"));
+    assertThat(gate.currentModel(5L, 1L)).isEmpty();
+  }
+
+  @Test
+  void currentModel_isNoneForARefusedOrNoLongerServedCentre() {
     when(lookup.findEffectiveSettings(5L, 1L))
-        .thenThrow(new ResourceAccessException("down"))
+        .thenThrow(new ForbiddenException("another tenant"))
         .thenReturn(Optional.empty());
-    assertThat(gate.currentModel(5L, 1L)).isEmpty();
-    assertThat(gate.currentModel(5L, 1L)).isEmpty();
+    assertThat(gate.currentModel(5L, 1L)).contains(CaseSharingModel.NONE);
+    assertThat(gate.currentModel(5L, 1L)).contains(CaseSharingModel.NONE);
   }
 
   @Test
@@ -209,10 +215,10 @@ class CaseSharingGateTest {
   }
 
   @Test
-  void modelForNewCase_leavesTheStampToTheSnapshotWhenUnreadable() {
+  void modelForNewCase_stampsNoneWhenUnreadableSoNoLaterReadCanGrantHandover() {
     when(lookup.findEffectiveSettings(5L, 1L)).thenThrow(new ResourceAccessException("down"));
-    assertThat(gate.modelForNewCase(5L, 1L, false)).isNull();
-    assertThat(gate.modelForNewCase(null, 1L, false)).isNull();
+    assertThat(gate.modelForNewCase(5L, 1L, false)).isEqualTo(CaseSharingModel.NONE);
+    assertThat(gate.modelForNewCase(null, 1L, false)).isEqualTo(CaseSharingModel.NONE);
   }
 
   private void requireMailberatung() {

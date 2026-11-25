@@ -401,10 +401,11 @@ class SessionRepositoryIT {
 
   /**
    * FE#2494 *4: the snapshot stamps unstamped 1:1 cases with a centre once, never group chats or
-   * live chat, and a stamp is never overwritten.
+   * live chats (also legacy ones without a modality), and a stamp is never overwritten, not even by
+   * a stale whole-entity save.
    */
   @Test
-  void findUnstampedCaseIds_Should_SkipGroupChatsAndStampedCases_AndStampOnlyOnce() {
+  void findUnstampedCases_Should_SkipGroupAndLiveChatsAndStampedCases_AndStampOnlyOnce() {
     givenAUser();
     var ids = new java.util.ArrayList<Long>();
     for (var type :
@@ -417,8 +418,16 @@ class SessionRepositoryIT {
       var unstamped = validSession(null, 1);
       unstamped.setAgencyId(5L);
       unstamped.setConversationType(type);
+      unstamped.setRegistrationType(RegistrationType.REGISTERED);
+      unstamped.setPostcode("12345");
+      unstamped.setTeamSession(type == null);
       ids.add(underTest.save(unstamped).getId());
     }
+    var legacyLiveChat = validSession(null, 1);
+    legacyLiveChat.setAgencyId(5L);
+    legacyLiveChat.setConversationType(null);
+    legacyLiveChat.setRegistrationType(RegistrationType.ANONYMOUS);
+    var legacyLiveChatId = underTest.save(legacyLiveChat).getId();
     var stamped = validSession(null, 1);
     stamped.setAgencyId(5L);
     stamped.setCaseSharingModel(de.caritas.cob.userservice.api.model.CaseSharingModel.NONE);
@@ -427,17 +436,33 @@ class SessionRepositoryIT {
     entityManager.clear();
 
     var found =
-        underTest.findUnstampedCaseIds(
-            ids.get(0) - 1, org.springframework.data.domain.PageRequest.of(0, 50));
+        underTest
+            .findUnstampedCases(
+                ids.get(0) - 1,
+                RegistrationType.ANONYMOUS,
+                org.springframework.data.domain.PageRequest.of(0, 50))
+            .stream()
+            .toList();
 
-    assertEquals(ids.subList(0, 2), found, "found " + found + " of " + ids);
-    assertFalse(found.contains(stampedId));
+    var foundIds = found.stream().map(SessionRepository.UnstampedCase::getId).toList();
+    assertEquals(ids.subList(0, 2), foundIds, "found " + foundIds + " of " + ids);
+    assertFalse(foundIds.contains(legacyLiveChatId), "a legacy live chat is no counselling case");
+    assertFalse(foundIds.contains(stampedId));
+    assertEquals(5L, found.get(1).getAgencyId());
+    assertTrue(found.get(1).isTeamSession());
+    assertFalse(found.get(0).isTeamSession());
 
     // The cursor and the page size hold.
     assertEquals(
         List.of(ids.get(1)),
-        underTest.findUnstampedCaseIds(
-            ids.get(0), org.springframework.data.domain.PageRequest.of(0, 1)));
+        underTest
+            .findUnstampedCases(
+                ids.get(0),
+                RegistrationType.ANONYMOUS,
+                org.springframework.data.domain.PageRequest.of(0, 1))
+            .stream()
+            .map(SessionRepository.UnstampedCase::getId)
+            .toList());
 
     assertEquals(
         1,
@@ -451,10 +476,27 @@ class SessionRepositoryIT {
     assertEquals(
         de.caritas.cob.userservice.api.model.CaseSharingModel.NONE,
         underTest.findById(stampedId).orElseThrow().getCaseSharingModel());
+
+    // A stale whole-entity save cannot write over the stamp: the column is write-once.
+    var stale = underTest.findById(stampedId).orElseThrow();
+    stale.setCaseSharingModel(null);
+    underTest.save(stale);
+    entityManager.flush();
+    entityManager.clear();
+    assertEquals(
+        de.caritas.cob.userservice.api.model.CaseSharingModel.NONE,
+        underTest.findById(stampedId).orElseThrow().getCaseSharingModel());
+
     assertEquals(
         List.of(ids.get(1)),
-        underTest.findUnstampedCaseIds(
-            ids.get(0) - 1, org.springframework.data.domain.PageRequest.of(0, 50)));
+        underTest
+            .findUnstampedCases(
+                ids.get(0) - 1,
+                RegistrationType.ANONYMOUS,
+                org.springframework.data.domain.PageRequest.of(0, 50))
+            .stream()
+            .map(SessionRepository.UnstampedCase::getId)
+            .toList());
   }
 
   @ParameterizedTest
@@ -542,7 +584,8 @@ class SessionRepositoryIT {
     validSession.setConsultingTypeId(consultingTypeId);
     validSession.setRegistrationType(easyRandom.nextObject(RegistrationType.class));
     validSession.setPostcode(RandomStringUtils.randomNumeric(5));
-    validSession.setLanguageCode(easyRandom.nextObject(LanguageCode.class));
+    // fixed: EasyRandom's seeded sequence can draw LanguageCode.undefined, too long for the column
+    validSession.setLanguageCode(LanguageCode.de);
     validSession.setStatus(easyRandom.nextObject(SessionStatus.class));
     validSession.setIsConsultantDirectlySet(false);
     validSession.setConversationType(ConversationType.AGENCY_COUNSELLING);

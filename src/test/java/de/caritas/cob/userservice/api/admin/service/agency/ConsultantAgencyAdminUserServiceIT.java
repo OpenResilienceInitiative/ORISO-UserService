@@ -133,8 +133,7 @@ public class ConsultantAgencyAdminUserServiceIT {
   }
 
   @Test
-  public void
-      removeConsultantsFromTeamSessionsByAgencyId_Should_removeTeamConsultantFlagAndCallServices() {
+  public void endTeamCounsellingForNewCases_Should_removeTeamConsultantFlagAndCallServices() {
     when(this.agencyService.getAgency(any())).thenReturn(new AgencyDTO().teamAgency(false));
 
     long teamCosnultantsBefore =
@@ -144,7 +143,7 @@ public class ConsultantAgencyAdminUserServiceIT {
             .filter(Consultant::isTeamConsultant)
             .count();
 
-    this.consultantAgencyAdminService.removeConsultantsFromTeamSessionsByAgencyId(0L);
+    this.consultantAgencyAdminService.endTeamCounsellingForNewCases(0L);
 
     long teamConsultantsAfter =
         this.consultantRepository

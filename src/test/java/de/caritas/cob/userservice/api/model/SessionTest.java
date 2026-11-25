@@ -70,4 +70,52 @@ public class SessionTest {
 
     assertThat(session.getSupervisionOptedOut(), is(false));
   }
+
+  /** FE#2494 *4: the stamp decides; the team flag only for a case not stamped yet. */
+  @Test
+  void isTeamCounsellingCase_Should_ReadTheStampBeforeTheTeamFlag() {
+    var session = oneToOne();
+    session.setTeamSession(true);
+    assertThat(session.isTeamCounsellingCase(), is(true));
+
+    session.setCaseSharingModel(CaseSharingModel.NONE);
+    assertThat(session.isTeamCounsellingCase(), is(false));
+
+    session.setTeamSession(false);
+    session.setCaseSharingModel(CaseSharingModel.TEAM_COUNSELLING);
+    assertThat(session.isTeamCounsellingCase(), is(true));
+  }
+
+  @Test
+  void isTeamCounsellingCase_Should_BeFalseForGroupAndLegacyLiveChats() {
+    var group = oneToOne();
+    group.setTeamSession(true);
+    group.setConversationType(ConversationType.INTERNAL_GROUP);
+    assertThat(group.isTeamCounsellingCase(), is(false));
+
+    var legacyLiveChat = oneToOne();
+    legacyLiveChat.setTeamSession(true);
+    legacyLiveChat.setConversationType(null);
+    legacyLiveChat.setRegistrationType(Session.RegistrationType.ANONYMOUS);
+    assertThat(legacyLiveChat.isTeamCounsellingCase(), is(false));
+
+    var legacyPostcode = oneToOne();
+    legacyPostcode.setTeamSession(true);
+    legacyPostcode.setConversationType(null);
+    legacyPostcode.setPostcode("00000");
+    assertThat(legacyPostcode.isTeamCounsellingCase(), is(false));
+
+    var legacyCase = oneToOne();
+    legacyCase.setTeamSession(true);
+    legacyCase.setConversationType(null);
+    assertThat(legacyCase.isTeamCounsellingCase(), is(true));
+  }
+
+  private static Session oneToOne() {
+    var session = new Session();
+    session.setConversationType(ConversationType.AGENCY_COUNSELLING);
+    session.setRegistrationType(Session.RegistrationType.REGISTERED);
+    session.setPostcode("12345");
+    return session;
+  }
 }

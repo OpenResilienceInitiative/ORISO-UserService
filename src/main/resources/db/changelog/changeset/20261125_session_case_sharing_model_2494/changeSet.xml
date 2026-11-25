@@ -21,7 +21,10 @@
     <update tableName="session">
       <column name="case_sharing_model" value="TEAM_COUNSELLING"/>
       <where>is_team_session = 1 AND case_sharing_model IS NULL
-        AND (conversation_type IS NULL OR conversation_type = 'AGENCY_COUNSELLING')</where>
+        AND (conversation_type = 'AGENCY_COUNSELLING'
+          OR (conversation_type IS NULL
+            AND (registration_type IS NULL OR registration_type &lt;&gt; 'ANONYMOUS')
+            AND postcode &lt;&gt; '00000'))</where>
     </update>
     <rollback><sql>SELECT 1</sql></rollback>
   </changeSet>
@@ -38,5 +41,19 @@
       <column name="team_read_only_since" type="datetime"/>
     </addColumn>
     <rollback><sql>SELECT 1</sql></rollback>
+  </changeSet>
+  <!--
+    FE#2494 *4: serves the snapshot scan of CaseSharingModelSnapshotScheduler (unstamped cases in id
+    order) without a full table scan.
+  -->
+  <changeSet id="20261125-session-case-sharing-model-index-2494" author="oriso">
+    <preConditions onFail="MARK_RAN" onError="HALT">
+      <not><indexExists tableName="session" indexName="idx_session_case_sharing_model"/></not>
+    </preConditions>
+    <createIndex tableName="session" indexName="idx_session_case_sharing_model">
+      <column name="case_sharing_model"/>
+      <column name="id"/>
+    </createIndex>
+    <rollback><dropIndex tableName="session" indexName="idx_session_case_sharing_model"/></rollback>
   </changeSet>
 </databaseChangeLog>

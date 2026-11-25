@@ -299,7 +299,8 @@ public class ConsultantAdminFacade {
   }
 
   /**
-   * Changes the consultant flag is_team_consultant and assignments for agency type changes.
+   * Changes the consultant flag is_team_consultant for agency type changes. Running cases keep the
+   * case sharing model they were created under (ORISO-Frontend#2494).
    *
    * @param agencyId the id of the changed agency
    * @param agencyTypeDTO the request object containing the target type
@@ -310,7 +311,7 @@ public class ConsultantAdminFacade {
       this.consultantAgencyAdminService.markAllAssignedConsultantsAsTeamConsultant(agencyId);
     }
     if (DEFAULT_AGENCY.equals(agencyTypeDTO.getAgencyType())) {
-      this.consultantAgencyAdminService.removeConsultantsFromTeamSessionsByAgencyId(agencyId);
+      this.consultantAgencyAdminService.endTeamCounsellingForNewCases(agencyId);
     }
   }
 

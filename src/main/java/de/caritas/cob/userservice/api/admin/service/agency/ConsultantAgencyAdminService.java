@@ -16,7 +16,6 @@ import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestExceptio
 import de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHttpStatusException;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.ConsultantAgency;
-import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.Session.SessionStatus;
 import de.caritas.cob.userservice.api.port.out.ConsultantAgencyRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
@@ -47,7 +46,6 @@ public class ConsultantAgencyAdminService {
   private final @NonNull AgencyEnquiryRevocations enquiryRevocations;
   private final @NonNull ConsultantRepository consultantRepository;
   private final @NonNull SessionRepository sessionRepository;
-  private final @NonNull RemoveConsultantFromSessionRoomsService removeFromSessionRoomsService;
   private final @NonNull AgencyService agencyService;
   private final @NonNull AgencyAdminService agencyAdminService;
   private final @NonNull ConsultantAgencyDeletionValidationService agencyDeletionValidationService;
@@ -184,30 +182,32 @@ public class ConsultantAgencyAdminService {
   }
 
   /**
-   * Removes the consultant from all session rooms where they are not directly assigned, changes the
-   * sessions to non-team sessions and removes the team-consultant identifier when the consultant
-   * has no other team agency assigned.
+   * Ends team counselling for new cases of a centre that switched to the default type.
+   *
+   * <p>Frank's rule of 2026-11-25 (ORISO-Frontend#2494): "cases that are already running stay as
+   * they are". Running team cases keep their colleagues, their rooms and their team flag; only new
+   * cases follow the new type. The team-consultant identifier is therefore only removed once the
+   * centre has no running team case left and the consultant has no other team agency, because the
+   * team-case list requires it.
    *
    * @param agencyId the id of the agency
    */
-  public void removeConsultantsFromTeamSessionsByAgencyId(Long agencyId) {
-    List<Session> teamSessionsInProgress =
-        this.sessionRepository.findByAgencyIdAndStatusAndTeamSessionIsTrue(
-            agencyId, SessionStatus.IN_PROGRESS);
-
-    this.removeFromSessionRoomsService.removeConsultantFromSessions(teamSessionsInProgress);
-    teamSessionsInProgress.forEach(this::changeSessionToNonTeamSession);
+  public void endTeamCounsellingForNewCases(Long agencyId) {
+    if (!this.sessionRepository
+        .findByAgencyIdAndStatusAndTeamSessionIsTrue(agencyId, SessionStatus.IN_PROGRESS)
+        .isEmpty()) {
+      log.info(
+          "Agency {} switched to the default type; its running team cases keep their model and"
+              + " its counsellors keep the team-consultant identifier",
+          agencyId);
+      return;
+    }
 
     this.consultantRepository
         .findByConsultantAgenciesAgencyIdInAndDeleteDateIsNull(singletonList(agencyId))
         .stream()
         .filter(consultant -> noOtherTeamAgency(consultant, agencyId))
         .forEach(this::removeTeamConsultantFlag);
-  }
-
-  private void changeSessionToNonTeamSession(Session session) {
-    session.setTeamSession(false);
-    this.sessionRepository.save(session);
   }
 
   private boolean noOtherTeamAgency(Consultant consultant, Long agencyId) {

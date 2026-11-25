@@ -236,7 +236,7 @@ class ConsultantAdminFacadeTest {
       changeAgencyType_Should_callRemoveConsultantsFromTeamSessionsByAgencyId_When_typeIsDefaultAgency() {
     this.consultantAdminFacade.changeAgencyType(1L, new AgencyTypeDTO().agencyType(DEFAULT_AGENCY));
 
-    verify(this.consultantAgencyAdminService).removeConsultantsFromTeamSessionsByAgencyId(1L);
+    verify(this.consultantAgencyAdminService).endTeamCounsellingForNewCases(1L);
   }
 
   @Test

@@ -163,10 +163,8 @@ public class CreateSessionFacade {
     sessionDataService.saveInitialSessionData(session, user, fromUserDTO(userDTO));
     session.setConsultant(consultant);
     session.setStatus(SessionStatus.IN_PROGRESS);
-    session.setCaseSharingModel(
-        caseSharingGate.modelForNewCase(
-            session.getAgencyId(), session.getTenantId(), session.isTeamSession()));
     session = sessionService.saveSession(session);
+    stampCaseSharingModel(session);
 
     directSessionMatrixRoomService.provisionRoomForDirectSession(session, consultant);
 
@@ -214,18 +212,16 @@ public class CreateSessionFacade {
   }
 
   /**
-   * FE#2494 *4: the case keeps the model it was created under. A failure leaves the stamp to the
-   * snapshot job and never fails the registration.
+   * FE#2494 *4: the case keeps the model it was created under. An unreadable centre setting stamps
+   * "none" (see {@link CaseSharingGate#modelForNewCase}); only a failed write leaves the stamp to
+   * the snapshot job, and it never fails the registration.
    */
   private void stampCaseSharingModel(Session session) {
     try {
-      var model =
+      sessionService.stampCaseSharingModel(
+          session,
           caseSharingGate.modelForNewCase(
-              session.getAgencyId(), session.getTenantId(), session.isTeamSession());
-      if (model != null) {
-        session.setCaseSharingModel(model);
-        sessionService.saveSession(session);
-      }
+              session.getAgencyId(), session.getTenantId(), session.isTeamSession()));
     } catch (RuntimeException failure) {
       log.warn(
           "Case sharing model of session {} left to the snapshot job ({})",

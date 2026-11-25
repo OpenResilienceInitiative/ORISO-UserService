@@ -2378,6 +2378,8 @@ public class CaseHandoverService {
           if (current.terminal() != null) return current.terminal();
           if (!initial.stamp().equals(current.stamp())
               || initial.needsPolicy() != current.needsPolicy()
+              // the locked case must still carry the model the gate checked above
+              || !Objects.equals(initial.caseSharingModel(), current.caseSharingModel())
               || !Objects.equals(initial.tenantId(), current.tenantId())
               || !Objects.equals(initial.agencyId(), current.agencyId())) {
             throw new ConflictException("Case handover changed while its policy was checked");
