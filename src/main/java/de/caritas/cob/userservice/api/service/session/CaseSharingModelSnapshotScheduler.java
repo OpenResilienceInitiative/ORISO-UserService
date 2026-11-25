@@ -177,8 +177,9 @@ public class CaseSharingModelSnapshotScheduler {
       unreachableRuns.remove(key);
       return model;
     }
+    // The count stays at the limit until the centre answers, so every later batch of the same
+    // centre is stamped as well instead of starting the budget again.
     if (unreachableRuns.merge(key, 1, Integer::sum) >= MAX_UNREACHABLE_RUNS) {
-      unreachableRuns.remove(key);
       log.warn("Centre {} stayed unreachable; its unstamped cases are stamped none", key);
       return Optional.of(CaseSharingModel.NONE);
     }

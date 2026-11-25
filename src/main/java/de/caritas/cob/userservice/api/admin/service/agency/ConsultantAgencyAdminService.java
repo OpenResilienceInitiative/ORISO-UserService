@@ -9,7 +9,6 @@ import static org.apache.commons.lang3.StringUtils.isNotBlank;
 
 import de.caritas.cob.userservice.api.adapters.web.dto.AgencyAdminResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.AgencyConsultantResponseDTO;
-import de.caritas.cob.userservice.api.adapters.web.dto.AgencyDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantAgencyResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantDTO;
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
@@ -212,11 +211,16 @@ public class ConsultantAgencyAdminService {
     this.consultantRepository
         .findByConsultantAgenciesAgencyIdInAndDeleteDateIsNull(singletonList(agencyId))
         .stream()
-        .filter(consultant -> noOtherTeamAgency(consultant, agencyId))
+        .filter(consultant -> noOtherTeamAccess(consultant, agencyId))
         .forEach(this::removeTeamConsultantFlag);
   }
 
-  private boolean noOtherTeamAgency(Consultant consultant, Long agencyId) {
+  /**
+   * No other centre of the consultant is a team agency or still has an open or archived team case.
+   * A centre that switched to the default type earlier keeps its team cases, and the consultant
+   * keeps the team-consultant identifier they need (FE#2494 *4).
+   */
+  private boolean noOtherTeamAccess(Consultant consultant, Long agencyId) {
     // Deliberately query the repository instead of navigating consultant.getConsultantAgencies():
     // this method runs outside of an open Hibernate session (changeAgencyType() is not
     // @Transactional, and spring.jpa.open-in-view is disabled), so the lazy collection on a
@@ -226,13 +230,12 @@ public class ConsultantAgencyAdminService {
     return consultantAgencyRepository
         .findByConsultantIdAndDeleteDateIsNull(consultant.getId())
         .stream()
-        .filter(consultantAgency -> !agencyId.equals(consultantAgency.getAgencyId()))
-        .map(this::toAgencyDto)
-        .noneMatch(AgencyDTO::getTeamAgency);
-  }
-
-  private AgencyDTO toAgencyDto(ConsultantAgency consultantAgency) {
-    return this.agencyService.getAgency(consultantAgency.getAgencyId());
+        .map(ConsultantAgency::getAgencyId)
+        .filter(otherAgencyId -> !agencyId.equals(otherAgencyId))
+        .noneMatch(
+            otherAgencyId ->
+                Boolean.TRUE.equals(agencyService.getAgency(otherAgencyId).getTeamAgency())
+                    || sessionRepository.existsTeamCase(otherAgencyId, TEAM_ACCESS_STATUSES));
   }
 
   private void removeTeamConsultantFlag(Consultant consultant) {

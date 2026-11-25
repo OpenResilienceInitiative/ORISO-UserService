@@ -44,6 +44,8 @@ import org.springframework.transaction.annotation.Transactional;
 @Transactional
 public class ConsultantAgencyAdminUserServiceIT {
 
+  @Autowired private de.caritas.cob.userservice.api.port.out.SessionRepository sessionRepository;
+
   @Autowired private ConsultantAgencyAdminService consultantAgencyAdminService;
 
   @Autowired private ConsultantRepository consultantRepository;
@@ -134,6 +136,13 @@ public class ConsultantAgencyAdminUserServiceIT {
   @Test
   public void endTeamCounsellingForNewCases_Should_LeaveRunningTeamCasesAndTeamFlags() {
     when(this.agencyService.getAgency(any())).thenReturn(new AgencyDTO().teamAgency(false));
+    var teamCasesBefore =
+        this.sessionRepository
+            .findByAgencyIdAndStatusAndTeamSessionIsTrue(
+                0L, de.caritas.cob.userservice.api.model.Session.SessionStatus.IN_PROGRESS)
+            .stream()
+            .map(session -> session.getId() + ":" + session.getCaseSharingModel())
+            .toList();
 
     long teamCosnultantsBefore =
         this.consultantRepository
@@ -154,6 +163,16 @@ public class ConsultantAgencyAdminUserServiceIT {
     // FE#2494: agency 0 still has running team cases; they stay as they are, and so does the
     // team-consultant identifier the team-case list needs
     assertThat(teamConsultantsAfter, is(teamCosnultantsBefore));
+    // the persisted cases keep their team flag and their stamp
+    assertThat(teamCasesBefore.isEmpty(), is(false));
+    assertThat(
+        this.sessionRepository
+            .findByAgencyIdAndStatusAndTeamSessionIsTrue(
+                0L, de.caritas.cob.userservice.api.model.Session.SessionStatus.IN_PROGRESS)
+            .stream()
+            .map(session -> session.getId() + ":" + session.getCaseSharingModel())
+            .toList(),
+        is(teamCasesBefore));
     verify(this.removeConsultantFromSessionRoomsService, never())
         .removeConsultantFromSessions(any());
   }

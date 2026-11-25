@@ -52,10 +52,41 @@ class TeamSessionReadOnlyServiceTest {
   }
 
   @Test
-  void enforceAfterCommitMarksTheCaseForTheRepairJob() {
+  void enforceAfterCommitEnforcesTheAcceptedCase() {
+    var accepted = session();
+    accepted.setTeamReadOnlySince(java.time.LocalDateTime.now());
+    when(sessions.findById(42L)).thenReturn(Optional.of(accepted));
+    when(matrix.getRoomMembers(anyString())).thenReturn(Optional.empty());
+
     service.enforceAfterCommit(42L);
 
-    verify(sessions).markTeamReadOnly(eq(42L), any());
+    verify(matrix).getRoomMembers(ROOM);
+  }
+
+  /** FE#2494 *4: the stamp decides, whatever the team flag says. */
+  @Test
+  void aStampedTeamCaseIsEnforcedEvenWithoutTheTeamFlag() {
+    var stamped = session();
+    stamped.setTeamSession(false);
+    stamped.setCaseSharingModel(
+        de.caritas.cob.userservice.api.model.CaseSharingModel.TEAM_COUNSELLING);
+    when(matrix.getRoomMembers(anyString())).thenReturn(Optional.empty());
+
+    assertThat(service.enforce(stamped)).isFalse();
+    verify(matrix).getRoomMembers(ROOM);
+  }
+
+  @Test
+  void aCaseStampedOtherThanTeamIsNeverLoweredEvenWithTheTeamFlag() {
+    for (var model :
+        java.util.List.of(
+            de.caritas.cob.userservice.api.model.CaseSharingModel.NONE,
+            de.caritas.cob.userservice.api.model.CaseSharingModel.CASE_HANDOVER)) {
+      var stamped = session();
+      stamped.setCaseSharingModel(model);
+      assertThat(service.enforce(stamped)).isTrue();
+    }
+    verifyNoInteractions(matrix);
   }
 
   @Test
@@ -65,7 +96,6 @@ class TeamSessionReadOnlyServiceTest {
 
     service.reenforceAfterCommitIfMarked(42L);
 
-    verify(sessions, never()).markTeamReadOnly(any(), any());
     verifyNoInteractions(matrix);
   }
 
@@ -78,7 +108,6 @@ class TeamSessionReadOnlyServiceTest {
 
     service.reenforceAfterCommitIfMarked(42L);
 
-    verify(sessions, never()).markTeamReadOnly(any(), any());
     verify(matrix).getRoomMembers(ROOM);
   }
 

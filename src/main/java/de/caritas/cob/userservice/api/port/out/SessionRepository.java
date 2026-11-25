@@ -231,20 +231,6 @@ public interface SessionRepository extends CrudRepository<Session, Long>, Sessio
   List<Long> findTeamReadOnlyCandidates(
       @Param("status") SessionStatus status, @Param("afterId") long afterId, Pageable page);
 
-  /** Marks a Teamberatung 1:1 case read-only for colleagues once; a mark is kept. */
-  @Transactional
-  @Modifying(flushAutomatically = true)
-  @Query(
-      """
-      UPDATE Session s SET s.teamReadOnlySince = :now
-      WHERE s.id = :sessionId AND s.teamReadOnlySince IS NULL
-        AND (s.caseSharingModel = de.caritas.cob.userservice.api.model.CaseSharingModel.TEAM_COUNSELLING
-          OR (s.caseSharingModel IS NULL AND s.teamSession = true))
-        AND (s.conversationType IS NULL
-          OR s.conversationType = de.caritas.cob.userservice.api.model.ConversationType.AGENCY_COUNSELLING)
-      """)
-  int markTeamReadOnly(@Param("sessionId") Long sessionId, @Param("now") LocalDateTime now);
-
   /** The facts the one-time case sharing snapshot needs, read in one query (no per-row load). */
   interface UnstampedCase {
 

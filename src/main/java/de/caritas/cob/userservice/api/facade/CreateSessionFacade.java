@@ -157,14 +157,20 @@ public class CreateSessionFacade {
     var agencyDTO = obtainVerifiedAgency(userDTO, extendedConsultingTypeResponseDTO);
     // Direct creation commences counselling immediately; check before persisting it.
     dpaPolicy.requireForAgency(agencyDTO);
+    // FE#2494 *4: the model is part of the first insert, so no separate stamp write joins a
+    // surrounding transaction (direct appointment) and can mark it rollback-only.
     var session =
         sessionService.initializeDirectSession(
-            consultant, user, userDTO, agencyDTO.getTeamAgency());
+            consultant,
+            user,
+            userDTO,
+            agencyDTO.getTeamAgency(),
+            caseSharingGate.modelForNewCase(
+                agencyDTO.getId(), agencyDTO.getTenantId(), isTrue(agencyDTO.getTeamAgency())));
     sessionDataService.saveInitialSessionData(session, user, fromUserDTO(userDTO));
     session.setConsultant(consultant);
     session.setStatus(SessionStatus.IN_PROGRESS);
     session = sessionService.saveSession(session);
-    stampCaseSharingModel(session);
 
     directSessionMatrixRoomService.provisionRoomForDirectSession(session, consultant);
 

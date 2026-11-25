@@ -1,5 +1,6 @@
 package de.caritas.cob.userservice.api.service.session;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.Mockito.mock;
@@ -94,6 +95,72 @@ class CaseSharingModelSnapshotSchedulerTest {
     scheduler.snapshot();
 
     verify(sessions).stampCaseSharingModel(1L, CaseSharingModel.NONE);
+  }
+
+  /** CodeRabbit: the budget stays used up, so every later batch of the same centre is stamped. */
+  @Test
+  void anUnreachableCentreStampsEveryLaterBatchOnceTheBudgetIsUsedUp() {
+    var first = case_(1L, 5L, false);
+    var second = case_(2L, 5L, false);
+    when(sessions.findUnstampedCases(
+            0L, RegistrationType.ANONYMOUS, CaseSharingModelSnapshotScheduler.BATCH))
+        .thenReturn(List.of(first));
+    when(sessions.findUnstampedCases(
+            1L, RegistrationType.ANONYMOUS, CaseSharingModelSnapshotScheduler.BATCH))
+        .thenReturn(List.of(second));
+    when(sessions.findUnstampedCases(
+            2L, RegistrationType.ANONYMOUS, CaseSharingModelSnapshotScheduler.BATCH))
+        .thenReturn(List.of());
+    when(gate.currentModel(5L, 1L)).thenReturn(Optional.empty());
+
+    var stamped = new java.util.ArrayList<Long>();
+    org.mockito.Mockito.doAnswer(
+            invocation -> {
+              stamped.add(invocation.getArgument(0));
+              return 1;
+            })
+        .when(sessions)
+        .stampCaseSharingModel(any(), any());
+
+    int runs = 0;
+    while (stamped.isEmpty() && runs++ < 50) {
+      scheduler.snapshot();
+    }
+    var firstStamped = stamped.getFirst();
+
+    // The very next batch (at most one pass end in between) is stamped too: the budget stays used
+    // up instead of starting again at one.
+    scheduler.snapshot();
+    scheduler.snapshot();
+
+    assertThat(stamped).contains(firstStamped == 1L ? 2L : 1L);
+  }
+
+  /** CodeRabbit: a lease lost before a row is processed neither stamps nor skips that row. */
+  @Test
+  void aLostLeaseLeavesTheRowForTheNextRun() {
+    givenUnstamped(case_(1L, 5L, false));
+    when(gate.currentModel(5L, 1L)).thenReturn(Optional.of(CaseSharingModel.CASE_HANDOVER));
+    org.mockito.Mockito.doReturn(false).when(claims).runIfHeld(any(), any());
+
+    scheduler.snapshot();
+
+    verify(sessions, never()).stampCaseSharingModel(any(), any());
+
+    org.mockito.Mockito.doAnswer(
+            invocation -> {
+              invocation.<Runnable>getArgument(1).run();
+              return true;
+            })
+        .when(claims)
+        .runIfHeld(any(), any());
+    scheduler.snapshot();
+
+    // the cursor did not move past the unprocessed row
+    verify(sessions, times(2))
+        .findUnstampedCases(
+            0L, RegistrationType.ANONYMOUS, CaseSharingModelSnapshotScheduler.BATCH);
+    verify(sessions).stampCaseSharingModel(1L, CaseSharingModel.CASE_HANDOVER);
   }
 
   @Test

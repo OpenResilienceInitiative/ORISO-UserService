@@ -371,6 +371,8 @@ class SessionRepositoryIT {
       team.setStatus(SessionStatus.IN_PROGRESS);
       team.setMatrixRoomId("!team-" + ids.size() + ":matrix.example");
       team.setConversationType(type);
+      // marked in the accepting save (SessionOwnershipService), group chat included on purpose
+      team.setTeamReadOnlySince(java.time.LocalDateTime.now());
       ids.add(underTest.save(team).getId());
     }
     var legacy = validSession(null, 1);
@@ -382,20 +384,13 @@ class SessionRepositoryIT {
     entityManager.flush();
     entityManager.clear();
 
-    var now = java.time.LocalDateTime.now();
-    assertEquals(1, underTest.markTeamReadOnly(ids.get(0), now));
-    assertEquals(1, underTest.markTeamReadOnly(ids.get(1), now));
-    assertEquals(0, underTest.markTeamReadOnly(ids.get(2), now), "group chats are never marked");
-    assertEquals(0, underTest.markTeamReadOnly(ids.get(0), now), "a mark is kept");
-    entityManager.clear();
-
     var found =
         underTest.findTeamReadOnlyCandidates(
             SessionStatus.IN_PROGRESS,
             ids.get(0) - 1,
             org.springframework.data.domain.PageRequest.of(0, 50));
 
-    assertEquals(ids.subList(0, 2), found);
+    assertEquals(ids.subList(0, 2), found, "group chats are never repaired");
     assertFalse(found.contains(legacyId), "a case accepted before read-only stays as it is");
   }
 

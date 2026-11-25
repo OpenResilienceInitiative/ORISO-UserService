@@ -267,30 +267,32 @@ class CreateSessionFacadeTest {
   }
 
   @Test
-  void createDirectUserSession_Should_StampTheModelAfterTheCaseIsSaved() {
+  void createDirectUserSession_Should_InsertTheCaseWithItsModel() {
+    // FE#2494 *4: part of the first insert, so no separate stamp write can mark a surrounding
+    // (direct appointment) transaction rollback-only.
     var agencyDTO = new EasyRandom().nextObject(AgencyDTO.class);
     agencyDTO.setTenantId(41L);
+    agencyDTO.setTeamAgency(true);
     var session = new EasyRandom().nextObject(Session.class);
-    session.setTeamSession(true);
-    session.setCaseSharingModel(null);
     when(agencyVerifier.getVerifiedAgency(anyLong(), anyInt())).thenReturn(agencyDTO);
     when(sessionService.findSessionByConsultantAndUserAndConsultingType(any(), any(), any()))
         .thenReturn(Optional.empty());
-    when(sessionService.initializeDirectSession(any(), any(), any(), anyBoolean()))
+    when(caseSharingGate.modelForNewCase(agencyDTO.getId(), 41L, true))
+        .thenReturn(de.caritas.cob.userservice.api.model.CaseSharingModel.TEAM_COUNSELLING);
+    when(sessionService.initializeDirectSession(
+            any(),
+            any(),
+            any(),
+            anyBoolean(),
+            org.mockito.ArgumentMatchers.eq(
+                de.caritas.cob.userservice.api.model.CaseSharingModel.TEAM_COUNSELLING)))
         .thenReturn(session);
     when(sessionService.saveSession(session)).thenReturn(session);
-    when(caseSharingGate.modelForNewCase(session.getAgencyId(), session.getTenantId(), true))
-        .thenReturn(de.caritas.cob.userservice.api.model.CaseSharingModel.TEAM_COUNSELLING);
 
     createSessionFacade.createDirectUserSession(
         null, mock(UserDTO.class), null, mock(ExtendedConsultingTypeResponseDTO.class));
 
-    var order = org.mockito.Mockito.inOrder(sessionService);
-    order.verify(sessionService).saveSession(session);
-    order
-        .verify(sessionService)
-        .stampCaseSharingModel(
-            session, de.caritas.cob.userservice.api.model.CaseSharingModel.TEAM_COUNSELLING);
+    verify(sessionService, never()).stampCaseSharingModel(any(), any());
   }
 
   @Test
@@ -336,7 +338,7 @@ class CreateSessionFacadeTest {
     when(agencyVerifier.getVerifiedAgency(anyLong(), anyInt())).thenReturn(agencyDTO);
     when(sessionService.findSessionByConsultantAndUserAndConsultingType(any(), any(), any()))
         .thenReturn(Optional.empty());
-    when(sessionService.initializeDirectSession(any(), any(), any(), anyBoolean()))
+    when(sessionService.initializeDirectSession(any(), any(), any(), anyBoolean(), any()))
         .thenReturn(session);
     when(sessionService.saveSession(session)).thenReturn(session);
 
@@ -357,7 +359,7 @@ class CreateSessionFacadeTest {
     when(agencyVerifier.getVerifiedAgency(anyLong(), anyInt())).thenReturn(agencyDTO);
     when(sessionService.findSessionByConsultantAndUserAndConsultingType(any(), any(), any()))
         .thenReturn(Optional.empty());
-    when(sessionService.initializeDirectSession(any(), any(), any(), anyBoolean()))
+    when(sessionService.initializeDirectSession(any(), any(), any(), anyBoolean(), any()))
         .thenReturn(session);
     when(sessionService.saveSession(session)).thenReturn(session);
     org.mockito.Mockito.doAnswer(
@@ -408,7 +410,7 @@ class CreateSessionFacadeTest {
     when(agencyVerifier.getVerifiedAgency(anyLong(), anyInt())).thenReturn(agencyDTO);
     when(sessionService.findSessionByConsultantAndUserAndConsultingType(any(), any(), any()))
         .thenReturn(Optional.empty());
-    when(sessionService.initializeDirectSession(any(), any(), any(), anyBoolean()))
+    when(sessionService.initializeDirectSession(any(), any(), any(), anyBoolean(), any()))
         .thenReturn(session);
     when(sessionService.saveSession(session)).thenReturn(session);
     var consultingTypeResponseDTO = new ExtendedConsultingTypeResponseDTO();

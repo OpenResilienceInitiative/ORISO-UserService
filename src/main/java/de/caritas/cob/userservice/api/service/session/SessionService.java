@@ -266,10 +266,24 @@ public class SessionService {
    */
   public Session initializeDirectSession(
       Consultant consultant, User user, UserDTO userDto, boolean isTeamSession) {
+    return initializeDirectSession(consultant, user, userDto, isTeamSession, null);
+  }
+
+  /**
+   * As {@link #initializeDirectSession(Consultant, User, UserDTO, boolean)}, with the case sharing
+   * model set before the first insert (FE#2494 *4). A null model leaves it to the snapshot job.
+   */
+  public Session initializeDirectSession(
+      Consultant consultant,
+      User user,
+      UserDTO userDto,
+      boolean isTeamSession,
+      CaseSharingModel caseSharingModel) {
     var session =
         initializeSession(
             user, userDto, isTeamSession, RegistrationType.REGISTERED, SessionStatus.NEW);
     session.setConsultant(consultant);
+    session.setCaseSharingModel(caseSharingModel);
     return saveSession(session);
   }
 

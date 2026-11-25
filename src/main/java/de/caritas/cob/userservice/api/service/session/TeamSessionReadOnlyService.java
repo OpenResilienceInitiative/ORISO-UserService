@@ -52,15 +52,14 @@ public class TeamSessionReadOnlyService {
   private final @NonNull SessionRepository sessions;
 
   /**
-   * Marks the case as read-only for colleagues in the caller's transaction and enforces once that
-   * transaction has committed; {@code TeamSessionReadOnlyRepairScheduler} repairs a failure. Only
-   * Teamberatung 1:1 cases are marked.
+   * Enforces the reader level once the accepting transaction has committed. The case was marked
+   * read-only in that transaction ({@code SessionOwnershipService}, initial acceptance), so {@code
+   * TeamSessionReadOnlyRepairScheduler} repairs a failure.
    */
   public void enforceAfterCommit(Long sessionId) {
     if (sessionId == null) {
       return;
     }
-    sessions.markTeamReadOnly(sessionId, java.time.LocalDateTime.now(java.time.ZoneOffset.UTC));
     if (!TransactionSynchronizationManager.isSynchronizationActive()) {
       enforceSafely(sessionId);
       return;

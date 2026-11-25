@@ -15,7 +15,6 @@ import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestExceptio
 import de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHttpStatusException;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.ConsultantAgency;
-import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.Session.SessionStatus;
 import de.caritas.cob.userservice.api.port.out.ConsultantAgencyRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
@@ -155,13 +154,12 @@ class ConsultantAgencyAdminServiceTest {
 
   @Test
   void endTeamCounsellingForNewCases_Should_LeaveRunningTeamCasesAndTeamFlagsAlone() {
-    var session = new Session();
-    session.setTeamSession(true);
+    // The cases themselves are checked on persisted rows in ConsultantAgencyAdminUserServiceIT;
+    // this test covers the early return.
     when(sessionRepository.existsTeamCase(any(), any())).thenReturn(true);
 
     consultantAgencyAdminService.endTeamCounsellingForNewCases(10L);
 
-    assertThat(session.isTeamSession()).isTrue();
     verify(sessionRepository, never()).save(any());
     verifyNoInteractions(removeFromSessionRoomsService);
     verify(consultantRepository, never())
@@ -178,7 +176,7 @@ class ConsultantAgencyAdminServiceTest {
     consultant.setTeamConsultant(true);
     // Deliberately NOT populating consultant.consultantAgencies here: production code must no
     // longer touch that lazy collection (it reproduces LazyInitializationException outside an
-    // open Hibernate session — see #1069). noOtherTeamAgency() must instead go through
+    // open Hibernate session — see #1069). noOtherTeamAccess() must instead go through
     // consultantAgencyRepository, which is what this test stubs below.
 
     when(sessionRepository.existsTeamCase(any(), any())).thenReturn(false);
@@ -187,7 +185,7 @@ class ConsultantAgencyAdminServiceTest {
     when(consultantAgencyRepository.findByConsultantIdAndDeleteDateIsNull("c-1"))
         .thenReturn(List.of(consultantAgency));
     // The only agency is 10L (the one being removed), so no other team agency remains.
-    // noOtherTeamAgency filters out agencyId == 10L, leaving nothing — noneMatch returns true.
+    // noOtherTeamAccess filters out agencyId == 10L, leaving nothing — noneMatch returns true.
     // agencyService.getAgency is never called because the stream filters it out.
 
     consultantAgencyAdminService.endTeamCounsellingForNewCases(10L);
@@ -217,6 +215,39 @@ class ConsultantAgencyAdminServiceTest {
     when(consultantAgencyRepository.findByConsultantIdAndDeleteDateIsNull("c-1"))
         .thenReturn(List.of(convertedAgencyRelation, otherAgencyRelation));
     when(agencyService.getAgency(20L)).thenReturn(otherTeamAgency);
+
+    consultantAgencyAdminService.endTeamCounsellingForNewCases(10L);
+
+    assertThat(consultant.isTeamConsultant()).isTrue();
+    verify(consultantRepository, never()).save(consultant);
+  }
+
+  /**
+   * FE#2494 *4 (Codex): a counsellor of centre A (switched earlier, team case still open) and
+   * centre B keeps the identifier when B switches, although A is no team agency any more.
+   */
+  @Test
+  void endTeamCounsellingForNewCases_Should_KeepTeamFlag_When_AnotherCentreStillHasATeamCase() {
+    var switchedRelation = new ConsultantAgency();
+    switchedRelation.setAgencyId(10L);
+    var earlierSwitchedRelation = new ConsultantAgency();
+    earlierSwitchedRelation.setAgencyId(20L);
+    var earlierSwitched = new AgencyDTO();
+    earlierSwitched.setId(20L);
+    earlierSwitched.setTeamAgency(false);
+    var consultant = new Consultant();
+    consultant.setId("c-1");
+    consultant.setTeamConsultant(true);
+
+    when(sessionRepository.existsTeamCase(org.mockito.ArgumentMatchers.eq(10L), any()))
+        .thenReturn(false);
+    when(sessionRepository.existsTeamCase(org.mockito.ArgumentMatchers.eq(20L), any()))
+        .thenReturn(true);
+    when(consultantRepository.findByConsultantAgenciesAgencyIdInAndDeleteDateIsNull(List.of(10L)))
+        .thenReturn(List.of(consultant));
+    when(consultantAgencyRepository.findByConsultantIdAndDeleteDateIsNull("c-1"))
+        .thenReturn(List.of(switchedRelation, earlierSwitchedRelation));
+    when(agencyService.getAgency(20L)).thenReturn(earlierSwitched);
 
     consultantAgencyAdminService.endTeamCounsellingForNewCases(10L);
 
