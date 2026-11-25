@@ -62,8 +62,9 @@ public class CaseSharingGate {
   }
 
   /**
-   * As {@link #isTeamCounselling}, but empty when the setting could not be read, so a caller can
-   * retry instead of treating an outage as "not Teamberatung".
+   * As {@link #isTeamCounselling}, but empty when the setting could not be read or was not served,
+   * so a caller can retry instead of treating either as "not Teamberatung". Only a served policy
+   * that names another model is a definite "no".
    */
   public java.util.Optional<Boolean> teamCounsellingMode(Long agencyId, Long tenantId) {
     Settings settings;
@@ -73,7 +74,7 @@ public class CaseSharingGate {
       return java.util.Optional.empty();
     }
     if (settings == null) {
-      return java.util.Optional.of(false);
+      return java.util.Optional.empty();
     }
     AgencyCaseSharingPolicy caseSharing = settings.getCaseSharing();
     return java.util.Optional.of(

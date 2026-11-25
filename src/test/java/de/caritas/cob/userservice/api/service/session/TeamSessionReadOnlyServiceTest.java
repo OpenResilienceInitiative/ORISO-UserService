@@ -207,6 +207,16 @@ class TeamSessionReadOnlyServiceTest {
     verify(matrix, never()).makeUserReadOnly(any(), any(), eq(-1), any(), any(), any());
   }
 
+  @Test
+  void aTeamCaseWithoutACentreLowersNobodyAndStaysPending() {
+    var session = current(session());
+    session.setAgencyId(null);
+    givenOwnerAndColleagueAtPower(100, 0);
+
+    assertThat(service.enforce(session)).isFalse();
+    verify(matrix, never()).makeUserReadOnly(any(), any(), eq(-1), any(), any(), any());
+  }
+
   private void givenOwnerAndColleagueAtPower(int owner, int colleague) {
     when(matrix.getRoomMembers(ROOM)).thenReturn(Optional.of(List.of(OWNER, COLLEAGUE)));
     when(consultants.findAllByMatrixUserIdInAndDeleteDateIsNull(List.of(COLLEAGUE)))

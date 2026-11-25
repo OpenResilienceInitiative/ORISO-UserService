@@ -102,7 +102,7 @@ public class TeamSessionReadOnlyService {
     }
     var teamMode =
         session.getAgencyId() == null
-            ? java.util.Optional.of(false)
+            ? java.util.Optional.<Boolean>empty()
             : caseSharing.teamCounsellingMode(session.getAgencyId(), session.getTenantId());
     boolean lowerColleagues = teamMode.orElse(false);
     boolean modeKnown = teamMode.isPresent();

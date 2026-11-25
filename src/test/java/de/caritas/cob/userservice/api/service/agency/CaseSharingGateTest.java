@@ -141,9 +141,23 @@ class CaseSharingGateTest {
   }
 
   @Test
-  void isTeamCounselling_isFalseWithoutSettings() {
+  void isTeamCounselling_isFalseWithoutSettings_butTheModeStaysUnknown() {
     when(lookup.findEffectiveSettings(5L, 1L)).thenReturn(Optional.empty());
     assertThat(gate.isTeamCounselling(5L, 1L)).isFalse();
+    assertThat(gate.teamCounsellingMode(5L, 1L)).isEmpty();
+  }
+
+  @Test
+  void teamCounsellingMode_isUnknownWhenTheSettingCannotBeRead() {
+    when(lookup.findEffectiveSettings(5L, 1L))
+        .thenThrow(new org.springframework.web.client.ResourceAccessException("down"));
+    assertThat(gate.teamCounsellingMode(5L, 1L)).isEmpty();
+  }
+
+  @Test
+  void teamCounsellingMode_isADefiniteNoOnlyForAServedOtherModel() {
+    givenMode(AgencyCaseSharingPolicy.ValueEnum.CASE_HANDOVER);
+    assertThat(gate.teamCounsellingMode(5L, 1L)).contains(false);
   }
 
   @Test
