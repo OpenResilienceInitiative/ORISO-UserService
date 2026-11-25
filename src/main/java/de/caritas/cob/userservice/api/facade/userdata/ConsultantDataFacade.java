@@ -67,6 +67,11 @@ public class ConsultantDataFacade {
         .forEach(
             session -> {
               var consultant = session.getConsultant();
+              if (nonNull(consultant) && consultant.getUsername() == null) {
+                // FE#2494 *4: the counsellor view of a session carries only the counsellor's id and
+                // real name. A team reader's banner needs the public name, so resolve the username.
+                addUsernameById(consultant);
+              }
               if (nonNull(consultant) && nonNull(consultant.getUsername())) {
                 try {
                   // The owner of a members-only chat may work for another Traeger than the reader.
@@ -84,6 +89,21 @@ public class ConsultantDataFacade {
                 }
               }
             });
+  }
+
+  private void addUsernameById(
+      de.caritas.cob.userservice.api.adapters.web.dto.GroupSessionConsultantDTO consultant) {
+    if (consultant.getId() == null) {
+      return;
+    }
+    try {
+      consultantService
+          .getConsultant(consultant.getId())
+          .map(Consultant::getUsername)
+          .ifPresent(consultant::setUsername);
+    } catch (Exception e) {
+      log.error("Could not resolve consultant username: {}", e.getMessage());
+    }
   }
 
   public void addConsultantDisplayNameToSessionList(UserSessionListResponseDTO userSessionsDTO) {
