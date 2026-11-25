@@ -435,13 +435,7 @@ class AgencyPasswordFreeSynapseIT {
     when(sessionRepository.findById(session.getId())).thenReturn(Optional.of(session));
     var readOnly =
         new de.caritas.cob.userservice.api.service.session.TeamSessionReadOnlyService(
-            new MatrixTeamSessionRoomAccess(matrix),
-            consultants,
-            supervisors,
-            sessionRepository,
-            teamCentre(),
-            mock(de.caritas.cob.userservice.api.port.out.CaseHandoverRequestRepository.class),
-            java.time.Clock.systemUTC());
+            new MatrixTeamSessionRoomAccess(matrix), consultants, supervisors, sessionRepository);
     var facade =
         new AssignEnquiryFacade(
             sessions,
@@ -653,11 +647,5 @@ class AgencyPasswordFreeSynapseIT {
     headers.setContentType(MediaType.APPLICATION_JSON);
     if (token != null) headers.setBearerAuth(token);
     return new HttpEntity<>(body, headers);
-  }
-
-  private static de.caritas.cob.userservice.api.service.agency.CaseSharingGate teamCentre() {
-    var gate = mock(de.caritas.cob.userservice.api.service.agency.CaseSharingGate.class);
-    when(gate.isTeamCounselling(any(), any())).thenReturn(true);
-    return gate;
   }
 }

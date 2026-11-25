@@ -111,6 +111,10 @@ class CaseHandoverServiceTest {
 
   @Mock private de.caritas.cob.userservice.api.service.agency.CaseSharingGate caseSharingGate;
 
+  @Mock
+  private de.caritas.cob.userservice.api.port.out.MatrixRoomMembershipLookup
+      matrixRoomMembershipLookup;
+
   @InjectMocks private CaseHandoverService caseHandoverService;
 
   @Mock
@@ -385,6 +389,9 @@ class CaseHandoverServiceTest {
 
   @BeforeEach
   void setUp() {
+    // MatrixSynapseService also implements the lookup, so @InjectMocks may pick either mock.
+    org.springframework.test.util.ReflectionTestUtils.setField(
+        caseHandoverService, "matrixRoomMembershipLookup", matrixRoomMembershipLookup);
     // The caller reaches the TenantContext's Träger; none means a single-tenant platform.
     lenient()
         .when(adminScope.current())
@@ -3709,9 +3716,7 @@ class CaseHandoverServiceTest {
   void getStatus_letsADepartmentColleagueReadAnAcceptedTeamCase_withoutARequest() {
     // FE#2494 *4 decision d: Teamberatung is read access for the team, writing stays with the
     // owner.
-    session.setTeamSession(true);
-    session.setStatus(Session.SessionStatus.IN_PROGRESS);
-    when(caseSharingGate.isTeamCounselling(any(), any())).thenReturn(true);
+    givenTeamRoomMember();
 
     CaseHandoverStatus status = caseHandoverService.getStatus(123L);
 
@@ -3727,12 +3732,78 @@ class CaseHandoverServiceTest {
     // The team flag stays on old sessions; the centre's current choice decides.
     session.setTeamSession(true);
     session.setStatus(Session.SessionStatus.IN_PROGRESS);
+    session.setMatrixRoomId(TEAM_ROOM);
     when(caseSharingGate.isTeamCounselling(any(), any())).thenReturn(false);
 
     CaseHandoverStatus status = caseHandoverService.getStatus(123L);
 
     assertEquals("NOT_REQUESTED", status.getStatus());
     assertFalse(status.isCanViewContent());
+  }
+
+  @Test
+  void getStatus_reportsNoTeamReadingToAColleagueOutsideTheCaseRoom() {
+    // A read grant is only reported where it can be exercised.
+    givenTeamRoomMember();
+    when(matrixRoomMembershipLookup.findJoinedRoomsForMatrixUser(any()))
+        .thenReturn(Optional.of(List.of("!other:example.org")));
+
+    CaseHandoverStatus status = caseHandoverService.getStatus(123L);
+
+    assertEquals("NOT_REQUESTED", status.getStatus());
+    assertFalse(status.isCanViewContent());
+  }
+
+  @Test
+  void getStatus_keepsTheReclaimOfAnAbsenceTakeoverInATeamCase() {
+    givenGrantedTakeover("COUNSELLOR_IS_ILL");
+    ConsultantAgency previousAgency = new ConsultantAgency();
+    previousAgency.setAgencyId(10L);
+    previousAgency.setConsultant(previous);
+    previous.setConsultantAgencies(Set.of(previousAgency));
+    givenTeamRoomMember();
+
+    CaseHandoverStatus status = caseHandoverService.getStatus(123L);
+
+    // Before the fix the team branch answered first and dropped the reclaim.
+    assertTrue(status.isCanReclaim());
+    assertTrue(status.isCanViewContent());
+  }
+
+  @Test
+  void getStatus_refusesATeamCaseOutsideTheRequesterDepartment() {
+    session.setTeamSession(true);
+    session.setMatrixRoomId(TEAM_ROOM);
+    givenRequesterTopics(5L);
+    session.setMainTopicId(99L);
+
+    assertThrows(ForbiddenException.class, () -> caseHandoverService.getStatus(123L));
+    verify(caseSharingGate, never()).isTeamCounselling(any(), any());
+  }
+
+  @Test
+  void getStatus_refusesATeamCaseThatIsAMembersOnlyChat() {
+    session.setTeamSession(true);
+    session.setMatrixRoomId(TEAM_ROOM);
+    when(membersOnlyChatAccess.concerns(session)).thenReturn(true);
+
+    assertThrows(
+        de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException.class,
+        () -> caseHandoverService.getStatus(123L));
+  }
+
+  private static final String TEAM_ROOM = "!team-case:example.org";
+
+  private void givenTeamRoomMember() {
+    session.setTeamSession(true);
+    session.setStatus(Session.SessionStatus.IN_PROGRESS);
+    session.setMatrixRoomId(TEAM_ROOM);
+    requester.setMatrixUserId("@requester:matrix");
+    previous.setMatrixUserId("@previous:matrix");
+    when(caseSharingGate.isTeamCounselling(any(), any())).thenReturn(true);
+    org.mockito.Mockito.lenient()
+        .when(matrixRoomMembershipLookup.findJoinedRoomsForMatrixUser(any()))
+        .thenReturn(Optional.of(List.of(TEAM_ROOM)));
   }
 
   @Test
@@ -3866,8 +3937,7 @@ class CaseHandoverServiceTest {
   @Test
   void searchCandidates_offersAColleaguesTeamCaseForReading_withoutARequest() {
     // FE#2494 *4: search a colleague, press Enter, open one of their cases and read it.
-    session.setTeamSession(true);
-    when(caseSharingGate.isTeamCounselling(any(), any())).thenReturn(true);
+    givenTeamRoomMember();
     givenCandidates(session);
 
     var status =

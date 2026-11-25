@@ -46,7 +46,7 @@ public class TeamSessionReadOnlyRepairScheduler {
       }
       for (Long id : ids) {
         try {
-          if (!claims.runIfHeld(lease.get(), () -> readOnly.enforceSafely(id))) break;
+          if (!claims.runIfHeld(lease.get(), () -> readOnly.repairSafely(id))) break;
         } catch (RuntimeException failure) {
           log.warn("Team read-only repair remains pending for session {}", id);
         }

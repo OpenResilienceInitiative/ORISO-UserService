@@ -377,6 +377,9 @@ public class CaseHandoverService {
   /** #374 / UserService#1687: case handover only where it is the centre's case sharing mode. */
   private final @NonNull CaseSharingGate caseSharingGate;
 
+  private final @NonNull de.caritas.cob.userservice.api.port.out.MatrixRoomMembershipLookup
+      matrixRoomMembershipLookup;
+
   /**
    * When topics are off, a department degenerates to the agency. When they are on, an empty topic
    * set must not widen the search to every case in the agency (#202).
@@ -659,21 +662,6 @@ public class CaseHandoverService {
           .build();
     }
 
-    // FE#2494 *4 (decision d): in Teamberatung every counsellor of the department reads the case
-    // without a request; writing stays with the owner (TeamSessionReadOnlyService).
-    if (isTeamReader(session, new java.util.HashMap<>())) {
-      return CaseHandoverStatus.builder()
-          .sessionId(sessionId)
-          .status(Status.GRANTED.name())
-          .canViewContent(true)
-          .clientConsent(CaseHandoverConsentMode.NONE)
-          .clientConsentRequired(false)
-          .ownershipRevision(session.getOwnershipRevision())
-          .policyAuthority(POLICY_AUTHORITY)
-          .auditOutcome(OUTCOME_TEAM_READER)
-          .build();
-    }
-
     CaseHandoverStatus status =
         latestFor(sessionId, requester)
             .map(this::toStatus)
@@ -692,7 +680,39 @@ public class CaseHandoverService {
         takeoverFrom(session, requester)
             .filter(takeover -> isReclaimable(session, takeover))
             .isPresent());
+    // FE#2494 *4 (decision d): in Teamberatung a room member of the department reads the case
+    // without a request; writing stays with the owner (TeamSessionReadOnlyService). Only the read
+    // fields change, so a pending offer, a takeover and its reclaim keep their state.
+    if (!status.isCanViewContent()
+        && isTeamReader(session, new java.util.HashMap<>(), joinedRooms(requester))) {
+      status.setCanViewContent(true);
+      if (OUTCOME_NOT_REQUESTED.equals(status.getStatus())) {
+        status.setStatus(Status.GRANTED.name());
+        status.setAuditOutcome(OUTCOME_TEAM_READER);
+      }
+    }
     return status;
+  }
+
+  /**
+   * The rooms the requester is joined to, asked at most once. A team read grant is only reported
+   * where it can be exercised: the requester must already be a member of the case room.
+   */
+  private java.util.function.Supplier<java.util.Set<String>> joinedRooms(Consultant requester) {
+    var memo = new java.util.concurrent.atomic.AtomicReference<java.util.Set<String>>();
+    return () -> {
+      if (memo.get() == null) {
+        java.util.Set<String> rooms =
+            requester == null || requester.getMatrixUserId() == null
+                ? java.util.Set.of()
+                : matrixRoomMembershipLookup
+                    .findJoinedRoomsForMatrixUser(requester.getMatrixUserId())
+                    .map(java.util.Set::copyOf)
+                    .orElse(java.util.Set.of());
+        memo.set(rooms);
+      }
+      return memo.get();
+    };
   }
 
   /**
@@ -892,13 +912,14 @@ public class CaseHandoverService {
                     Collectors.toMap(CandidateStatusRequest::getSessionId, Function.identity()));
     LocalDateTime now = LocalDateTime.now(clock);
     Map<Long, Boolean> teamCentres = new java.util.HashMap<>();
+    var requesterRooms = joinedRooms(requester);
     List<ConsultantSessionResponseDTO> page =
         pageSessions.stream()
             .map(
                 candidate ->
                     toCandidateDto(candidate, agencyNames)
                         .caseHandoverStatus(
-                            isTeamReader(candidate, teamCentres)
+                            isTeamReader(candidate, teamCentres, requesterRooms)
                                 ? teamReaderCandidateStatus()
                                 : candidateStatus(requestsBySession.get(candidate.getId()), now)))
             .collect(Collectors.toList());
@@ -2043,16 +2064,21 @@ public class CaseHandoverService {
    * case handover or "none" the old team flag no longer opens the case, and a case handover centre
    * keeps its request, handover and reclaim flow.
    */
-  private boolean isTeamReader(Session session, Map<Long, Boolean> teamCentres) {
+  private boolean isTeamReader(
+      Session session,
+      Map<Long, Boolean> teamCentres,
+      java.util.function.Supplier<java.util.Set<String>> requesterRooms) {
     if (!session.isTeamCounsellingCase()
         || session.getConsultant() == null
         || session.getStatus() != Session.SessionStatus.IN_PROGRESS
-        || session.getAgencyId() == null) {
+        || session.getAgencyId() == null
+        || session.getMatrixRoomId() == null) {
       return false;
     }
     return teamCentres.computeIfAbsent(
-        session.getAgencyId(),
-        agencyId -> caseSharingGate.isTeamCounselling(agencyId, session.getTenantId()));
+            session.getAgencyId(),
+            agencyId -> caseSharingGate.isTeamCounselling(agencyId, session.getTenantId()))
+        && requesterRooms.get().contains(session.getMatrixRoomId());
   }
 
   private void verifyEligibleForSession(Session session, Consultant requester) {
