@@ -55,6 +55,7 @@ public class DeleteUserAccountServiceTest {
   @Mock private UserHardDeleteClaimService userHardDeleteClaimService;
 
   @Mock private ConsultantHardDeleteClaimService consultantHardDeleteClaimService;
+  @Mock private MarkedSessionPurgeService markedSessionPurgeService;
 
   private final ActionCommandMockProvider commandMockProvider = new ActionCommandMockProvider();
 
@@ -212,5 +213,29 @@ public class DeleteUserAccountServiceTest {
         .verify(userHardDeleteClaimService)
         .recordFailure("user-id", "MATRIX: Unable to delete Matrix user account");
     order.verify(userHardDeleteClaimService).release("user-id");
+  }
+
+  @Test
+  void deleteUserAccounts_Should_purgeMarkedSessions_When_noAccountIsMarked() {
+    when(markedSessionPurgeService.purgeMarkedSessions()).thenReturn(new java.util.ArrayList<>());
+
+    this.deleteUserAccountService.deleteUserAccounts();
+
+    verify(markedSessionPurgeService, times(1)).purgeMarkedSessions();
+    verifyNoMoreInteractions(this.workflowErrorMailService);
+  }
+
+  @Test
+  void deleteUserAccounts_Should_mailThePurgeErrors_When_aMarkedSessionCannotBePurged() {
+    var purgeError = DeletionWorkflowError.builder().identifier("42").reason("stuck").build();
+    when(markedSessionPurgeService.purgeMarkedSessions())
+        .thenReturn(new java.util.ArrayList<>(singletonList(purgeError)));
+
+    this.deleteUserAccountService.deleteUserAccounts();
+
+    verify(this.workflowErrorMailService)
+        .buildAndSendErrorMail(
+            org.mockito.ArgumentMatchers.argThat(
+                errors -> errors.size() == 1 && errors.contains(purgeError)));
   }
 }

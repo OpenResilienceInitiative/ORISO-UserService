@@ -135,6 +135,14 @@ class UserAdminControllerIT {
   private de.caritas.cob.userservice.api.admin.service.contactperson.ContactPersonAdminService
       contactPersonAdminService;
 
+  @MockitoBean
+  private de.caritas.cob.userservice.api.admin.service.agency.AgencyDeletionCascadeService
+      agencyDeletionCascadeService;
+
+  @MockitoBean
+  private de.caritas.cob.userservice.api.admin.service.tenant.TenantDeletionCascadeService
+      tenantDeletionCascadeService;
+
   @Test
   void getAgencyContactPerson_Should_passTheTenantHintAndReturnTheState() throws Exception {
     when(contactPersonAdminService.getAgencyContactPerson(7L, 3L))

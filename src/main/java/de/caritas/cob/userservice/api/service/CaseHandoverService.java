@@ -45,6 +45,7 @@ import de.caritas.cob.userservice.api.port.out.CaseHandoverRequestRepository.Can
 import de.caritas.cob.userservice.api.port.out.ConsultantAgencyRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
+import de.caritas.cob.userservice.api.service.agency.CaseSharingGate;
 import de.caritas.cob.userservice.api.service.chat.MembersOnlyChatAccess;
 import de.caritas.cob.userservice.api.service.matrix.MatrixSessionSystemMessageService;
 import de.caritas.cob.userservice.api.service.notification.AskerNotificationChannelPolicy;
@@ -122,6 +123,7 @@ public class CaseHandoverService {
   private static final String OUTCOME_ACCESS_EXPIRED = "ACCESS_EXPIRED";
   private static final String OUTCOME_ALREADY_ANSWERED = "ALREADY_ANSWERED";
   private static final String OUTCOME_NOT_REQUESTED = "NOT_REQUESTED";
+  static final String OUTCOME_TEAM_READER = "TEAM_READER";
   private static final String OUTCOME_RECLAIMED = "RECLAIMED";
 
   /** ADR-002: "counsellor left" has no reclaim. ASSIGNMENT_ENDED is its successor (#1245). */
@@ -371,6 +373,12 @@ public class CaseHandoverService {
   private final @NonNull AgencyService agencyService;
   private final @NonNull AdminScope adminScope;
   private final @NonNull MembersOnlyChatAccess membersOnlyChatAccess;
+
+  /** #374 / UserService#1687: case handover only where it is the centre's case sharing mode. */
+  private final @NonNull CaseSharingGate caseSharingGate;
+
+  private final @NonNull de.caritas.cob.userservice.api.port.out.MatrixRoomMembershipLookup
+      matrixRoomMembershipLookup;
 
   /**
    * When topics are off, a department degenerates to the agency. When they are on, an empty topic
@@ -672,7 +680,39 @@ public class CaseHandoverService {
         takeoverFrom(session, requester)
             .filter(takeover -> isReclaimable(session, takeover))
             .isPresent());
+    // FE#2494 *4 (decision d): in Teamberatung a room member of the department reads the case
+    // without a request; writing stays with the owner (TeamSessionReadOnlyService). Only the read
+    // fields change, so a pending offer, a takeover and its reclaim keep their state.
+    if (!status.isCanViewContent()
+        && isTeamReader(session, new java.util.HashMap<>(), joinedRooms(requester))) {
+      status.setCanViewContent(true);
+      if (OUTCOME_NOT_REQUESTED.equals(status.getStatus())) {
+        status.setStatus(Status.GRANTED.name());
+        status.setAuditOutcome(OUTCOME_TEAM_READER);
+      }
+    }
     return status;
+  }
+
+  /**
+   * The rooms the requester is joined to, asked at most once. A team read grant is only reported
+   * where it can be exercised: the requester must already be a member of the case room.
+   */
+  private java.util.function.Supplier<java.util.Set<String>> joinedRooms(Consultant requester) {
+    var memo = new java.util.concurrent.atomic.AtomicReference<java.util.Set<String>>();
+    return () -> {
+      if (memo.get() == null) {
+        java.util.Set<String> rooms =
+            requester == null || requester.getMatrixUserId() == null
+                ? java.util.Set.of()
+                : matrixRoomMembershipLookup
+                    .findJoinedRoomsForMatrixUser(requester.getMatrixUserId())
+                    .map(java.util.Set::copyOf)
+                    .orElse(java.util.Set.of());
+        memo.set(rooms);
+      }
+      return memo.get();
+    };
   }
 
   /**
@@ -871,13 +911,17 @@ public class CaseHandoverService {
                 .collect(
                     Collectors.toMap(CandidateStatusRequest::getSessionId, Function.identity()));
     LocalDateTime now = LocalDateTime.now(clock);
+    Map<Long, Boolean> teamCentres = new java.util.HashMap<>();
+    var requesterRooms = joinedRooms(requester);
     List<ConsultantSessionResponseDTO> page =
         pageSessions.stream()
             .map(
                 candidate ->
                     toCandidateDto(candidate, agencyNames)
                         .caseHandoverStatus(
-                            candidateStatus(requestsBySession.get(candidate.getId()), now)))
+                            isTeamReader(candidate, teamCentres, requesterRooms)
+                                ? teamReaderCandidateStatus()
+                                : candidateStatus(requestsBySession.get(candidate.getId()), now)))
             .collect(Collectors.toList());
 
     return new ConsultantSessionListResponseDTO()
@@ -885,6 +929,14 @@ public class CaseHandoverService {
         .offset(safeOffset)
         .count(page.size())
         .total(total);
+  }
+
+  /** FE#2494 *4: a colleague's team case opens for reading straight from the search. */
+  private static CaseHandoverListStatusDTO teamReaderCandidateStatus() {
+    return new CaseHandoverListStatusDTO()
+        .status(Status.GRANTED.name())
+        .canViewContent(true)
+        .hasRequest(false);
   }
 
   private CaseHandoverListStatusDTO candidateStatus(
@@ -2006,6 +2058,29 @@ public class CaseHandoverService {
     return username == null ? null : new UsernameTranscoder().decodeUsername(username);
   }
 
+  /**
+   * Department eligibility is checked before. The team reader needs an accepted Teamberatung 1:1
+   * case in a centre whose <em>current</em> case sharing model is Teamberatung: after a switch to
+   * case handover or "none" the old team flag no longer opens the case, and a case handover centre
+   * keeps its request, handover and reclaim flow.
+   */
+  private boolean isTeamReader(
+      Session session,
+      Map<Long, Boolean> teamCentres,
+      java.util.function.Supplier<java.util.Set<String>> requesterRooms) {
+    if (!session.isTeamCounsellingCase()
+        || session.getConsultant() == null
+        || session.getStatus() != Session.SessionStatus.IN_PROGRESS
+        || session.getAgencyId() == null
+        || session.getMatrixRoomId() == null) {
+      return false;
+    }
+    return teamCentres.computeIfAbsent(
+            session.getAgencyId(),
+            agencyId -> caseSharingGate.isTeamCounselling(agencyId, session.getTenantId()))
+        && requesterRooms.get().contains(session.getMatrixRoomId());
+  }
+
   private void verifyEligibleForSession(Session session, Consultant requester) {
     if (isActiveOwner(session, requester)) {
       return;
@@ -2297,13 +2372,19 @@ public class CaseHandoverService {
         initial.needsPolicy()
             ? caseHandoverPolicyCacheService.getCurrent(initial.tenantId())
             : null;
+    if (initial.needsPolicy()) {
+      // outside any lock, like the policy read: the centre must have chosen case handover
+      caseSharingGate.requireCaseHandover(
+          initial.agencyId(), initial.tenantId(), initial.conversationType());
+    }
     return inNewTransaction(
         () -> {
           PreparedAction current = prepare.apply(true);
           if (current.terminal() != null) return current.terminal();
           if (!initial.stamp().equals(current.stamp())
               || initial.needsPolicy() != current.needsPolicy()
-              || !Objects.equals(initial.tenantId(), current.tenantId())) {
+              || !Objects.equals(initial.tenantId(), current.tenantId())
+              || !Objects.equals(initial.agencyId(), current.agencyId())) {
             throw new ConflictException("Case handover changed while its policy was checked");
           }
           return current.effect().apply(policy);
@@ -2323,7 +2404,7 @@ public class CaseHandoverService {
   }
 
   private PreparedAction terminalAction(CaseHandoverStatus status) {
-    return new PreparedAction(null, null, false, status, null);
+    return new PreparedAction(null, null, null, null, false, status, null);
   }
 
   private PreparedAction preparedAction(
@@ -2334,6 +2415,8 @@ public class CaseHandoverService {
     return new PreparedAction(
         PolicyStamp.capture(session, request),
         needsPolicy ? policyTenant(session) : null,
+        session.getAgencyId(),
+        AskerNotificationChannelPolicy.conversationType(session),
         needsPolicy,
         null,
         effect);
@@ -2342,6 +2425,8 @@ public class CaseHandoverService {
   private record PreparedAction(
       PolicyStamp stamp,
       Long tenantId,
+      Long agencyId,
+      ConversationType conversationType,
       boolean needsPolicy,
       CaseHandoverStatus terminal,
       Function<CaseHandoverPolicyCacheService.CurrentPolicy, CaseHandoverStatus> effect) {}

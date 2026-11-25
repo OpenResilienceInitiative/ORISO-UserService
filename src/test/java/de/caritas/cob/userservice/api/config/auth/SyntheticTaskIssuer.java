@@ -112,7 +112,8 @@ final class SyntheticTaskIssuer implements AutoCloseable {
                 "matrix-agency-provision",
                 "appointment-sync",
                 "appointment-participant-cleanup",
-                "deletion-audit-read");
+                "deletion-audit-read",
+                "tenant-deletion");
         audiences = List.of("tenantservice", "agencyservice", "appointmentservice");
         subject = "native-runtime-subject";
       }

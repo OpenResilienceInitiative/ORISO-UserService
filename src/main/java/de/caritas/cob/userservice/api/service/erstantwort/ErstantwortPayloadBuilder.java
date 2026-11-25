@@ -83,8 +83,11 @@ public class ErstantwortPayloadBuilder {
    * safety-bearing Bausteine come before every optional action, because consent has to precede data
    * transmission; and the free notice sits at a fixed position just before the closing, so a Träger
    * cannot push their own text to the top of a message that is meant to be a transparency record.
+   *
+   * <p>Package-visible for {@link JourneyFirstReplyBuilder}: the journey's greeting step sends
+   * exactly these resolved Bausteine, so both versions say the same words.
    */
-  private List<Map<String, Object>> buildBausteine(ErstantwortContext context) {
+  List<Map<String, Object>> buildBausteine(ErstantwortContext context) {
     var modality = context.modalityOrDefault();
     var informal = context.isInformal();
     var bausteine = new ArrayList<Map<String, Object>>();

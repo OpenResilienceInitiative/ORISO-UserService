@@ -199,6 +199,13 @@ public class Session implements TenantAware, SessionRoom {
   @Column(name = "update_date", columnDefinition = "datetime")
   private LocalDateTime updateDate;
 
+  /**
+   * Set when the session's Beratungsstelle is deleted while its advice seeker keeps the account
+   * (ORISO-Admin#1524). The nightly deletion job purges the session and its Matrix room.
+   */
+  @Column(name = "delete_date", columnDefinition = "datetime")
+  private LocalDateTime deleteDate;
+
   @Column(name = "tenant_id")
   private Long tenantId;
 
@@ -339,6 +346,17 @@ public class Session implements TenantAware, SessionRoom {
     return conversationType == null
         || conversationType == ConversationType.AGENCY_COUNSELLING
         || conversationType == ConversationType.LIVE_CHAT;
+  }
+
+  /**
+   * FE#2494 *4: a Teamberatung 1:1 case, the only kind whose colleagues become readers. Group chats
+   * also carry {@code teamSession} (see {@code CreateChatFacade}) but are never counselling cases;
+   * legacy rooms without a modality are 1:1 cases.
+   */
+  @JsonIgnore
+  public boolean isTeamCounsellingCase() {
+    return teamSession
+        && (conversationType == null || conversationType == ConversationType.AGENCY_COUNSELLING);
   }
 
   @JsonIgnore
