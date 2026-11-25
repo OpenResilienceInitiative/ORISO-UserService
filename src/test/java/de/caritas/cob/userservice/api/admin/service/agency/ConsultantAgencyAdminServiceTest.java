@@ -16,7 +16,6 @@ import de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHt
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.ConsultantAgency;
 import de.caritas.cob.userservice.api.model.Session;
-import de.caritas.cob.userservice.api.model.Session.SessionStatus;
 import de.caritas.cob.userservice.api.port.out.ConsultantAgencyRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
@@ -142,9 +141,7 @@ class ConsultantAgencyAdminServiceTest {
   void endTeamCounsellingForNewCases_Should_LeaveRunningTeamCasesAndTeamFlagsAlone() {
     var session = new Session();
     session.setTeamSession(true);
-    when(sessionRepository.findByAgencyIdAndStatusAndTeamSessionIsTrue(
-            10L, SessionStatus.IN_PROGRESS))
-        .thenReturn(List.of(session));
+    when(sessionRepository.existsTeamCase(any(), any())).thenReturn(true);
 
     consultantAgencyAdminService.endTeamCounsellingForNewCases(10L);
 
@@ -168,9 +165,7 @@ class ConsultantAgencyAdminServiceTest {
     // open Hibernate session — see #1069). noOtherTeamAgency() must instead go through
     // consultantAgencyRepository, which is what this test stubs below.
 
-    when(sessionRepository.findByAgencyIdAndStatusAndTeamSessionIsTrue(
-            10L, SessionStatus.IN_PROGRESS))
-        .thenReturn(List.of());
+    when(sessionRepository.existsTeamCase(any(), any())).thenReturn(false);
     when(consultantRepository.findByConsultantAgenciesAgencyIdInAndDeleteDateIsNull(List.of(10L)))
         .thenReturn(List.of(consultant));
     when(consultantAgencyRepository.findByConsultantIdAndDeleteDateIsNull("c-1"))
@@ -200,9 +195,7 @@ class ConsultantAgencyAdminServiceTest {
     consultant.setId("c-1");
     consultant.setTeamConsultant(true);
 
-    when(sessionRepository.findByAgencyIdAndStatusAndTeamSessionIsTrue(
-            10L, SessionStatus.IN_PROGRESS))
-        .thenReturn(List.of());
+    when(sessionRepository.existsTeamCase(any(), any())).thenReturn(false);
     when(consultantRepository.findByConsultantAgenciesAgencyIdInAndDeleteDateIsNull(List.of(10L)))
         .thenReturn(List.of(consultant));
     when(consultantAgencyRepository.findByConsultantIdAndDeleteDateIsNull("c-1"))

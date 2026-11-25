@@ -282,6 +282,22 @@ public interface SessionRepository extends CrudRepository<Session, Long>, Sessio
       @Param("anonymousRegistrationType") RegistrationType anonymousRegistrationType,
       Pageable page);
 
+  /**
+   * FE#2494 *4: whether the centre still has a team case in one of {@code statuses}, by the stamp,
+   * or the team flag for a case not stamped yet. Group and live chats are not counted.
+   */
+  @Query(
+      """
+      select count(s) > 0 from Session s
+      where s.agencyId = :agencyId and s.status in :statuses
+        and (s.caseSharingModel = de.caritas.cob.userservice.api.model.CaseSharingModel.TEAM_COUNSELLING
+          or (s.caseSharingModel is null and s.teamSession = true
+            and (s.conversationType is null
+              or s.conversationType = de.caritas.cob.userservice.api.model.ConversationType.AGENCY_COUNSELLING)))
+      """)
+  boolean existsTeamCase(
+      @Param("agencyId") Long agencyId, @Param("statuses") Collection<SessionStatus> statuses);
+
   /** Stamps the model once; a case that already carries one keeps it. */
   @Transactional
   @Modifying(flushAutomatically = true)

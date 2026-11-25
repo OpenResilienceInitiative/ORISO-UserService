@@ -181,23 +181,24 @@ public class ConsultantAgencyAdminService {
     this.consultantRepository.save(consultant);
   }
 
+  private static final List<SessionStatus> OPEN_CASE_STATUSES =
+      List.of(SessionStatus.INITIAL, SessionStatus.NEW, SessionStatus.IN_PROGRESS);
+
   /**
    * Ends team counselling for new cases of a centre that switched to the default type.
    *
    * <p>Frank's rule of 2026-11-25 (ORISO-Frontend#2494): "cases that are already running stay as
    * they are". Running team cases keep their colleagues, their rooms and their team flag; only new
    * cases follow the new type. The team-consultant identifier is therefore only removed once the
-   * centre has no running team case left and the consultant has no other team agency, because the
-   * team-case list requires it.
+   * centre has no open team case left (an enquiry not yet accepted included) and the consultant has
+   * no other team agency, because the team-case list requires it.
    *
    * @param agencyId the id of the agency
    */
   public void endTeamCounsellingForNewCases(Long agencyId) {
-    if (!this.sessionRepository
-        .findByAgencyIdAndStatusAndTeamSessionIsTrue(agencyId, SessionStatus.IN_PROGRESS)
-        .isEmpty()) {
+    if (this.sessionRepository.existsTeamCase(agencyId, OPEN_CASE_STATUSES)) {
       log.info(
-          "Agency {} switched to the default type; its running team cases keep their model and"
+          "Agency {} switched to the default type; its open team cases keep their model and"
               + " its counsellors keep the team-consultant identifier",
           agencyId);
       return;

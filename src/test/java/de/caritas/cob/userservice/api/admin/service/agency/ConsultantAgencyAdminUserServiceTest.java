@@ -97,8 +97,7 @@ public class ConsultantAgencyAdminUserServiceTest {
     Session session = new EasyRandom().nextObject(Session.class);
     session.setTeamSession(true);
 
-    when(this.sessionRepository.findByAgencyIdAndStatusAndTeamSessionIsTrue(any(), any()))
-        .thenReturn(singletonList(session));
+    when(this.sessionRepository.existsTeamCase(any(), any())).thenReturn(true);
 
     this.consultantAgencyAdminService.endTeamCounsellingForNewCases(1L);
 
@@ -116,8 +115,7 @@ public class ConsultantAgencyAdminUserServiceTest {
         new EasyRandom().objects(Consultant.class, 10).collect(Collectors.toList());
     AgencyDTO agencyDTO = new AgencyDTO().id(1L).teamAgency(false);
 
-    when(this.sessionRepository.findByAgencyIdAndStatusAndTeamSessionIsTrue(any(), any()))
-        .thenReturn(List.of());
+    when(this.sessionRepository.existsTeamCase(any(), any())).thenReturn(false);
     when(this.consultantRepository.findByConsultantAgenciesAgencyIdInAndDeleteDateIsNull(anyList()))
         .thenReturn(consultants);
     // noOtherTeamAgency() now queries consultantAgencyRepository directly (not the lazy
@@ -143,8 +141,7 @@ public class ConsultantAgencyAdminUserServiceTest {
           List<Consultant> consultants =
               new EasyRandom().objects(Consultant.class, 10).collect(Collectors.toList());
 
-          when(this.sessionRepository.findByAgencyIdAndStatusAndTeamSessionIsTrue(any(), any()))
-              .thenReturn(List.of());
+          when(this.sessionRepository.existsTeamCase(any(), any())).thenReturn(false);
           when(this.consultantRepository.findByConsultantAgenciesAgencyIdInAndDeleteDateIsNull(
                   anyList()))
               .thenReturn(consultants);

@@ -499,6 +499,42 @@ class SessionRepositoryIT {
             .toList());
   }
 
+  /** FE#2494 *4: an open team case, an enquiry not yet accepted included, keeps team access. */
+  @Test
+  void existsTeamCase_Should_CountOpenTeamCasesByStampOrFlag() {
+    givenAUser();
+    var open = List.of(SessionStatus.INITIAL, SessionStatus.NEW, SessionStatus.IN_PROGRESS);
+    java.util.function.BiFunction<Long, SessionStatus, Session> teamCase =
+        (agencyId, status) -> {
+          var session = validSession(agencyId, 1);
+          session.setStatus(status);
+          session.setTeamSession(true);
+          return session;
+        };
+
+    underTest.save(teamCase.apply(7101L, SessionStatus.NEW));
+    underTest.save(teamCase.apply(7102L, SessionStatus.DONE));
+    var group = teamCase.apply(7103L, SessionStatus.IN_PROGRESS);
+    group.setConversationType(ConversationType.INTERNAL_GROUP);
+    underTest.save(group);
+    var stampedNone = teamCase.apply(7104L, SessionStatus.IN_PROGRESS);
+    stampedNone.setCaseSharingModel(de.caritas.cob.userservice.api.model.CaseSharingModel.NONE);
+    underTest.save(stampedNone);
+    var stampedTeam = validSession(7105L, 1);
+    stampedTeam.setStatus(SessionStatus.IN_PROGRESS);
+    stampedTeam.setCaseSharingModel(
+        de.caritas.cob.userservice.api.model.CaseSharingModel.TEAM_COUNSELLING);
+    underTest.save(stampedTeam);
+    entityManager.flush();
+    entityManager.clear();
+
+    assertTrue(underTest.existsTeamCase(7101L, open), "a pending team enquiry counts");
+    assertFalse(underTest.existsTeamCase(7102L, open), "a finished case does not");
+    assertFalse(underTest.existsTeamCase(7103L, open), "a group chat is no team case");
+    assertFalse(underTest.existsTeamCase(7104L, open), "the stamp wins over the flag");
+    assertTrue(underTest.existsTeamCase(7105L, open), "a stamped team case counts");
+  }
+
   @ParameterizedTest
   @ValueSource(booleans = {true, false})
   void handoverCandidateScanLoadsOnlyRequestedNamesWithoutLoadingPersonEntities(
