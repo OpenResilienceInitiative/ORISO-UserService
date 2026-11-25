@@ -2,6 +2,7 @@ package de.caritas.cob.userservice.api.service.session;
 
 import static org.apache.commons.lang3.StringUtils.isBlank;
 
+import de.caritas.cob.userservice.api.config.observability.TeamSessionReadOnlyMetrics;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.SessionSupervisor;
@@ -51,6 +52,7 @@ public class TeamSessionReadOnlyService {
   private final @NonNull SessionSupervisorRepository supervisors;
   private final @NonNull SessionRepository sessions;
   private final @NonNull CaseSharingGate caseSharing;
+  private final @NonNull TeamSessionReadOnlyMetrics metrics;
 
   /** Enforces once the caller's transaction has committed; the repair job retries a failure. */
   public void enforceAfterCommit(Long sessionId) {
@@ -106,6 +108,19 @@ public class TeamSessionReadOnlyService {
             : caseSharing.teamCounsellingMode(session.getAgencyId(), session.getTenantId());
     boolean lowerColleagues = teamMode.orElse(false);
     boolean modeKnown = teamMode.isPresent();
+    if (!modeKnown) {
+      if (session.getAgencyId() == null) {
+        metrics.recordNoCentre();
+        log.warn("Team read-only access for session {} stays pending: no centre", session.getId());
+      } else {
+        metrics.recordModeUnresolved();
+        log.warn(
+            "Team read-only access for session {} stays pending: the case sharing model of centre"
+                + " {} could not be resolved",
+            session.getId(),
+            session.getAgencyId());
+      }
+    }
     var members = matrix.getRoomMembers(roomId);
     if (members.isEmpty()) {
       return false;

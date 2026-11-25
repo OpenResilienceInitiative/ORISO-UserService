@@ -439,7 +439,9 @@ class AgencyPasswordFreeSynapseIT {
             consultants,
             supervisors,
             sessionRepository,
-            teamCentre());
+            teamCentre(),
+            new de.caritas.cob.userservice.api.config.observability.TeamSessionReadOnlyMetrics(
+                new io.micrometer.core.instrument.simple.SimpleMeterRegistry()));
     var facade =
         new AssignEnquiryFacade(
             sessions,

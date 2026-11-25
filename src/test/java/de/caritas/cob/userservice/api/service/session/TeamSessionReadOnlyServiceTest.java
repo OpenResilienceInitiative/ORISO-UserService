@@ -45,12 +45,14 @@ class TeamSessionReadOnlyServiceTest {
   @Mock SessionSupervisorRepository supervisors;
   @Mock SessionRepository sessions;
   @Mock de.caritas.cob.userservice.api.service.agency.CaseSharingGate caseSharing;
+  @Mock de.caritas.cob.userservice.api.config.observability.TeamSessionReadOnlyMetrics metrics;
   TeamSessionReadOnlyService service;
 
   @BeforeEach
   void setUp() {
     service =
-        new TeamSessionReadOnlyService(matrix, consultants, supervisors, sessions, caseSharing);
+        new TeamSessionReadOnlyService(
+            matrix, consultants, supervisors, sessions, caseSharing, metrics);
     lenient().when(caseSharing.teamCounsellingMode(7L, 1L)).thenReturn(Optional.of(true));
   }
 
@@ -230,6 +232,7 @@ class TeamSessionReadOnlyServiceTest {
 
     assertThat(service.enforce(session)).isFalse();
     verify(matrix, never()).makeUserReadOnly(any(), any(), eq(-1), any(), any(), any());
+    verify(metrics).recordModeUnresolved();
   }
 
   @Test
@@ -240,6 +243,7 @@ class TeamSessionReadOnlyServiceTest {
 
     assertThat(service.enforce(session)).isFalse();
     verify(matrix, never()).makeUserReadOnly(any(), any(), eq(-1), any(), any(), any());
+    verify(metrics).recordNoCentre();
   }
 
   private void givenOwnerAndColleagueAtPower(int owner, int colleague) {
