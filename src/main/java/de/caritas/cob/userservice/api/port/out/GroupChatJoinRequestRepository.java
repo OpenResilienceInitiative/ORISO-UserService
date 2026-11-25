@@ -40,6 +40,20 @@ public interface GroupChatJoinRequestRepository extends CrudRepository<GroupChat
   List<GroupChatJoinRequest> findPendingCallKnocksForUpdate(
       @Param("sessionId") Long sessionId, @Param("userId") String userId, @Param("via") Via via);
 
+  /**
+   * ORISO-Frontend#2356: one person's knocks of one kind in a conversation, newest first, locked,
+   * whatever their status.
+   */
+  @Lock(LockModeType.PESSIMISTIC_WRITE)
+  @Query(
+      "SELECT request FROM GroupChatJoinRequest request WHERE request.sessionId = :sessionId"
+          + " AND request.userId = :userId AND request.via = :via ORDER BY request.id DESC")
+  List<GroupChatJoinRequest> findCallKnocksOfPersonForUpdate(
+      @Param("sessionId") Long sessionId,
+      @Param("userId") String userId,
+      @Param("via") Via via,
+      Pageable page);
+
   Optional<GroupChatJoinRequest> findFirstBySessionIdAndUserIdAndViaAndStatusOrderByIdDesc(
       Long sessionId, String userId, Via via, Status status);
 

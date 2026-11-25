@@ -336,6 +336,70 @@ class DirectCallKnockServiceTest {
             eq("counsellor-1"), eq(Via.DIRECT_LINK), eq(Status.PENDING), any(), eq(SESSION_ID));
   }
 
+  // --- ORISO-Frontend#2356: counsellors who knock through a direct invitation's link ---------
+
+  @Test
+  void staffKnock_Should_BeTheConversationsCounsellorsDecision() {
+    when(repository.findByIdForUpdate(3L)).thenReturn(Optional.of(staffKnock(3L)));
+
+    assertThatThrownBy(() -> service.admit(3L, consultant("someone-else")))
+        .isInstanceOf(NotFoundException.class);
+    var admitted = service.admit(3L, counsellor);
+
+    assertThat(admitted.getStatus()).isEqualTo(Status.ADMITTED);
+    assertThat(admitted.getDecidedBy()).isEqualTo("counsellor-1");
+  }
+
+  @Test
+  void openStaffKnock_Should_RingTheCounsellor_AndEndAnEarlierOpenKnock() {
+    var earlier = staffKnock(3L);
+    when(repository.findPendingCallKnocksForUpdate(SESSION_ID, "colleague-9", Via.STAFF_LINK))
+        .thenReturn(List.of(earlier));
+    when(repository.save(any(GroupChatJoinRequest.class))).thenAnswer(i -> i.getArgument(0));
+
+    var knock = service.openStaffKnock(session, "colleague-9", 9L, InviteLinkChatType.VIDEO);
+
+    assertThat(knock.getVia()).isEqualTo(Via.STAFF_LINK);
+    assertThat(knock.getUserId()).isEqualTo("colleague-9");
+    assertThat(knock.getStatus()).isEqualTo(Status.PENDING);
+    assertThat(earlier.getStatus()).isEqualTo(Status.CANCELLED);
+    verify(eventNotifications).createCallKnockRequestedNotification(any(), eq(knock));
+  }
+
+  @Test
+  void pendingFor_Should_ListAStaffKnockOnlyWhileItsCallRuns() {
+    var knock = staffKnock(3L);
+    when(repository.findCallKnocksForConsultant(
+            eq("counsellor-1"), eq(Via.STAFF_LINK), eq(Status.PENDING), any(), eq(null)))
+        .thenReturn(List.of(knock));
+    var running =
+        de.caritas.cob.userservice.api.model.MatrixCallBinding.builder()
+            .id(1L)
+            .sessionId(SESSION_ID)
+            .invitedAt(System.currentTimeMillis() - 60_000)
+            .inviteExpiresAt(System.currentTimeMillis() + 60_000)
+            .build();
+    when(callBindings.findBySessionIdIn(List.of(SESSION_ID))).thenReturn(List.of(running));
+
+    assertThat(service.pendingFor(counsellor, null, null)).contains(knock);
+
+    when(callBindings.findBySessionIdIn(List.of(SESSION_ID))).thenReturn(List.of());
+    assertThat(service.pendingFor(counsellor, null, null)).doesNotContain(knock);
+  }
+
+  private GroupChatJoinRequest staffKnock(Long id) {
+    return GroupChatJoinRequest.builder()
+        .id(id)
+        .via(Via.STAFF_LINK)
+        .sessionId(SESSION_ID)
+        .userId("colleague-9")
+        .inviteLinkId(9L)
+        .medium("VIDEO")
+        .status(Status.PENDING)
+        .requestedAt(LocalDateTime.now())
+        .build();
+  }
+
   @Test
   void admit_Should_Return404_ForAnotherCounsellor_AndForSeriesKnocks() {
     when(repository.findByIdForUpdate(1L))

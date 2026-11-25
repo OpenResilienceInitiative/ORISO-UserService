@@ -170,6 +170,10 @@ public class MatrixCallGuestService {
             .map(device -> device.getSenderMatrixId())
             .distinct()
             .filter(member -> binding.isInCall(member, now))
+            // ORISO-Frontend#2356: a counsellor seated as a guest is no counsellor of the call.
+            // They
+            // neither keep it open for others nor vouch for anybody.
+            .filter(member -> !isSeatedGuest(binding, member))
             .toList();
     // Round 10 (F1): one not deleted account of the Träger per id, else nobody (fail closed).
     // CodeRabbit 4585785733: every live sender is resolved in one query, not one per sender.
@@ -194,6 +198,40 @@ public class MatrixCallGuestService {
   public Admission admitAs(
       Long tenant, String consultantId, String sourceRoomId, String callId, String guestUserId) {
     if (blank(guestUserId)) return Admission.of(Outcome.NOT_FOUND);
+    return seat(tenant, consultantId, sourceRoomId, callId, () -> identity(guestUserId, tenant));
+  }
+
+  /**
+   * ORISO-Frontend#2356: seats a counsellor who holds a direct invitation's link in its running
+   * call, on the authority of counsellor {@code consultantId} of the call's Träger. Unlike {@link
+   * #admitAs}, the guest may work for ANOTHER Träger (product owner, 25 Nov 2026); that is why this
+   * is a separate, explicitly named path and {@link #admitAs} keeps its same-Träger rule. The seat
+   * is in the call room only and ends with the call, like every guest seat; the conversation is
+   * never joined. Run inside {@code TenantContext.supplyAcrossTenants}: the guest's account is not
+   * visible in the call's Träger otherwise.
+   */
+  @Transactional
+  public Admission admitCounsellorAs(
+      Long tenant,
+      String consultantId,
+      String sourceRoomId,
+      String callId,
+      String guestConsultantId) {
+    if (blank(guestConsultantId)) return Admission.of(Outcome.NOT_FOUND);
+    return seat(
+        tenant,
+        consultantId,
+        sourceRoomId,
+        callId,
+        () -> counsellorOfAnyTraeger(guestConsultantId));
+  }
+
+  private Admission seat(
+      Long tenant,
+      String consultantId,
+      String sourceRoomId,
+      String callId,
+      java.util.function.Supplier<Optional<Identity>> guestIdentity) {
     var call = counsellorCall(tenant, consultantId, sourceRoomId, callId);
     if (call.outcome() != Outcome.ADMITTED) return Admission.of(call.outcome());
     var binding = call.binding();
@@ -202,7 +240,7 @@ public class MatrixCallGuestService {
     if (!binding.isLive(System.currentTimeMillis())) return Admission.of(Outcome.NOT_FOUND);
     var members = call.members();
     String admitter = call.counsellorMatrixId();
-    var guest = identity(guestUserId, tenant).orElse(null);
+    var guest = guestIdentity.get().orElse(null);
     if (guest == null || !isActive(guest.id())) return Admission.of(Outcome.NOT_FOUND);
     // A member of the conversation already has the normal join path; never record them as a
     // guest, or the end of the call would take a seat that belongs to the conversation.
@@ -379,7 +417,10 @@ public class MatrixCallGuestService {
   private long lastCounsellorPresence(MatrixCallBinding binding) {
     Long tenant = binding.getTenantId();
     var senders =
-        binding.getDevices().values().stream().map(device -> device.getSenderMatrixId()).toList();
+        binding.getDevices().values().stream()
+            .map(device -> device.getSenderMatrixId())
+            .filter(member -> !isSeatedGuest(binding, member))
+            .toList();
     var counsellors = SoleCounsellor.allOf(consultants, senders, tenant);
     return binding.getDevices().values().stream()
         .filter(
@@ -647,6 +688,29 @@ public class MatrixCallGuestService {
                     .filter(
                         user -> tenant.equals(user.getTenantId()) && !blank(user.getMatrixUserId()))
                     .map(user -> new Identity(user.getId(), user.getMatrixUserId())));
+  }
+
+  /**
+   * ORISO-Frontend#2356: a not deleted counsellor of any Träger whose Matrix id stands for them
+   * alone in their own Träger (the {@link SoleCounsellor} rule the media gate applies).
+   */
+  private Optional<Identity> counsellorOfAnyTraeger(String consultantId) {
+    return consultants
+        .findByIdAndDeleteDateIsNull(consultantId)
+        .filter(value -> value.getTenantId() != null && !blank(value.getMatrixUserId()))
+        .filter(
+            value ->
+                SoleCounsellor.is(
+                    consultants, value.getMatrixUserId(), value.getTenantId(), value.getId()))
+        .map(value -> new Identity(value.getId(), value.getMatrixUserId()));
+  }
+
+  /** Whether {@code matrixId} holds an unrevoked guest seat in this call (ORISO-Frontend#2356). */
+  public boolean isSeatedGuest(MatrixCallBinding binding, String matrixId) {
+    return binding != null
+        && binding.getId() != null
+        && !blank(matrixId)
+        && guests.existsByBindingIdAndMatrixUserIdAndRevokedAtIsNull(binding.getId(), matrixId);
   }
 
   private static boolean blank(String value) {

@@ -483,6 +483,11 @@ public class SecurityConfig {
                     "/users/sessions/{sessionId:[0-9]+}/direct-invitations",
                     "/service/users/sessions/{sessionId:[0-9]+}/direct-invitations")
                 .hasAuthority(CONSULTANT_DEFAULT)
+                // ORISO-Frontend#2356: a counsellor who holds the link joins its call only. The
+                // service decides what they get; /conversations below stays for advice seekers.
+                .requestMatchers(
+                    "/users/invitelinks/*/staff-join", "/service/users/invitelinks/*/staff-join")
+                .hasAuthority(CONSULTANT_DEFAULT)
                 .requestMatchers(
                     HttpMethod.POST,
                     "/users/invitelinks/*/conversations",

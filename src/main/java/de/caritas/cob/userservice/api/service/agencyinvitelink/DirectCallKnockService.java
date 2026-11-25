@@ -289,6 +289,128 @@ public class DirectCallKnockService {
         .toList();
   }
 
+  /**
+   * ORISO-Frontend#2356: the counsellor's latest knock on the call that started at {@code
+   * callStartedAt}, locked. A knock from before that call is stale: an admission or a decline
+   * counts for one call only, never for a later call of the same conversation. The caller holds the
+   * conversation's row lock (lock order binding, conversation, knocks).
+   */
+  public Optional<GroupChatJoinRequest> latestStaffKnock(
+      Long sessionId, String consultantId, LocalDateTime callStartedAt) {
+    return repository
+        .findCallKnocksOfPersonForUpdate(
+            sessionId,
+            consultantId,
+            Via.STAFF_LINK,
+            org.springframework.data.domain.PageRequest.of(0, 1))
+        .stream()
+        .findFirst()
+        .filter(knock -> !knock.getRequestedAt().isBefore(callStartedAt));
+  }
+
+  /** Whether a waiting staff knock is recent enough to still show in the counsellor's list. */
+  public boolean stillWaitingStaffKnock(GroupChatJoinRequest knock) {
+    return knock.isPending() && stillWaiting(knock);
+  }
+
+  /**
+   * ORISO-Frontend#2356: a counsellor who holds the link knocks on the running call. Earlier open
+   * knocks of theirs in this conversation no longer wait. Tells the conversation's counsellor.
+   */
+  public GroupChatJoinRequest openStaffKnock(
+      Session session, String consultantId, Long inviteLinkId, InviteLinkChatType medium) {
+    cancelWaitingStaffKnocks(session.getId(), consultantId, null);
+    var knock =
+        repository.save(
+            GroupChatJoinRequest.builder()
+                .via(Via.STAFF_LINK)
+                .sessionId(session.getId())
+                .userId(consultantId)
+                .inviteLinkId(inviteLinkId)
+                .medium(medium.name())
+                .status(Status.PENDING)
+                .requestedAt(LocalDateTime.now())
+                .build());
+    tellCounsellorAfterCommit(session, knock);
+    return knock;
+  }
+
+  /** ORISO-Frontend#2356, "Anklopfen" off: let in without waiting, nobody is rung. */
+  public GroupChatJoinRequest admitStaffWithoutKnock(
+      Session session, String consultantId, Long inviteLinkId, InviteLinkChatType medium) {
+    cancelWaitingStaffKnocks(session.getId(), consultantId, null);
+    var now = LocalDateTime.now();
+    return repository.save(
+        GroupChatJoinRequest.builder()
+            .via(Via.STAFF_LINK)
+            .sessionId(session.getId())
+            .userId(consultantId)
+            .inviteLinkId(inviteLinkId)
+            .medium(medium.name())
+            .status(Status.ADMITTED)
+            .requestedAt(now)
+            .decidedAt(now)
+            .decidedBy(session.getConsultant() == null ? null : session.getConsultant().getId())
+            .build());
+  }
+
+  /**
+   * ORISO-Frontend#2356: the counsellor left the waiting page. Their open knocks through this link
+   * are cancelled; a decided knock is left as it is. Returns how many were cancelled.
+   */
+  @Transactional
+  public int cancelWaitingStaffKnocks(Long inviteLinkId, String consultantId) {
+    var now = LocalDateTime.now();
+    var waiting =
+        repository
+            .findByInviteLinkIdAndUserIdAndVia(inviteLinkId, consultantId, Via.STAFF_LINK)
+            .stream()
+            .filter(GroupChatJoinRequest::isPending)
+            .toList();
+    for (var knock : waiting) {
+      repository
+          .findByIdForUpdate(knock.getId())
+          .filter(GroupChatJoinRequest::isPending)
+          .ifPresent(
+              locked -> {
+                locked.setStatus(Status.CANCELLED);
+                locked.setDecidedAt(now);
+                locked.setDecidedBy(consultantId);
+                repository.save(locked);
+              });
+    }
+    return waiting.size();
+  }
+
+  private void cancelWaitingStaffKnocks(Long sessionId, String consultantId, Long except) {
+    var now = LocalDateTime.now();
+    repository.findPendingCallKnocksForUpdate(sessionId, consultantId, Via.STAFF_LINK).stream()
+        .filter(knock -> !Objects.equals(knock.getId(), except))
+        .forEach(
+            knock -> {
+              knock.setStatus(Status.CANCELLED);
+              knock.setDecidedAt(now);
+              repository.save(knock);
+            });
+  }
+
+  /**
+   * ORISO-Frontend#2356: a staff knock is on one running call. Once that call is over (no running
+   * call of the conversation started before the knock), nobody can be let in any more and the knock
+   * drops off the counsellor's list.
+   */
+  private boolean onRunningCall(GroupChatJoinRequest knock) {
+    if (knock.getSessionId() == null) {
+      return false;
+    }
+    long now = System.currentTimeMillis();
+    return callBindings.findBySessionIdIn(List.of(knock.getSessionId())).stream()
+        .anyMatch(
+            binding ->
+                binding.isLive(now)
+                    && !knock.getRequestedAt().isBefore(StaffCallClock.startOf(binding)));
+  }
+
   public GroupChatJoinRequest getOwn(Long knockId, User user) {
     return requireOwn(knockId, user);
   }
@@ -349,6 +471,18 @@ public class DirectCallKnockService {
                         since,
                         scope.sessionId())
                     .stream()
+                : Stream.<GroupChatJoinRequest>empty(),
+            // ORISO-Frontend#2356: counsellors who hold the link and knock on the running call.
+            scope.directLinks()
+                ? repository
+                    .findCallKnocksForConsultant(
+                        consultant.getId(),
+                        Via.STAFF_LINK,
+                        Status.PENDING,
+                        since,
+                        scope.sessionId())
+                    .stream()
+                    .filter(this::onRunningCall)
                 : Stream.<GroupChatJoinRequest>empty(),
             scope.callLinks()
                 ? repository
@@ -446,6 +580,17 @@ public class DirectCallKnockService {
                         since,
                         scope.sessionId())
                     .stream()
+                : Stream.<GroupChatJoinRequest>empty(),
+            scope.directLinks()
+                ? repository
+                    .findCallKnocksForConsultantForUpdate(
+                        consultant.getId(),
+                        Via.STAFF_LINK,
+                        Status.PENDING,
+                        since,
+                        scope.sessionId())
+                    .stream()
+                    .filter(this::onRunningCall)
                 : Stream.<GroupChatJoinRequest>empty(),
             scope.callLinks()
                 ? repository
@@ -550,7 +695,7 @@ public class DirectCallKnockService {
 
   private boolean decides(GroupChatJoinRequest knock, Consultant consultant) {
     return switch (knock.getVia()) {
-      case DIRECT_LINK -> isCounsellorOf(knock.getSessionId(), consultant);
+      case DIRECT_LINK, STAFF_LINK -> isCounsellorOf(knock.getSessionId(), consultant);
       case CALL_LINK -> isInCallOfLink(knock.getInviteLinkId(), consultant);
       case WAITING_ROOM -> waitingRooms.mayAdmit(knock, consultant);
       default -> false;
