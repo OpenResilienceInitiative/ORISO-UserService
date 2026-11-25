@@ -22,8 +22,9 @@ import org.springframework.stereotype.Component;
  * FE#2494 *4: each case keeps the case sharing model it was created under. Cases created before the
  * model was stamped get it once from their centre's model at the time of this snapshot. A case that
  * was not created as a team case is never stamped as Teamberatung: a running case stays as it is
- * when the centre switches. Only the stamp is written; no Matrix power level and no access changes.
- * Once every case is stamped, a run finds nothing and does nothing.
+ * when the centre switches. A handover right is never inferred. Only the stamp is written; no
+ * Matrix power level and no access changes. Once every case is stamped, a run finds nothing and
+ * does nothing.
  */
 @Component
 @Profile("!testing")
@@ -78,8 +79,9 @@ public class CaseSharingModelSnapshotScheduler {
 
   /**
    * A team flag records the model the case was created under. Any other case was created as case
-   * handover or "none": it takes the centre's current model, except that a centre now on
-   * Teamberatung does not turn it into a team case; it stays a case handover case.
+   * handover or "none": it takes the centre's current model. A centre now on Teamberatung does not
+   * turn it into a team case, and since its earlier model is unknown it is stamped "none": a
+   * handover right is never inferred.
    */
   Optional<CaseSharingModel> modelAtSnapshot(
       Session session, Map<String, Optional<CaseSharingModel>> centres) {
@@ -90,10 +92,6 @@ public class CaseSharingModelSnapshotScheduler {
         .computeIfAbsent(
             session.getAgencyId() + "/" + session.getTenantId(),
             key -> caseSharing.currentModel(session.getAgencyId(), session.getTenantId()))
-        .map(
-            model ->
-                model == CaseSharingModel.TEAM_COUNSELLING
-                    ? CaseSharingModel.CASE_HANDOVER
-                    : model);
+        .map(model -> model == CaseSharingModel.TEAM_COUNSELLING ? CaseSharingModel.NONE : model);
   }
 }

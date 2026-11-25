@@ -203,9 +203,9 @@ class CaseSharingGateTest {
   }
 
   @Test
-  void modelForNewCase_neverStampsANonTeamCaseAsTeamberatung() {
+  void modelForNewCase_neverStampsANonTeamCaseAsTeamberatungNorInfersHandover() {
     givenMode(AgencyCaseSharingPolicy.ValueEnum.TEAM_COUNSELLING);
-    assertThat(gate.modelForNewCase(5L, 1L, false)).isEqualTo(CaseSharingModel.CASE_HANDOVER);
+    assertThat(gate.modelForNewCase(5L, 1L, false)).isEqualTo(CaseSharingModel.NONE);
   }
 
   @Test

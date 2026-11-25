@@ -99,9 +99,9 @@ public class CaseSharingGate {
 
   /**
    * FE#2494 *4: the model to stamp on a case being created. A team flag means Teamberatung without
-   * a further read. Otherwise the centre's current model, except that a centre whose team flag and
-   * setting disagree in this instant is not read as Teamberatung. Null when the setting cannot be
-   * read; the snapshot job stamps such a case later.
+   * a further read. Otherwise the centre's current model; a non-team case in a centre that reads as
+   * Teamberatung in this instant is stamped "none", never case handover: a handover right is never
+   * inferred. Null when the setting cannot be read; the snapshot job stamps such a case later.
    */
   public CaseSharingModel modelForNewCase(Long agencyId, Long tenantId, boolean teamSession) {
     if (teamSession) {
@@ -111,9 +111,7 @@ public class CaseSharingGate {
       return null;
     }
     return currentModel(agencyId, tenantId)
-        .map(
-            model ->
-                model == CaseSharingModel.TEAM_COUNSELLING ? CaseSharingModel.CASE_HANDOVER : model)
+        .map(model -> model == CaseSharingModel.TEAM_COUNSELLING ? CaseSharingModel.NONE : model)
         .orElse(null);
   }
 

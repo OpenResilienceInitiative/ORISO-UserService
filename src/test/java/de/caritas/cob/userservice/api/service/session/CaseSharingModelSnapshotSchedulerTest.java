@@ -53,13 +53,13 @@ class CaseSharingModelSnapshotSchedulerTest {
   }
 
   @Test
-  void aRunningCaseIsNotTurnedIntoATeamCaseByATeamCentre() {
+  void aRunningCaseIsNotTurnedIntoATeamCaseByATeamCentreNorGivenAHandoverRight() {
     givenUnstamped(case_(1L, 5L, false));
     when(gate.currentModel(5L, 1L)).thenReturn(Optional.of(CaseSharingModel.TEAM_COUNSELLING));
 
     scheduler.snapshot();
 
-    verify(sessions).stampCaseSharingModel(1L, CaseSharingModel.CASE_HANDOVER);
+    verify(sessions).stampCaseSharingModel(1L, CaseSharingModel.NONE);
   }
 
   @Test
