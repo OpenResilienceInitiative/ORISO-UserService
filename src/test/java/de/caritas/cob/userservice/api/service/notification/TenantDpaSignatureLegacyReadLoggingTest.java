@@ -30,6 +30,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.HttpServerErrorException;
 import org.springframework.web.client.ResourceAccessException;
+import org.springframework.web.client.RestTemplate;
 
 class TenantDpaSignatureLegacyReadLoggingTest {
   private static final long TENANT_ID = 825719L;
@@ -54,7 +55,11 @@ class TenantDpaSignatureLegacyReadLoggingTest {
     when(api.getApiClient()).thenReturn(mock(ApiClient.class));
     client =
         new TenantDpaSignatureReadClient(
-            headers, mock(IdentityAuthentication.class), identityConfig, factory);
+            headers,
+            mock(IdentityAuthentication.class),
+            identityConfig,
+            factory,
+            mock(RestTemplate.class));
     additive = logger.isAdditive();
     logger.setAdditive(false);
     captured.start();

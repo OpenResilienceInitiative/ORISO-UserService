@@ -6,6 +6,8 @@ on:
     - main
     - dev
     - pre-dev
+    # The dedicated merge_group workflow runs the checks for these refs.
+    - 'gh-readonly-queue/**'
 
 env:
   REGISTRY: ghcr.io

@@ -5,13 +5,13 @@ services where needed, and allows the frontend on `localhost:9001` to call it di
 
 ## 1. Java
 
-Use Java 17:
+Use Java 21, which is the version compiled by `pom.xml` and used by CI:
 
 ```bash
-/usr/libexec/java_home -V
+/usr/libexec/java_home -v 21
 ```
 
-The local run script example auto-detects Java 17 on macOS when `JAVA_HOME` is not already set.
+The local run script example selects Java 21 on macOS when `JAVA_HOME` is not already set.
 
 ## 2. Create `run-local-remote-db.sh`
 
@@ -32,20 +32,24 @@ Copy the sample config:
 cp config.env.example config.env
 ```
 
-Fill all `CHANGE_ME` values.
+Fill all `CHANGE_ME` values and replace the sample Matrix settings with those for your approved test environment.
 
 Important values for the mixed local setup:
 
 ```env
 SERVER_SERVLET_CONTEXT_PATH=/service
-ROCKET_SYSTEMUSER_ID=rocket-chat-system-user
-ROCKET_SYSTEMUSER_USERNAME=rocket-chat-system-user
-ROCKET_SYSTEMUSER_PASSWORD=CHANGE_ME
+MATRIX_API_URL=CHANGE_ME
+MATRIX_SERVER_NAME=CHANGE_ME
+MATRIX_REGISTRATION_SHARED_SECRET=CHANGE_ME
 AGENCY_SERVICE_API_URL=https://api.oriso-dev.site/service
 TENANT_SERVICE_API_URL=https://api.oriso-dev.site/service
 REGISTRATION_CORS_ALLOWED_ORIGINS=http://localhost:9001,http://127.0.0.1:9001
 REGISTRATION_CORS_ALLOWED_PATHS=/**
 ```
+
+Use the API URL and configured Synapse server name for the same approved test environment.
+The server name is the Matrix ID domain. Obtain the shared secret through the configured
+credential store and keep it in the ignored local config.
 
 `AGENCY_SERVICE_API_URL` must point at the AgencyService base path. The generated client appends
 `/agencies`, `/agencies/{agencyIds}`, and `/internal/agencies/{id}/matrix-service-account` itself.

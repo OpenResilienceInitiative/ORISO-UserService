@@ -39,9 +39,10 @@ jobs:
       uses: actions/checkout@v6
       with:
         repository: OpenResilienceInitiative/ORISO-AgencyService
-        # AgencyService PR #372 head: dev plus featureLiveChatFurtherCounsellingEnabled (ORISO-Frontend#2251).
-        # Merge AgencyService #372 before this PR so the push-to-dev run against AgencyService dev stays green.
-        ref: ${{ github.event_name != 'push' && 'c25826f5e247ce9e711206bda340beca0b91fdd7' || 'dev' }}
+        # AgencyService #391 head (settings.caseSharing, ORISO-Frontend#2494) includes #389 and the
+        # previous providers. Merge AgencyService #391 before this PR so the push-to-dev run against
+        # AgencyService dev stays green.
+        ref: ${{ github.event_name != 'push' && 'a8a427247fd89daa35bc1b66689207aee4869016' || 'dev' }}
         path: .providers/agency
         persist-credentials: false
 
@@ -59,9 +60,10 @@ jobs:
       uses: actions/checkout@v6
       with:
         repository: OpenResilienceInitiative/ORISO-TenantService
-        # TenantService #393 head includes the previous provider and both reservation operations.
-        # Merge the provider first so post-merge validation against dev also includes them.
-        ref: ${{ github.event_name != 'push' && '4a608517d60d8be0a8f7b63e87a167a94c6e7508' || 'dev' }}
+        # TenantService #405 head (featureTeamDiscussionAfterAcceptEnabled, ORISO-Frontend#2491) includes
+        # the landed dev revision (proof-bound release and assignment confirmation). Merge the provider
+        # first so post-merge validation against dev also includes it.
+        ref: ${{ github.event_name != 'push' && 'bd15fe30ced95362a3eeaeae1303831588d07c98' || 'dev' }}
         path: .providers/tenant
         persist-credentials: false
 

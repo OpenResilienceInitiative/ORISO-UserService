@@ -264,4 +264,55 @@ class FreeSlotGridTest {
         .map(slot -> slot.start().atZone(BERLIN).toLocalTime().toString())
         .toList();
   }
+
+  @Test
+  void onceSlots_Should_CutTheWindowOnTheStep_And_KeepAShortWindowWhole() {
+    var start = at(MONDAY, "14:00");
+
+    assertThat(
+            FreeSlotGrid.onceSlots(
+                start,
+                at(MONDAY, "15:30"),
+                List.of(),
+                start,
+                at(MONDAY, "23:00"),
+                start,
+                HOUR,
+                HALF_HOUR))
+        .containsExactly(
+            new FreeSlot(at(MONDAY, "14:00"), at(MONDAY, "15:00")),
+            new FreeSlot(at(MONDAY, "14:30"), at(MONDAY, "15:30")));
+    assertThat(
+            FreeSlotGrid.onceSlots(
+                start,
+                at(MONDAY, "14:40"),
+                List.of(),
+                start,
+                at(MONDAY, "23:00"),
+                start,
+                HOUR,
+                HALF_HOUR))
+        .containsExactly(new FreeSlot(at(MONDAY, "14:00"), at(MONDAY, "14:40")));
+  }
+
+  @Test
+  void onceSlots_Should_StartNotBeforeTheEarliest_And_LeaveOutBusyTime() {
+    var start = at(MONDAY, "14:00");
+    var busy = List.of(new BusySlot(at(MONDAY, "15:30"), at(MONDAY, "16:00")));
+
+    assertThat(
+            FreeSlotGrid.onceSlots(
+                    start,
+                    at(MONDAY, "17:00"),
+                    busy,
+                    start,
+                    at(MONDAY, "23:00"),
+                    at(MONDAY, "14:15"),
+                    HOUR,
+                    HALF_HOUR)
+                .stream()
+                .map(slot -> slot.start().atZone(BERLIN).toLocalTime().toString()))
+        // 14:30 ends as the busy time starts; 15:00 and 15:30 touch it.
+        .containsExactly("14:30", "16:00");
+  }
 }

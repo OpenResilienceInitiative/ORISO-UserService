@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+  xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog https://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-latest.xsd">
+  <changeSet id="20261119-dpa-admin-notice-outbox-cursor-1704" author="oriso">
+    <preConditions onFail="MARK_RAN" onError="HALT">
+      <not>
+        <tableExists tableName="dpa_admin_notice_outbox_cursor"/>
+      </not>
+    </preConditions>
+    <createTable tableName="dpa_admin_notice_outbox_cursor">
+      <column name="id" type="SMALLINT">
+        <constraints primaryKey="true" nullable="false"/>
+      </column>
+      <column name="after_id" type="BIGINT">
+        <constraints nullable="false"/>
+      </column>
+    </createTable>
+    <rollback><dropTable tableName="dpa_admin_notice_outbox_cursor"/></rollback>
+  </changeSet>
+  <changeSet id="20261119-dpa-admin-notice-outbox-cursor-seed-1704" author="oriso">
+    <preConditions onFail="MARK_RAN" onError="HALT">
+      <sqlCheck expectedResult="0">SELECT COUNT(*) FROM dpa_admin_notice_outbox_cursor WHERE id = 1</sqlCheck>
+    </preConditions>
+    <insert tableName="dpa_admin_notice_outbox_cursor">
+      <column name="id" valueNumeric="1"/>
+      <column name="after_id" valueNumeric="0"/>
+    </insert>
+    <rollback>
+      <delete tableName="dpa_admin_notice_outbox_cursor"><where>id = 1</where></delete>
+    </rollback>
+  </changeSet>
+</databaseChangeLog>

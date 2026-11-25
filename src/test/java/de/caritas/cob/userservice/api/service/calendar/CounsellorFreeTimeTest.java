@@ -6,17 +6,21 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import de.caritas.cob.userservice.api.adapters.web.dto.CalendarEntryType;
 import de.caritas.cob.userservice.api.model.CalendarBookingSetting;
 import de.caritas.cob.userservice.api.model.CalendarConsultationHours;
+import de.caritas.cob.userservice.api.model.CalendarConsultationOnce;
+import de.caritas.cob.userservice.api.model.CalendarConsultationOnceBlocker;
 import de.caritas.cob.userservice.api.model.CalendarWorkingDayException;
 import de.caritas.cob.userservice.api.model.CalendarWorkingHours;
 import de.caritas.cob.userservice.api.model.CalendarWorkingHoursSetting;
 import de.caritas.cob.userservice.api.model.SessionAppointment;
 import de.caritas.cob.userservice.api.port.out.CalendarBookingSettingRepository;
 import de.caritas.cob.userservice.api.port.out.CalendarConsultationHoursRepository;
+import de.caritas.cob.userservice.api.port.out.CalendarConsultationOnceRepository;
 import de.caritas.cob.userservice.api.port.out.CalendarWorkingDayExceptionRepository;
 import de.caritas.cob.userservice.api.port.out.CalendarWorkingHoursRepository;
 import de.caritas.cob.userservice.api.port.out.CalendarWorkingHoursSettingRepository;
@@ -53,6 +57,8 @@ class CounsellorFreeTimeTest {
 
   private final CalendarConsultationHoursRepository consultationHours =
       mock(CalendarConsultationHoursRepository.class);
+  private final CalendarConsultationOnceRepository consultationOnce =
+      mock(CalendarConsultationOnceRepository.class);
   private final CalendarBookingSettingRepository bookingSettings =
       mock(CalendarBookingSettingRepository.class);
   private final CalendarWorkingHoursRepository workingHours =
@@ -68,6 +74,8 @@ class CounsellorFreeTimeTest {
   private final List<CalendarConsultationHours> hours = new ArrayList<>();
   private final List<CalendarEntry> taken = new ArrayList<>();
   private final List<SessionAppointment> requested = new ArrayList<>();
+  private final List<CalendarConsultationOnce> onces = new ArrayList<>();
+  private final List<CalendarEntry> blocked = new ArrayList<>();
 
   private CounsellorFreeTime freeTime;
 
@@ -81,7 +89,16 @@ class CounsellorFreeTimeTest {
         .thenReturn(List.of());
     when(entries.appointmentsOfConsultant(anyString(), any(), any())).thenReturn(taken);
     when(entries.groupOccurrencesOfConsultant(anyString(), any(), any())).thenReturn(List.of());
-    when(entries.blockersOf(anyString(), any(), any())).thenReturn(List.of());
+    when(entries.blockersOf(anyString(), any(), any())).thenReturn(blocked);
+    when(consultationOnce.findOverlapping(eq(COUNSELLOR), any(), any()))
+        .thenAnswer(
+            call -> {
+              Instant from = call.getArgument(1);
+              Instant to = call.getArgument(2);
+              return onces.stream()
+                  .filter(o -> o.getStartAt().isBefore(to) && o.getEndAt().isAfter(from))
+                  .toList();
+            });
     when(appointments.findRequestedOfConsultantBetween(anyString(), any(), any()))
         .thenReturn(requested);
     freeTime = freeTimeAt(NOW);
@@ -94,6 +111,7 @@ class CounsellorFreeTimeTest {
               () ->
                   new CounsellorFreeTime(
                       consultationHours,
+                      consultationOnce,
                       bookingSettings,
                       workingHoursSettings,
                       exceptions,
@@ -112,6 +130,7 @@ class CounsellorFreeTimeTest {
   private CounsellorFreeTime freeTimeAt(Instant now) {
     return new CounsellorFreeTime(
         consultationHours,
+        consultationOnce,
         bookingSettings,
         workingHoursSettings,
         exceptions,
@@ -280,6 +299,313 @@ class CounsellorFreeTimeTest {
     assertThat(
             freeTime.isFreeBesides(COUNSELLOR, own.getStartTime(), own.getEndTime(), own.getId()))
         .isFalse();
+  }
+
+  // One-off Sprechstunden (ORISO-Frontend#2494).
+
+  @Test
+  void isFreeBesides_Should_IgnoreOwnBlockers_InsideAOneOffReleasedOverThem() {
+    var tuesday = MONDAY.plusDays(1);
+    var own = request(at(tuesday, "14:00"), at(tuesday, "15:00"));
+    requested.add(own);
+    blocked.add(blocker(at(tuesday, "13:00"), at(tuesday, "16:00"), CalendarEntryType.BLOCKER));
+    once(at(tuesday, "14:00"), at(tuesday, "16:00"), 60, true);
+
+    assertThat(
+            freeTime.isFreeBesides(COUNSELLOR, own.getStartTime(), own.getEndTime(), own.getId()))
+        .isTrue();
+  }
+
+  @Test
+  void isFreeBesides_Should_StillRejectOtherTakenTime_InsideAOneOffReleasedOverBlockers() {
+    var tuesday = MONDAY.plusDays(1);
+    var own = request(at(tuesday, "14:00"), at(tuesday, "15:00"));
+    requested.add(own);
+    blocked.add(blocker(at(tuesday, "14:00"), at(tuesday, "15:00"), CalendarEntryType.BLOCKER));
+    once(at(tuesday, "14:00"), at(tuesday, "16:00"), 60, true);
+    taken.add(entry(at(tuesday, "14:30"), at(tuesday, "15:00")));
+
+    assertThat(
+            freeTime.isFreeBesides(COUNSELLOR, own.getStartTime(), own.getEndTime(), own.getId()))
+        .isFalse();
+
+    taken.clear();
+    blocked.add(blocker(at(tuesday, "14:00"), at(tuesday, "14:30"), CalendarEntryType.BUSY));
+    assertThat(
+            freeTime.isFreeBesides(COUNSELLOR, own.getStartTime(), own.getEndTime(), own.getId()))
+        .isFalse();
+  }
+
+  @Test
+  void isFreeBesides_Should_RejectAnOwnBlocker_WithoutAOneOffReleasedOverIt() {
+    var tuesday = MONDAY.plusDays(1);
+    var own = request(at(tuesday, "14:00"), at(tuesday, "15:00"));
+    requested.add(own);
+    blocked.add(blocker(at(tuesday, "14:00"), at(tuesday, "15:00"), CalendarEntryType.BLOCKER));
+
+    assertThat(
+            freeTime.isFreeBesides(COUNSELLOR, own.getStartTime(), own.getEndTime(), own.getId()))
+        .isFalse();
+
+    // A one-off not released over blockers does not exempt them.
+    once(at(tuesday, "14:00"), at(tuesday, "16:00"), 60, false);
+    assertThat(
+            freeTime.isFreeBesides(COUNSELLOR, own.getStartTime(), own.getEndTime(), own.getId()))
+        .isFalse();
+
+    // Released over blockers, but covering only part of the blocked request time.
+    onces.clear();
+    once(at(tuesday, "14:30"), at(tuesday, "16:00"), 60, true);
+    assertThat(
+            freeTime.isFreeBesides(COUNSELLOR, own.getStartTime(), own.getEndTime(), own.getId()))
+        .isFalse();
+  }
+
+  @Test
+  void slots_Should_OfferAOneOff_WithoutAnyWeeklySprechstunde() {
+    var tuesday = MONDAY.plusDays(1);
+    once(at(tuesday, "14:00"), at(tuesday, "16:00"), 60, false);
+
+    assertThat(starts(freeTime.slots(COUNSELLOR, NOW, NOW.plus(Duration.ofDays(3)))))
+        .containsExactly("14:00", "14:30", "15:00");
+  }
+
+  @Test
+  void slots_Should_StartAOneOffAfterItsOwnNotice_NotTheMinimumLeadTime() {
+    // Now is 08:00; the minimum lead time would start at 10:00, the 30-minute notice at 08:30.
+    once(at(MONDAY, "08:00"), at(MONDAY, "10:30"), 30, false);
+
+    assertThat(starts(freeTime.slots(COUNSELLOR, NOW, NOW.plus(Duration.ofDays(1)))))
+        .containsExactly("08:30", "09:00", "09:30");
+  }
+
+  @Test
+  void slots_Should_OfferAOneOffShorterThanTheSlotLength_AsOneSlotOfItsLength() {
+    var tuesday = MONDAY.plusDays(1);
+    once(at(tuesday, "14:00"), at(tuesday, "14:45"), 0, false);
+
+    var slots = freeTime.slots(COUNSELLOR, NOW, NOW.plus(Duration.ofDays(3)));
+
+    assertThat(slots).hasSize(1);
+    assertThat(slots.get(0).start()).isEqualTo(at(tuesday, "14:00"));
+    assertThat(slots.get(0).end()).isEqualTo(at(tuesday, "14:45"));
+  }
+
+  @Test
+  void slots_Should_LeaveOutAOneOffsTime_UnderABlocker_UnlessReleasedOverIt() {
+    var tuesday = MONDAY.plusDays(1);
+    blocked.add(blocker(at(tuesday, "14:00"), at(tuesday, "15:00"), CalendarEntryType.BLOCKER));
+    once(at(tuesday, "14:00"), at(tuesday, "16:00"), 60, false);
+
+    assertThat(starts(freeTime.slots(COUNSELLOR, NOW, NOW.plus(Duration.ofDays(3)))))
+        .containsExactly("15:00");
+
+    onces.clear();
+    once(at(tuesday, "14:00"), at(tuesday, "16:00"), 60, true);
+    assertThat(starts(freeTime.slots(COUNSELLOR, NOW, NOW.plus(Duration.ofDays(3)))))
+        .containsExactly("14:00", "14:30", "15:00");
+  }
+
+  @Test
+  void aBlockerEnteredAfterTheRelease_Should_TakeTheTimeOfAOneOffReleasedOverBlockers() {
+    // Released 14:00-16:00 over the Sperrzeit 14:00-14:30; later a sick leave from 15:00.
+    when(bookingSettings.lockById(COUNSELLOR)).thenReturn(Optional.empty());
+    var tuesday = MONDAY.plusDays(1);
+    blocked.add(blocker(at(tuesday, "14:00"), at(tuesday, "14:30"), CalendarEntryType.BLOCKER));
+    once(at(tuesday, "14:00"), at(tuesday, "16:00"), 60, true);
+    var early = request(at(tuesday, "14:00"), at(tuesday, "15:00"));
+    var late = request(at(tuesday, "15:00"), at(tuesday, "16:00"));
+    assertThat(starts(freeTime.slots(COUNSELLOR, NOW, NOW.plus(Duration.ofDays(3)))))
+        .containsExactly("14:00", "14:30", "15:00");
+
+    blocked.add(blocker(at(tuesday, "15:00"), at(tuesday, "15:30"), CalendarEntryType.BLOCKER));
+
+    // Listing: the old Sperrzeit still gives way, the sick leave does not.
+    assertThat(starts(freeTime.slots(COUNSELLOR, NOW, NOW.plus(Duration.ofDays(3)))))
+        .containsExactly("14:00");
+    // Booking: the window is the lead time's question; the slot is no longer offered.
+    assertThat(
+            freeTime.isInsideBookingWindow(COUNSELLOR, at(tuesday, "15:00"), at(tuesday, "16:00")))
+        .isTrue();
+    assertThat(freeTime.offeredSlot(COUNSELLOR, at(tuesday, "15:00"), at(tuesday, "16:00")))
+        .isEmpty();
+    assertThat(freeTime.offeredSlot(COUNSELLOR, at(tuesday, "14:00"), at(tuesday, "15:00")))
+        .isPresent();
+    // Confirming: a request under the sick leave cannot be, one under the old Sperrzeit can.
+    requested.addAll(List.of(early, late));
+    assertThat(
+            freeTime.isFreeBesides(
+                COUNSELLOR, late.getStartTime(), late.getEndTime(), late.getId()))
+        .isFalse();
+    assertThat(
+            freeTime.isFreeBesides(
+                COUNSELLOR, early.getStartTime(), early.getEndTime(), early.getId()))
+        .isTrue();
+  }
+
+  @Test
+  void aBlockerMovedAfterTheRelease_Should_TakeTheTimeOfAOneOffReleasedOverIt() {
+    var tuesday = MONDAY.plusDays(1);
+    var id = UUID.randomUUID().toString();
+    blocked.add(blocker(id, at(tuesday, "14:00"), at(tuesday, "14:30")));
+    once(at(tuesday, "14:00"), at(tuesday, "16:00"), 60, true);
+    assertThat(starts(freeTime.slots(COUNSELLOR, NOW, NOW.plus(Duration.ofDays(3)))))
+        .containsExactly("14:00", "14:30", "15:00");
+
+    // The same blocker, moved to 15:00 after the release.
+    blocked.clear();
+    blocked.add(blocker(id, at(tuesday, "15:00"), at(tuesday, "15:30")));
+
+    assertThat(starts(freeTime.slots(COUNSELLOR, NOW, NOW.plus(Duration.ofDays(3)))))
+        .containsExactly("14:00");
+    var own = request(at(tuesday, "15:00"), at(tuesday, "16:00"));
+    requested.add(own);
+    assertThat(
+            freeTime.isFreeBesides(COUNSELLOR, own.getStartTime(), own.getEndTime(), own.getId()))
+        .isFalse();
+  }
+
+  @Test
+  void isFreeBesides_Should_RejectAnOwnBlocker_InsideAOneOffReleasedOverOtherBlockers() {
+    // Two one-offs back to back: the first released over the blocker, the second over none.
+    var tuesday = MONDAY.plusDays(1);
+    blocked.add(blocker(at(tuesday, "14:30"), at(tuesday, "15:30"), CalendarEntryType.BLOCKER));
+    once(at(tuesday, "14:00"), at(tuesday, "15:00"), 0, true);
+    var second = new ArrayList<>(blocked);
+    blocked.clear();
+    once(at(tuesday, "15:00"), at(tuesday, "16:00"), 0, true);
+    blocked.addAll(second);
+    var own = request(at(tuesday, "14:30"), at(tuesday, "15:30"));
+    requested.add(own);
+
+    assertThat(
+            freeTime.isFreeBesides(COUNSELLOR, own.getStartTime(), own.getEndTime(), own.getId()))
+        .isFalse();
+  }
+
+  @Test
+  void slots_Should_LeaveOutAOneOffsTime_UnderImportedBusyTimeAndAppointments_EvenOverABlocker() {
+    var tuesday = MONDAY.plusDays(1);
+    blocked.add(blocker(at(tuesday, "14:00"), at(tuesday, "15:00"), CalendarEntryType.BUSY));
+    taken.add(entry(at(tuesday, "16:30"), at(tuesday, "17:00")));
+    once(at(tuesday, "14:00"), at(tuesday, "17:00"), 60, true);
+
+    assertThat(starts(freeTime.slots(COUNSELLOR, NOW, NOW.plus(Duration.ofDays(3)))))
+        .containsExactly("15:00", "15:30");
+  }
+
+  @Test
+  void slots_Should_KeepAOneOff_OnADayOff_And_APublicHoliday() {
+    // Friday 25 Dec 2026 is a public holiday; Thursday 24 Dec is a day off.
+    var region = new CalendarWorkingHoursSetting();
+    region.setHolidayRegion("BY");
+    when(workingHoursSettings.findById(COUNSELLOR)).thenReturn(Optional.of(region));
+    var dayOff = new CalendarWorkingDayException();
+    dayOff.setConsultantId(COUNSELLOR);
+    dayOff.setExceptionDate(LocalDate.of(2026, 12, 24));
+    when(exceptions.findByConsultantIdAndExceptionDateGreaterThanEqual(eq(COUNSELLOR), any()))
+        .thenReturn(List.of(dayOff));
+    sprechstunde(4, "10:00", "11:00");
+    sprechstunde(5, "10:00", "11:00");
+    once(
+        at(LocalDate.of(2026, 12, 24), "12:00"), at(LocalDate.of(2026, 12, 24), "13:00"), 0, false);
+    once(
+        at(LocalDate.of(2026, 12, 25), "12:00"), at(LocalDate.of(2026, 12, 25), "13:00"), 0, false);
+    var now = at(LocalDate.of(2026, 12, 21), "08:00");
+
+    assertThat(freeTimeAt(now).slots(COUNSELLOR, now, now.plus(Duration.ofDays(5))))
+        .extracting(slot -> slot.start().atZone(BERLIN).toLocalDateTime().toString())
+        .containsExactly("2026-12-24T12:00", "2026-12-25T12:00");
+  }
+
+  @Test
+  void slots_Should_OfferAWeeklyAndAOneOffSlotOfTheSameTime_Once() {
+    setting(true, 2, 60);
+    var tuesday = MONDAY.plusDays(1);
+    sprechstunde(2, "10:00", "11:00");
+    once(at(tuesday, "10:00"), at(tuesday, "12:00"), 0, false);
+
+    var slots = freeTime.slots(COUNSELLOR, NOW, NOW.plus(Duration.ofDays(3)));
+
+    assertThat(starts(slots)).containsExactly("10:00", "10:30", "11:00");
+    // Inside the two-day notice the weekly slot is a request; the one-off's own mode wins.
+    assertThat(slots).extracting(FreeSlot::mode).containsOnly(BookingMode.INSTANT);
+  }
+
+  @Test
+  void slots_Should_BookAOneOffAtOnce_When_TheCounsellorAcceptsAutomatically_ElseAsARequest() {
+    setting(true, 7, 60);
+    once(at(MONDAY, "09:00"), at(MONDAY, "10:00"), 30, false);
+
+    assertThat(freeTime.slots(COUNSELLOR, NOW, NOW.plus(Duration.ofDays(1))))
+        .extracting(FreeSlot::mode)
+        .containsExactly(BookingMode.INSTANT);
+
+    setting(false, 0, 60);
+    assertThat(freeTime.slots(COUNSELLOR, NOW, NOW.plus(Duration.ofDays(1))))
+        .extracting(FreeSlot::mode)
+        .containsExactly(BookingMode.REQUEST);
+  }
+
+  @Test
+  void offeredSlot_Should_LookUpOneOffs_OverTheWholeSlot_NotASubMicrosecondWindow() {
+    // MariaDB truncates timestamp parameters to microseconds; a window [start, start+1ns)
+    // collapses to an empty one and finds no one-off for the first slot of a window.
+    when(bookingSettings.lockById(COUNSELLOR)).thenReturn(Optional.empty());
+    once(at(MONDAY, "09:00"), at(MONDAY, "11:00"), 0, false);
+
+    assertThat(freeTime.offeredSlot(COUNSELLOR, at(MONDAY, "09:00"), at(MONDAY, "10:00")))
+        .isPresent();
+    verify(consultationOnce).findOverlapping(COUNSELLOR, at(MONDAY, "09:00"), at(MONDAY, "10:00"));
+  }
+
+  @Test
+  void offeredSlot_Should_AcceptAOneOffSlot_InsideTheMinimumLeadTime_ButNotInsideItsNotice() {
+    when(bookingSettings.lockById(COUNSELLOR)).thenReturn(Optional.empty());
+    once(at(MONDAY, "08:00"), at(MONDAY, "10:00"), 60, false);
+
+    assertThat(freeTime.offeredSlot(COUNSELLOR, at(MONDAY, "09:00"), at(MONDAY, "10:00")))
+        .isPresent();
+    assertThat(freeTime.offeredSlot(COUNSELLOR, at(MONDAY, "08:30"), at(MONDAY, "09:30")))
+        .isEmpty();
+    assertThat(freeTime.isInsideBookingWindow(COUNSELLOR, at(MONDAY, "09:00"), at(MONDAY, "10:00")))
+        .isTrue();
+    assertThat(freeTime.isInsideBookingWindow(COUNSELLOR, at(MONDAY, "08:30"), at(MONDAY, "09:30")))
+        .isFalse();
+    // Outside any one-off the minimum lead time still holds.
+    assertThat(freeTime.isInsideBookingWindow(COUNSELLOR, at(MONDAY, "09:00"), at(MONDAY, "10:30")))
+        .isFalse();
+    assertThat(freeTime.isInsideBookingWindow(COUNSELLOR, at(MONDAY, "10:00"), at(MONDAY, "11:00")))
+        .isTrue();
+  }
+
+  private void once(Instant start, Instant end, int noticeMinutes, boolean overBlocker) {
+    var row = new CalendarConsultationOnce();
+    row.setId(UUID.randomUUID());
+    row.setConsultantId(COUNSELLOR);
+    row.setStartAt(start);
+    row.setEndAt(end);
+    row.setNoticeMinutes(noticeMinutes);
+    row.setOverBlocker(overBlocker);
+    if (overBlocker) {
+      // Released now: over the counsellor's own blockers inside it as they are now.
+      blocked.stream()
+          .filter(b -> b.type() == CalendarEntryType.BLOCKER)
+          .filter(b -> b.start().isBefore(end) && b.end().isAfter(start))
+          .map(
+              b -> new CalendarConsultationOnceBlocker(UUID.fromString(b.id()), b.start(), b.end()))
+          .forEach(row.getReleasedOver()::add);
+    }
+    onces.add(row);
+  }
+
+  private static CalendarEntry blocker(Instant start, Instant end, CalendarEntryType type) {
+    return new CalendarEntry(
+        UUID.randomUUID().toString(), type, start, end, null, null, null, null);
+  }
+
+  private static CalendarEntry blocker(String id, Instant start, Instant end) {
+    return new CalendarEntry(id, CalendarEntryType.BLOCKER, start, end, null, null, null, null);
   }
 
   private void sprechstunde(int weekday, String start, String end) {

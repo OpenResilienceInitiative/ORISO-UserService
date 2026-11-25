@@ -10,6 +10,7 @@ import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -36,8 +37,14 @@ import de.caritas.cob.userservice.api.tenant.TenantContext;
 import de.caritas.cob.userservice.tenantadminservice.generated.web.model.DpaSignatureDTO;
 import de.caritas.cob.userservice.tenantservice.generated.web.model.RestrictedTenantDTO;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
+import java.time.Clock;
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -91,8 +98,16 @@ class DpaSignedNoticeServiceTest {
   void setUp() {
     TransactionStatus transactionStatus = new SimpleTransactionStatus();
     when(transactionManager.getTransaction(any())).thenReturn(transactionStatus);
+    var nextNoticeId = new AtomicLong(1);
     when(noticeRepository.save(any(DpaSignedNotice.class)))
-        .thenAnswer(invocation -> invocation.getArgument(0));
+        .thenAnswer(
+            invocation -> {
+              DpaSignedNotice notice = invocation.getArgument(0);
+              if (notice.getId() == null) notice.setId(nextNoticeId.getAndIncrement());
+              return notice;
+            });
+    when(noticeRepository.lockAdminPreparation(anyLong(), any()))
+        .thenReturn(Optional.of(new DpaSignedNotice()));
     when(templateRepository.findByKindAndActiveTrueAndTenantIdIsNullOrderByCreateDateDesc(
             InviteEmailTemplateKind.DPA_SIGNED_NOTICE))
         .thenReturn(List.of());
@@ -111,7 +126,8 @@ class DpaSignedNoticeServiceTest {
             tenantService,
             transactionManager,
             metrics,
-            new AdminPanelUrl("https://admin.example.org"));
+            new AdminPanelUrl("https://admin.example.org"),
+            Clock.systemUTC());
     // the endpoint dispatches asynchronously; run it inline so these tests keep asserting the
     // work itself rather than the hand-off
     service.useExecutor(Runnable::run);
@@ -302,10 +318,7 @@ class DpaSignedNoticeServiceTest {
   }
 
   @Test
-  void onSignatureHint_releasesTheClaim_When_renderingFailsBeforeDispatch() {
-    // the claim is committed in its own transaction and its unique key is what makes the notice
-    // exactly-once — a claim stranded by a PRE-dispatch failure would not just lose this attempt,
-    // it would make every later hint lose the race and the notice would never be sent
+  void onSignatureHint_keepsTheAdminClaimPending_When_renderingFailsBeforeHandoff() {
     givenSignatures(forwardedSignature("kc-admin-1"));
     when(adminRepository.findById("kc-admin-1")).thenReturn(Optional.of(forwardingAdmin()));
     when(templateRepository.findByKindAndActiveTrueAndTenantIdIsNullOrderByCreateDateDesc(
@@ -314,7 +327,12 @@ class DpaSignedNoticeServiceTest {
 
     service.onSignatureHint(TENANT_ID);
 
-    verify(noticeRepository).delete(any(DpaSignedNotice.class));
+    var captured = ArgumentCaptor.forClass(DpaSignedNotice.class);
+    verify(noticeRepository).save(captured.capture());
+    assertThat(captured.getValue().getAdminNextAttemptAt()).isNotNull();
+    assertThat(captured.getValue().getAdminRecoverySignatureAt()).isEqualTo("2026-08-14T09:15:00");
+    verify(noticeRepository, never()).lockAdminPreparation(anyLong(), any());
+    verify(noticeRepository, never()).delete(any(DpaSignedNotice.class));
     verify(inviteMailDispatchService, never())
         .send(any(), any(), any(), any(), any(), any(), any());
   }
@@ -353,7 +371,12 @@ class DpaSignedNoticeServiceTest {
     givenSignatures(forwardedSignature("kc-admin-1"));
     when(adminRepository.findById("kc-admin-1")).thenReturn(Optional.of(forwardingAdmin()));
     when(noticeRepository.save(any(DpaSignedNotice.class)))
-        .thenAnswer(invocation -> invocation.getArgument(0)) // the claim
+        .thenAnswer(
+            invocation -> {
+              DpaSignedNotice notice = invocation.getArgument(0);
+              notice.setId(1L);
+              return notice;
+            }) // the claim
         .thenThrow(new IllegalStateException("connection lost")); // recording sent_at
 
     service.onSignatureHint(TENANT_ID);
@@ -472,17 +495,44 @@ class DpaSignedNoticeServiceTest {
   }
 
   @Test
-  void onSignatureHint_releasesTheClaimAsNotSent_When_theFailureIsNotAnSmtpFailure() {
-    // a template load, the tenant-name lookup or the rendering can fail too; all of those happen
-    // before the handover, so they can never have sent anything
-    givenSignatures(forwardedSignature("kc-admin-1"));
+  void onSignatureHint_releasesAnUnmarkedAdminClaim_When_tenantLookupFailsBeforeHandoff() {
+    // The owner supplied a version but no exact signing timestamp, so recovery cannot prove
+    // which signature this ADMIN claim represents. An ordinary later hint can still retry it.
+    givenSignatures(forwardedSignature("kc-admin-1").signedAt(null));
     when(adminRepository.findById("kc-admin-1")).thenReturn(Optional.of(forwardingAdmin()));
     when(tenantService.getRestrictedTenantData(anyLong()))
         .thenThrow(new IllegalStateException("tenant lookup down"));
 
     service.onSignatureHint(TENANT_ID);
 
-    verify(noticeRepository).delete(any(DpaSignedNotice.class));
+    var released = ArgumentCaptor.forClass(DpaSignedNotice.class);
+    verify(noticeRepository).delete(released.capture());
+    assertThat(released.getValue().getAdminRecoverySignatureAt()).isNull();
+    assertThat(released.getValue().getAdminNextAttemptAt()).isNull();
+    verify(noticeRepository, never()).lockAdminPreparation(anyLong(), any());
+    verify(inviteMailDispatchService, never())
+        .send(any(), any(), any(), any(), any(), any(), any());
+    assertEquals(1.0, releasedCount("confirmed_not_sent"));
+  }
+
+  @Test
+  void onSignatureHint_releasesTheMarkedAdminClaim_When_dispatchThrowsAnUnexpectedFailure() {
+    givenSignatures(forwardedSignature("kc-admin-1"));
+    when(adminRepository.findById("kc-admin-1")).thenReturn(Optional.of(forwardingAdmin()));
+    when(inviteMailDispatchService.send(any(), any(), any(), any(), any(), any(), any()))
+        .thenThrow(new IllegalStateException("dispatch failed"));
+
+    service.onSignatureHint(TENANT_ID);
+
+    var released = ArgumentCaptor.forClass(DpaSignedNotice.class);
+    var sequence = inOrder(noticeRepository, inviteMailDispatchService);
+    sequence.verify(noticeRepository).lockAdminPreparation(anyLong(), any());
+    sequence
+        .verify(inviteMailDispatchService)
+        .send(any(), any(), any(), any(), any(), any(), any());
+    sequence.verify(noticeRepository).delete(released.capture());
+    assertThat(released.getValue().getAdminRecoverySignatureAt()).isEqualTo("2026-08-14T09:15:00");
+    assertThat(released.getValue().getAdminNextAttemptAt()).isNull();
     assertEquals(1.0, releasedCount("confirmed_not_sent"));
   }
 
@@ -624,6 +674,192 @@ class DpaSignedNoticeServiceTest {
     assertEquals(TENANT_ID, claim.getTenantId());
     assertEquals(DPA_VERSION, claim.getDpaVersion());
     assertEquals("toni@example.org", claim.getRecipientEmail());
+  }
+
+  @Test
+  void recoveryCanRunWhileThePublicHintExecutorRejectsWork() throws InterruptedException {
+    service.useExecutor(
+        command -> {
+          throw new RejectedExecutionException("saturated hint executor");
+        });
+    var ran = new CountDownLatch(1);
+    try {
+      service.submitAdminRecovery(ran::countDown);
+      assertThat(ran.await(2, TimeUnit.SECONDS)).isTrue();
+    } finally {
+      service.shutdownNoticeExecutor();
+    }
+  }
+
+  @Test
+  void recoveryDeliversTheRecordedSignatureEvenAfterALaterSignatureAppears() {
+    var signature = forwardedSignature("kc-admin-1");
+    var later = forwardedSignature("kc-admin-2").signedAt("2026-08-14T10:15:00");
+    var pending = dueAdminNotice(signature);
+    givenPending(pending);
+    givenSignatures(later, signature);
+    when(adminRepository.findById("kc-admin-1")).thenReturn(Optional.of(forwardingAdmin()));
+
+    service.retryPendingAdminNotices();
+
+    verify(adminRepository, never()).findById("kc-admin-2");
+    verify(noticeRepository).lockAdminPreparation(eq(pending.getId()), any());
+    verify(inviteMailDispatchService)
+        .send(eq("toni@example.org"), any(), any(), isNull(), eq(TENANT_ID), eq("de"), any());
+    assertThat(pending.getSentAt()).isNotNull();
+    assertThat(pending.getAdminNextAttemptAt()).isNull();
+  }
+
+  @Test
+  void recoveryKeepsItsClaimPendingWhenTheExactSignatureIsUnavailable() {
+    var signature = forwardedSignature("kc-admin-1");
+    var pending = dueAdminNotice(signature);
+    givenPending(pending);
+    givenSignatures(signature.signedAt("2026-08-14T10:15:00"));
+
+    service.retryPendingAdminNotices();
+
+    verify(inviteMailDispatchService, never())
+        .send(any(), any(), any(), any(), any(), any(), any());
+    assertProofDeferred(pending);
+    assertThat(pending.getSentAt()).isNull();
+  }
+
+  @Test
+  void recoveryDoesNotDeliverToAnAddressThatNoLongerMatchesTheRecordedRecipient() {
+    var signature = forwardedSignature("kc-admin-1");
+    var pending = dueAdminNotice(signature);
+    givenPending(pending);
+    givenSignatures(signature);
+    var currentAdmin = forwardingAdmin();
+    currentAdmin.setEmail("changed@example.org");
+    when(adminRepository.findById("kc-admin-1")).thenReturn(Optional.of(currentAdmin));
+
+    service.retryPendingAdminNotices();
+
+    verify(inviteMailDispatchService, never())
+        .send(any(), any(), any(), any(), any(), any(), any());
+    assertProofDeferred(pending);
+    assertEquals(
+        0.0, counter("oriso.dpa_signed_notice.dispatch", "outcome", "parked_recipient_mismatch"));
+  }
+
+  @Test
+  void recoveryParksALongMismatchedClaimForReconciliationInsteadOfRetryingForever() {
+    // A changed address is not authority to readdress the receipt, and retrying every 15 minutes
+    // forever only repeats upstream reads. After a day the claim leaves automatic recovery, unsent
+    // and still holding the recorded recipient, until an operator reconciles it.
+    var signature = forwardedSignature("kc-admin-1");
+    var pending = dueAdminNotice(signature);
+    pending.setCreateDate(LocalDateTime.now().minusHours(25));
+    givenPending(pending);
+    givenSignatures(signature);
+    var currentAdmin = forwardingAdmin();
+    currentAdmin.setEmail("changed@example.org");
+    when(adminRepository.findById("kc-admin-1")).thenReturn(Optional.of(currentAdmin));
+
+    service.retryPendingAdminNotices();
+
+    verify(inviteMailDispatchService, never())
+        .send(any(), any(), any(), any(), any(), any(), any());
+    var deadline = ArgumentCaptor.forClass(LocalDateTime.class);
+    verify(noticeRepository)
+        .reserveAdminPreparation(eq(pending.getId()), any(), deadline.capture());
+    verify(noticeRepository).lockAdminPreparation(pending.getId(), deadline.getValue());
+    verify(noticeRepository, never()).delete(any(DpaSignedNotice.class));
+    assertThat(pending.getAdminNextAttemptAt()).isNull();
+    assertThat(pending.getSentAt()).isNull();
+    assertThat(pending.getRecipientEmail()).isEqualTo("toni@example.org");
+    assertThat(pending.getAdminRecoverySignatureAt()).isEqualTo("2026-08-14T09:15:00");
+    assertEquals(
+        1.0, counter("oriso.dpa_signed_notice.dispatch", "outcome", "parked_recipient_mismatch"));
+  }
+
+  @Test
+  void recoveryKeepsBackingOffALongPendingClaimWhoseRecipientIsOnlyUnavailable() {
+    // An unresolvable recipient can be transient (directory outage, admin row being rebuilt);
+    // only a positive mismatch with the recorded address parks the claim.
+    var signature = forwardedSignature("kc-admin-1");
+    var pending = dueAdminNotice(signature);
+    pending.setCreateDate(LocalDateTime.now().minusHours(25));
+    givenPending(pending);
+    givenSignatures(signature);
+    when(adminRepository.findById("kc-admin-1")).thenReturn(Optional.empty());
+
+    service.retryPendingAdminNotices();
+
+    assertProofDeferred(pending);
+    assertEquals(
+        0.0, counter("oriso.dpa_signed_notice.dispatch", "outcome", "parked_recipient_mismatch"));
+  }
+
+  @Test
+  void recoveryRetainsTheClaimWhenTheRecipientIsUnavailable() {
+    var signature = forwardedSignature("kc-admin-1");
+    var pending = dueAdminNotice(signature);
+    givenPending(pending);
+    givenSignatures(signature);
+    when(adminRepository.findById("kc-admin-1")).thenReturn(Optional.empty());
+
+    service.retryPendingAdminNotices();
+
+    verify(inviteMailDispatchService, never())
+        .send(any(), any(), any(), any(), any(), any(), any());
+    assertProofDeferred(pending);
+  }
+
+  private void assertProofDeferred(DpaSignedNotice pending) {
+    var deadline = ArgumentCaptor.forClass(LocalDateTime.class);
+    verify(noticeRepository)
+        .reserveAdminPreparation(eq(pending.getId()), any(), deadline.capture());
+    verify(noticeRepository).lockAdminPreparation(pending.getId(), deadline.getValue());
+    verify(noticeRepository, never()).delete(any(DpaSignedNotice.class));
+    assertThat(pending.getAdminNextAttemptAt()).isAfter(deadline.getValue().plusMinutes(10));
+    assertThat(pending.getAdminRecoverySignatureAt()).isEqualTo("2026-08-14T09:15:00");
+    assertThat(pending.getRecipientEmail()).isEqualTo("toni@example.org");
+    assertThat(pending.getSentAt()).isNull();
+  }
+
+  @Test
+  void recoveryDoesNotSendWhenAnotherWorkerHasAlreadyStartedHandoff() {
+    var signature = forwardedSignature("kc-admin-1");
+    var pending = dueAdminNotice(signature);
+    givenPending(pending);
+    givenSignatures(signature);
+    when(adminRepository.findById("kc-admin-1")).thenReturn(Optional.of(forwardingAdmin()));
+    when(noticeRepository.lockAdminPreparation(eq(pending.getId()), any()))
+        .thenReturn(Optional.empty());
+
+    service.retryPendingAdminNotices();
+
+    verify(inviteMailDispatchService, never())
+        .send(any(), any(), any(), any(), any(), any(), any());
+    verify(noticeRepository, never()).delete(any(DpaSignedNotice.class));
+  }
+
+  private DpaSignedNotice dueAdminNotice(DpaSignatureDTO signature) {
+    return DpaSignedNotice.builder()
+        .id(99L)
+        .tenantId(TENANT_ID)
+        .dpaVersion(DPA_VERSION)
+        .recipientEmail("toni@example.org")
+        .adminRecoverySignatureAt(signature.getSignedAt())
+        .adminNextAttemptAt(LocalDateTime.parse("2026-08-15T00:00:00"))
+        .createDate(LocalDateTime.now())
+        .build();
+  }
+
+  private void givenPending(DpaSignedNotice pending) {
+    when(noticeRepository.findDueAdminNoticeIds(any(), any())).thenReturn(List.of(pending.getId()));
+    when(noticeRepository.reserveAdminPreparation(eq(pending.getId()), any(), any()))
+        .thenAnswer(
+            invocation -> {
+              pending.setAdminNextAttemptAt(invocation.getArgument(2));
+              return 1;
+            });
+    when(noticeRepository.lockAdminPreparation(eq(pending.getId()), any()))
+        .thenReturn(Optional.of(pending));
+    when(noticeRepository.findById(pending.getId())).thenReturn(Optional.of(pending));
   }
 
   // --- DPA signed write-back to the invite (ORISO-Admin#896, epic #725) ---

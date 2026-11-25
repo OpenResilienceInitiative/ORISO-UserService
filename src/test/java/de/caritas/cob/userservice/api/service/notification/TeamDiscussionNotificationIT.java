@@ -117,6 +117,12 @@ class TeamDiscussionNotificationIT {
   @Autowired private MessageMentionNotificationService mentions;
   @Autowired private EventNotificationService eventNotifications;
   @MockitoBean private AuthenticatedUser authenticatedUser;
+
+  // Switched on for open enquiries; not continuing after acceptance, as before FE#2491.
+  @MockitoBean
+  private de.caritas.cob.userservice.api.service.teamdiscussion.TeamDiscussionFeatureGate
+      teamDiscussionGate;
+
   @MockitoBean private IdentityTombstoneService tombstones;
   @MockitoBean private MatrixFeedUpdateSignalService feedSignals;
   @MockitoBean private FeedbackMessageEmailService feedbackMail;
@@ -129,6 +135,12 @@ class TeamDiscussionNotificationIT {
 
   private MockMvc mvc;
   private Long discussionId;
+
+  @BeforeEach
+  void teamChatSwitchedOn() {
+    org.mockito.Mockito.when(teamDiscussionGate.isEnabled(org.mockito.ArgumentMatchers.any()))
+        .thenReturn(true);
+  }
 
   @BeforeEach
   void seedCurrentMembership() {

@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+  xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.3.xsd">
+  <!-- Keep these additive columns on application rollback so already recorded joins survive. -->
+  <changeSet id="20261122-agency-enquiry-requester-join-plan-1744" author="oriso">
+    <preConditions onFail="MARK_RAN" onError="HALT">
+      <not><columnExists tableName="agency_enquiry_room_attempt" columnName="requester_join_plan"/></not>
+    </preConditions>
+    <addColumn tableName="agency_enquiry_room_attempt">
+      <column name="requester_join_plan" type="json"/>
+    </addColumn>
+    <rollback><sql>SELECT 1</sql></rollback>
+  </changeSet>
+  <changeSet id="20261122-agency-enquiry-requester-join-ready-at-1744" author="oriso">
+    <preConditions onFail="MARK_RAN" onError="HALT">
+      <not><columnExists tableName="agency_enquiry_room_attempt" columnName="requester_join_ready_at"/></not>
+    </preConditions>
+    <addColumn tableName="agency_enquiry_room_attempt">
+      <column name="requester_join_ready_at" type="datetime(6)"/>
+    </addColumn>
+    <rollback><sql>SELECT 1</sql></rollback>
+  </changeSet>
+  <changeSet id="20261122-agency-enquiry-requester-join-claim-1744" author="oriso">
+    <preConditions onFail="MARK_RAN" onError="HALT">
+      <not><columnExists tableName="agency_enquiry_room_attempt" columnName="requester_join_claim"/></not>
+    </preConditions>
+    <addColumn tableName="agency_enquiry_room_attempt">
+      <column name="requester_join_claim" type="varchar(36)"/>
+    </addColumn>
+    <rollback><sql>SELECT 1</sql></rollback>
+  </changeSet>
+  <!--
+    The join plan holds requester and consultant identifiers. Attempt rows must disappear with
+    their session, whichever deletion path removes it, so erasure leaves no copy behind.
+    session.id is BIGINT UNSIGNED; the referencing column has to match before the key can exist.
+  -->
+  <changeSet id="20261123-agency-enquiry-room-attempt-session-cascade-1744" author="oriso" dbms="mariadb,mysql">
+    <preConditions onFail="MARK_RAN" onError="HALT">
+      <not><foreignKeyConstraintExists foreignKeyTableName="agency_enquiry_room_attempt" foreignKeyName="fk_agency_enquiry_room_attempt_session"/></not>
+    </preConditions>
+    <sql>DELETE FROM agency_enquiry_room_attempt WHERE session_id NOT IN (SELECT id FROM session)</sql>
+    <sql>ALTER TABLE agency_enquiry_room_attempt MODIFY session_id BIGINT UNSIGNED NOT NULL</sql>
+    <addForeignKeyConstraint baseTableName="agency_enquiry_room_attempt" baseColumnNames="session_id" referencedTableName="session" referencedColumnNames="id" constraintName="fk_agency_enquiry_room_attempt_session" onDelete="CASCADE"/>
+    <rollback>
+      <dropForeignKeyConstraint baseTableName="agency_enquiry_room_attempt" constraintName="fk_agency_enquiry_room_attempt_session"/>
+    </rollback>
+  </changeSet>
+</databaseChangeLog>

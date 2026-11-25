@@ -15,6 +15,9 @@ import static org.mockito.Mockito.when;
 
 import com.neovisionaries.i18n.LanguageCode;
 import de.caritas.cob.userservice.api.exception.httpresponses.ConflictException;
+import de.caritas.cob.userservice.api.model.AgencyEnquiryRevocationTask;
+import de.caritas.cob.userservice.api.model.AgencyEnquiryRoomDecision;
+import de.caritas.cob.userservice.api.model.AgencyEnquiryRoomDecision.Outcome;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.ConsultantAgency;
 import de.caritas.cob.userservice.api.model.ConsultantAgencyStatus;
@@ -186,6 +189,161 @@ class AgencyEnquiryAcceptanceDepartureIT {
     } finally {
       TenantContext.clear();
     }
+  }
+
+  @Test
+  void purgesSettledDecisionsOnlyAfterCommittedErasure() {
+    long decision = addDecision(1, Outcome.REUSED);
+
+    readCommitted()
+        .executeWithoutResult(
+            status -> {
+              eraseCase();
+              status.setRollbackOnly();
+            });
+    TenantContext.runIn(TENANT_ID + 1, revocations::retryDue);
+    assertThat(hasDecision(decision)).isTrue();
+
+    eraseCase();
+    revocations.retryDue();
+
+    assertThat(hasDecision(decision)).isFalse();
+    revocations.retryDue();
+    assertThat(hasDecision(decision)).isFalse();
+  }
+
+  @Test
+  void retainsPendingDecisionsAndBothKindsOfAccessRemovalWork() {
+    long pending = addDecision(1, Outcome.PENDING);
+    long parked = addDecision(2, Outcome.REPLACED);
+    long released = addDecision(3, Outcome.REUSED);
+    long reopened = addDecision(4, Outcome.REOPENED);
+    addDecisionTask(parked, relationId, AgencyEnquiryRevocationTask.WAITING_FOR_ROOM_DECISION);
+    addDecisionTask(released, relationId + 1, LocalDateTime.now(clock).plusMinutes(1));
+    eraseCase();
+
+    revocations.retryDue();
+    assertThat(hasDecision(pending)).isTrue();
+    assertThat(hasDecision(parked)).isTrue();
+    assertThat(hasDecision(released)).isTrue();
+
+    jdbc.update("DELETE FROM agency_enquiry_revocation_task WHERE room_decision_id = ?", released);
+    revocations.retryDue();
+    assertThat(hasDecision(parked)).isTrue();
+    assertThat(hasDecision(released)).isFalse();
+    assertThat(hasDecision(reopened)).isTrue();
+    assertThat(hasDecision(pending)).isTrue();
+  }
+
+  @ParameterizedTest
+  @EnumSource(
+      value = Outcome.class,
+      names = {"REPLACED", "REOPENED"})
+  @Timeout(15)
+  void keepsRoomEvidenceForDepartureBeforeItCanInsertATask(Outcome outcome) throws Exception {
+    var orderAllocated = new CountDownLatch(1);
+    var allowDepartureToRead = new CountDownLatch(1);
+    doAnswer(
+            invocation -> {
+              long order = (long) invocation.callRealMethod();
+              orderAllocated.countDown();
+              await(allowDepartureToRead);
+              return order;
+            })
+        .when(AopTestUtils.<AgencyEnquiryRoomDecisions>getUltimateTargetObject(roomDecisions))
+        .nextEvent();
+
+    try (var workers = Executors.newSingleThreadExecutor()) {
+      var departure =
+          workers.submit(
+              () ->
+                  TenantContext.runIn(
+                      TENANT_ID,
+                      () -> readCommitted().executeWithoutResult(status -> stageDeparture())));
+      long decision;
+      try {
+        await(orderAllocated);
+        decision = addDecision(1, outcome);
+        eraseCase();
+        assertThat(tasks.pendingSessionIds(relationId)).isEmpty();
+
+        roomDecisions.purgeErasedBatch(1);
+
+        assertThat(hasDecision(decision)).isTrue();
+      } finally {
+        allowDepartureToRead.countDown();
+      }
+      departure.get(5, SECONDS);
+      assertThat(
+              jdbc.queryForList(
+                  "SELECT room_decision_id FROM agency_enquiry_revocation_task WHERE session_id = ?",
+                  Long.class,
+                  sessionId))
+          .containsExactly(decision);
+    }
+  }
+
+  @Test
+  void limitsCleanupToTheRequestedNumberOfDecisions() {
+    long earlier = addDecision(1, Outcome.REUSED);
+    long later = addDecision(2, Outcome.REUSED);
+    eraseCase();
+
+    roomDecisions.purgeErasedBatch(1);
+
+    assertThat(hasDecision(earlier)).isFalse();
+    assertThat(hasDecision(later)).isTrue();
+    roomDecisions.purgeErasedBatch(1);
+    assertThat(hasDecision(later)).isFalse();
+  }
+
+  private long addDecision(long revision, Outcome outcome) {
+    long id =
+        jdbc.queryForObject(
+            "SELECT NEXT VALUE FOR " + AgencyEnquiryRoomDecision.EVENT_SEQUENCE, Long.class);
+    jdbc.update(
+        """
+        INSERT INTO agency_enquiry_room_decision
+          (id, session_id, agency_id, tenant_id, room_id, ownership_revision, outcome, resolved_order)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        id,
+        sessionId,
+        agencyId,
+        TENANT_ID,
+        oldRoom,
+        revision,
+        outcome.name(),
+        outcome == Outcome.PENDING ? null : id);
+    return id;
+  }
+
+  private void addDecisionTask(long decision, long departure, LocalDateTime retryAt) {
+    jdbc.update(
+        """
+        INSERT INTO agency_enquiry_revocation_task
+          (consultant_agency_id, consultant_id, agency_id, session_id, room_id, member_id,
+           retry_at, room_decision_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        departure,
+        departed.getId(),
+        agencyId,
+        sessionId,
+        oldRoom,
+        departed.getMatrixUserId(),
+        retryAt,
+        decision);
+  }
+
+  private boolean hasDecision(long id) {
+    return jdbc.queryForObject(
+            "SELECT COUNT(*) FROM agency_enquiry_room_decision WHERE id = ?", Integer.class, id)
+        == 1;
+  }
+
+  private void eraseCase() {
+    assertThat(jdbc.update("DELETE FROM session WHERE id = ?", sessionId)).isOne();
   }
 
   @Test

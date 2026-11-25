@@ -614,7 +614,9 @@ public class SecurityConfig {
                     "/users/sessions/{sessionId:[0-9]+}/rejection",
                     "/service/users/sessions/{sessionId:[0-9]+}/rejection",
                     "/users/sessions/{sessionId:[0-9]+}/team-discussion",
-                    "/service/users/sessions/{sessionId:[0-9]+}/team-discussion")
+                    "/service/users/sessions/{sessionId:[0-9]+}/team-discussion",
+                    "/users/sessions/{sessionId:[0-9]+}/team-discussion/join",
+                    "/service/users/sessions/{sessionId:[0-9]+}/team-discussion/join")
                 .hasAuthority(CONSULTANT_DEFAULT)
                 .requestMatchers(
                     "/conversations/anonymous/{sessionId:[0-9]+}/finish",
@@ -665,6 +667,13 @@ public class SecurityConfig {
                     "/useradmin/tenants/{tenantId:[0-9]+}/deletion-blockers",
                     "/service/useradmin/tenants/{tenantId:[0-9]+}/deletion-blockers")
                 .hasAnyAuthority(USER_ADMIN, TENANT_ADMIN, SINGLE_TENANT_ADMIN)
+                // Called by TenantService when the platform administrator deletes a Träger
+                // (ORISO-Admin#1525). Only that person may empty a Träger, never a Träger admin.
+                .requestMatchers(
+                    HttpMethod.POST,
+                    "/useradmin/tenants/{tenantId:[0-9]+}/deletion",
+                    "/service/useradmin/tenants/{tenantId:[0-9]+}/deletion")
+                .access(this::isHumanPlatformAdmin)
                 .requestMatchers(HttpMethod.GET, "/useradmin/tenantadmins/search")
                 .hasAnyAuthority(TENANT_ADMIN, USER_ADMIN)
                 .requestMatchers(
@@ -796,6 +805,11 @@ public class SecurityConfig {
                 .access(this::isPlatformAdmin)
                 // An admin's own list sorts (#1263): every admin role that sees a user list keeps
                 // its own; the data is always the caller's, so no other access widens.
+                // The platform admin's own Erstantwort texts (Settings → Begrüßung), above the
+                // built-in default. Must precede the generic /useradmin/** rule.
+                .requestMatchers(
+                    "/useradmin/erstantwort/platform", "/service/useradmin/erstantwort/platform")
+                .access(this::isPlatformAdmin)
                 // Platform default Erstantwort texts for the Träger editor (Admin#601); read-only.
                 .requestMatchers(
                     HttpMethod.GET,
@@ -806,6 +820,21 @@ public class SecurityConfig {
                 .requestMatchers("/useradmin/list-preferences", "/useradmin/list-preferences/**")
                 .hasAnyAuthority(
                     USER_ADMIN, TENANT_ADMIN, SINGLE_TENANT_ADMIN, RESTRICTED_AGENCY_ADMIN)
+                // A Beratungsstelle's own Erstantwort texts (ADR-018 §6). Every admin role reaches
+                // it; the controller narrows to the caller's AdminScope.
+                .requestMatchers(
+                    "/useradmin/erstantwort/agencies/{agencyId:[0-9]+}",
+                    "/service/useradmin/erstantwort/agencies/{agencyId:[0-9]+}")
+                .hasAnyAuthority(
+                    USER_ADMIN, TENANT_ADMIN, SINGLE_TENANT_ADMIN, RESTRICTED_AGENCY_ADMIN)
+                // Deleting a Beratungsstelle (ORISO-Admin#1524): the preview and the cascade
+                // AgencyService calls with the deleting admin's token. Träger and platform admins
+                // only, as for deleting the Beratungsstelle itself; AgencyDeletionCascadeService
+                // narrows to the caller's AdminScope.
+                .requestMatchers(
+                    "/useradmin/agencies/{agencyId:[0-9]+}/deletion",
+                    "/service/useradmin/agencies/{agencyId:[0-9]+}/deletion")
+                .hasAnyAuthority(USER_ADMIN, TENANT_ADMIN, SINGLE_TENANT_ADMIN)
                 // Contact person per counselling centre and Träger (ORISO-Admin#1534). Every admin
                 // role reaches it; ContactPersonAdminService narrows to the caller's AdminScope
                 // (agency admins: own centres only, never the Träger default).
@@ -898,6 +927,10 @@ public class SecurityConfig {
                     "/service/users/calendar/working-hours",
                     "/users/calendar/consultation-hours",
                     "/service/users/calendar/consultation-hours",
+                    "/users/calendar/consultation-hours/once",
+                    "/service/users/calendar/consultation-hours/once",
+                    "/users/calendar/consultation-hours/once/{onceId}",
+                    "/service/users/calendar/consultation-hours/once/{onceId}",
                     "/users/calendar/working-hours/exceptions/{date}",
                     "/service/users/calendar/working-hours/exceptions/{date}",
                     "/users/calendar/proposals",

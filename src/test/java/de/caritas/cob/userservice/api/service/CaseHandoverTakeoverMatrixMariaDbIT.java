@@ -163,20 +163,23 @@ class CaseHandoverTakeoverMatrixMariaDbIT {
                   .createDate(now)
                   .updateDate(now)
                   .build());
-          consultantRepository.save(consultant(PREVIOUS_ID, PREVIOUS_MXID, now));
+          Consultant previous =
+              consultantRepository.save(consultant(PREVIOUS_ID, PREVIOUS_MXID, now));
           Consultant colleague =
               consultantRepository.save(consultant(COLLEAGUE_ID, COLLEAGUE_MXID, now));
-          consultantAgencyRepository.save(
-              ConsultantAgency.builder()
-                  .consultant(colleague)
-                  .agencyId(AGENCY_ID)
-                  .tenantId(TENANT_ID)
-                  .createDate(now)
-                  .updateDate(now)
-                  .build());
+          for (Consultant counsellor : List.of(previous, colleague)) {
+            consultantAgencyRepository.save(
+                ConsultantAgency.builder()
+                    .consultant(counsellor)
+                    .agencyId(AGENCY_ID)
+                    .tenantId(TENANT_ID)
+                    .createDate(now)
+                    .updateDate(now)
+                    .build());
+          }
         });
     homeserver.account(COLLEAGUE_MXID);
-    handovers = handoverService();
+    handovers = handoverService(COLLEAGUE_ID, CaseHandoverReasonPolicy.CodeEnum.COUNSELLOR_LEFT);
   }
 
   @AfterEach
@@ -188,9 +191,11 @@ class CaseHandoverTakeoverMatrixMariaDbIT {
             caseHandoverRequestRepository.deleteAllBySessionId(sessionId);
             sessionRepository.deleteById(sessionId);
           }
-          eventNotificationRepository.deleteByRecipientUserId(COLLEAGUE_ID);
-          consultantAgencyRepository.deleteAll(
-              consultantAgencyRepository.findByConsultantIdAndDeleteDateIsNull(COLLEAGUE_ID));
+          for (String consultantId : List.of(PREVIOUS_ID, COLLEAGUE_ID)) {
+            eventNotificationRepository.deleteByRecipientUserId(consultantId);
+            consultantAgencyRepository.deleteAll(
+                consultantAgencyRepository.findByConsultantIdAndDeleteDateIsNull(consultantId));
+          }
           consultantRepository.deleteAllById(List.of(PREVIOUS_ID, COLLEAGUE_ID));
           userRepository.deleteById(USER_ID);
         });
@@ -273,6 +278,39 @@ class CaseHandoverTakeoverMatrixMariaDbIT {
     assertThat(homeserver.isMember(room, PREVIOUS_MXID)).isTrue();
     assertThat(homeserver.powerOf(room, COLLEAGUE_MXID)).isEqualTo(100);
     assertThat(homeserver.adminJoinRequests()).isZero();
+  }
+
+  @Test
+  void reclaimAfterTemporaryCoverAdvancesTheStoredOwnershipRevision() {
+    Long sessionId = givenAcceptedCase(false);
+    String room = roomOf(sessionId);
+    var temporaryCover = CaseHandoverReasonPolicy.CodeEnum.COUNSELLOR_IS_ILL;
+    var coverHandovers = handoverService(COLLEAGUE_ID, temporaryCover);
+    var previousHandovers = handoverService(PREVIOUS_ID, temporaryCover);
+
+    var takeover =
+        transactions.execute(
+            ignored ->
+                coverHandovers.requestAccess(sessionId, "UNPLANNED_ABSENCE", "Temporary cover."));
+    assertThat(takeover.getStatus()).isEqualTo("GRANTED");
+    Session covered = readSession(sessionId);
+    assertThat(covered.getConsultant().getId()).isEqualTo(COLLEAGUE_ID);
+    assertThat(covered.getOwnershipRevision()).isEqualTo(1L);
+    assertThat(homeserver.isMember(room, COLLEAGUE_MXID)).isTrue();
+    assertThat(homeserver.powerOf(room, COLLEAGUE_MXID)).isEqualTo(100);
+
+    var response = transactions.execute(ignored -> previousHandovers.reclaim(sessionId));
+
+    Session reclaimed = readSession(sessionId);
+    assertThat(reclaimed.getConsultant().getId()).isEqualTo(PREVIOUS_ID);
+    assertThat(reclaimed.getOwnershipRevision()).isEqualTo(covered.getOwnershipRevision() + 1);
+    assertThat(response.getOwnershipRevision()).isEqualTo(reclaimed.getOwnershipRevision());
+    assertThat(response.isCanViewContent()).isTrue();
+    assertThat(storedRequest(sessionId).getStatus())
+        .isEqualTo(CaseHandoverRequest.Status.RECLAIMED);
+    assertThat(homeserver.isMember(room, PREVIOUS_MXID)).isTrue();
+    assertThat(homeserver.isMember(room, COLLEAGUE_MXID)).isTrue();
+    assertThat(homeserver.powerOf(room, COLLEAGUE_MXID)).isZero();
   }
 
   @Test
@@ -385,25 +423,26 @@ class CaseHandoverTakeoverMatrixMariaDbIT {
                 .get(0));
   }
 
-  private CaseHandoverService handoverService() {
+  private CaseHandoverService handoverService(
+      String consultantId, CaseHandoverReasonPolicy.CodeEnum reason) {
     var accounts = mock(UserAccountService.class);
     when(accounts.retrieveValidatedConsultant())
         .thenAnswer(
             ignored ->
                 transactions.execute(
-                    tx -> consultantRepository.findById(COLLEAGUE_ID).orElseThrow()));
+                    tx -> consultantRepository.findById(consultantId).orElseThrow()));
     var caller = mock(AuthenticatedUser.class);
-    when(caller.getUserId()).thenReturn(COLLEAGUE_ID);
+    when(caller.getUserId()).thenReturn(consultantId);
     when(caller.isConsultant()).thenReturn(true);
 
     var cache = mock(CaseHandoverPolicyCacheService.class);
     var policy =
         new CaseHandoverReasonPolicy()
-            .code(CaseHandoverReasonPolicy.CodeEnum.COUNSELLOR_LEFT)
+            .code(reason)
             .enabled(new BooleanPermissionPolicy(null).value(true))
             .accessAllowed(new BooleanPermissionPolicy(null).value(true))
             .clientConsent(new ConsentPermissionPolicy(null).value(CaseHandoverConsentValue.NONE));
-    var policies = new CaseHandoverPolicies().reasons(Map.of("COUNSELLOR_LEFT", policy));
+    var policies = new CaseHandoverPolicies().reasons(Map.of(reason.name(), policy));
     when(cache.getEffective(TENANT_ID)).thenReturn(policies);
     when(cache.getCurrent(TENANT_ID))
         .thenReturn(new CaseHandoverPolicyCacheService.CurrentPolicy(true, policies));
@@ -430,7 +469,11 @@ class CaseHandoverTakeoverMatrixMariaDbIT {
         transactionManager,
         mock(AgencyService.class),
         mock(AdminScope.class),
-        mock(MembersOnlyChatAccess.class));
+        mock(MembersOnlyChatAccess.class),
+        org.mockito.Mockito.mock(
+            de.caritas.cob.userservice.api.service.agency.CaseSharingGate.class),
+        org.mockito.Mockito.mock(
+            de.caritas.cob.userservice.api.port.out.MatrixRoomMembershipLookup.class));
   }
 
   private static Consultant consultant(String id, String matrixUserId, LocalDateTime now) {

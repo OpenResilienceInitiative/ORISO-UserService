@@ -197,8 +197,7 @@ class ModuleBoundaryContractTest(unittest.TestCase):
         consumers = (
             ROOT / "src/main/java/de/caritas/cob/userservice/api/IdentityManager.java",
             ROOT
-            / "src/main/java/de/caritas/cob/userservice/api/conversation/service/user/"
-            "anonymous/AnonymousUserCreatorService.java",
+            / "src/main/java/de/caritas/cob/userservice/api/facade/CreateUserFacade.java",
             ROOT
             / "src/main/java/de/caritas/cob/userservice/api/service/agency/"
             "AgencyMatrixCredentialClient.java",

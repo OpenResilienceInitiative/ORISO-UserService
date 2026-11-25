@@ -33,6 +33,8 @@ import de.caritas.cob.userservice.api.model.TenantReservationReleaseTask;
 import de.caritas.cob.userservice.api.model.TopicPermission;
 import de.caritas.cob.userservice.api.port.out.AccountInviteRepository;
 import de.caritas.cob.userservice.api.port.out.IdReservationReleaseTaskRepository;
+import de.caritas.cob.userservice.api.port.out.IdentityAuthentication;
+import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
 import de.caritas.cob.userservice.api.port.out.IdentityEmailOwner;
 import de.caritas.cob.userservice.api.port.out.IdentityEmailOwnerLookup;
 import de.caritas.cob.userservice.api.port.out.InviteEmailDeliveryRepository;
@@ -66,6 +68,7 @@ import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageImpl;
 import org.springframework.http.HttpStatus;
@@ -92,6 +95,8 @@ class AccountInviteServiceTest {
   @Mock private IdReservationReleaseTaskRepository reservationReleaseTaskRepository;
   @Mock private TenantReservationReleaseTaskRepository tenantReservationReleaseTaskRepository;
   @Mock private IdReservationReleaseProcessor reservationReleaseProcessor;
+  @Mock private ObjectProvider<IdentityClientConfig> identityClientConfig;
+  @Mock private ObjectProvider<IdentityAuthentication> identityAuthentication;
 
   @Mock
   private de.caritas.cob.userservice.api.port.out.IdReservationLockRepository
@@ -176,7 +181,14 @@ class AccountInviteServiceTest {
             new InviteTargetResolver(ledger),
             ledger,
             new UnitQueue(
-                accountInviteRepository, templateRepository, ledger, delivery, transactionManager),
+                accountInviteRepository,
+                templateRepository,
+                ledger,
+                delivery,
+                transactionManager,
+                tenantIdAllocationClient,
+                identityClientConfig,
+                identityAuthentication),
             delivery,
             existingAccountSetupIssuer);
     lenient().when(accessPolicy.authorizeCreate(any())).thenAnswer(call -> call.getArgument(0));

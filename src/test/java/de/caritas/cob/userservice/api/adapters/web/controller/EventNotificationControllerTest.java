@@ -874,7 +874,8 @@ class EventNotificationControllerTest {
             s6RealService,
             mock(
                 de.caritas.cob.userservice.api.workflow.accountinactivity.AccountInactivityService
-                    .class));
+                    .class),
+            teamChatSwitchedOnGate());
     var controller = s6Controller(realTeamService);
 
     // Colleague A reads the enquiry's own room, colleague B reads the team discussion.
@@ -897,5 +898,15 @@ class EventNotificationControllerTest {
               assertThat(row.getEventType()).isEqualTo("team.discussion.new");
               assertThat(row.getParams()).contains("\"mentioned\":true");
             });
+  }
+
+  /** Team chat switched on; continuation after acceptance stays off (plain mock default). */
+  private static de.caritas.cob.userservice.api.service.teamdiscussion.TeamDiscussionFeatureGate
+      teamChatSwitchedOnGate() {
+    var gate =
+        org.mockito.Mockito.mock(
+            de.caritas.cob.userservice.api.service.teamdiscussion.TeamDiscussionFeatureGate.class);
+    org.mockito.Mockito.when(gate.isEnabled(org.mockito.ArgumentMatchers.any())).thenReturn(true);
+    return gate;
   }
 }

@@ -16,6 +16,7 @@ import de.caritas.cob.userservice.api.adapters.web.dto.NewRegistrationResponseDt
 import de.caritas.cob.userservice.api.adapters.web.dto.UserDTO;
 import de.caritas.cob.userservice.api.admin.service.tenant.TenantService;
 import de.caritas.cob.userservice.api.config.auth.UserRole;
+import de.caritas.cob.userservice.api.conversation.service.AnonymousConversationCreatorService;
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
 import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException;
 import de.caritas.cob.userservice.api.helper.AgencyVerifier;
@@ -25,11 +26,14 @@ import de.caritas.cob.userservice.api.manager.consultingtype.ConsultingTypeManag
 import de.caritas.cob.userservice.api.model.Chat;
 import de.caritas.cob.userservice.api.model.ConversationType;
 import de.caritas.cob.userservice.api.model.Session;
+import de.caritas.cob.userservice.api.model.Session.RegistrationType;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.out.IdentityAccountRemover;
+import de.caritas.cob.userservice.api.port.out.IdentityAuthentication;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import de.caritas.cob.userservice.api.port.out.IdentityDummyEmailUpdate;
 import de.caritas.cob.userservice.api.port.out.IdentityDummyEmailUpdater;
+import de.caritas.cob.userservice.api.port.out.IdentityLogin;
 import de.caritas.cob.userservice.api.port.out.IdentityPasswordUpdater;
 import de.caritas.cob.userservice.api.port.out.identity.CreatedIdentity;
 import de.caritas.cob.userservice.api.service.AskerEmailCollectionPolicy;
@@ -111,17 +115,43 @@ public class CreateUserFacade {
       temporaryAccountSettings;
 
   private final @NonNull LifecycleEventPublisher lifecycleEvents;
+  private final @NonNull AnonymousConversationCreatorService anonymousConversationCreatorService;
+  private final @NonNull IdentityAuthentication identityAuthentication;
+
+  private static final String GUEST_POSTCODE = "00000";
 
   @Value("${feature.multitenancy.with.single.domain.enabled:false}")
   private boolean multitenancyWithSingleDomain;
 
   /**
-   * Creates a user in Keycloak and MariaDB. Then creates a session or chat account depending on the
-   * provided consulting ID.
+   * What the one registration entry created. {@code login} is set for a live-chat guest only: the
+   * guest never typed a password, so the entry signs the guest in before it reports success.
+   */
+  public record CreatedAccount(String userId, Long sessionId, IdentityLogin login) {}
+
+  /**
+   * Registers an advice seeker for e-mail counselling (Mailberatung), a group or a direct link.
    *
    * @param userDTO {@link UserDTO}
+   * @return the id of the enquiry session, or {@code null} when the registration opens none
    */
   public Long createUserAccountWithInitializedConsultingType(final UserDTO userDTO) {
+    return createUserAccountWithInitializedConsultingType(userDTO, RegistrationType.REGISTERED)
+        .sessionId();
+  }
+
+  /**
+   * The one entry that creates an advice seeker (ADR-038, #1745): identity, role, database row,
+   * chat identity and the first conversation, with one compensation for all of them. A live-chat
+   * guest is {@link RegistrationType#ANONYMOUS}; nothing else separates a guest from a registered
+   * advice seeker here.
+   *
+   * @param userDTO {@link UserDTO}
+   * @param registrationType how the advice seeker enters
+   */
+  public CreatedAccount createUserAccountWithInitializedConsultingType(
+      final UserDTO userDTO, final RegistrationType registrationType) {
+    boolean guest = registrationType == RegistrationType.ANONYMOUS;
 
     initializeTenantContextForRegistration(userDTO);
     tenantService.requireOperationalTenant(TenantContext.getCurrentTenant());
@@ -142,11 +172,22 @@ public class CreateUserFacade {
           "Chat provisioning credentials available={}",
           plainCreds != null && plainCreds.getUsername() != null);
 
-      userVerifier.checkIfAllRequiredAttributesAreCorrectlyFilled(userDTO);
-      userVerifier.checkIfUsernameIsAvailable(userDTO);
-      agencyVerifier.checkIfConsultingTypeMatchesToAgency(userDTO);
+      if (guest) {
+        // A guest enters a topic queue: no agency, no demographics, no invitation to resolve.
+        requireGuestRegistration(userDTO);
+      } else {
+        userVerifier.checkIfAllRequiredAttributesAreCorrectlyFilled(userDTO);
+        userVerifier.checkIfUsernameIsAvailable(userDTO);
+        agencyVerifier.checkIfConsultingTypeMatchesToAgency(userDTO);
+      }
       var consultingTypeSettings = obtainConsultingTypeSettings(userDTO);
-      var linkEntry = temporaryAccountLinkResolver.resolveEntry(userDTO);
+      var linkEntry =
+          guest
+              ? Optional
+                  .<de.caritas.cob.userservice.api.service.agencyinvitelink
+                          .TemporaryAccountLinkResolver.Entry>
+                      empty()
+              : temporaryAccountLinkResolver.resolveEntry(userDTO);
       var directLink =
           linkEntry.map(
               de.caritas.cob.userservice.api.service.agencyinvitelink.TemporaryAccountLinkResolver
@@ -156,17 +197,25 @@ public class CreateUserFacade {
           directLink
               .filter(link -> InviteLinkKind.CALL.name().equals(link.getLinkKind()))
               .isPresent();
-      if (callGuest
-          || consultingTypeSettings.getGroupChat() == null
-          || !isTrue(consultingTypeSettings.getGroupChat().getIsGroupChat())) {
+      if (!guest
+          && (callGuest
+              || consultingTypeSettings.getGroupChat() == null
+              || !isTrue(consultingTypeSettings.getGroupChat().getIsGroupChat()))) {
+        // A guest has no agency yet; its tenant's declaration is checked before the name is
+        // claimed, and the agency's when a counsellor accepts.
         dpaPolicy.requireForAgency(userDTO.getAgencyId());
       }
-      var invitation = groupInviteRegistration.resolveInvitation(userDTO);
+      var invitation =
+          guest
+              ? Optional.<GroupInviteRegistration.Invitation>empty()
+              : groupInviteRegistration.resolveInvitation(userDTO);
       Optional<Chat> invitedGroup = invitation.map(GroupInviteRegistration.Invitation::group);
-      var registrationType =
-          invitedGroup.isPresent()
-              ? ConversationType.SELF_HELP
-              : ConversationType.AGENCY_COUNSELLING;
+      var conversationType =
+          guest
+              ? ConversationType.LIVE_CHAT
+              : invitedGroup.isPresent()
+                  ? ConversationType.SELF_HELP
+                  : ConversationType.AGENCY_COUNSELLING;
       if (userDTO.isTemporary() && invitedGroup.isEmpty() && directLink.isEmpty()) {
         // The deletion job removes temporary accounts; only a valid group invite or direct link
         // may ask for one. Checked before the e-mail rule
@@ -177,12 +226,17 @@ public class CreateUserFacade {
       Long tenantId = TenantContext.getCurrentTenant();
       if (userDTO.getEmail() != null && !userDTO.getEmail().isBlank()) {
         emailCollectionPolicy.requireForRegistration(
-            tenantId, registrationType, userDTO.isTemporary());
+            tenantId, conversationType, userDTO.isTemporary());
       }
       var displayName =
-          sessionDataService.validateRegistrationNames(
-              userDTO.getUsername(), userDTO.getDisplayName(), tenantId, registrationType);
-      if (invitedGroup.isEmpty() && directLink.isEmpty()) {
+          guest
+              ? null
+              : sessionDataService.validateRegistrationNames(
+                  userDTO.getUsername(), userDTO.getDisplayName(), tenantId, conversationType);
+      if (guest) {
+        // The rolled User-ID is the only name a guest has.
+        userDTO.setDisplayName(null);
+      } else if (invitedGroup.isEmpty() && directLink.isEmpty()) {
         assertDisplayNameHoldsNoPassword(displayName, userDTO.getPassword());
         userDTO.setDisplayName(displayName);
       } else {
@@ -199,7 +253,9 @@ public class CreateUserFacade {
                   .ASKER);
       CreatedIdentity response = identityClient.createUser(userDTO);
       String identityUserId = CreatedIdentity.requireUserId(response);
-      provisioningAttempt = provisioningCompensator.begin(ProvisioningWorkflow.REGISTERED_USER);
+      provisioningAttempt =
+          provisioningCompensator.begin(
+              guest ? ProvisioningWorkflow.LIVE_CHAT_GUEST : ProvisioningWorkflow.REGISTERED_USER);
       ProvisioningAttempt activeAttempt = provisioningAttempt;
       activeAttempt.register(
           IDENTITY_USER, identityUserId, () -> identityAccountRemover.rollbackUser(identityUserId));
@@ -216,7 +272,8 @@ public class CreateUserFacade {
 
       inactivityEnrollment.enroll(
           identityUserId, TenantContext.getCurrentTenant(), inactivityPolicy);
-      User user = updateIdentityAndCreateAccount(identityUserId, userDTO, UserRole.USER, snapshot);
+      User user =
+          updateIdentityAndCreateAccount(identityUserId, userDTO, registrationType, snapshot);
       if (user != null) {
         user.setTemporaryAccount(userDTO.isTemporary());
         if (userDTO.isTemporary()) {
@@ -248,7 +305,10 @@ public class CreateUserFacade {
       }
 
       String plainUsername;
-      if (plainCreds != null && plainCreds.getUsername() != null) {
+      if (guest) {
+        // The server built this registration, so no request body left plain credentials behind.
+        plainUsername = new UsernameTranscoder().decodeUsername(userDTO.getUsername());
+      } else if (plainCreds != null && plainCreds.getUsername() != null) {
         plainUsername = plainCreds.getUsername();
       } else if (user != null && user.getUsername() != null) {
         plainUsername = new UsernameTranscoder().decodeUsername(user.getUsername());
@@ -258,7 +318,16 @@ public class CreateUserFacade {
       provisionMatrixUser(user, plainUsername, activeAttempt);
 
       Long sessionId;
-      if (invitedGroup.isPresent()) {
+      IdentityLogin login = null;
+      if (guest) {
+        // Sign the guest in before the waiting place exists: a guest without tokens could never
+        // enter, so a failed login undoes the account instead of leaving it queued.
+        login = identityAuthentication.login(userDTO.getUsername(), userDTO.getPassword());
+        activeAttempt.register(
+            SESSION, identityUserId, () -> deleteSessionsForUser(provisionedUser.get()));
+        sessionId =
+            anonymousConversationCreatorService.createAnonymousConversation(userDTO, user).getId();
+      } else if (invitedGroup.isPresent()) {
         // Joining a self-help group is not a request for counselling: no enquiry (FE#1499).
         Chat group = invitedGroup.get();
         activeAttempt.register(
@@ -278,8 +347,9 @@ public class CreateUserFacade {
         sessionId = registration.getSessionId();
       }
 
-      // The registration event contract requires a session id; a group join opens none.
-      if (sessionId != null) {
+      // The registration event contract requires a session id; a group join opens none. A guest
+      // has not registered: the live chat is counted when a counsellor accepts it.
+      if (sessionId != null && !guest) {
         try {
           RegistrationStatisticsEvent registrationEvent =
               new RegistrationStatisticsEvent(
@@ -304,13 +374,15 @@ public class CreateUserFacade {
       // @Async submission throws synchronously when the executor queue is
       // full, and neither that nor a later bounce may undo a registration
       // that has already succeeded.
-      try {
-        welcomeEmailService.sendWelcomeEmail(user, plainUsername);
-      } catch (Exception e) {
-        log.error("Could not schedule welcome mail", e);
+      if (!guest) {
+        try {
+          welcomeEmailService.sendWelcomeEmail(user, plainUsername);
+        } catch (Exception e) {
+          log.error("Could not schedule welcome mail", e);
+        }
       }
 
-      return sessionId;
+      return new CreatedAccount(identityUserId, sessionId, login);
     } finally {
       compensateProvisioning(provisioningAttempt);
       de.caritas.cob.userservice.api.helper.PlainCredentialsHolder.clear();
@@ -324,10 +396,6 @@ public class CreateUserFacade {
   }
 
   /** Provisions and persists the Matrix identity needed by browser token bootstrap. */
-  public void provisionMatrixUser(User user, String plainUsername) {
-    provisionMatrixUser(user, plainUsername, null);
-  }
-
   private void provisionMatrixUser(
       User user, String plainUsername, ProvisioningAttempt provisioningAttempt) {
     try {
@@ -346,17 +414,14 @@ public class CreateUserFacade {
 
       if (matrixResponse.getBody() != null && matrixResponse.getBody().getUserId() != null) {
         String matrixUserId = matrixResponse.getBody().getUserId();
-        if (provisioningAttempt != null) {
-          provisioningAttempt.register(
-              CHAT_IDENTITY,
-              matrixUserId,
-              () -> {
-                if (!matrixSynapseService.deactivateUser(matrixUserId)) {
-                  throw new IllegalStateException(
-                      "Chat identity deactivation was not acknowledged");
-                }
-              });
-        }
+        provisioningAttempt.register(
+            CHAT_IDENTITY,
+            matrixUserId,
+            () -> {
+              if (!matrixSynapseService.deactivateUser(matrixUserId)) {
+                throw new IllegalStateException("Chat identity deactivation was not acknowledged");
+              }
+            });
         user.setMatrixUserId(matrixUserId);
         userService.saveUser(user);
         log.info("Chat identity provisioned successfully");
@@ -422,24 +487,15 @@ public class CreateUserFacade {
   }
 
   /**
-   * Updates Keycloak role and password and creates a user account in MariaDB.
-   *
-   * @param userId Keycloak user ID
-   * @param userDTO {@link UserDTO}
-   * @return {@link User}
+   * Assigns the role and password in the identity provider and creates the user row in MariaDB.
+   * Every advice seeker gets the {@code user} realm role; the realm defines no {@code anonymous}
+   * role, and a guest is recognised by the registration type instead (ADR-038).
    */
-  public User updateIdentityAndCreateAccount(String userId, UserDTO userDTO, UserRole role) {
-    return updateIdentityAndCreateAccount(
-        userId,
-        userDTO,
-        role,
-        shouldClearPrivacyConfirmations(role, userDTO)
-            ? chatRecoveryEnrollmentPolicyService.forNewAsker(TenantContext.getCurrentTenant())
-            : chatRecoveryEnrollmentPolicyService.forExistingIdentity(userId));
-  }
-
-  private User updateIdentityAndCreateAccount(
-      String userId, UserDTO userDTO, UserRole role, RecoveryPolicySnapshot snapshot) {
+  User updateIdentityAndCreateAccount(
+      String userId,
+      UserDTO userDTO,
+      RegistrationType registrationType,
+      RecoveryPolicySnapshot snapshot) {
 
     if (userDTO.getEmail() != null && !userDTO.getEmail().isBlank()) {
       AskerIdentityPolicy.requireEmailCollectionAllowed(
@@ -447,13 +503,8 @@ public class CreateUserFacade {
     }
 
     try {
-      updateKeycloakRoleAndPassword(userId, userDTO, role);
+      updateKeycloakRoleAndPassword(userId, userDTO);
     } catch (RuntimeException ex) {
-      if (role == UserRole.ANONYMOUS) {
-        log.error(
-            "Identity operations failed for anonymous account; aborting account creation", ex);
-        throw new InternalServerErrorException("Identity operations failed for anonymous user", ex);
-      }
       log.error("Identity operations failed; aborting database user creation", ex);
       throw ex;
     }
@@ -472,7 +523,7 @@ public class CreateUserFacade {
             language,
             snapshot);
 
-    if (shouldClearPrivacyConfirmations(role, userDTO) && nonNull(user)) {
+    if (shouldClearPrivacyConfirmations(registrationType, userDTO) && nonNull(user)) {
       user.setTermsAndConditionsConfirmation(null);
       user.setDataPrivacyConfirmation(null);
       user = userService.saveUser(user);
@@ -481,16 +532,27 @@ public class CreateUserFacade {
     return user;
   }
 
-  private boolean shouldClearPrivacyConfirmations(UserRole role, UserDTO userDTO) {
-    if (role == UserRole.ANONYMOUS) {
+  private boolean shouldClearPrivacyConfirmations(
+      RegistrationType registrationType, UserDTO userDTO) {
+    if (registrationType == RegistrationType.ANONYMOUS) {
       return true;
     }
 
-    // Anonymous chat currently registers through /users/askers/new with role USER.
-    // Detect that path by its synthetic postcode, never by the User-ID text (#1697), and clear
-    // confirmations so the first in-chat privacy gate is shown and persisted only after explicit
-    // acceptance.
-    return StringUtils.equals("00000", userDTO.getPostcode());
+    // The app can also register an anonymous chat through /users/askers/new. Detect that by its
+    // synthetic postcode, never by the User-ID text (#1697), so the first in-chat privacy gate is
+    // shown and persisted only after explicit acceptance.
+    return StringUtils.equals(GUEST_POSTCODE, userDTO.getPostcode());
+  }
+
+  /**
+   * The User-ID rule for a guest: only a name the generator can roll, never a typed one. Whether
+   * the name is still free is decided where it is claimed, before this entry is called.
+   */
+  private void requireGuestRegistration(UserDTO userDTO) {
+    sessionDataService.requireGeneratedUsername(userDTO.getUsername());
+    if (userDTO.isTemporary() || !isBlank(userDTO.getEmail())) {
+      throw new BadRequestException("A live-chat guest has neither an e-mail nor a kept account.");
+    }
   }
 
   /** The alias is stored and shown to counsellors in plain text, so it must not hold a secret. */
@@ -504,9 +566,9 @@ public class CreateUserFacade {
     return consultingTypeManager.getConsultingTypeSettings(userDTO.getConsultingType());
   }
 
-  private void updateKeycloakRoleAndPassword(String userId, UserDTO userDTO, UserRole role) {
+  private void updateKeycloakRoleAndPassword(String userId, UserDTO userDTO) {
     checkIfUserIdNotNull(userId);
-    identityClient.updateRole(userId, role);
+    identityClient.updateRole(userId, UserRole.USER);
     identityPasswordUpdater.updatePassword(userId, userDTO.getPassword());
   }
 
