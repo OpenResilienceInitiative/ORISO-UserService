@@ -74,6 +74,42 @@ public class TeamSessionReadOnlyService {
         });
   }
 
+  /**
+   * FE#2494 *4: a reassignment keeps the case as it is. Only a case that is already read-only for
+   * colleagues is enforced again for its new owner; a case accepted before read-only existed is not
+   * marked and its colleagues keep writing.
+   */
+  public void reenforceAfterCommitIfMarked(Long sessionId) {
+    if (sessionId == null) {
+      return;
+    }
+    Runnable reenforce =
+        () -> {
+          try {
+            sessions
+                .findById(sessionId)
+                .filter(session -> session.getTeamReadOnlySince() != null)
+                .ifPresent(this::enforce);
+          } catch (RuntimeException failure) {
+            log.warn(
+                "Team read-only access for session {} remains pending ({})",
+                sessionId,
+                failure.getClass().getSimpleName());
+          }
+        };
+    if (!TransactionSynchronizationManager.isSynchronizationActive()) {
+      reenforce.run();
+      return;
+    }
+    TransactionSynchronizationManager.registerSynchronization(
+        new TransactionSynchronization() {
+          @Override
+          public void afterCommit() {
+            reenforce.run();
+          }
+        });
+  }
+
   /** Never throws; a failure stays for the repair job. */
   public void enforceSafely(Long sessionId) {
     try {

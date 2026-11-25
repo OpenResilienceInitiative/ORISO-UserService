@@ -59,6 +59,30 @@ class TeamSessionReadOnlyServiceTest {
   }
 
   @Test
+  void aReassignmentNeitherMarksNorLowersACaseAcceptedBeforeReadOnlyExisted() {
+    var legacy = session();
+    when(sessions.findById(42L)).thenReturn(Optional.of(legacy));
+
+    service.reenforceAfterCommitIfMarked(42L);
+
+    verify(sessions, never()).markTeamReadOnly(any(), any());
+    verifyNoInteractions(matrix);
+  }
+
+  @Test
+  void aReassignmentEnforcesAMarkedCaseAgain() {
+    var marked = session();
+    marked.setTeamReadOnlySince(java.time.LocalDateTime.now());
+    when(sessions.findById(42L)).thenReturn(Optional.of(marked));
+    when(matrix.getRoomMembers(anyString())).thenReturn(Optional.empty());
+
+    service.reenforceAfterCommitIfMarked(42L);
+
+    verify(sessions, never()).markTeamReadOnly(any(), any());
+    verify(matrix).getRoomMembers(ROOM);
+  }
+
+  @Test
   void aGroupChatIsNeverLoweredEvenWithTheTeamFlag() {
     var session = session();
     session.setConversationType(ConversationType.INTERNAL_GROUP);

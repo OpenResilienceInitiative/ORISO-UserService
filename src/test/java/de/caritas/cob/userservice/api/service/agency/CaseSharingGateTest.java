@@ -215,8 +215,13 @@ class CaseSharingGateTest {
   }
 
   @Test
-  void modelForNewCase_stampsNoneWhenUnreadableSoNoLaterReadCanGrantHandover() {
-    when(lookup.findEffectiveSettings(5L, 1L)).thenThrow(new ResourceAccessException("down"));
+  void modelForNewCase_leavesTheStampToTheSnapshotOnlyWhileTheCentreIsUnreachable() {
+    when(lookup.findEffectiveSettings(5L, 1L))
+        .thenThrow(new ResourceAccessException("down"))
+        .thenThrow(new ForbiddenException("refused"))
+        .thenReturn(Optional.empty());
+    assertThat(gate.modelForNewCase(5L, 1L, false)).isNull();
+    assertThat(gate.modelForNewCase(5L, 1L, false)).isEqualTo(CaseSharingModel.NONE);
     assertThat(gate.modelForNewCase(5L, 1L, false)).isEqualTo(CaseSharingModel.NONE);
     assertThat(gate.modelForNewCase(null, 1L, false)).isEqualTo(CaseSharingModel.NONE);
   }

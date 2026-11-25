@@ -97,6 +97,40 @@ class CaseSharingModelSnapshotSchedulerTest {
   }
 
   @Test
+  void aRowThatKeepsFailingIsStampedNoneAfterTheLimit() {
+    givenUnstamped(case_(1L, 5L, false));
+    when(gate.currentModel(5L, 1L)).thenThrow(new IllegalStateException("broken row"));
+
+    for (int run = 1; run < CaseSharingModelSnapshotScheduler.MAX_ROW_FAILURES; run++) {
+      scheduler.snapshot();
+      scheduler.snapshot();
+    }
+    verify(sessions, never()).stampCaseSharingModel(any(), any());
+
+    scheduler.snapshot();
+
+    verify(sessions).stampCaseSharingModel(1L, CaseSharingModel.NONE);
+  }
+
+  @Test
+  void aRowThatCannotEvenBeStampedIsSkippedSoTheJobCanRest() {
+    givenUnstamped(case_(1L, 5L, false));
+    when(gate.currentModel(5L, 1L)).thenThrow(new IllegalStateException("broken row"));
+    when(sessions.stampCaseSharingModel(any(), any())).thenThrow(new IllegalStateException("db"));
+    for (int run = 0; run < CaseSharingModelSnapshotScheduler.MAX_ROW_FAILURES; run++) {
+      scheduler.snapshot();
+      scheduler.snapshot();
+    }
+
+    scheduler.snapshot(); // the given-up row is skipped: nothing found in this pass
+    scheduler.snapshot(); // end of that pass: the job rests
+    org.mockito.Mockito.clearInvocations(sessions);
+    scheduler.snapshot();
+
+    verify(sessions, never()).findUnstampedCases(anyLong(), any(), any());
+  }
+
+  @Test
   void restsAfterAPassThatFoundNothingAndLooksAgainLater() {
     when(sessions.findUnstampedCases(anyLong(), any(), any())).thenReturn(List.of());
 

@@ -212,9 +212,9 @@ public class CreateSessionFacade {
   }
 
   /**
-   * FE#2494 *4: the case keeps the model it was created under. An unreadable centre setting stamps
-   * "none" (see {@link CaseSharingGate#modelForNewCase}); only a failed write leaves the stamp to
-   * the snapshot job, and it never fails the registration.
+   * FE#2494 *4: the case keeps the model it was created under. A centre that is temporarily
+   * unreachable, or a failed write, leaves the stamp to the snapshot job (see {@link
+   * CaseSharingGate#modelForNewCase}); it never fails the registration.
    */
   private void stampCaseSharingModel(Session session) {
     try {

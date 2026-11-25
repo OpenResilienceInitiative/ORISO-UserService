@@ -24,7 +24,7 @@
         AND (conversation_type = 'AGENCY_COUNSELLING'
           OR (conversation_type IS NULL
             AND (registration_type IS NULL OR registration_type &lt;&gt; 'ANONYMOUS')
-            AND postcode &lt;&gt; '00000'))</where>
+            AND (postcode IS NULL OR postcode &lt;&gt; '00000')))</where>
     </update>
     <rollback><sql>SELECT 1</sql></rollback>
   </changeSet>

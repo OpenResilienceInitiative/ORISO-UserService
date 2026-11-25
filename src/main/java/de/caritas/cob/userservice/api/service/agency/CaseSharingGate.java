@@ -104,8 +104,9 @@ public class CaseSharingGate {
    * FE#2494 *4: the model to stamp on a case being created. A team flag means Teamberatung without
    * a further read. Otherwise the centre's current model; a non-team case in a centre that reads as
    * Teamberatung in this instant is stamped "none", never case handover: a handover right is never
-   * inferred. A case whose centre setting cannot be read now is stamped "none" as well, so no later
-   * read can grant it case handover.
+   * inferred. A refused or deleted centre gives "none". Null only while the centre is temporarily
+   * unreachable: the case stays unstamped and the snapshot job stamps it once the centre answers. A
+   * case without a centre is "none".
    */
   public CaseSharingModel modelForNewCase(Long agencyId, Long tenantId, boolean teamSession) {
     if (teamSession) {
@@ -116,7 +117,7 @@ public class CaseSharingGate {
     }
     return currentModel(agencyId, tenantId)
         .map(model -> model == CaseSharingModel.TEAM_COUNSELLING ? CaseSharingModel.NONE : model)
-        .orElse(CaseSharingModel.NONE);
+        .orElse(null);
   }
 
   private Settings readSettings(Long agencyId, Long tenantId) {

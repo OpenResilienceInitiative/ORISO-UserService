@@ -273,7 +273,7 @@ public interface SessionRepository extends CrudRepository<Session, Long>, Sessio
         and (s.conversationType = de.caritas.cob.userservice.api.model.ConversationType.AGENCY_COUNSELLING
           or (s.conversationType is null
             and (s.registrationType is null or s.registrationType <> :anonymousRegistrationType)
-            and s.postcode <> '00000'))
+            and (s.postcode is null or s.postcode <> '00000')))
         and s.id > :afterId
       order by s.id asc
       """)

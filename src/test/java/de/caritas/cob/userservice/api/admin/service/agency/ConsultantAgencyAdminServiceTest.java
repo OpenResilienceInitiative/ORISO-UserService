@@ -16,6 +16,7 @@ import de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHt
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.ConsultantAgency;
 import de.caritas.cob.userservice.api.model.Session;
+import de.caritas.cob.userservice.api.model.Session.SessionStatus;
 import de.caritas.cob.userservice.api.port.out.ConsultantAgencyRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
@@ -136,6 +137,21 @@ class ConsultantAgencyAdminServiceTest {
   // ---------------------------------------------------------------------------
   // endTeamCounsellingForNewCases
   // ---------------------------------------------------------------------------
+
+  @Test
+  void endTeamCounsellingForNewCases_Should_CountOpenAndArchivedTeamCases() {
+    consultantAgencyAdminService.endTeamCounsellingForNewCases(10L);
+
+    // an archived team case can be reactivated and still needs its colleagues' team access
+    verify(sessionRepository)
+        .existsTeamCase(
+            10L,
+            List.of(
+                SessionStatus.INITIAL,
+                SessionStatus.NEW,
+                SessionStatus.IN_PROGRESS,
+                SessionStatus.IN_ARCHIVE));
+  }
 
   @Test
   void endTeamCounsellingForNewCases_Should_LeaveRunningTeamCasesAndTeamFlagsAlone() {

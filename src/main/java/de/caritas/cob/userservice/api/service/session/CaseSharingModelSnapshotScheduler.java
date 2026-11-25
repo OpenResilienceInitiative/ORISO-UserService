@@ -32,8 +32,9 @@ import org.springframework.stereotype.Component;
  * <p>A centre whose setting is refused or no longer served (for example a deleted centre) is
  * stamped "none" by {@link CaseSharingGate#currentModel}. A centre that is unreachable is retried
  * in later runs; after {@value #MAX_UNREACHABLE_RUNS} such runs its cases are stamped "none" too,
- * so no row is retried forever. Once a full pass finds nothing, the job rests for {@code
- * case-sharing.model-snapshot.idle-ms} (default six hours) before it looks again.
+ * and so is a row that keeps failing for another reason, so no row is retried forever. Once a full
+ * pass finds nothing, the job rests for {@code case-sharing.model-snapshot.idle-ms} (default six
+ * hours) before it looks again.
  */
 @Component
 @Profile("!testing")
@@ -43,6 +44,7 @@ public class CaseSharingModelSnapshotScheduler {
   public static final String TASK = "case-sharing-model-snapshot";
   static final Pageable BATCH = PageRequest.of(0, 50);
   static final int MAX_UNREACHABLE_RUNS = 10;
+  static final int MAX_ROW_FAILURES = 5;
 
   private final SessionRepository sessions;
   private final CaseSharingGate caseSharing;
@@ -54,6 +56,8 @@ public class CaseSharingModelSnapshotScheduler {
   private boolean foundInThisPass;
   private Instant restUntil = Instant.MIN;
   private final Map<String, Integer> unreachableRuns = new HashMap<>();
+  private final Map<Long, Integer> rowFailures = new HashMap<>();
+  private final java.util.Set<Long> givenUp = new java.util.HashSet<>();
 
   @Autowired
   public CaseSharingModelSnapshotScheduler(
@@ -89,19 +93,48 @@ public class CaseSharingModelSnapshotScheduler {
         endPass();
         return;
       }
-      foundInThisPass = true;
       Map<String, Optional<CaseSharingModel>> centres = new HashMap<>();
       for (UnstampedCase unstamped : cases) {
-        try {
-          if (!claims.runIfHeld(lease.get(), () -> stamp(unstamped, centres))) break;
-        } catch (RuntimeException failure) {
-          log.warn("Case sharing model snapshot remains pending for session {}", unstamped.getId());
+        if (!givenUp.contains(unstamped.getId())) {
+          foundInThisPass = true;
+          try {
+            if (!claims.runIfHeld(lease.get(), () -> stamp(unstamped, centres))) break;
+            rowFailures.remove(unstamped.getId());
+          } catch (RuntimeException failure) {
+            recordFailure(unstamped.getId(), failure);
+          }
         }
         cursor = unstamped.getId();
       }
     } finally {
       TenantContext.clear();
       claims.release(lease.get());
+    }
+  }
+
+  /**
+   * A row that keeps failing is stamped "none" after {@value #MAX_ROW_FAILURES} tries; if even that
+   * fails it is left alone until the next restart, so it cannot keep the job from resting.
+   */
+  private void recordFailure(Long id, RuntimeException failure) {
+    int failures = rowFailures.merge(id, 1, Integer::sum);
+    if (failures < MAX_ROW_FAILURES) {
+      log.warn(
+          "Case sharing model snapshot remains pending for session {} ({})",
+          id,
+          failure.getClass().getSimpleName());
+      return;
+    }
+    rowFailures.remove(id);
+    try {
+      sessions.stampCaseSharingModel(id, CaseSharingModel.NONE);
+      log.warn("Session {} kept failing the snapshot; stamped none", id);
+    } catch (RuntimeException stampFailure) {
+      givenUp.add(id);
+      log.error(
+          "Session {} cannot be stamped ({}); the snapshot skips it until restart",
+          id,
+          stampFailure.getClass().getSimpleName());
     }
   }
 
