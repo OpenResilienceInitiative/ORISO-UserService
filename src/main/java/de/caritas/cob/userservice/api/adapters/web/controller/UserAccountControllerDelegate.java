@@ -14,8 +14,10 @@ import de.caritas.cob.userservice.api.admin.service.consultant.update.Consultant
 import de.caritas.cob.userservice.api.config.VideoChatConfig;
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
 import de.caritas.cob.userservice.api.exception.httpresponses.ConflictException;
+import de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHttpStatusException;
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
 import de.caritas.cob.userservice.api.exception.httpresponses.ServiceUnavailableException;
+import de.caritas.cob.userservice.api.exception.httpresponses.customheader.HttpStatusExceptionReason;
 import de.caritas.cob.userservice.api.facade.userdata.AgencyAdminDataProvider;
 import de.caritas.cob.userservice.api.facade.userdata.AskerDataProvider;
 import de.caritas.cob.userservice.api.facade.userdata.ConsultantDataFacade;
@@ -106,6 +108,7 @@ class UserAccountControllerDelegate {
       }
     } else {
       var user = userAccountProvider.retrieveValidatedUser();
+      refuseDeletedTemporaryAccount(user);
       partialUserData = askerDataProvider.retrieveData(user);
       partialUserData.setIsAskerEmailCollectionAllowed(
           !authenticatedUser.isAnonymous() && emailCollectionPolicy.capabilityForAccount(user));
@@ -144,6 +147,20 @@ class UserAccountControllerDelegate {
           "Could not enrich availability for consultant {}; returning user data without availability",
           authenticatedUser.getUserId(),
           ex);
+    }
+  }
+
+  /**
+   * A guest account is deleted some time after its conversation (ADR-029): the Keycloak user goes,
+   * the row stays as a tombstone. A browser that is still open keeps a token until it runs out, and
+   * the OTP lookup below then failed on the missing Keycloak user with a 503 (Dev, 25 Nov 2026).
+   * The account is gone, so the answer is "not signed in", with the reason.
+   */
+  private void refuseDeletedTemporaryAccount(de.caritas.cob.userservice.api.model.User user) {
+    var snapshot = user.getTemporaryAccountSnapshot();
+    if (snapshot != null && snapshot.getDeletionStartedAt() != null) {
+      throw new CustomValidationHttpStatusException(
+          HttpStatusExceptionReason.TEMPORARY_ACCOUNT_DELETED, HttpStatus.UNAUTHORIZED);
     }
   }
 
