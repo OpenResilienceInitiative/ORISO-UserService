@@ -281,9 +281,13 @@ public class SessionService {
       CaseSharingModel caseSharingModel) {
     var session =
         initializeSession(
-            user, userDto, isTeamSession, RegistrationType.REGISTERED, SessionStatus.NEW);
+            user,
+            userDto,
+            isTeamSession,
+            RegistrationType.REGISTERED,
+            SessionStatus.NEW,
+            caseSharingModel);
     session.setConsultant(consultant);
-    session.setCaseSharingModel(caseSharingModel);
     return saveSession(session);
   }
 
@@ -315,6 +319,17 @@ public class SessionService {
       boolean isTeamSession,
       RegistrationType registrationType,
       SessionStatus sessionStatus) {
+    return initializeSession(user, userDto, isTeamSession, registrationType, sessionStatus, null);
+  }
+
+  /** The case sharing model is part of the first insert; the column is write-once (FE#2494). */
+  private Session initializeSession(
+      User user,
+      UserDTO userDto,
+      boolean isTeamSession,
+      RegistrationType registrationType,
+      SessionStatus sessionStatus,
+      CaseSharingModel caseSharingModel) {
     var extendedConsultingTypeResponseDTO = obtainConsultingTypeSettings(userDto);
 
     var session =
@@ -328,6 +343,7 @@ public class SessionService {
             .languageCode(LanguageCode.de)
             .status(sessionStatus)
             .teamSession(isTeamSession)
+            .caseSharingModel(caseSharingModel)
             .createDate(nowInUtc())
             .updateDate(nowInUtc())
             .mainTopicId(userDto.getMainTopicId())

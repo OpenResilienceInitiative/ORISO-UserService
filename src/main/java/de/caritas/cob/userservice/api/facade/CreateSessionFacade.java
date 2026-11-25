@@ -57,6 +57,8 @@ public class CreateSessionFacade {
   private final @NonNull AgencyPreAssignmentRoomService agencyPreAssignmentRoomService;
   private final @NonNull DirectSessionMatrixRoomService directSessionMatrixRoomService;
   private final @NonNull CaseSharingGate caseSharingGate;
+  private final @NonNull de.caritas.cob.userservice.api.service.session.TeamSessionReadOnlyService
+      teamSessionReadOnly;
 
   /**
    * Creates a new session for the provided user.
@@ -125,6 +127,9 @@ public class CreateSessionFacade {
       // An earlier visit may have failed to provision the room; provisioning is idempotent.
       if (session.getMatrixRoomId() == null || session.getMatrixRoomId().isBlank()) {
         directSessionMatrixRoomService.provisionRoomForDirectSession(session, consultant);
+        if (session.getTeamReadOnlySince() != null) {
+          teamSessionReadOnly.enforceAfterCommit(session.getId());
+        }
       }
       return new NewRegistrationResponseDto()
           .sessionId(session.getId())
@@ -170,9 +175,17 @@ public class CreateSessionFacade {
     sessionDataService.saveInitialSessionData(session, user, fromUserDTO(userDTO));
     session.setConsultant(consultant);
     session.setStatus(SessionStatus.IN_PROGRESS);
+    if (session.isTeamCounsellingCase()) {
+      // FE#2494 *4: counselling starts here, without an acceptance, so this versioned save marks
+      // the new team case read-only for colleagues, as the acceptance does for an enquiry.
+      session.setTeamReadOnlySince(java.time.LocalDateTime.now(java.time.ZoneOffset.UTC));
+    }
     session = sessionService.saveSession(session);
 
     directSessionMatrixRoomService.provisionRoomForDirectSession(session, consultant);
+    if (session.getTeamReadOnlySince() != null) {
+      teamSessionReadOnly.enforceAfterCommit(session.getId());
+    }
 
     return new NewRegistrationResponseDto()
         .sessionId(session.getId())

@@ -61,6 +61,7 @@ import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErro
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.manager.consultingtype.ConsultingTypeManager;
+import de.caritas.cob.userservice.api.model.CaseSharingModel;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.ConsultantAgency;
 import de.caritas.cob.userservice.api.model.ConsultantStatus;
@@ -346,6 +347,28 @@ class SessionServiceTest {
     assertThat(savedSession.getSessionTopics()).hasSize(2);
     assertThat(savedSession.getSessionTopics())
         .allMatch(topic -> topic.getSession() == savedSession);
+  }
+
+  /** FE#2494 *4 (Codex): the write-once model must already be in the very first insert. */
+  @Test
+  void initializeDirectSession_Should_InsertTheCaseSharingModelWithTheFirstSave() {
+    var firstSaveModels = new java.util.ArrayList<CaseSharingModel>();
+    when(sessionRepository.save(any(Session.class)))
+        .thenAnswer(
+            invocation -> {
+              Session persisted = invocation.getArgument(0);
+              firstSaveModels.add(persisted.getCaseSharingModel());
+              return persisted;
+            });
+    when(consultingTypeManager.getConsultingTypeSettings(any()))
+        .thenReturn(CONSULTING_TYPE_SETTINGS_SUCHT);
+
+    var session =
+        sessionService.initializeDirectSession(
+            mock(Consultant.class), USER, USER_DTO, true, CaseSharingModel.TEAM_COUNSELLING);
+
+    assertThat(firstSaveModels.getFirst()).isEqualTo(CaseSharingModel.TEAM_COUNSELLING);
+    assertThat(session.getCaseSharingModel()).isEqualTo(CaseSharingModel.TEAM_COUNSELLING);
   }
 
   @Test

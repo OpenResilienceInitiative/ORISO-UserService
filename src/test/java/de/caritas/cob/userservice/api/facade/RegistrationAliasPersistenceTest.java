@@ -130,7 +130,8 @@ class RegistrationAliasPersistenceTest {
             mock(ConsultantAgencyRepository.class),
             mock(AgencyPreAssignmentRoomService.class),
             mock(DirectSessionMatrixRoomService.class),
-            mock(de.caritas.cob.userservice.api.service.agency.CaseSharingGate.class));
+            mock(de.caritas.cob.userservice.api.service.agency.CaseSharingGate.class),
+            mock(de.caritas.cob.userservice.api.service.session.TeamSessionReadOnlyService.class));
 
     assertThat(facade.createUserSession(signup, user, settings, List.of())).isEqualTo(11L);
 

@@ -80,6 +80,10 @@ class CreateSessionFacadeTest {
 
   @Mock private de.caritas.cob.userservice.api.service.agency.CaseSharingGate caseSharingGate;
 
+  @Mock
+  private de.caritas.cob.userservice.api.service.session.TeamSessionReadOnlyService
+      teamSessionReadOnly;
+
   private static final Long TOPIC_ID_SERVED_BY_AGENCY = 3L;
   private static final Long MAIN_TOPIC_ID_NOT_SERVED_BY_AGENCY = 1L;
 
@@ -101,7 +105,8 @@ class CreateSessionFacadeTest {
             consultantAgencyRepository,
             agencyPreAssignmentRoomService,
             directSessionMatrixRoomService,
-            caseSharingGate);
+            caseSharingGate,
+            teamSessionReadOnly);
     logCaptor = LogbackCaptor.attach(LogService.class);
   }
 
@@ -264,6 +269,61 @@ class CreateSessionFacadeTest {
             USER_DTO_SUCHT, USER, CONSULTING_TYPE_SETTINGS_SUCHT, validationConstraints);
 
     assertEquals(created.getId(), result);
+  }
+
+  /** FE#2494 *4 (Codex): a direct team case starts counselling without an acceptance. */
+  @Test
+  void createDirectUserSession_Should_MarkANewTeamCaseReadOnlyAndEnforceIt() {
+    var agencyDTO = new EasyRandom().nextObject(AgencyDTO.class);
+    agencyDTO.setTenantId(41L);
+    var session = new Session();
+    session.setId(77L);
+    session.setTeamSession(true);
+    session.setConversationType(
+        de.caritas.cob.userservice.api.model.ConversationType.AGENCY_COUNSELLING);
+    session.setRegistrationType(Session.RegistrationType.REGISTERED);
+    session.setPostcode("12345");
+    when(agencyVerifier.getVerifiedAgency(anyLong(), anyInt())).thenReturn(agencyDTO);
+    when(sessionService.findSessionByConsultantAndUserAndConsultingType(any(), any(), any()))
+        .thenReturn(Optional.empty());
+    when(sessionService.initializeDirectSession(any(), any(), any(), anyBoolean(), any()))
+        .thenReturn(session);
+    when(sessionService.saveSession(session))
+        .thenAnswer(
+            invocation -> {
+              Session saved = invocation.getArgument(0);
+              org.junit.jupiter.api.Assertions.assertNotNull(
+                  saved.getTeamReadOnlySince(), "marked in the save that starts counselling");
+              return saved;
+            });
+
+    createSessionFacade.createDirectUserSession(
+        null, mock(UserDTO.class), null, mock(ExtendedConsultingTypeResponseDTO.class));
+
+    verify(teamSessionReadOnly).enforceAfterCommit(77L);
+  }
+
+  @Test
+  void createDirectUserSession_Should_NotMarkANonTeamCase() {
+    var agencyDTO = new EasyRandom().nextObject(AgencyDTO.class);
+    agencyDTO.setTenantId(41L);
+    var session = new Session();
+    session.setId(78L);
+    session.setTeamSession(false);
+    session.setConversationType(
+        de.caritas.cob.userservice.api.model.ConversationType.AGENCY_COUNSELLING);
+    when(agencyVerifier.getVerifiedAgency(anyLong(), anyInt())).thenReturn(agencyDTO);
+    when(sessionService.findSessionByConsultantAndUserAndConsultingType(any(), any(), any()))
+        .thenReturn(Optional.empty());
+    when(sessionService.initializeDirectSession(any(), any(), any(), anyBoolean(), any()))
+        .thenReturn(session);
+    when(sessionService.saveSession(session)).thenReturn(session);
+
+    createSessionFacade.createDirectUserSession(
+        null, mock(UserDTO.class), null, mock(ExtendedConsultingTypeResponseDTO.class));
+
+    org.junit.jupiter.api.Assertions.assertNull(session.getTeamReadOnlySince());
+    verify(teamSessionReadOnly, never()).enforceAfterCommit(any());
   }
 
   @Test
