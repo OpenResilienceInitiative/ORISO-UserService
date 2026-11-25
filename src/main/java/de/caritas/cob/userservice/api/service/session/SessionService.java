@@ -1126,6 +1126,8 @@ public class SessionService {
     var consultantSessionDTO =
         new ConsultantSessionDTO()
             .isTeamSession(session.isTeamSession())
+            .caseSharingModel(
+                session.getCaseSharingModel() == null ? null : session.getCaseSharingModel().name())
             .supervision(supervisionMarkerService.buildFor(session, requester))
             .agencyId(session.getAgencyId())
             .consultingType(session.getConsultingTypeId())

@@ -354,6 +354,52 @@ class SessionRepositoryIT {
   }
 
   /**
+   * FE#2494 *4: the repair touches only Teamberatung 1:1 cases marked read-only at accept or
+   * reassignment, never unmarked (pre-release) cases and never group chats.
+   */
+  @Test
+  void findTeamReadOnlyCandidates_Should_KeepOnlyMarkedOneToOneTeamCases() {
+    givenAUser();
+    var consultant = consultantRepository.findAll().iterator().next();
+    var ids = new java.util.ArrayList<Long>();
+    for (var type :
+        java.util.Arrays.asList(
+            ConversationType.AGENCY_COUNSELLING, null, ConversationType.INTERNAL_GROUP)) {
+      var team = validSession(null, 1);
+      team.setConsultant(consultant);
+      team.setTeamSession(true);
+      team.setStatus(SessionStatus.IN_PROGRESS);
+      team.setMatrixRoomId("!team-" + ids.size() + ":matrix.example");
+      team.setConversationType(type);
+      ids.add(underTest.save(team).getId());
+    }
+    var legacy = validSession(null, 1);
+    legacy.setConsultant(consultant);
+    legacy.setTeamSession(true);
+    legacy.setStatus(SessionStatus.IN_PROGRESS);
+    legacy.setMatrixRoomId("!legacy:matrix.example");
+    var legacyId = underTest.save(legacy).getId();
+    entityManager.flush();
+    entityManager.clear();
+
+    var now = java.time.LocalDateTime.now();
+    assertEquals(1, underTest.markTeamReadOnly(ids.get(0), now));
+    assertEquals(1, underTest.markTeamReadOnly(ids.get(1), now));
+    assertEquals(0, underTest.markTeamReadOnly(ids.get(2), now), "group chats are never marked");
+    assertEquals(0, underTest.markTeamReadOnly(ids.get(0), now), "a mark is kept");
+    entityManager.clear();
+
+    var found =
+        underTest.findTeamReadOnlyCandidates(
+            SessionStatus.IN_PROGRESS,
+            ids.get(0) - 1,
+            org.springframework.data.domain.PageRequest.of(0, 50));
+
+    assertEquals(ids.subList(0, 2), found);
+    assertFalse(found.contains(legacyId), "a case accepted before read-only stays as it is");
+  }
+
+  /**
    * FE#2494 *4: the snapshot stamps unstamped 1:1 cases with a centre once, never group chats or
    * live chat, and a stamp is never overwritten.
    */

@@ -212,6 +212,36 @@ public interface SessionRepository extends CrudRepository<Session, Long>, Sessio
       boolean isTeamSession);
 
   /**
+   * Accepted Teamberatung 1:1 cases that were made read-only for colleagues, in id order after
+   * {@code afterId}: the repair of {@code TeamSessionReadOnlyRepairScheduler} (FE#2494 *4). Cases
+   * accepted before read-only existed are not marked and stay as they are.
+   */
+  @Query(
+      """
+      select s.id from Session s
+      where s.teamSession = true and s.status = :status and s.consultant is not null
+        and s.teamReadOnlySince is not null
+        and (s.conversationType is null
+          or s.conversationType = de.caritas.cob.userservice.api.model.ConversationType.AGENCY_COUNSELLING)
+        and s.matrixRoomId is not null and s.id > :afterId
+      order by s.id asc
+      """)
+  List<Long> findTeamReadOnlyCandidates(
+      @Param("status") SessionStatus status, @Param("afterId") long afterId, Pageable page);
+
+  /** Marks a Teamberatung 1:1 case read-only for colleagues once; a mark is kept. */
+  @Transactional
+  @Modifying(flushAutomatically = true)
+  @Query(
+      """
+      UPDATE Session s SET s.teamReadOnlySince = :now
+      WHERE s.id = :sessionId AND s.teamReadOnlySince IS NULL AND s.teamSession = true
+        AND (s.conversationType IS NULL
+          OR s.conversationType = de.caritas.cob.userservice.api.model.ConversationType.AGENCY_COUNSELLING)
+      """)
+  int markTeamReadOnly(@Param("sessionId") Long sessionId, @Param("now") LocalDateTime now);
+
+  /**
    * 1:1 cases with a centre that were created before the case sharing model was stamped, in id
    * order after {@code afterId}: the one-time snapshot of {@code CaseSharingModelSnapshotScheduler}
    * (FE#2494 *4).

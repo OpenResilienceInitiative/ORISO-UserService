@@ -52,6 +52,13 @@ class TeamSessionReadOnlyServiceTest {
   }
 
   @Test
+  void enforceAfterCommitMarksTheCaseForTheRepairJob() {
+    service.enforceAfterCommit(42L);
+
+    verify(sessions).markTeamReadOnly(eq(42L), any());
+  }
+
+  @Test
   void aGroupChatIsNeverLoweredEvenWithTheTeamFlag() {
     var session = session();
     session.setConversationType(ConversationType.INTERNAL_GROUP);

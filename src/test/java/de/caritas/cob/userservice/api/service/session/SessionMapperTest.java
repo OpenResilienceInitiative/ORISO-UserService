@@ -33,6 +33,18 @@ import org.junit.jupiter.api.Test;
 class SessionMapperTest {
 
   @Test
+  void sessionDtoCarriesTheCaseSharingModelTheCaseWasCreatedUnder() {
+    // FE#2494 *4: the UI offers case handover by the case's own model.
+    Session session = new EasyRandom().nextObject(Session.class);
+    session.setCaseSharingModel(de.caritas.cob.userservice.api.model.CaseSharingModel.NONE);
+    org.junit.jupiter.api.Assertions.assertEquals(
+        "NONE", new SessionMapper().convertToSessionDTO(session).getCaseSharingModel());
+    session.setCaseSharingModel(null);
+    org.junit.jupiter.api.Assertions.assertNull(
+        new SessionMapper().convertToSessionDTO(session).getCaseSharingModel());
+  }
+
+  @Test
   void serializedSessionShouldCarryBothParticipantsStoredAvatarChoices() throws Exception {
     Session session = new EasyRandom().nextObject(Session.class);
     session.getUser().setAvatarId("fox");

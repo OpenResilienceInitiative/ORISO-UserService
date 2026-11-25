@@ -51,11 +51,16 @@ public class TeamSessionReadOnlyService {
   private final @NonNull SessionSupervisorRepository supervisors;
   private final @NonNull SessionRepository sessions;
 
-  /** Enforces once the caller's transaction has committed; a failure is logged and stays. */
+  /**
+   * Marks the case as read-only for colleagues in the caller's transaction and enforces once that
+   * transaction has committed; {@code TeamSessionReadOnlyRepairScheduler} repairs a failure. Only
+   * Teamberatung 1:1 cases are marked.
+   */
   public void enforceAfterCommit(Long sessionId) {
     if (sessionId == null) {
       return;
     }
+    sessions.markTeamReadOnly(sessionId, java.time.LocalDateTime.now(java.time.ZoneOffset.UTC));
     if (!TransactionSynchronizationManager.isSynchronizationActive()) {
       enforceSafely(sessionId);
       return;
@@ -69,7 +74,7 @@ public class TeamSessionReadOnlyService {
         });
   }
 
-  /** Never throws; a failure is logged and stays until the next accept or reassignment. */
+  /** Never throws; a failure stays for the repair job. */
   public void enforceSafely(Long sessionId) {
     try {
       sessions.findById(sessionId).ifPresent(this::enforce);

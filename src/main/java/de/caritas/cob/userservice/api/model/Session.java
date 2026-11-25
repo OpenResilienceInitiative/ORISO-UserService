@@ -199,6 +199,14 @@ public class Session implements TenantAware, SessionRoom {
   @Nullable
   private CaseSharingModel caseSharingModel;
 
+  /**
+   * FE#2494 *4: when the case became read-only for colleagues (accepted or reassigned as a
+   * Teamberatung case). Null for a case accepted before that existed: it stays as it is.
+   */
+  @Column(name = "team_read_only_since", columnDefinition = "datetime")
+  @Nullable
+  private LocalDateTime teamReadOnlySince;
+
   @Column(nullable = false, columnDefinition = "bit default false")
   private Boolean isConsultantDirectlySet;
 

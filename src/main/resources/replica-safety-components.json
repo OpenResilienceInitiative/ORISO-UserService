@@ -1256,6 +1256,30 @@
       }
     },
     {
+      "id": "team-session-read-only-repair",
+      "source": "src/main/java/de/caritas/cob/userservice/api/service/session/TeamSessionReadOnlyRepairScheduler.java",
+      "kind": "scheduler",
+      "owner": "team-counselling",
+      "risk": "duplicate-side-effect",
+      "components": [
+        "repair"
+      ],
+      "decision": "Uses a database lease to re-apply the Matrix reader power level to team cases marked read-only at accept or reassignment, in id batches. It never reads the centre's model; a repeated or concurrent run converges on the same state.",
+      "signals": [
+        "userservice.scheduler.executions",
+        "userservice.scheduler.duration"
+      ],
+      "status": "bounded",
+      "claim": {
+        "mechanism": "scheduled-task-claim",
+        "evidence": [
+          {
+            "contains": ["claims.tryClaimLease(", "TASK", "claims.runIfHeld("]
+          }
+        ]
+      }
+    },
+    {
       "id": "case-sharing-model-snapshot",
       "source": "src/main/java/de/caritas/cob/userservice/api/service/session/CaseSharingModelSnapshotScheduler.java",
       "kind": "scheduler",

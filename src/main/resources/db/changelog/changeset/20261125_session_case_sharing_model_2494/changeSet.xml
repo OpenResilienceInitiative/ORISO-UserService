@@ -25,4 +25,18 @@
     </update>
     <rollback><sql>SELECT 1</sql></rollback>
   </changeSet>
+  <!--
+    FE#2494 *4: when a Teamberatung case became read-only for colleagues (accept or reassignment
+    after this release). NULL for cases accepted before: they stay as they are, and the repair job
+    of TeamSessionReadOnlyRepairScheduler only touches marked cases.
+  -->
+  <changeSet id="20261125-session-team-read-only-since-2494" author="oriso">
+    <preConditions onFail="MARK_RAN" onError="HALT">
+      <not><columnExists tableName="session" columnName="team_read_only_since"/></not>
+    </preConditions>
+    <addColumn tableName="session">
+      <column name="team_read_only_since" type="datetime"/>
+    </addColumn>
+    <rollback><sql>SELECT 1</sql></rollback>
+  </changeSet>
 </databaseChangeLog>
