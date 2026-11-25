@@ -353,11 +353,13 @@ class SessionRepositoryIT {
     assertEquals(List.of(oneToOne.getId()), found.stream().map(Session::getId).toList());
   }
 
-  /** FE#2494 *4: the read-only sweep touches Teamberatung 1:1 cases, never team group chats. */
+  /**
+   * FE#2494 *4: the snapshot stamps unstamped 1:1 cases with a centre once, never group chats or
+   * live chat, and a stamp is never overwritten.
+   */
   @Test
-  void findTeamReadOnlyCandidates_Should_SkipGroupChats_AndKeepOneToOneAndLegacyCases() {
+  void findUnstampedCaseIds_Should_SkipGroupChatsAndStampedCases_AndStampOnlyOnce() {
     givenAUser();
-    var consultant = consultantRepository.findAll().iterator().next();
     var ids = new java.util.ArrayList<Long>();
     for (var type :
         java.util.Arrays.asList(
@@ -366,41 +368,47 @@ class SessionRepositoryIT {
             ConversationType.INTERNAL_GROUP,
             ConversationType.SELF_HELP,
             ConversationType.LIVE_CHAT)) {
-      var team = validSession(null, 1);
-      team.setConsultant(consultant);
-      team.setTeamSession(true);
-      team.setStatus(SessionStatus.IN_PROGRESS);
-      team.setMatrixRoomId("!team-" + ids.size() + ":matrix.example");
-      team.setConversationType(type);
-      ids.add(underTest.save(team).getId());
+      var unstamped = validSession(null, 1);
+      unstamped.setAgencyId(5L);
+      unstamped.setConversationType(type);
+      ids.add(underTest.save(unstamped).getId());
     }
+    var stamped = validSession(null, 1);
+    stamped.setAgencyId(5L);
+    stamped.setCaseSharingModel(de.caritas.cob.userservice.api.model.CaseSharingModel.NONE);
+    var stampedId = underTest.save(stamped).getId();
     entityManager.flush();
     entityManager.clear();
 
     var found =
-        underTest.findTeamReadOnlyCandidates(
-            SessionStatus.IN_PROGRESS,
-            ids.get(0) - 1,
-            org.springframework.data.domain.PageRequest.of(0, 50));
+        underTest.findUnstampedCaseIds(
+            ids.get(0) - 1, org.springframework.data.domain.PageRequest.of(0, 50));
 
     assertEquals(ids.subList(0, 2), found, "found " + found + " of " + ids);
-    assertFalse(found.contains(ids.get(2)));
-    assertFalse(found.contains(ids.get(3)));
-    assertFalse(found.contains(ids.get(4)));
+    assertFalse(found.contains(stampedId));
 
-    // The cursor and the page size hold: after the first eligible case, one per page.
+    // The cursor and the page size hold.
     assertEquals(
         List.of(ids.get(1)),
-        underTest.findTeamReadOnlyCandidates(
-            SessionStatus.IN_PROGRESS,
-            ids.get(0),
-            org.springframework.data.domain.PageRequest.of(0, 1)));
+        underTest.findUnstampedCaseIds(
+            ids.get(0), org.springframework.data.domain.PageRequest.of(0, 1)));
+
     assertEquals(
-        List.of(ids.get(0)),
-        underTest.findTeamReadOnlyCandidates(
-            SessionStatus.IN_PROGRESS,
-            ids.get(0) - 1,
-            org.springframework.data.domain.PageRequest.of(0, 1)));
+        1,
+        underTest.stampCaseSharingModel(
+            ids.get(0), de.caritas.cob.userservice.api.model.CaseSharingModel.CASE_HANDOVER));
+    assertEquals(
+        0,
+        underTest.stampCaseSharingModel(
+            stampedId, de.caritas.cob.userservice.api.model.CaseSharingModel.CASE_HANDOVER));
+    entityManager.clear();
+    assertEquals(
+        de.caritas.cob.userservice.api.model.CaseSharingModel.NONE,
+        underTest.findById(stampedId).orElseThrow().getCaseSharingModel());
+    assertEquals(
+        List.of(ids.get(1)),
+        underTest.findUnstampedCaseIds(
+            ids.get(0) - 1, org.springframework.data.domain.PageRequest.of(0, 50)));
   }
 
   @ParameterizedTest

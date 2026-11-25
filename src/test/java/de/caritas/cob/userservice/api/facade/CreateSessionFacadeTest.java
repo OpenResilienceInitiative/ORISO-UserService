@@ -17,6 +17,7 @@ import static de.caritas.cob.userservice.api.testHelper.TestConstants.USER_SESSI
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.is;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
@@ -78,6 +79,8 @@ class CreateSessionFacadeTest {
 
   @Mock private DirectSessionMatrixRoomService directSessionMatrixRoomService;
 
+  @Mock private de.caritas.cob.userservice.api.service.agency.CaseSharingGate caseSharingGate;
+
   private static final Long TOPIC_ID_SERVED_BY_AGENCY = 3L;
   private static final Long MAIN_TOPIC_ID_NOT_SERVED_BY_AGENCY = 1L;
 
@@ -98,7 +101,8 @@ class CreateSessionFacadeTest {
             userAccountProvider,
             consultantAgencyRepository,
             agencyPreAssignmentRoomService,
-            directSessionMatrixRoomService);
+            directSessionMatrixRoomService,
+            caseSharingGate);
     logCaptor = LogbackCaptor.attach(LogService.class);
   }
 
@@ -217,6 +221,46 @@ class CreateSessionFacadeTest {
             USER_DTO_SUCHT, USER, CONSULTING_TYPE_SETTINGS_SUCHT, validationConstraints);
 
     assertEquals(SESSION_WITHOUT_CONSULTANT.getId(), result);
+  }
+
+  @Test
+  void createUserSession_Should_StampTheCaseSharingModelTheCaseIsCreatedUnder() {
+    // FE#2494 *4: the case keeps this model; a later centre switch affects new cases only.
+    var created = new EasyRandom().nextObject(Session.class);
+    created.setTeamSession(false);
+    created.setCaseSharingModel(null);
+    when(sessionService.getSessionsForUserId(USER_ID))
+        .thenReturn(USER_SESSION_RESPONSE_DTO_LIST_U25);
+    when(agencyVerifier.getVerifiedAgency(AGENCY_ID, 0)).thenReturn(AGENCY_DTO_U25);
+    when(sessionService.initializeSession(any(), any(), any(Boolean.class))).thenReturn(created);
+    when(caseSharingGate.modelForNewCase(created.getAgencyId(), created.getTenantId(), false))
+        .thenReturn(de.caritas.cob.userservice.api.model.CaseSharingModel.NONE);
+
+    createSessionFacade.createUserSession(
+        USER_DTO_SUCHT, USER, CONSULTING_TYPE_SETTINGS_SUCHT, validationConstraints);
+
+    assertEquals(
+        de.caritas.cob.userservice.api.model.CaseSharingModel.NONE, created.getCaseSharingModel());
+    verify(sessionService).saveSession(created);
+  }
+
+  @Test
+  void createUserSession_Should_LeaveTheStampToTheSnapshot_When_TheSettingIsUnreadable() {
+    var created = new EasyRandom().nextObject(Session.class);
+    created.setTeamSession(false);
+    created.setCaseSharingModel(null);
+    when(sessionService.getSessionsForUserId(USER_ID))
+        .thenReturn(USER_SESSION_RESPONSE_DTO_LIST_U25);
+    when(agencyVerifier.getVerifiedAgency(AGENCY_ID, 0)).thenReturn(AGENCY_DTO_U25);
+    when(sessionService.initializeSession(any(), any(), any(Boolean.class))).thenReturn(created);
+
+    Long result =
+        createSessionFacade.createUserSession(
+            USER_DTO_SUCHT, USER, CONSULTING_TYPE_SETTINGS_SUCHT, validationConstraints);
+
+    assertEquals(created.getId(), result);
+    assertNull(created.getCaseSharingModel());
+    verify(sessionService, never()).saveSession(created);
   }
 
   @Test

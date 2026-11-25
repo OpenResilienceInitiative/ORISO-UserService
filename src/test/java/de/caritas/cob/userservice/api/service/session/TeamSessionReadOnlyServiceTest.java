@@ -44,16 +44,11 @@ class TeamSessionReadOnlyServiceTest {
   @Mock ConsultantRepository consultants;
   @Mock SessionSupervisorRepository supervisors;
   @Mock SessionRepository sessions;
-  @Mock de.caritas.cob.userservice.api.service.agency.CaseSharingGate caseSharing;
-  @Mock de.caritas.cob.userservice.api.config.observability.TeamSessionReadOnlyMetrics metrics;
   TeamSessionReadOnlyService service;
 
   @BeforeEach
   void setUp() {
-    service =
-        new TeamSessionReadOnlyService(
-            matrix, consultants, supervisors, sessions, caseSharing, metrics);
-    lenient().when(caseSharing.teamCounsellingMode(7L, 1L)).thenReturn(Optional.of(true));
+    service = new TeamSessionReadOnlyService(matrix, consultants, supervisors, sessions);
   }
 
   @Test
@@ -127,7 +122,7 @@ class TeamSessionReadOnlyServiceTest {
   }
 
   @Test
-  void theSweepLowersAFormerOwnerWhoseAfterCommitRunFailed() {
+  void aRepeatedRunLowersAnEqualPowerFormerOwner() {
     var session = current(session());
     when(matrix.getRoomMembers(ROOM)).thenReturn(Optional.of(List.of(OWNER, FORMER_OWNER)));
     when(consultants.findAllByMatrixUserIdInAndDeleteDateIsNull(List.of(FORMER_OWNER)))
@@ -139,7 +134,7 @@ class TeamSessionReadOnlyServiceTest {
     when(matrix.makeUserReadOnly(ROOM, FORMER_OWNER, -1, OWNER, "owner-token", "former-token"))
         .thenReturn(Optional.of(-1));
 
-    service.repairSafely(42L);
+    service.enforceSafely(42L);
 
     verify(matrix).makeUserReadOnly(ROOM, FORMER_OWNER, -1, OWNER, "owner-token", "former-token");
     verify(matrix, never())
@@ -215,35 +210,17 @@ class TeamSessionReadOnlyServiceTest {
   }
 
   @Test
-  void aCentreThatLeftTeamberatungLowersNobody() {
-    var session = current(session());
-    when(caseSharing.teamCounsellingMode(7L, 1L)).thenReturn(Optional.of(false));
-    givenOwnerAndColleagueAtPower(100, 0);
-
-    assertThat(service.enforce(session)).isTrue();
-    verify(matrix, never()).makeUserReadOnly(any(), any(), eq(-1), any(), any(), any());
-  }
-
-  @Test
-  void anUnreadableSettingLowersNobodyAndStaysPending() {
-    var session = current(session());
-    when(caseSharing.teamCounsellingMode(7L, 1L)).thenReturn(Optional.empty());
-    givenOwnerAndColleagueAtPower(100, 0);
-
-    assertThat(service.enforce(session)).isFalse();
-    verify(matrix, never()).makeUserReadOnly(any(), any(), eq(-1), any(), any(), any());
-    verify(metrics).recordModeUnresolved();
-  }
-
-  @Test
-  void aTeamCaseWithoutACentreLowersNobodyAndStaysPending() {
+  void aTeamCaseStaysReadOnlyWhateverTheCentreChoseSince() {
+    // FE#2494 *4 (Frank, 2026-11-25): the case keeps the model it was created under; the centre's
+    // current setting is not part of the decision, and a case without a centre is no exception.
     var session = current(session());
     session.setAgencyId(null);
     givenOwnerAndColleagueAtPower(100, 0);
+    when(matrix.makeUserReadOnly(ROOM, COLLEAGUE, -1, OWNER, "owner-token", null))
+        .thenReturn(Optional.of(-1));
 
-    assertThat(service.enforce(session)).isFalse();
-    verify(matrix, never()).makeUserReadOnly(any(), any(), eq(-1), any(), any(), any());
-    verify(metrics).recordNoCentre();
+    assertThat(service.enforce(session)).isTrue();
+    verify(matrix).makeUserReadOnly(ROOM, COLLEAGUE, -1, OWNER, "owner-token", null);
   }
 
   private void givenOwnerAndColleagueAtPower(int owner, int colleague) {
@@ -270,7 +247,7 @@ class TeamSessionReadOnlyServiceTest {
   }
 
   @Test
-  void unreadableMembersOrARefusedWriteStaysPendingForTheRepairJob() {
+  void unreadableMembersOrARefusedWriteReportsIncomplete() {
     var session = current(session());
     when(matrix.getRoomMembers(ROOM)).thenReturn(Optional.empty());
     assertThat(service.enforce(session)).isFalse();

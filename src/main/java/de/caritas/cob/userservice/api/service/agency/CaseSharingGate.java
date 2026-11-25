@@ -6,7 +6,9 @@ import de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHt
 import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
 import de.caritas.cob.userservice.api.exception.httpresponses.ServiceUnavailableException;
 import de.caritas.cob.userservice.api.exception.httpresponses.customheader.HttpStatusExceptionReason;
+import de.caritas.cob.userservice.api.model.CaseSharingModel;
 import de.caritas.cob.userservice.api.model.ConversationType;
+import java.util.Optional;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -52,34 +54,67 @@ public class CaseSharingGate {
   }
 
   /**
-   * FE#2494 *4: whether the centre's current case sharing model is Teamberatung, so colleagues may
-   * read its team cases. An AgencyService that predates #374 serves no {@code caseSharing}; then
-   * the session's own team flag (checked by the caller) decides alone. A refused or failed read is
-   * "no": nobody gains read access on an unknown setting.
+   * FE#2494 *4: the case keeps the model it was created under. A stamped case is decided by its
+   * stamp alone, whatever the centre chose since; only a case created before the stamp existed
+   * falls back to the centre's current model until the snapshot job stamps it.
    */
-  public boolean isTeamCounselling(Long agencyId, Long tenantId) {
-    return teamCounsellingMode(agencyId, tenantId).orElse(false);
+  public void requireCaseHandover(
+      Long agencyId, Long tenantId, ConversationType type, CaseSharingModel stamped) {
+    if (stamped == null) {
+      requireCaseHandover(agencyId, tenantId, type);
+      return;
+    }
+    if ((type != null && type != ConversationType.AGENCY_COUNSELLING)
+        || stamped != CaseSharingModel.CASE_HANDOVER) {
+      throw featureDisabled();
+    }
   }
 
   /**
-   * As {@link #isTeamCounselling}, but empty when the setting could not be read or was not served,
-   * so a caller can retry instead of treating either as "not Teamberatung". Only a served policy
-   * that names another model is a definite "no".
+   * FE#2494 *4: the centre's current case sharing model, to stamp on a case. Empty when the setting
+   * could not be read or was not served, so the caller retries instead of guessing. An
+   * AgencyService that predates #374 serves no {@code caseSharing}: that legacy centre offered case
+   * handover under the Traeger master switch, which the handover caller still checks.
    */
-  public java.util.Optional<Boolean> teamCounsellingMode(Long agencyId, Long tenantId) {
+  public Optional<CaseSharingModel> currentModel(Long agencyId, Long tenantId) {
     Settings settings;
     try {
       settings = readSettings(agencyId, tenantId);
     } catch (RuntimeException unavailableOrRefused) {
-      return java.util.Optional.empty();
+      return Optional.empty();
     }
     if (settings == null) {
-      return java.util.Optional.empty();
+      return Optional.empty();
     }
     AgencyCaseSharingPolicy caseSharing = settings.getCaseSharing();
-    return java.util.Optional.of(
-        caseSharing == null
-            || caseSharing.getValue() == AgencyCaseSharingPolicy.ValueEnum.TEAM_COUNSELLING);
+    if (caseSharing == null) {
+      return Optional.of(CaseSharingModel.CASE_HANDOVER);
+    }
+    if (caseSharing.getValue() == null) {
+      // a served policy without a value refuses case handover, as requireCaseHandover does
+      return Optional.of(CaseSharingModel.NONE);
+    }
+    return Optional.of(CaseSharingModel.valueOf(caseSharing.getValue().name()));
+  }
+
+  /**
+   * FE#2494 *4: the model to stamp on a case being created. A team flag means Teamberatung without
+   * a further read. Otherwise the centre's current model, except that a centre whose team flag and
+   * setting disagree in this instant is not read as Teamberatung. Null when the setting cannot be
+   * read; the snapshot job stamps such a case later.
+   */
+  public CaseSharingModel modelForNewCase(Long agencyId, Long tenantId, boolean teamSession) {
+    if (teamSession) {
+      return CaseSharingModel.TEAM_COUNSELLING;
+    }
+    if (agencyId == null) {
+      return null;
+    }
+    return currentModel(agencyId, tenantId)
+        .map(
+            model ->
+                model == CaseSharingModel.TEAM_COUNSELLING ? CaseSharingModel.CASE_HANDOVER : model)
+        .orElse(null);
   }
 
   private Settings readSettings(Long agencyId, Long tenantId) {

@@ -6,6 +6,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import de.caritas.cob.userservice.agencyserivce.generated.web.model.AgencyCaseSharingPolicy;
@@ -14,11 +15,13 @@ import de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHt
 import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
 import de.caritas.cob.userservice.api.exception.httpresponses.ServiceUnavailableException;
 import de.caritas.cob.userservice.api.exception.httpresponses.customheader.HttpStatusExceptionReason;
+import de.caritas.cob.userservice.api.model.CaseSharingModel;
 import de.caritas.cob.userservice.api.model.ConversationType;
 import java.util.Optional;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.EnumSource;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
@@ -120,57 +123,96 @@ class CaseSharingGateTest {
   }
 
   @Test
-  void isTeamCounselling_onlyWhileTheCentreHasChosenTeamberatung() {
+  void aCaseStampedAsCaseHandoverKeepsItAfterTheCentreSwitched() {
+    // FE#2494 *4: the stamp decides; the centre's current model is not read.
+    gate.requireCaseHandover(
+        5L, 1L, ConversationType.AGENCY_COUNSELLING, CaseSharingModel.CASE_HANDOVER);
+    verifyNoInteractions(lookup);
+  }
+
+  @ParameterizedTest
+  @EnumSource(
+      value = CaseSharingModel.class,
+      names = {"TEAM_COUNSELLING", "NONE"})
+  void aCaseStampedAsAnotherModelNeverOffersCaseHandover(CaseSharingModel stamped) {
+    assertThatThrownBy(
+            () -> gate.requireCaseHandover(5L, 1L, ConversationType.AGENCY_COUNSELLING, stamped))
+        .isInstanceOfSatisfying(
+            CustomValidationHttpStatusException.class,
+            error -> assertThat(error.getHttpStatus()).isEqualTo(HttpStatus.FORBIDDEN));
+  }
+
+  @Test
+  void aStampedCaseStaysMailberatungOnly() {
+    assertThatThrownBy(
+            () ->
+                gate.requireCaseHandover(
+                    5L, 1L, ConversationType.LIVE_CHAT, CaseSharingModel.CASE_HANDOVER))
+        .isInstanceOf(CustomValidationHttpStatusException.class);
+  }
+
+  @Test
+  void anUnstampedCaseFallsBackToTheCentresCurrentModel() {
     givenMode(AgencyCaseSharingPolicy.ValueEnum.TEAM_COUNSELLING);
-    assertThat(gate.isTeamCounselling(5L, 1L)).isTrue();
+    assertThatThrownBy(
+            () -> gate.requireCaseHandover(5L, 1L, ConversationType.AGENCY_COUNSELLING, null))
+        .isInstanceOf(CustomValidationHttpStatusException.class);
+  }
+
+  @ParameterizedTest
+  @EnumSource(AgencyCaseSharingPolicy.ValueEnum.class)
+  void currentModel_namesTheServedModel(AgencyCaseSharingPolicy.ValueEnum served) {
+    givenMode(served);
+    assertThat(gate.currentModel(5L, 1L)).contains(CaseSharingModel.valueOf(served.name()));
   }
 
   @Test
-  void isTeamCounselling_isFalseAfterASwitchToCaseHandoverOrNone() {
-    givenMode(AgencyCaseSharingPolicy.ValueEnum.CASE_HANDOVER);
-    assertThat(gate.isTeamCounselling(5L, 1L)).isFalse();
-    givenMode(AgencyCaseSharingPolicy.ValueEnum.NONE);
-    assertThat(gate.isTeamCounselling(5L, 1L)).isFalse();
-  }
-
-  @Test
-  void isTeamCounselling_failsClosedWhenTheSettingCannotBeRead() {
+  void currentModel_isUnknownWhenTheSettingCannotBeReadOrIsNotServed() {
     when(lookup.findEffectiveSettings(5L, 1L))
-        .thenThrow(new org.springframework.web.client.ResourceAccessException("down"));
-    assertThat(gate.isTeamCounselling(5L, 1L)).isFalse();
+        .thenThrow(new ResourceAccessException("down"))
+        .thenReturn(Optional.empty());
+    assertThat(gate.currentModel(5L, 1L)).isEmpty();
+    assertThat(gate.currentModel(5L, 1L)).isEmpty();
   }
 
   @Test
-  void isTeamCounselling_isFalseWithoutSettings_butTheModeStaysUnknown() {
-    when(lookup.findEffectiveSettings(5L, 1L)).thenReturn(Optional.empty());
-    assertThat(gate.isTeamCounselling(5L, 1L)).isFalse();
-    assertThat(gate.teamCounsellingMode(5L, 1L)).isEmpty();
-  }
-
-  @Test
-  void teamCounsellingMode_isUnknownWhenTheSettingCannotBeRead() {
-    when(lookup.findEffectiveSettings(5L, 1L))
-        .thenThrow(new org.springframework.web.client.ResourceAccessException("down"));
-    assertThat(gate.teamCounsellingMode(5L, 1L)).isEmpty();
-  }
-
-  @Test
-  void teamCounsellingMode_isADefiniteNoOnlyForAServedOtherModel() {
-    givenMode(AgencyCaseSharingPolicy.ValueEnum.CASE_HANDOVER);
-    assertThat(gate.teamCounsellingMode(5L, 1L)).contains(false);
-  }
-
-  @Test
-  void isTeamCounselling_keepsTheLegacyDefaultWhenNoPolicyIsServed() {
+  void currentModel_isCaseHandoverForALegacyCentreWithoutAPolicy() {
     when(lookup.findEffectiveSettings(5L, 1L)).thenReturn(Optional.of(new Settings()));
-    assertThat(gate.isTeamCounselling(5L, 1L)).isTrue();
+    assertThat(gate.currentModel(5L, 1L)).contains(CaseSharingModel.CASE_HANDOVER);
   }
 
   @Test
-  void isTeamCounselling_isFalseForAServedPolicyWithoutAValue() {
+  void currentModel_isNoneForAServedPolicyWithoutAValue() {
     when(lookup.findEffectiveSettings(5L, 1L))
         .thenReturn(Optional.of(new Settings(new AgencyCaseSharingPolicy())));
-    assertThat(gate.isTeamCounselling(5L, 1L)).isFalse();
+    assertThat(gate.currentModel(5L, 1L)).contains(CaseSharingModel.NONE);
+  }
+
+  @Test
+  void modelForNewCase_isTeamberatungForATeamCaseWithoutARead() {
+    assertThat(gate.modelForNewCase(5L, 1L, true)).isEqualTo(CaseSharingModel.TEAM_COUNSELLING);
+    verifyNoInteractions(lookup);
+  }
+
+  @Test
+  void modelForNewCase_takesTheCentresModelForAnyOtherCase() {
+    givenMode(AgencyCaseSharingPolicy.ValueEnum.NONE);
+    assertThat(gate.modelForNewCase(5L, 1L, false)).isEqualTo(CaseSharingModel.NONE);
+    givenMode(AgencyCaseSharingPolicy.ValueEnum.CASE_HANDOVER);
+    assertThat(gate.modelForNewCase(5L, 1L, false)).isEqualTo(CaseSharingModel.CASE_HANDOVER);
+  }
+
+  @Test
+  void modelForNewCase_neverStampsANonTeamCaseAsTeamberatung() {
+    givenMode(AgencyCaseSharingPolicy.ValueEnum.TEAM_COUNSELLING);
+    assertThat(gate.modelForNewCase(5L, 1L, false)).isEqualTo(CaseSharingModel.CASE_HANDOVER);
+  }
+
+  @Test
+  void modelForNewCase_leavesTheStampToTheSnapshotWhenUnreadable() {
+    when(lookup.findEffectiveSettings(5L, 1L)).thenThrow(new ResourceAccessException("down"));
+    assertThat(gate.modelForNewCase(5L, 1L, false)).isNull();
+    assertThat(gate.modelForNewCase(null, 1L, false)).isNull();
   }
 
   private void requireMailberatung() {

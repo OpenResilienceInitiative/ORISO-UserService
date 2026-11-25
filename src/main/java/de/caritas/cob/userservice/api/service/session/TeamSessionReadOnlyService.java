@@ -2,7 +2,6 @@ package de.caritas.cob.userservice.api.service.session;
 
 import static org.apache.commons.lang3.StringUtils.isBlank;
 
-import de.caritas.cob.userservice.api.config.observability.TeamSessionReadOnlyMetrics;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.SessionSupervisor;
@@ -10,7 +9,6 @@ import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.port.out.SessionSupervisorRepository;
 import de.caritas.cob.userservice.api.port.out.TeamSessionRoomAccess;
-import de.caritas.cob.userservice.api.service.agency.CaseSharingGate;
 import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.Map;
@@ -30,15 +28,16 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
  * and active supervisors keep their level. A takeover (absence cover) makes its counsellor the
  * owner, so it keeps writing; a co-access grant is a reader by design.
  *
- * <p>Applies only to 1:1 counselling cases ({@link Session#isTeamCounsellingCase()}), never to
- * group chats, and lowers colleagues only while the centre currently resolves to Teamberatung
- * (decision A, 2026-11-23: all Teamberatung centres, including existing cases). An unreadable
- * setting leaves the case pending for the repair job; it is never read as "not Teamberatung".
+ * <p>Applies only to 1:1 cases created as Teamberatung ({@link Session#isTeamCounsellingCase()}),
+ * never to group chats. The case keeps the model it was created under: a later switch of the centre
+ * changes nothing here, and there is no sweep converting existing cases (Frank, 2026-11-25,
+ * replacing decision "1 a" of 2026-11-23). Runs after accepting an enquiry and after a
+ * reassignment.
  *
  * <p>Lowers colleagues; the only raise restores an owner that a run racing a reassignment left
- * below a colleague. Every change re-reads the committed owner first, so it is safe to repeat and
- * the repair sweep can also lower an equal-power former owner. Matrix is the only hard boundary for
- * sending: there is no REST send endpoint.
+ * below a colleague. Every change re-reads the committed owner first, so a repeated run is safe and
+ * can also lower an equal-power former owner. Matrix is the only hard boundary for sending: there
+ * is no REST send endpoint.
  */
 @Service
 @RequiredArgsConstructor
@@ -51,10 +50,8 @@ public class TeamSessionReadOnlyService {
   private final @NonNull ConsultantRepository consultants;
   private final @NonNull SessionSupervisorRepository supervisors;
   private final @NonNull SessionRepository sessions;
-  private final @NonNull CaseSharingGate caseSharing;
-  private final @NonNull TeamSessionReadOnlyMetrics metrics;
 
-  /** Enforces once the caller's transaction has committed; the repair job retries a failure. */
+  /** Enforces once the caller's transaction has committed; a failure is logged and stays. */
   public void enforceAfterCommit(Long sessionId) {
     if (sessionId == null) {
       return;
@@ -72,12 +69,7 @@ public class TeamSessionReadOnlyService {
         });
   }
 
-  /** The repair sweep's entry; same as {@link #enforceSafely}. */
-  public void repairSafely(Long sessionId) {
-    enforceSafely(sessionId);
-  }
-
-  /** Never throws; a failure stays for the repair job. */
+  /** Never throws; a failure is logged and stays until the next accept or reassignment. */
   public void enforceSafely(Long sessionId) {
     try {
       sessions.findById(sessionId).ifPresent(this::enforce);
@@ -102,32 +94,13 @@ public class TeamSessionReadOnlyService {
     if (owner == null || isBlank(owner.getMatrixUserId()) || isBlank(roomId)) {
       return true;
     }
-    var teamMode =
-        session.getAgencyId() == null
-            ? java.util.Optional.<Boolean>empty()
-            : caseSharing.teamCounsellingMode(session.getAgencyId(), session.getTenantId());
-    boolean lowerColleagues = teamMode.orElse(false);
-    boolean modeKnown = teamMode.isPresent();
-    if (!modeKnown) {
-      if (session.getAgencyId() == null) {
-        metrics.recordNoCentre();
-        log.warn("Team read-only access for session {} stays pending: no centre", session.getId());
-      } else {
-        metrics.recordModeUnresolved();
-        log.warn(
-            "Team read-only access for session {} stays pending: the case sharing model of centre"
-                + " {} could not be resolved",
-            session.getId(),
-            session.getAgencyId());
-      }
-    }
     var members = matrix.getRoomMembers(roomId);
     if (members.isEmpty()) {
       return false;
     }
     Set<String> colleagueIds = colleagueMatrixIds(session, owner, members.get());
     if (colleagueIds.isEmpty()) {
-      return modeKnown;
+      return true;
     }
     String ownerToken = matrix.loginAsUserAccessToken(owner.getMatrixUserId());
     if (isBlank(ownerToken)) {
@@ -168,9 +141,6 @@ public class TeamSessionReadOnlyService {
         return false;
       }
       ownerPower = highestPower;
-    }
-    if (!lowerColleagues) {
-      return modeKnown;
     }
     boolean complete = true;
     for (String colleagueId : colleagueIds) {

@@ -1,6 +1,7 @@
 package de.caritas.cob.userservice.api.port.out;
 
 import de.caritas.cob.userservice.api.model.CaseHandoverRequest;
+import de.caritas.cob.userservice.api.model.CaseSharingModel;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.HandoverCandidate;
 import de.caritas.cob.userservice.api.model.Session;
@@ -211,21 +212,29 @@ public interface SessionRepository extends CrudRepository<Session, Long>, Sessio
       boolean isTeamSession);
 
   /**
-   * Accepted Teamberatung 1:1 cases with a case room (group chats excluded), in id order after
-   * {@code afterId}: the sweep of {@code TeamSessionReadOnlyRepairScheduler} (FE#2494 *4, decision
-   * d).
+   * 1:1 cases with a centre that were created before the case sharing model was stamped, in id
+   * order after {@code afterId}: the one-time snapshot of {@code CaseSharingModelSnapshotScheduler}
+   * (FE#2494 *4).
    */
   @Query(
       """
       select s.id from Session s
-      where s.teamSession = true and s.status = :status and s.consultant is not null
+      where s.caseSharingModel is null and s.agencyId is not null
         and (s.conversationType is null
           or s.conversationType = de.caritas.cob.userservice.api.model.ConversationType.AGENCY_COUNSELLING)
-        and s.matrixRoomId is not null and s.id > :afterId
+        and s.id > :afterId
       order by s.id asc
       """)
-  List<Long> findTeamReadOnlyCandidates(
-      @Param("status") SessionStatus status, @Param("afterId") long afterId, Pageable page);
+  List<Long> findUnstampedCaseIds(@Param("afterId") long afterId, Pageable page);
+
+  /** Stamps the model once; a case that already carries one keeps it. */
+  @Transactional
+  @Modifying(flushAutomatically = true)
+  @Query(
+      "UPDATE Session session SET session.caseSharingModel = :model"
+          + " WHERE session.id = :sessionId AND session.caseSharingModel IS NULL")
+  int stampCaseSharingModel(
+      @Param("sessionId") Long sessionId, @Param("model") CaseSharingModel model);
 
   /**
    * Find metadata-only case handover candidates in the requester's agencies. These sessions are

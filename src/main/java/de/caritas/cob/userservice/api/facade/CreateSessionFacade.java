@@ -23,6 +23,7 @@ import de.caritas.cob.userservice.api.model.Session.SessionStatus;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.out.ConsultantAgencyRepository;
 import de.caritas.cob.userservice.api.service.SessionDataService;
+import de.caritas.cob.userservice.api.service.agency.CaseSharingGate;
 import de.caritas.cob.userservice.api.service.session.AgencyPreAssignmentRoomService;
 import de.caritas.cob.userservice.api.service.session.DirectSessionMatrixRoomService;
 import de.caritas.cob.userservice.api.service.session.SessionService;
@@ -55,6 +56,7 @@ public class CreateSessionFacade {
   private final @NonNull ConsultantAgencyRepository consultantAgencyRepository;
   private final @NonNull AgencyPreAssignmentRoomService agencyPreAssignmentRoomService;
   private final @NonNull DirectSessionMatrixRoomService directSessionMatrixRoomService;
+  private final @NonNull CaseSharingGate caseSharingGate;
 
   /**
    * Creates a new session for the provided user.
@@ -161,6 +163,9 @@ public class CreateSessionFacade {
     sessionDataService.saveInitialSessionData(session, user, fromUserDTO(userDTO));
     session.setConsultant(consultant);
     session.setStatus(SessionStatus.IN_PROGRESS);
+    session.setCaseSharingModel(
+        caseSharingGate.modelForNewCase(
+            session.getAgencyId(), session.getTenantId(), session.isTeamSession()));
     session = sessionService.saveSession(session);
 
     directSessionMatrixRoomService.provisionRoomForDirectSession(session, consultant);
@@ -182,6 +187,7 @@ public class CreateSessionFacade {
       initialized = nonNull(session) && nonNull(session.getId());
       sessionId = initialized ? session.getId() : null;
       sessionDataService.saveInitialSessionData(session, user, sessionData);
+      stampCaseSharingModel(session);
 
       return session;
     } catch (Exception ex) {
@@ -204,6 +210,27 @@ public class CreateSessionFacade {
       var stepWord = initialized ? "save session data" : "initialize session";
       var message = String.format("Could not %s for user %s.", stepWord, user.getUsername());
       throw new InternalServerErrorException(message, ex);
+    }
+  }
+
+  /**
+   * FE#2494 *4: the case keeps the model it was created under. A failure leaves the stamp to the
+   * snapshot job and never fails the registration.
+   */
+  private void stampCaseSharingModel(Session session) {
+    try {
+      var model =
+          caseSharingGate.modelForNewCase(
+              session.getAgencyId(), session.getTenantId(), session.isTeamSession());
+      if (model != null) {
+        session.setCaseSharingModel(model);
+        sessionService.saveSession(session);
+      }
+    } catch (RuntimeException failure) {
+      log.warn(
+          "Case sharing model of session {} left to the snapshot job ({})",
+          session.getId(),
+          failure.getClass().getSimpleName());
     }
   }
 

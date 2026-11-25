@@ -190,6 +190,15 @@ public class Session implements TenantAware, SessionRoom {
   @JdbcTypeCode(SqlTypes.TINYINT)
   private boolean teamSession;
 
+  /**
+   * FE#2494 *4: the case sharing model this case was created under; a later centre switch does not
+   * change it. Null only for a case created before the column, until the snapshot job stamps it.
+   */
+  @Enumerated(EnumType.STRING)
+  @Column(name = "case_sharing_model", length = 32)
+  @Nullable
+  private CaseSharingModel caseSharingModel;
+
   @Column(nullable = false, columnDefinition = "bit default false")
   private Boolean isConsultantDirectlySet;
 
