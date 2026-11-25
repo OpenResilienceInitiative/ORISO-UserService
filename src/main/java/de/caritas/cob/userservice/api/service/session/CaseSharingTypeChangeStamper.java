@@ -1,6 +1,5 @@
 package de.caritas.cob.userservice.api.service.session;
 
-import de.caritas.cob.userservice.api.exception.httpresponses.ServiceUnavailableException;
 import de.caritas.cob.userservice.api.model.CaseSharingModel;
 import de.caritas.cob.userservice.api.model.Session.RegistrationType;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
@@ -36,13 +35,9 @@ public class CaseSharingTypeChangeStamper {
             agencyId, true, CaseSharingModel.TEAM_COUNSELLING, RegistrationType.ANONYMOUS);
     // Other cases: a Teamberatung centre switching back created them as "none"; a default centre
     // switching to Teamberatung created them under its current case sharing setting.
+    // A refused or unreadable settings read throws here and refuses the type change.
     var model =
-        toTeam ? caseSharing.modelForNewCase(agencyId, tenantId, false) : CaseSharingModel.NONE;
-    if (model == null) {
-      // Unreachable now: refuse the switch rather than let the snapshot read the new type later.
-      throw new ServiceUnavailableException(
-          "Case sharing settings of agency " + agencyId + " could not be read; type not changed");
-    }
+        toTeam ? caseSharing.requirePreSwitchModel(agencyId, tenantId) : CaseSharingModel.NONE;
     int other =
         sessions.stampUnstampedCasesOfAgency(agencyId, false, model, RegistrationType.ANONYMOUS);
     if (team + other > 0) {

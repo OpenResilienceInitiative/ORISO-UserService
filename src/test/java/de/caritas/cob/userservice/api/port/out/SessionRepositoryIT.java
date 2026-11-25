@@ -416,6 +416,20 @@ class SessionRepositoryIT {
     var team = unstampedCase(5L, ConversationType.AGENCY_COUNSELLING, true);
     var group = unstampedCase(5L, ConversationType.INTERNAL_GROUP, false);
     var otherCentre = unstampedCase(6L, ConversationType.AGENCY_COUNSELLING, false);
+    var liveChat = unstampedCase(5L, ConversationType.LIVE_CHAT, false);
+    var legacyAnonymous = validSession(null, 1);
+    legacyAnonymous.setAgencyId(5L);
+    legacyAnonymous.setConversationType(null);
+    legacyAnonymous.setRegistrationType(RegistrationType.ANONYMOUS);
+    legacyAnonymous.setTeamSession(false);
+    var legacyAnonymousId = underTest.save(legacyAnonymous).getId();
+    var legacyPostcode = validSession(null, 1);
+    legacyPostcode.setAgencyId(5L);
+    legacyPostcode.setConversationType(null);
+    legacyPostcode.setRegistrationType(RegistrationType.REGISTERED);
+    legacyPostcode.setPostcode("00000");
+    legacyPostcode.setTeamSession(false);
+    var legacyPostcodeId = underTest.save(legacyPostcode).getId();
     var stamped = validSession(null, 1);
     stamped.setAgencyId(5L);
     stamped.setConversationType(ConversationType.AGENCY_COUNSELLING);
@@ -434,6 +448,9 @@ class SessionRepositoryIT {
     assertEquals(null, modelOf(team), "the team flag is stamped by its own call");
     assertEquals(null, modelOf(group), "a group chat is no counselling case");
     assertEquals(null, modelOf(otherCentre));
+    assertEquals(null, modelOf(liveChat), "a live chat is no counselling case");
+    assertEquals(null, modelOf(legacyAnonymousId), "a legacy anonymous live chat neither");
+    assertEquals(null, modelOf(legacyPostcodeId), "a legacy 00000 live chat neither");
     assertEquals(CaseSharingModel.NONE, modelOf(stampedId), "a stamp is never overwritten");
   }
 

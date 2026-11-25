@@ -194,6 +194,34 @@ class CaseSharingGateTest {
     assertThat(gate.currentModel(5L, 1L)).contains(CaseSharingModel.NONE);
   }
 
+  /** CodeRabbit: before a type change, only a declared setting is a model; a refusal is none. */
+  @Test
+  void requirePreSwitchModel_returnsTheDeclaredSetting() {
+    givenMode(AgencyCaseSharingPolicy.ValueEnum.CASE_HANDOVER);
+    assertThat(gate.requirePreSwitchModel(5L, 1L)).isEqualTo(CaseSharingModel.CASE_HANDOVER);
+    givenMode(AgencyCaseSharingPolicy.ValueEnum.NONE);
+    assertThat(gate.requirePreSwitchModel(5L, 1L)).isEqualTo(CaseSharingModel.NONE);
+    givenMode(AgencyCaseSharingPolicy.ValueEnum.TEAM_COUNSELLING);
+    assertThat(gate.requirePreSwitchModel(5L, 1L)).isEqualTo(CaseSharingModel.NONE);
+    when(lookup.findEffectiveSettings(5L, 1L)).thenReturn(Optional.of(new Settings()));
+    assertThat(gate.requirePreSwitchModel(5L, 1L)).isEqualTo(CaseSharingModel.CASE_HANDOVER);
+  }
+
+  @Test
+  void requirePreSwitchModel_refusesWhenTheModelCannotBeEstablished() {
+    when(lookup.findEffectiveSettings(5L, 1L))
+        .thenThrow(new ForbiddenException("another tenant"))
+        .thenThrow(new ResourceAccessException("down"))
+        .thenThrow(new IllegalStateException("unexpected"))
+        .thenReturn(Optional.empty())
+        .thenReturn(Optional.of(new Settings(new AgencyCaseSharingPolicy())));
+    for (int read = 0; read < 5; read++) {
+      org.junit.jupiter.api.Assertions.assertThrows(
+          de.caritas.cob.userservice.api.exception.httpresponses.ServiceUnavailableException.class,
+          () -> gate.requirePreSwitchModel(5L, 1L));
+    }
+  }
+
   @Test
   void modelForNewCase_isTeamberatungForATeamCaseWithoutARead() {
     assertThat(gate.modelForNewCase(5L, 1L, true)).isEqualTo(CaseSharingModel.TEAM_COUNSELLING);

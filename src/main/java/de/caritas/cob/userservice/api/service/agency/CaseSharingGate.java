@@ -120,6 +120,43 @@ public class CaseSharingGate {
         .orElse(null);
   }
 
+  /**
+   * FE#2494 *4: the model a default centre's running non-team cases were created under, read right
+   * before the centre becomes Teamberatung. Unlike {@link #currentModel}, a refused, missing or
+   * unreadable settings read is no model: it throws, so the type change is refused instead of
+   * stamping "none". A declared setting is returned as is ("none" only when declared).
+   */
+  public CaseSharingModel requirePreSwitchModel(Long agencyId, Long tenantId) {
+    Settings settings;
+    try {
+      settings = readSettings(agencyId, tenantId);
+    } catch (RuntimeException notEstablished) {
+      throw preSwitchModelUnknown(agencyId, notEstablished.getClass().getSimpleName());
+    }
+    if (settings == null) {
+      throw preSwitchModelUnknown(agencyId, "no settings");
+    }
+    AgencyCaseSharingPolicy caseSharing = settings.getCaseSharing();
+    if (caseSharing == null) {
+      return CaseSharingModel.CASE_HANDOVER;
+    }
+    if (caseSharing.getValue() == null) {
+      throw preSwitchModelUnknown(agencyId, "policy without value");
+    }
+    var model = CaseSharingModel.valueOf(caseSharing.getValue().name());
+    // a centre still reading as Teamberatung created its non-team cases as "none"
+    return model == CaseSharingModel.TEAM_COUNSELLING ? CaseSharingModel.NONE : model;
+  }
+
+  private static ServiceUnavailableException preSwitchModelUnknown(Long agencyId, String reason) {
+    log.warn(
+        "Agency {} type change refused: case sharing model not established ({})", agencyId, reason);
+    return new ServiceUnavailableException(
+        "Case sharing settings of agency "
+            + agencyId
+            + " could not be established; type not changed");
+  }
+
   private Settings readSettings(Long agencyId, Long tenantId) {
     try {
       return effectiveAgencySettingsLookup.findEffectiveSettings(agencyId, tenantId).orElse(null);

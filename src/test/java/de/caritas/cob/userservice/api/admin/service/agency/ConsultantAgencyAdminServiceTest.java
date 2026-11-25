@@ -308,6 +308,10 @@ class ConsultantAgencyAdminServiceTest {
 
     consultantAgencyAdminService.endTeamCounsellingForNewCases(10L);
 
+    assertThat(first.isTeamConsultant()).isFalse();
+    assertThat(second.isTeamConsultant()).isFalse();
+    verify(consultantRepository).save(first);
+    verify(consultantRepository).save(second);
     verify(agencyService, org.mockito.Mockito.times(1)).getAgency(20L);
     verify(sessionRepository, org.mockito.Mockito.times(1))
         .existsTeamCase(org.mockito.ArgumentMatchers.eq(20L), any());

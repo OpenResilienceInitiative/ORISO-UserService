@@ -29,7 +29,7 @@ class CaseSharingTypeChangeStamperTest {
 
   @Test
   void aDefaultCentreBecomingTeamStampsItsCurrentHandoverModelFirst() {
-    when(gate.modelForNewCase(5L, 7L, false)).thenReturn(CaseSharingModel.CASE_HANDOVER);
+    when(gate.requirePreSwitchModel(5L, 7L)).thenReturn(CaseSharingModel.CASE_HANDOVER);
 
     stamper.stampBeforeTypeChange(5L, 7L, true);
 
@@ -55,7 +55,8 @@ class CaseSharingTypeChangeStamperTest {
 
   @Test
   void anUnreachableCentreRefusesTheSwitchAndLeavesItsOtherCasesUnstamped() {
-    when(gate.modelForNewCase(5L, 7L, false)).thenReturn(null);
+    when(gate.requirePreSwitchModel(5L, 7L))
+        .thenThrow(new ServiceUnavailableException("not established"));
 
     assertThrows(
         ServiceUnavailableException.class, () -> stamper.stampBeforeTypeChange(5L, 7L, true));
