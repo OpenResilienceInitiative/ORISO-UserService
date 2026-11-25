@@ -405,6 +405,53 @@ class SessionRepositoryIT {
   }
 
   /**
+   * FE#2494 *4: before a centre's type changes, its unstamped 1:1 cases with the given team flag
+   * are stamped; stamped cases, group and live chats and other centres are left alone.
+   */
+  @Test
+  void stampUnstampedCasesOfAgency_Should_StampOnlyTheCentresUnstampedOneToOneCasesOfTheFlag() {
+    givenAUser();
+    var handover = unstampedCase(5L, ConversationType.AGENCY_COUNSELLING, false);
+    var legacyOneToOne = unstampedCase(5L, null, false);
+    var team = unstampedCase(5L, ConversationType.AGENCY_COUNSELLING, true);
+    var group = unstampedCase(5L, ConversationType.INTERNAL_GROUP, false);
+    var otherCentre = unstampedCase(6L, ConversationType.AGENCY_COUNSELLING, false);
+    var stamped = validSession(null, 1);
+    stamped.setAgencyId(5L);
+    stamped.setConversationType(ConversationType.AGENCY_COUNSELLING);
+    stamped.setCaseSharingModel(CaseSharingModel.NONE);
+    var stampedId = underTest.save(stamped).getId();
+    entityManager.flush();
+    entityManager.clear();
+
+    int count =
+        underTest.stampUnstampedCasesOfAgency(
+            5L, false, CaseSharingModel.CASE_HANDOVER, RegistrationType.ANONYMOUS);
+
+    assertEquals(2, count);
+    assertEquals(CaseSharingModel.CASE_HANDOVER, modelOf(handover));
+    assertEquals(CaseSharingModel.CASE_HANDOVER, modelOf(legacyOneToOne));
+    assertEquals(null, modelOf(team), "the team flag is stamped by its own call");
+    assertEquals(null, modelOf(group), "a group chat is no counselling case");
+    assertEquals(null, modelOf(otherCentre));
+    assertEquals(CaseSharingModel.NONE, modelOf(stampedId), "a stamp is never overwritten");
+  }
+
+  private Long unstampedCase(Long agencyId, ConversationType type, boolean teamFlag) {
+    var session = validSession(null, 1);
+    session.setAgencyId(agencyId);
+    session.setConversationType(type);
+    session.setRegistrationType(RegistrationType.REGISTERED);
+    session.setPostcode("12345");
+    session.setTeamSession(teamFlag);
+    return underTest.save(session).getId();
+  }
+
+  private CaseSharingModel modelOf(Long id) {
+    return underTest.findById(id).orElseThrow().getCaseSharingModel();
+  }
+
+  /**
    * FE#2494 *4: the snapshot stamps unstamped 1:1 cases with a centre once, never group chats or
    * live chats (also legacy ones without a modality), and a stamp is never overwritten, not even by
    * a stale whole-entity save.

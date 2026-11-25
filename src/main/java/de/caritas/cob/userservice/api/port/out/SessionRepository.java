@@ -284,6 +284,28 @@ public interface SessionRepository extends CrudRepository<Session, Long>, Sessio
   boolean existsTeamCase(
       @Param("agencyId") Long agencyId, @Param("statuses") Collection<SessionStatus> statuses);
 
+  /**
+   * FE#2494 *4: stamps a centre's unstamped 1:1 cases with or without the team flag before its type
+   * changes, so the snapshot never reads the post-switch model for them. Same case scope as {@link
+   * #findUnstampedCases}; a stamped case keeps its stamp.
+   */
+  @Transactional
+  @Modifying(flushAutomatically = true, clearAutomatically = true)
+  @Query(
+      """
+      update Session s set s.caseSharingModel = :model
+      where s.agencyId = :agencyId and s.caseSharingModel is null and s.teamSession = :teamSession
+        and (s.conversationType = de.caritas.cob.userservice.api.model.ConversationType.AGENCY_COUNSELLING
+          or (s.conversationType is null
+            and (s.registrationType is null or s.registrationType <> :anonymousRegistrationType)
+            and (s.postcode is null or s.postcode <> '00000')))
+      """)
+  int stampUnstampedCasesOfAgency(
+      @Param("agencyId") Long agencyId,
+      @Param("teamSession") boolean teamSession,
+      @Param("model") CaseSharingModel model,
+      @Param("anonymousRegistrationType") RegistrationType anonymousRegistrationType);
+
   /** Stamps the model once; a case that already carries one keeps it. */
   @Transactional
   @Modifying(flushAutomatically = true)

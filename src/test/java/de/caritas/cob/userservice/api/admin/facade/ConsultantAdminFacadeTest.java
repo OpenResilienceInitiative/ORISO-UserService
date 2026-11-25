@@ -78,6 +78,10 @@ class ConsultantAdminFacadeTest {
 
   @Mock private AgencyService agencyService;
 
+  @Mock
+  private de.caritas.cob.userservice.api.service.session.CaseSharingTypeChangeStamper
+      caseSharingTypeChangeStamper;
+
   @Mock private AdminScope adminScope;
 
   @Mock
@@ -226,17 +230,52 @@ class ConsultantAdminFacadeTest {
   @Test
   void
       changeAgencyType_Should_callMarkAllAssignedConsultantsAsTeamConsultant_When_typeIsTeamAgency() {
+    givenAgencyOfTenant(1L, 7L);
+
     this.consultantAdminFacade.changeAgencyType(1L, new AgencyTypeDTO().agencyType(TEAM_AGENCY));
 
-    verify(this.consultantAgencyAdminService).markAllAssignedConsultantsAsTeamConsultant(1L);
+    var order =
+        org.mockito.Mockito.inOrder(caseSharingTypeChangeStamper, consultantAgencyAdminService);
+    order.verify(caseSharingTypeChangeStamper).stampBeforeTypeChange(1L, 7L, true);
+    order.verify(this.consultantAgencyAdminService).markAllAssignedConsultantsAsTeamConsultant(1L);
   }
 
   @Test
   void
       changeAgencyType_Should_callRemoveConsultantsFromTeamSessionsByAgencyId_When_typeIsDefaultAgency() {
+    givenAgencyOfTenant(1L, 7L);
+
     this.consultantAdminFacade.changeAgencyType(1L, new AgencyTypeDTO().agencyType(DEFAULT_AGENCY));
 
-    verify(this.consultantAgencyAdminService).endTeamCounsellingForNewCases(1L);
+    var order =
+        org.mockito.Mockito.inOrder(caseSharingTypeChangeStamper, consultantAgencyAdminService);
+    order.verify(caseSharingTypeChangeStamper).stampBeforeTypeChange(1L, 7L, false);
+    order.verify(this.consultantAgencyAdminService).endTeamCounsellingForNewCases(1L);
+  }
+
+  /** FE#2494 *4: a refused pre-switch stamp stops the type change before anything else changes. */
+  @Test
+  void changeAgencyType_Should_ChangeNothing_When_ThePreSwitchStampFails() {
+    givenAgencyOfTenant(1L, 7L);
+    org.mockito.Mockito.doThrow(
+            new de.caritas.cob.userservice.api.exception.httpresponses.ServiceUnavailableException(
+                "unreachable"))
+        .when(caseSharingTypeChangeStamper)
+        .stampBeforeTypeChange(1L, 7L, true);
+    var toTeam = new AgencyTypeDTO().agencyType(TEAM_AGENCY);
+
+    org.junit.jupiter.api.Assertions.assertThrows(
+        de.caritas.cob.userservice.api.exception.httpresponses.ServiceUnavailableException.class,
+        () -> this.consultantAdminFacade.changeAgencyType(1L, toTeam));
+
+    org.mockito.Mockito.verifyNoInteractions(consultantAgencyAdminService);
+  }
+
+  private void givenAgencyOfTenant(Long agencyId, Long tenantId) {
+    var agency = new de.caritas.cob.userservice.api.adapters.web.dto.AgencyDTO();
+    agency.setId(agencyId);
+    agency.setTenantId(tenantId);
+    when(agencyService.getAgency(agencyId)).thenReturn(agency);
   }
 
   @Test
