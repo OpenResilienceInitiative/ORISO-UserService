@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.neovisionaries.i18n.LanguageCode;
+import de.caritas.cob.userservice.api.model.CaseSharingModel;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.ConversationType;
 import de.caritas.cob.userservice.api.model.Session;
@@ -381,6 +382,13 @@ class SessionRepositoryIT {
     legacy.setStatus(SessionStatus.IN_PROGRESS);
     legacy.setMatrixRoomId("!legacy:matrix.example");
     var legacyId = underTest.save(legacy).getId();
+    // the stored stamp wins over the team flag, in both directions
+    var stampedTeam = markedOneToOne(consultant, "!stamped-team:matrix.example", false);
+    stampedTeam.setCaseSharingModel(CaseSharingModel.TEAM_COUNSELLING);
+    var stampedTeamId = underTest.save(stampedTeam).getId();
+    var stampedNone = markedOneToOne(consultant, "!stamped-none:matrix.example", true);
+    stampedNone.setCaseSharingModel(CaseSharingModel.NONE);
+    var stampedNoneId = underTest.save(stampedNone).getId();
     entityManager.flush();
     entityManager.clear();
 
@@ -390,7 +398,9 @@ class SessionRepositoryIT {
             ids.get(0) - 1,
             org.springframework.data.domain.PageRequest.of(0, 50));
 
-    assertEquals(ids.subList(0, 2), found, "group chats are never repaired");
+    assertEquals(
+        List.of(ids.get(0), ids.get(1), stampedTeamId), found, "group chats are never repaired");
+    assertFalse(found.contains(stampedNoneId), "a case stamped none is no team case");
     assertFalse(found.contains(legacyId), "a case accepted before read-only stays as it is");
   }
 
@@ -641,5 +651,16 @@ class SessionRepositoryIT {
 
   private void givenAUser() {
     user = userRepository.findAll().iterator().next();
+  }
+
+  private Session markedOneToOne(Consultant consultant, String roomId, boolean teamFlag) {
+    var session = validSession(null, 1);
+    session.setConsultant(consultant);
+    session.setTeamSession(teamFlag);
+    session.setStatus(SessionStatus.IN_PROGRESS);
+    session.setMatrixRoomId(roomId);
+    session.setConversationType(ConversationType.AGENCY_COUNSELLING);
+    session.setTeamReadOnlySince(java.time.LocalDateTime.now());
+    return session;
   }
 }

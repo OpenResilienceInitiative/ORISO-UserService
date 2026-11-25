@@ -349,6 +349,34 @@ class SessionServiceTest {
         .allMatch(topic -> topic.getSession() == savedSession);
   }
 
+  /** CodeRabbit: when the snapshot stamped the case first, the stored stamp wins in memory. */
+  @Test
+  void stampCaseSharingModel_Should_KeepTheStoredStamp_When_AlreadyStamped() {
+    var session = new Session();
+    session.setId(9L);
+    var stored = new Session();
+    stored.setId(9L);
+    stored.setCaseSharingModel(CaseSharingModel.NONE);
+    when(sessionRepository.stampCaseSharingModel(9L, CaseSharingModel.CASE_HANDOVER)).thenReturn(0);
+    when(sessionRepository.findById(9L)).thenReturn(Optional.of(stored));
+
+    sessionService.stampCaseSharingModel(session, CaseSharingModel.CASE_HANDOVER);
+
+    assertThat(session.getCaseSharingModel()).isEqualTo(CaseSharingModel.NONE);
+  }
+
+  @Test
+  void stampCaseSharingModel_Should_SetTheModel_When_TheStampWasWritten() {
+    var session = new Session();
+    session.setId(9L);
+    when(sessionRepository.stampCaseSharingModel(9L, CaseSharingModel.CASE_HANDOVER)).thenReturn(1);
+
+    sessionService.stampCaseSharingModel(session, CaseSharingModel.CASE_HANDOVER);
+
+    assertThat(session.getCaseSharingModel()).isEqualTo(CaseSharingModel.CASE_HANDOVER);
+    verify(sessionRepository, never()).findById(any());
+  }
+
   /** FE#2494 *4 (Codex): the write-once model must already be in the very first insert. */
   @Test
   void initializeDirectSession_Should_InsertTheCaseSharingModelWithTheFirstSave() {

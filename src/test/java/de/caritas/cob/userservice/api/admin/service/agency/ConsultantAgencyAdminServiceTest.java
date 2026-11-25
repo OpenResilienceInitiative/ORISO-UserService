@@ -255,6 +255,64 @@ class ConsultantAgencyAdminServiceTest {
     verify(consultantRepository, never()).save(consultant);
   }
 
+  /** CodeRabbit: another default centre without a team case does not keep the identifier. */
+  @Test
+  void endTeamCounsellingForNewCases_Should_RemoveTeamFlag_When_OtherCentreHasNoTeamCase() {
+    var switchedRelation = new ConsultantAgency();
+    switchedRelation.setAgencyId(10L);
+    var otherRelation = new ConsultantAgency();
+    otherRelation.setAgencyId(20L);
+    var other = new AgencyDTO();
+    other.setId(20L);
+    other.setTeamAgency(false);
+    var consultant = new Consultant();
+    consultant.setId("c-1");
+    consultant.setTeamConsultant(true);
+
+    when(sessionRepository.existsTeamCase(any(), any())).thenReturn(false);
+    when(consultantRepository.findByConsultantAgenciesAgencyIdInAndDeleteDateIsNull(List.of(10L)))
+        .thenReturn(List.of(consultant));
+    when(consultantAgencyRepository.findByConsultantIdAndDeleteDateIsNull("c-1"))
+        .thenReturn(List.of(switchedRelation, otherRelation));
+    when(agencyService.getAgency(20L)).thenReturn(other);
+
+    consultantAgencyAdminService.endTeamCounsellingForNewCases(10L);
+
+    assertThat(consultant.isTeamConsultant()).isFalse();
+    verify(consultantRepository).save(consultant);
+  }
+
+  /** CodeRabbit: each other centre is resolved once per type change, not once per counsellor. */
+  @Test
+  void endTeamCounsellingForNewCases_Should_ResolveEachOtherCentreOnce() {
+    var switchedRelation = new ConsultantAgency();
+    switchedRelation.setAgencyId(10L);
+    var otherRelation = new ConsultantAgency();
+    otherRelation.setAgencyId(20L);
+    var other = new AgencyDTO();
+    other.setId(20L);
+    other.setTeamAgency(false);
+    var first = new Consultant();
+    first.setId("c-1");
+    first.setTeamConsultant(true);
+    var second = new Consultant();
+    second.setId("c-2");
+    second.setTeamConsultant(true);
+
+    when(sessionRepository.existsTeamCase(any(), any())).thenReturn(false);
+    when(consultantRepository.findByConsultantAgenciesAgencyIdInAndDeleteDateIsNull(List.of(10L)))
+        .thenReturn(List.of(first, second));
+    when(consultantAgencyRepository.findByConsultantIdAndDeleteDateIsNull(any()))
+        .thenReturn(List.of(switchedRelation, otherRelation));
+    when(agencyService.getAgency(20L)).thenReturn(other);
+
+    consultantAgencyAdminService.endTeamCounsellingForNewCases(10L);
+
+    verify(agencyService, org.mockito.Mockito.times(1)).getAgency(20L);
+    verify(sessionRepository, org.mockito.Mockito.times(1))
+        .existsTeamCase(org.mockito.ArgumentMatchers.eq(20L), any());
+  }
+
   // ---------------------------------------------------------------------------
   // markConsultantAgencyForDeletion
   // ---------------------------------------------------------------------------

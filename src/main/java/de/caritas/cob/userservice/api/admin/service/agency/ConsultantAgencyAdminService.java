@@ -208,10 +208,12 @@ public class ConsultantAgencyAdminService {
       return;
     }
 
+    // One answer per other centre for the whole type change, not one query per counsellor.
+    var teamAccessByAgency = new java.util.HashMap<Long, Boolean>();
     this.consultantRepository
         .findByConsultantAgenciesAgencyIdInAndDeleteDateIsNull(singletonList(agencyId))
         .stream()
-        .filter(consultant -> noOtherTeamAccess(consultant, agencyId))
+        .filter(consultant -> noOtherTeamAccess(consultant, agencyId, teamAccessByAgency))
         .forEach(this::removeTeamConsultantFlag);
   }
 
@@ -220,7 +222,8 @@ public class ConsultantAgencyAdminService {
    * A centre that switched to the default type earlier keeps its team cases, and the consultant
    * keeps the team-consultant identifier they need (FE#2494 *4).
    */
-  private boolean noOtherTeamAccess(Consultant consultant, Long agencyId) {
+  private boolean noOtherTeamAccess(
+      Consultant consultant, Long agencyId, java.util.Map<Long, Boolean> teamAccessByAgency) {
     // Deliberately query the repository instead of navigating consultant.getConsultantAgencies():
     // this method runs outside of an open Hibernate session (changeAgencyType() is not
     // @Transactional, and spring.jpa.open-in-view is disabled), so the lazy collection on a
@@ -234,8 +237,12 @@ public class ConsultantAgencyAdminService {
         .filter(otherAgencyId -> !agencyId.equals(otherAgencyId))
         .noneMatch(
             otherAgencyId ->
-                Boolean.TRUE.equals(agencyService.getAgency(otherAgencyId).getTeamAgency())
-                    || sessionRepository.existsTeamCase(otherAgencyId, TEAM_ACCESS_STATUSES));
+                teamAccessByAgency.computeIfAbsent(otherAgencyId, this::givesTeamAccess));
+  }
+
+  private boolean givesTeamAccess(Long agencyId) {
+    return Boolean.TRUE.equals(agencyService.getAgency(agencyId).getTeamAgency())
+        || sessionRepository.existsTeamCase(agencyId, TEAM_ACCESS_STATUSES);
   }
 
   private void removeTeamConsultantFlag(Consultant consultant) {

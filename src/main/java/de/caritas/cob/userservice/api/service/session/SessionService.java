@@ -424,8 +424,15 @@ public class SessionService {
     if (session == null || session.getId() == null || model == null) {
       return;
     }
-    sessionRepository.stampCaseSharingModel(session.getId(), model);
-    session.setCaseSharingModel(model);
+    if (sessionRepository.stampCaseSharingModel(session.getId(), model) > 0) {
+      session.setCaseSharingModel(model);
+      return;
+    }
+    // Already stamped (by the snapshot job, for one): the stored write-once stamp wins.
+    sessionRepository
+        .findById(session.getId())
+        .map(Session::getCaseSharingModel)
+        .ifPresent(session::setCaseSharingModel);
   }
 
   /**

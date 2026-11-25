@@ -300,7 +300,12 @@ class CreateSessionFacadeTest {
     createSessionFacade.createDirectUserSession(
         null, mock(UserDTO.class), null, mock(ExtendedConsultingTypeResponseDTO.class));
 
-    verify(teamSessionReadOnly).enforceAfterCommit(77L);
+    var order =
+        org.mockito.Mockito.inOrder(
+            sessionService, directSessionMatrixRoomService, teamSessionReadOnly);
+    order.verify(sessionService).saveSession(session);
+    order.verify(directSessionMatrixRoomService).provisionRoomForDirectSession(any(), any());
+    order.verify(teamSessionReadOnly).enforceAfterCommit(77L);
   }
 
   @Test

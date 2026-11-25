@@ -113,8 +113,9 @@ public class CaseSharingModelSnapshotScheduler {
   }
 
   /**
-   * A row that keeps failing is stamped "none" after {@value #MAX_ROW_FAILURES} tries; if even that
-   * fails it is left alone until the next restart, so it cannot keep the job from resting.
+   * A row that keeps failing is left alone until the next restart after {@value #MAX_ROW_FAILURES}
+   * tries, so it cannot keep the job from resting. It is never stamped "none" for a failed write:
+   * its resolved model (a team flag, for one) must not be replaced because persistence failed.
    */
   private void recordFailure(Long id, RuntimeException failure) {
     int failures = rowFailures.merge(id, 1, Integer::sum);
@@ -126,16 +127,11 @@ public class CaseSharingModelSnapshotScheduler {
       return;
     }
     rowFailures.remove(id);
-    try {
-      sessions.stampCaseSharingModel(id, CaseSharingModel.NONE);
-      log.warn("Session {} kept failing the snapshot; stamped none", id);
-    } catch (RuntimeException stampFailure) {
-      givenUp.add(id);
-      log.error(
-          "Session {} cannot be stamped ({}); the snapshot skips it until restart",
-          id,
-          stampFailure.getClass().getSimpleName());
-    }
+    givenUp.add(id);
+    log.error(
+        "Session {} kept failing the snapshot ({}); it is skipped until restart",
+        id,
+        failure.getClass().getSimpleName());
   }
 
   /** A pass that found nothing to stamp rests; one that did starts over for the cases it left. */
