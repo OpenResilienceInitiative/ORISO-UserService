@@ -9,6 +9,7 @@ import de.caritas.cob.userservice.api.adapters.web.dto.DirectInvitationAppointme
 import de.caritas.cob.userservice.api.adapters.web.dto.DirectLinkConversationDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.DirectLinkDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.DirectLinkMedium;
+import de.caritas.cob.userservice.api.adapters.web.dto.DirectLinkStaffJoinDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.RenewDirectInvitationDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.UpdateDirectLinkDTO;
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
@@ -67,6 +68,11 @@ public class DirectLinkControllerDelegate {
       temporaryAccountService;
   private final @NonNull de.caritas.cob.userservice.api.service.session.SessionConsentService
       consents;
+  private final @NonNull de.caritas.cob.userservice.api.service.agencyinvitelink
+          .DirectLinkStaffJoinService
+      staffJoin;
+  private final @NonNull de.caritas.cob.userservice.api.port.out.ConsultantRepository
+      consultantRepository;
 
   public ResponseEntity<de.caritas.cob.userservice.api.adapters.web.dto.TemporaryAccountDTO>
       getOwnTemporaryAccount() {
@@ -246,6 +252,37 @@ public class DirectLinkControllerDelegate {
     return new ResponseEntity<>(dto, started.created() ? HttpStatus.CREATED : HttpStatus.OK);
   }
 
+  /**
+   * ORISO-Frontend#2356: a counsellor who holds the link joins its running call. The caller is
+   * checked as a counsellor of their own Träger here; the service then works across Träger.
+   */
+  ResponseEntity<DirectLinkStaffJoinDTO> joinDirectLinkCallAsCounsellor(
+      String token, Long waitingFor) {
+    var counsellor = userAccountService.retrieveValidatedConsultant();
+    var join = staffJoin.join(token, counsellor.getId(), waitingFor);
+    return ResponseEntity.ok()
+        .cacheControl(org.springframework.http.CacheControl.noStore())
+        .body(
+            new DirectLinkStaffJoinDTO()
+                .outcome(DirectLinkStaffJoinDTO.OutcomeEnum.valueOf(join.outcome().name()))
+                .medium(DirectLinkMedium.valueOf(join.medium().name()))
+                .sessionId(join.sessionId())
+                .knockId(join.knockId())
+                .knockStatus(
+                    join.knockStatus() == null
+                        ? null
+                        : CallKnockStatus.valueOf(join.knockStatus().name()))
+                .sourceRoomId(join.sourceRoomId())
+                .callId(join.callId())
+                .callRoomId(join.callRoomId())
+                .guestMatrixUserId(join.guestMatrixUserId()));
+  }
+
+  ResponseEntity<Void> leaveDirectLinkCallWaitingAsCounsellor(String token) {
+    staffJoin.leave(token, userAccountService.retrieveValidatedConsultant().getId());
+    return ResponseEntity.noContent().build();
+  }
+
   ResponseEntity<List<CallKnockDTO>> getPendingCallKnocks(Long sessionId, String matrixRoomId) {
     var consultant = userAccountService.retrieveValidatedConsultant();
     return ResponseEntity.ok(
@@ -294,13 +331,43 @@ public class DirectLinkControllerDelegate {
     var ids = knocks.stream().map(GroupChatJoinRequest::getUserId).distinct().toList();
     var people = new HashMap<String, User>();
     userRepository.findAllById(ids).forEach(u -> people.put(u.getUserId(), u));
-    return knocks.stream().map(k -> toKnockDto(k, people.get(k.getUserId()))).toList();
+    return knocks.stream()
+        .map(
+            k ->
+                k.getVia() == GroupChatJoinRequest.Via.STAFF_LINK
+                    ? toKnockDto(k, null)
+                        .displayName(counsellorName(k.getUserId()))
+                        .counsellor(true)
+                    : toKnockDto(k, people.get(k.getUserId())))
+        .toList();
   }
 
   private CallKnockDTO toKnockDto(GroupChatJoinRequest knock) {
+    if (knock.getVia() == GroupChatJoinRequest.Via.STAFF_LINK) {
+      return toKnockDto(knock, null)
+          .displayName(counsellorName(knock.getUserId()))
+          .counsellor(true);
+    }
     var person =
         knock.getUserId() == null ? null : userRepository.findById(knock.getUserId()).orElse(null);
     return toKnockDto(knock, person);
+  }
+
+  /**
+   * ORISO-Frontend#2356: who knocks as a counsellor. They may work for another Träger, so the
+   * lookup crosses Träger on purpose, and only the public display name leaves it.
+   */
+  private String counsellorName(String consultantId) {
+    if (consultantId == null) {
+      return null;
+    }
+    return de.caritas.cob.userservice.api.tenant.TenantContext.supplyAcrossTenants(
+        () ->
+            consultantRepository
+                .findByIdAndDeleteDateIsNull(consultantId)
+                .map(de.caritas.cob.userservice.api.model.Consultant::getDisplayName)
+                .filter(name -> !name.isBlank())
+                .orElse(null));
   }
 
   /** The pseudonym the person registered with; never the e-mail address. */

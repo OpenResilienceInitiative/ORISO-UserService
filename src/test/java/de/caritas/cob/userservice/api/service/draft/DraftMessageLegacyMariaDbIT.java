@@ -5,6 +5,7 @@ import static org.mockito.AdditionalAnswers.delegatesTo;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
 
+import de.caritas.cob.userservice.api.model.DraftMessage;
 import de.caritas.cob.userservice.api.port.out.DraftMessageRepository;
 import de.caritas.cob.userservice.api.service.draft.DraftMessageService.UpsertDraftRequest;
 import jakarta.persistence.EntityManager;
@@ -87,6 +88,40 @@ class DraftMessageLegacyMariaDbIT {
     } finally {
       repository.deleteByUserId(owner);
     }
+  }
+
+  @Test
+  void deleteLegacyDraftsOfSession_Should_matchTheRoomCaseSensitively() {
+    String owner = UUID.randomUUID().toString();
+    String room = "!CaseRoom" + owner.substring(0, 8) + ":matrix.example";
+    try {
+      var exact = roomDraft(owner, room);
+      var otherCase = roomDraft(owner, room.toLowerCase());
+
+      var transaction = new TransactionTemplate(transactionManager);
+      int deleted =
+          transaction.execute(status -> repository.deleteLegacyDraftsOfSession(-1L, room));
+
+      assertThat(deleted).isEqualTo(1);
+      assertThat(repository.findById(exact)).isEmpty();
+      assertThat(repository.findById(otherCase)).isPresent();
+    } finally {
+      repository.deleteByUserId(owner);
+    }
+  }
+
+  private Long roomDraft(String owner, String roomRef) {
+    return repository
+        .saveAndFlush(
+            DraftMessage.builder()
+                .userId(owner)
+                .scopeKey("legacy:" + roomRef)
+                .text("synthetic draft")
+                .roomRef(roomRef)
+                .createDate(java.time.LocalDateTime.now())
+                .updateDate(java.time.LocalDateTime.now())
+                .build())
+        .getId();
   }
 
   private DraftMessageService replica(String owner, String scope, CountDownLatch missingLookups) {

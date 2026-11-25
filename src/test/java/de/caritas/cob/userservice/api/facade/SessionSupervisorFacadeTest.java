@@ -395,10 +395,11 @@ class SessionSupervisorFacadeTest {
   void addSupervisor_ShouldRejectRegisteredAnonymousStyleUserBeforeProvisioningMatrixAccess()
       throws Exception {
     session.setRegistrationType(Session.RegistrationType.REGISTERED);
-    session.setPostcode("12345");
+    session.setPostcode("00000");
     User anonymousStyleUser = new User();
     anonymousStyleUser.setUserId("anonymous-user-id");
-    anonymousStyleUser.setUsername("Anonymous-session-user");
+    // ORISO-UserService#1697: an animal User-ID, recognised by the stored postcode, not its name.
+    anonymousStyleUser.setUsername("katze_sam_4821");
     session.setUser(anonymousStyleUser);
 
     assertThatThrownBy(
@@ -407,6 +408,24 @@ class SessionSupervisorFacadeTest {
         .hasMessageContaining("Anonymous sessions");
     verify(matrixSynapseService, never()).createRoom(any(), any(), any());
     verify(matrixSynapseService, never()).inviteUserToRoom(any(), any(), any());
+  }
+
+  @Test
+  void addSupervisor_ShouldAcceptRegisteredSessionWithAnonymousLookingUsername() throws Exception {
+    // ORISO-UserService#1697: a guest is decided by the stored session, never by the name.
+    session.setRegistrationType(Session.RegistrationType.REGISTERED);
+    session.setPostcode("12345");
+    User registeredUser = new User();
+    registeredUser.setUserId("registered-user-id");
+    registeredUser.setUsername("Anonymous-4711");
+    session.setUser(registeredUser);
+
+    SessionSupervisor saved =
+        facade.addSupervisor(
+            SESSION_ID, SUPERVISOR_ID, addedBy, "CLINICAL_OVERSIGHT", "stuck case");
+
+    assertThat(saved.getIsActive()).isTrue();
+    verify(matrixSynapseService).inviteUserToRoom(eq(CLIENT_ROOM), eq(SUPERVISOR_MXID), any());
   }
 
   @Test
@@ -541,6 +560,103 @@ class SessionSupervisorFacadeTest {
     assertThat(saved.getValue().getSupervisorConsultant().getId()).isEqualTo(SUPERVISOR_ID);
     assertThat(saved.getValue().getNotes()).contains("CLINICAL_OVERSIGHT");
     verify(matrixSynapseService).inviteUserToRoom(eq(CLIENT_ROOM), eq(SUPERVISOR_MXID), any());
+  }
+
+  @Test
+  void attachStandingSupervisorIfAssigned_Should_attach_whenTheSupervisorsAgenciesAreNotLoaded()
+      throws Exception {
+    // ORISO-Frontend#2386 on Dev, 22 Nov: accepting an enquiry runs this without a transaction
+    // (self-invocation, open-in-view off), so the supervisor loaded by findById is detached and
+    // touching its lazy consultantAgencies threw. The case then stayed unsupervised.
+    addedBy.setAssignedSupervisorId(SUPERVISOR_ID);
+    // What findById hands over outside a transaction: an uninitialised lazy set with no session.
+    supervisor.setConsultantAgencies(new org.hibernate.collection.spi.PersistentSet<>());
+
+    facade.attachStandingSupervisorIfAssigned(SESSION_ID, addedBy);
+
+    ArgumentCaptor<SessionSupervisor> saved = ArgumentCaptor.forClass(SessionSupervisor.class);
+    verify(sessionSupervisorRepository).save(saved.capture());
+    assertThat(saved.getValue().getIsActive()).isTrue();
+    assertThat(saved.getValue().getSupervisorConsultant().getId()).isEqualTo(SUPERVISOR_ID);
+  }
+
+  @Test
+  void attachStandingSupervisorIfAssigned_Should_keepTheSupervisor_whenMatrixRateLimitsTheInvite()
+      throws Exception {
+    // ORISO-Frontend#2386: right after a new enquiry the agency holding room has just invited
+    // every counsellor of the agency, so Synapse rate-limits the next invite into that room for
+    // minutes. That must not cost the case its standing supervisor.
+    addedBy.setAssignedSupervisorId(SUPERVISOR_ID);
+    when(matrixSynapseService.inviteUserToRoom(eq(CLIENT_ROOM), eq(SUPERVISOR_MXID), any()))
+        .thenThrow(rateLimited());
+
+    facade.attachStandingSupervisorIfAssigned(SESSION_ID, addedBy);
+
+    ArgumentCaptor<SessionSupervisor> saved = ArgumentCaptor.forClass(SessionSupervisor.class);
+    verify(sessionSupervisorRepository).save(saved.capture());
+    assertThat(saved.getValue().getIsActive()).isTrue();
+    assertThat(saved.getValue().getMatrixRoomId()).isEqualTo(SIDE_ROOM);
+    verify(repairs)
+        .enqueueSupervisorObservation(CLIENT_ROOM, SUPERVISOR_MXID, SESSION_ID, CONSULTANT_MXID);
+  }
+
+  @Test
+  void addSupervisor_Should_queueTheClientRoomInvite_insteadOfFailing_whenMatrixRateLimitsIt()
+      throws Exception {
+    when(matrixSynapseService.inviteUserToRoom(eq(CLIENT_ROOM), eq(SUPERVISOR_MXID), any()))
+        .thenThrow(rateLimited());
+
+    SessionSupervisor saved =
+        facade.addSupervisor(SESSION_ID, SUPERVISOR_ID, addedBy, null, "reason");
+
+    // The side room works at once; observing the client room follows from the repair queue.
+    assertThat(saved.getMatrixRoomId()).isEqualTo(SIDE_ROOM);
+    verify(repairs)
+        .enqueueSupervisorObservation(CLIENT_ROOM, SUPERVISOR_MXID, SESSION_ID, CONSULTANT_MXID);
+    // Not a member yet: no power level, no join in the client room now.
+    verify(matrixSynapseService, never())
+        .setUserPowerLevel(eq(CLIENT_ROOM), any(), org.mockito.ArgumentMatchers.anyInt(), any());
+    verify(matrixSynapseService, never()).joinRoom(eq(CLIENT_ROOM), any());
+  }
+
+  @Test
+  void addSupervisor_Should_saveTheSupervisionRowBeforeQueueingTheDeferredInvite()
+      throws Exception {
+    when(matrixSynapseService.inviteUserToRoom(eq(CLIENT_ROOM), eq(SUPERVISOR_MXID), any()))
+        .thenThrow(rateLimited());
+
+    facade.addSupervisor(SESSION_ID, SUPERVISOR_ID, addedBy, null, "reason");
+
+    var order = org.mockito.Mockito.inOrder(sessionSupervisorRepository, repairs);
+    order.verify(sessionSupervisorRepository).save(any(SessionSupervisor.class));
+    order
+        .verify(repairs)
+        .enqueueSupervisorObservation(CLIENT_ROOM, SUPERVISOR_MXID, SESSION_ID, CONSULTANT_MXID);
+  }
+
+  @Test
+  void addSupervisor_Should_stillFail_whenMatrixRefusesTheClientRoomInvite() throws Exception {
+    when(matrixSynapseService.inviteUserToRoom(eq(CLIENT_ROOM), eq(SUPERVISOR_MXID), any()))
+        .thenThrow(
+            new MatrixInviteUserException(
+                "Could not invite user (@sup:oriso) to room (!clientroom:oriso) in Matrix: "
+                    + "{\"errcode\":\"M_FORBIDDEN\",\"error\":\"not allowed\"}"));
+
+    assertThatThrownBy(
+            () -> facade.addSupervisor(SESSION_ID, SUPERVISOR_ID, addedBy, null, "reason"))
+        .isInstanceOf(
+            de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException
+                .class);
+    verify(sessionSupervisorRepository, never()).save(any());
+    verify(repairs, never()).enqueueSupervisorObservation(any(), any(), any(), any());
+  }
+
+  private static de.caritas.cob.userservice.api.exception.matrix.MatrixInviteRateLimitedException
+      rateLimited() {
+    return new de.caritas.cob.userservice.api.exception.matrix.MatrixInviteRateLimitedException(
+        "Could not invite user (@sup:oriso) to room (!clientroom:oriso) in Matrix: "
+            + "{\"errcode\":\"M_LIMIT_EXCEEDED\",\"retry_after_ms\":269823}",
+        269823L);
   }
 
   @Test

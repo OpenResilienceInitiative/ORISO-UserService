@@ -91,6 +91,8 @@ import org.springframework.transaction.support.TransactionTemplate;
 })
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
 class MoveThenTakeoverMatrixMariaDbIT {
+  @MockitoBean
+  private de.caritas.cob.userservice.api.service.session.AgencyEnquiryRoomDecisions roomDecisions;
 
   private static final long TENANT_ID = 7L;
   private static final long AGENCY_ID = 14211422L;
@@ -349,7 +351,11 @@ class MoveThenTakeoverMatrixMariaDbIT {
         transactionManager,
         mock(AgencyService.class),
         mock(AdminScope.class),
-        mock(MembersOnlyChatAccess.class));
+        mock(MembersOnlyChatAccess.class),
+        org.mockito.Mockito.mock(
+            de.caritas.cob.userservice.api.service.agency.CaseSharingGate.class),
+        org.mockito.Mockito.mock(
+            de.caritas.cob.userservice.api.port.out.MatrixRoomMembershipLookup.class));
   }
 
   private static Consultant consultant(String id, String matrixUserId, LocalDateTime now) {

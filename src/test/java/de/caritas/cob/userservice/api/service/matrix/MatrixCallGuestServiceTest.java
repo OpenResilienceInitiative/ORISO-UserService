@@ -739,6 +739,77 @@ class MatrixCallGuestServiceTest {
     verify(matrix, never()).inviteUserToRoom(anyString(), anyString(), anyString());
   }
 
+  /**
+   * ORISO-Frontend#2356: the counsellor path seats a counsellor of ANOTHER Träger, call room only.
+   */
+  @Test
+  void aCounsellorOfAnotherTraegerIsSeatedInTheCallRoomOnly() throws Exception {
+    var other = consultant("other", "@other:example", 8L);
+    when(consultants.findByIdAndDeleteDateIsNull("other")).thenReturn(Optional.of(other));
+    when(consultants.findByMatrixUserIdAndDeleteDateIsNull("@other:example"))
+        .thenReturn(Optional.of(other));
+
+    var seat = service.admitCounsellorAs(7L, "counsellor", SOURCE, "call", "other");
+
+    assertThat(seat.outcome()).isEqualTo(Outcome.ADMITTED);
+    assertThat(seat.callRoomId()).isEqualTo(MEDIA);
+    assertThat(seat.guestMatrixUserId()).isEqualTo("@other:example");
+    verify(matrix).inviteUserToRoom(MEDIA, "@other:example", "counsellor-token");
+    verify(matrix, never()).inviteUserToRoom(eq(SOURCE), anyString(), anyString());
+  }
+
+  /** The ordinary guest path keeps its same-Träger rule for counsellors too. */
+  @Test
+  void theOrdinaryGuestPathStillRefusesACounsellorOfAnotherTraeger() throws Exception {
+    var other = consultant("other", "@other:example", 8L);
+    when(consultants.findByIdAndDeleteDateIsNull("other")).thenReturn(Optional.of(other));
+
+    assertThat(service.admitAs(7L, "counsellor", SOURCE, "call", "other").outcome())
+        .isEqualTo(Outcome.NOT_FOUND);
+    verify(matrix, never()).inviteUserToRoom(anyString(), anyString(), anyString());
+  }
+
+  @Test
+  void anAdviceSeekerIsNeverSeatedThroughTheCounsellorPath() throws Exception {
+    assertThat(service.admitCounsellorAs(7L, "counsellor", SOURCE, "call", "guest").outcome())
+        .isEqualTo(Outcome.NOT_FOUND);
+    verify(matrix, never()).inviteUserToRoom(anyString(), anyString(), anyString());
+  }
+
+  @Test
+  void aCounsellorWhoIsInTheConversationIsNotSeatedAsGuest() throws Exception {
+    var colleague = consultant("colleague", "@colleague:example", 7L);
+    when(consultants.findByIdAndDeleteDateIsNull("colleague")).thenReturn(Optional.of(colleague));
+    when(consultants.findByMatrixUserIdAndDeleteDateIsNull("@colleague:example"))
+        .thenReturn(Optional.of(colleague));
+    when(matrix.getCallRoomMembers(SOURCE))
+        .thenReturn(Optional.of(List.of(COUNSELLOR, "@colleague:example")));
+
+    assertThat(service.admitCounsellorAs(7L, "counsellor", SOURCE, "call", "colleague").outcome())
+        .isEqualTo(Outcome.ALREADY_PARTICIPANT);
+    assertThat(saved).isEmpty();
+  }
+
+  /**
+   * ORISO-Frontend#2356: a colleague seated as a guest never counts as a counsellor in the call.
+   */
+  @Test
+  void aCounsellorSeatedAsGuestIsNotACounsellorInTheCall() {
+    binding
+        .getDevices()
+        .put(
+            "colleague-device",
+            new de.caritas.cob.userservice.api.model.MatrixCallDevice(
+                "@colleague:example", 1300L, Long.MAX_VALUE, true, "$colleague"));
+    var colleague = consultant("colleague", "@colleague:example", 7L);
+    when(consultants.findByMatrixUserIdAndDeleteDateIsNull("@colleague:example"))
+        .thenReturn(Optional.of(colleague));
+    when(guests.existsByBindingIdAndMatrixUserIdAndRevokedAtIsNull(11L, "@colleague:example"))
+        .thenReturn(true);
+
+    assertThat(service.counsellorsInCall(7L, binding)).containsExactly("counsellor");
+  }
+
   @Test
   void sourceRoomMemberUsesTheNormalJoinPathAndIsNotRecordedAsGuest() throws Exception {
     when(matrix.getCallRoomMembers(SOURCE)).thenReturn(Optional.of(List.of(COUNSELLOR, GUEST)));

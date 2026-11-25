@@ -1,29 +1,30 @@
 package de.caritas.cob.userservice.api.service.support;
 
 import static de.caritas.cob.userservice.api.helper.CustomLocalDateTime.nowInUtc;
+import static org.apache.commons.lang3.StringUtils.isBlank;
 
 import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
 import de.caritas.cob.userservice.api.adapters.matrix.config.MatrixConfig;
-import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
-import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.model.Admin;
-import de.caritas.cob.userservice.api.model.HandshakeAuditEvent;
 import de.caritas.cob.userservice.api.model.HandshakeSession;
 import de.caritas.cob.userservice.api.model.SupportRoom;
 import de.caritas.cob.userservice.api.model.SupportRoom.SupportRoomStatus;
 import de.caritas.cob.userservice.api.port.out.AdminRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
-import de.caritas.cob.userservice.api.port.out.HandshakeAuditEventRepository;
 import de.caritas.cob.userservice.api.port.out.SupportRoomRepository;
+import java.time.Duration;
 import java.time.LocalDateTime;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.UUID;
 import lombok.Getter;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -39,13 +40,11 @@ import org.springframework.transaction.annotation.Transactional;
 @RequiredArgsConstructor
 public class SupportRoomService {
 
-  private static final String EVENT_ROOM_CREATED = "SUPPORT_ROOM_CREATED";
-  private static final String EVENT_ROOM_CLOSED = "SUPPORT_ROOM_CLOSED";
-  private static final String REASON_EXPIRED = "EXPIRED";
-  private static final String REASON_TERMINATED = "TERMINATED";
+  private static final Duration PROVISIONING_GRACE = Duration.ofMinutes(3);
+  private static final Duration SWEEP_BUDGET = Duration.ofSeconds(20);
 
   private final @NonNull SupportRoomRepository supportRoomRepository;
-  private final @NonNull HandshakeAuditEventRepository handshakeAuditEventRepository;
+  private final @NonNull SupportRoomLifecycle lifecycle;
   private final @NonNull AdminRepository adminRepository;
   private final @NonNull ConsultantRepository consultantRepository;
   private final @NonNull MatrixSynapseService matrixSynapseService;
@@ -54,13 +53,10 @@ public class SupportRoomService {
   @Value("${support.room-ttl-hours:4}")
   private long roomTtlHours;
 
-  @Value("${support.room-sweep-batch-size:200}")
+  @Value("${support.room-sweep-batch-size:20}")
   private int sweepBatchSize;
 
-  /**
-   * Creates the fresh encrypted 1:1 room for a confirmed SUPPORT_ACCESS handshake. Any failure here
-   * propagates — the handshake confirmation rolls back and no half-created lease remains.
-   */
+  /** Creates a verified support room; failed confirmation leaves a durable cleanup marker. */
   @Transactional
   public SupportRoom createForConfirmedHandshake(HandshakeSession session) {
     var supportAdmin =
@@ -86,65 +82,65 @@ public class SupportRoomService {
               .formatted(consultant.getId()));
     }
 
+    var roomId = UUID.randomUUID().toString();
     try {
       var supportAdminMatrixId = resolveSupportAdminMatrixId(supportAdmin);
       var supportAdminToken = matrixSynapseService.loginAsUserAccessToken(supportAdminMatrixId);
-      // Confidentiality-neutral room name: no names, no topic, no category (ADR-012 §9 spirit).
-      var roomResponse = matrixSynapseService.createRoom("Support", null, supportAdminToken);
-      var roomId = roomResponse.getBody() != null ? roomResponse.getBody().getRoomId() : null;
-      if (roomId == null) {
-        throw new IllegalStateException(
-            "Matrix room creation returned no room id for handshake %s".formatted(session.getId()));
+      if (isBlank(supportAdminToken) || supportAdminMatrixId.equals(consultantMatrixId)) {
+        throw new IllegalStateException("Support room requires two distinct Matrix identities");
       }
-      matrixSynapseService.inviteUserToRoom(roomId, consultantMatrixId, supportAdminToken);
-      var consultantToken = matrixSynapseService.loginAsUserAccessToken(consultantMatrixId);
-      matrixSynapseService.joinRoom(roomId, consultantToken);
-
+      // Confidentiality-neutral room name: no names, no topic, no category.
+      var roomResponse = matrixSynapseService.createRoom("Support", null, supportAdminToken);
+      var matrixRoomId = roomResponse.getBody() != null ? roomResponse.getBody().getRoomId() : null;
+      if (isBlank(matrixRoomId)) {
+        throw new IllegalStateException("Matrix did not identify the created support room");
+      }
       var now = nowInUtc();
-      var room =
+      lifecycle.rememberProvisional(
           SupportRoom.builder()
-              .id(UUID.randomUUID().toString())
+              .id(roomId)
               .handshakeId(session.getId())
-              .matrixRoomId(roomId)
+              .matrixRoomId(matrixRoomId)
               .supportAdminId(supportAdmin.getId())
               .supportAdminMatrixId(supportAdminMatrixId)
               .consultantId(consultant.getId())
-              .status(SupportRoomStatus.ACTIVE)
+              .status(SupportRoomStatus.PROVISIONING)
               .createDate(now)
-              .expiryDate(now.plusHours(roomTtlHours))
+              .expiryDate(now.plus(PROVISIONING_GRACE))
               .tenantId(session.getTenantId())
-              .build();
-      room = supportRoomRepository.save(room);
-      audit(room, EVENT_ROOM_CREATED, null);
-      return room;
+              .build());
+
+      if (!matrixSynapseService.isRoomEncrypted(matrixRoomId).orElse(false)) {
+        throw new IllegalStateException("Matrix did not confirm support room encryption");
+      }
+      matrixSynapseService.inviteUserToRoom(matrixRoomId, consultantMatrixId, supportAdminToken);
+      var consultantToken = matrixSynapseService.loginAsUserAccessToken(consultantMatrixId);
+      if (isBlank(consultantToken)
+          || !matrixSynapseService.joinRoom(matrixRoomId, consultantToken)) {
+        throw new IllegalStateException(
+            "Matrix did not confirm the consultant joined the support room");
+      }
+      var expectedMembers = Set.of(supportAdminMatrixId, consultantMatrixId);
+      var members = matrixSynapseService.getRoomMembers(matrixRoomId);
+      if (members.map(HashSet::new).filter(expectedMembers::equals).isEmpty()) {
+        throw new IllegalStateException("Matrix did not confirm both support room participants");
+      }
     } catch (IllegalStateException e) {
       throw e;
     } catch (Exception e) {
-      throw new IllegalStateException(
-          "Support room creation failed for handshake %s".formatted(session.getId()), e);
+      throw new IllegalStateException("Support room creation failed", e);
     }
+    return lifecycle.activate(roomId, roomTtlHours);
   }
 
-  /** The Berater*in ends the session early — same hard close as the four-hour cutoff. */
-  @Transactional
+  /** Ends the app lease now. Matrix withdrawal runs from the persisted pending row. */
   public void terminate(AuthenticatedUser caller, String roomId) {
-    var room =
-        supportRoomRepository
-            .findById(roomId)
-            .orElseThrow(
-                () -> new BadRequestException(String.format("Unknown support room %s", roomId)));
-    if (!room.getConsultantId().equals(caller.getUserId())) {
-      throw new ForbiddenException(
-          String.format("User %s may not terminate support room %s", caller.getUserId(), roomId));
-    }
-    if (room.getStatus() != SupportRoomStatus.ACTIVE) {
-      throw new BadRequestException(String.format("Support room %s is not active", roomId));
-    }
-    close(room, REASON_TERMINATED, caller.getUserId());
+    lifecycle.terminate(roomId, caller.getUserId());
   }
 
   @Transactional(readOnly = true)
   public List<SupportRoomItem> activeFor(AuthenticatedUser caller) {
+    var now = nowInUtc();
     return supportRoomRepository
         .findAllByStatusAndConsultantIdOrStatusAndSupportAdminId(
             SupportRoomStatus.ACTIVE,
@@ -152,39 +148,49 @@ public class SupportRoomService {
             SupportRoomStatus.ACTIVE,
             caller.getUserId())
         .stream()
+        .filter(room -> room.getExpiryDate().isAfter(now))
         .map(SupportRoomItem::of)
         .toList();
   }
 
-  /** ADR-018 hard cutoff: at four hours the lease ends even if the homeserver hiccups. */
+  /** Reconciles due withdrawals; the app lease ends at its cutoff even during an outage. */
   @Scheduled(fixedDelayString = "${support.room-sweep-delay-ms:60000}")
-  @Transactional
   public void sweepExpired() {
-    supportRoomRepository
-        .findAllByStatusAndExpiryDateBefore(
-            SupportRoomStatus.ACTIVE,
+    long startedAt = System.nanoTime();
+    var due =
+        supportRoomRepository.findClosureDue(
+            List.of(SupportRoomStatus.ACTIVE, SupportRoomStatus.PROVISIONING),
+            SupportRoomStatus.REVOCATION_PENDING,
             nowInUtc(),
-            org.springframework.data.domain.PageRequest.of(0, sweepBatchSize))
-        .forEach(room -> close(room, REASON_EXPIRED, null));
+            PageRequest.of(0, sweepBatchSize));
+    for (var roomId : due) {
+      if (System.nanoTime() - startedAt >= SWEEP_BUDGET.toNanos()) {
+        return;
+      }
+      lifecycle.claimClosure(roomId, nowInUtc()).ifPresent(this::withdrawAndConfirm);
+    }
   }
 
-  private void close(SupportRoom room, String reason, String actorId) {
+  private void withdrawAndConfirm(SupportRoomLifecycle.Revocation work) {
     try {
-      var supportAdminToken =
-          matrixSynapseService.loginAsUserAccessToken(room.getSupportAdminMatrixId());
-      matrixSynapseService.leaveRoom(room.getMatrixRoomId(), supportAdminToken);
-    } catch (Exception e) {
-      log.error(
-          "Could not remove support admin from Matrix room {} while closing support room {} — closing the lease anyway",
-          room.getMatrixRoomId(),
-          room.getId(),
-          e);
+      var token = matrixSynapseService.loginAsUserAccessToken(work.matrixMemberId());
+      if (!isBlank(token)) {
+        matrixSynapseService.leaveRoom(work.matrixRoomId(), token);
+      }
+      // A generic leave acknowledgement is insufficient; require the authoritative room state.
+      if (matrixSynapseService
+          .isOutOfRoom(work.matrixRoomId(), work.matrixMemberId())
+          .orElse(false)) {
+        lifecycle.confirmClosure(work.roomId());
+        return;
+      }
+      log.warn("Support room withdrawal {} remains pending", work.roomId());
+    } catch (RuntimeException failure) {
+      log.warn(
+          "Support room withdrawal {} remains pending ({})",
+          work.roomId(),
+          failure.getClass().getSimpleName());
     }
-    room.setStatus(SupportRoomStatus.CLOSED);
-    room.setCloseReason(reason);
-    room.setClosedDate(nowInUtc());
-    supportRoomRepository.save(room);
-    audit(room, EVENT_ROOM_CLOSED, actorId);
   }
 
   private String resolveSupportAdminMatrixId(Admin supportAdmin) throws Exception {
@@ -200,19 +206,6 @@ public class SupportRoomService {
       }
     }
     return "@" + localpart + ":" + matrixConfig.getServerName();
-  }
-
-  private void audit(SupportRoom room, String event, String actorId) {
-    handshakeAuditEventRepository.save(
-        HandshakeAuditEvent.builder()
-            .handshakeId(room.getHandshakeId())
-            .purpose("SUPPORT_ACCESS")
-            .event(event)
-            .actorId(actorId)
-            .counterpartId(room.getConsultantId())
-            .tenantId(room.getTenantId())
-            .createDate(nowInUtc())
-            .build());
   }
 
   @Getter

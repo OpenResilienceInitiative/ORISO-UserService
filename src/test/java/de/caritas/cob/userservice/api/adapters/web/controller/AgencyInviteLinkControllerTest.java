@@ -213,10 +213,10 @@ class AgencyInviteLinkControllerTest {
     when(session.getExpiresIn()).thenReturn(60);
     when(session.getRefreshToken()).thenReturn("refresh");
     when(session.getRefreshExpiresIn()).thenReturn(120);
-    when(agencyInviteLinkService.redeemWithContext("token-1"))
+    when(agencyInviteLinkService.redeemWithContext("token-1", null))
         .thenReturn(new RedeemContext(session, 7L, 9L, 5, 99L));
 
-    var response = controller.redeem("token-1");
+    var response = controller.redeem("token-1", null);
 
     assertEquals(HttpStatus.OK, response.getStatusCode());
     assertEquals("anon", response.getBody().getUserName());
@@ -224,13 +224,27 @@ class AgencyInviteLinkControllerTest {
   }
 
   @Test
+  void redeem_Should_PassTheRolledHandleThrough_So_ItBecomesTheLogin() {
+    var request = new AgencyInviteLinkController.RedeemRequestDTO();
+    request.setUsername("katze_sam_4821");
+    var session = mock(CreateAnonymousEnquiryResponseDTO.class);
+    when(session.getUserName()).thenReturn("enc.katze");
+    when(agencyInviteLinkService.redeemWithContext("token-3", "katze_sam_4821"))
+        .thenReturn(new RedeemContext(session, 7L, null, 5, 99L));
+
+    var response = controller.redeem("token-3", request);
+
+    assertEquals("enc.katze", response.getBody().getUserName());
+  }
+
+  @Test
   void redeem_existingTokenWithoutSession_returnsMetadataOnly() {
     // Business reason: metadata-only redemption must still unblock frontends that create sessions
     // later.
-    when(agencyInviteLinkService.redeemWithContext("token-2"))
+    when(agencyInviteLinkService.redeemWithContext("token-2", null))
         .thenReturn(new RedeemContext(null, 8L, 10L, 6, 100L));
 
-    var response = controller.redeem("token-2");
+    var response = controller.redeem("token-2", null);
 
     assertEquals(HttpStatus.OK, response.getStatusCode());
     assertNotNull(response.getBody());

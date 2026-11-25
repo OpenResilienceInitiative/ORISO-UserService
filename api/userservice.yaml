@@ -127,6 +127,63 @@ paths:
         '404': {description: 'Unknown link, or the caller is not in its conversation'}
         '409': {description: 'The link has no appointment, so it never expires and needs no renewal'}
         '503': {description: 'The notice to the counsellor could not be stored; nothing was sent, try again'}
+  /users/invitelinks/{token}/staff-join:
+    post:
+      tags: [direct-link-controller]
+      operationId: joinDirectLinkCallAsCounsellor
+      summary: 'A signed-in counsellor who holds the link joins the running call of a direct invitation [Authorization: Role: consultant]'
+      description: >-
+        ORISO-Frontend#2356. The counsellor joins the call only, with their own account, also from
+        another Träger; the conversation, its history and its session id stay closed to them. The
+        conversation's counsellor lets them in like a guest: with "Anklopfen" on the answer is
+        WAITING with a knock, with it off (or once admitted) the answer is SEATED with the call
+        room. Repeating the request is the poll. A counsellor who is already in the conversation
+        (its counsellor, a supervisor, a member of its room) gets MEMBER with the session id.
+        Nothing is written while no call runs (CALL_NOT_RUNNING); an admission or a decline counts
+        for one call. A link without an appointment has no shared conversation (NO_SHARED_CALL).
+        The existing `/conversations` operation stays for advice seekers only.
+      security:
+        - Bearer: [ ]
+      parameters:
+        - name: token
+          in: path
+          required: true
+          schema: {type: string}
+        - name: waitingFor
+          in: query
+          required: false
+          description: >-
+            The knock the caller's page waits on. When that knock was withdrawn the answer is
+            REFUSED. A decline holds for the rest of the call either way; a new call takes a new
+            knock.
+          schema: {type: integer, format: int64}
+      responses:
+        '200':
+          description: The state of this visit
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/DirectLinkStaffJoinDTO'}
+        '400': {description: 'Not an audio or video counsellor direct link'}
+        '401': {description: UNAUTHORIZED - no/invalid Keycloak token}
+        '403': {description: 'Not a counsellor, removed from this call by a counsellor, or a room member from another Träger'}
+        '404': {description: 'Unknown token'}
+        '410': {description: 'The link is switched off, expired, or direct invitations were withdrawn'}
+        '502': {description: 'Matrix could not be asked; nothing is assumed, try again'}
+    delete:
+      tags: [direct-link-controller]
+      operationId: leaveDirectLinkCallWaitingAsCounsellor
+      summary: 'The counsellor leaves the waiting state: their open knocks through this link are cancelled [Authorization: Role: consultant]'
+      security:
+        - Bearer: [ ]
+      parameters:
+        - name: token
+          in: path
+          required: true
+          schema: {type: string}
+      responses:
+        '204': {description: 'No knock of the caller waits through this link any more'}
+        '401': {description: UNAUTHORIZED - no/invalid Keycloak token}
+        '403': {description: 'Not a counsellor'}
   /users/invitelinks/{token}/conversations:
     post:
       tags: [direct-link-controller]
@@ -2583,7 +2640,7 @@ paths:
         401:
           description: UNAUTHORIZED - no/invalid Keycloak token
         403:
-          description: FORBIDDEN - no chat permission, AVV does not permit new external counselling, or a moderator banned the caller (X-Reason USER_BANNED_FROM_CHAT)
+          description: FORBIDDEN - no chat permission, AVV does not permit new external counselling, a moderator banned the caller (X-Reason USER_BANNED_FROM_CHAT), or an advice seeker of an audio or video self-help circle has not been let in from its waiting room (X-Reason GROUP_ADMISSION_REQUIRED)
           headers:
             X-Reason:
               schema:
@@ -4118,6 +4175,33 @@ components:
         knock:
           type: boolean
           description: Changeable during the call; applies to the next person who opens the link.
+    DirectLinkStaffJoinDTO:
+      type: object
+      required: [outcome, medium]
+      properties:
+        outcome:
+          type: string
+          enum: [MEMBER, WAITING, SEATED, CALL_NOT_RUNNING, REFUSED, NO_SHARED_CALL]
+          description: >-
+            MEMBER: already in the conversation, open it (sessionId). WAITING: knocked, ask again.
+            SEATED: join the call room. CALL_NOT_RUNNING: no call runs yet, ask again. REFUSED: the
+            conversation's counsellor declined for this call, or the knock named in waitingFor was
+            withdrawn. NO_SHARED_CALL: the link has no
+            appointment, so there is no shared call to join.
+        medium: {$ref: '#/components/schemas/DirectLinkMedium'}
+        sessionId:
+          type: integer
+          format: int64
+          description: 'MEMBER only, and only for a counsellor of the conversation''s own Träger.'
+        knockId:
+          type: integer
+          format: int64
+          description: 'WAITING, REFUSED and SEATED: the caller''s knock or admission; pass it as waitingFor while waiting.'
+        knockStatus: {$ref: '#/components/schemas/CallKnockStatus'}
+        sourceRoomId: {type: string, description: 'SEATED only.'}
+        callId: {type: string, description: 'SEATED only.'}
+        callRoomId: {type: string, description: 'SEATED only: the call room the counsellor was invited to.'}
+        guestMatrixUserId: {type: string, description: 'SEATED only: the counsellor''s own Matrix id, as seated.'}
     DirectLinkConversationDTO:
       type: object
       required: [sessionId, medium, admission, created]
@@ -4171,6 +4255,9 @@ components:
         medium: {$ref: '#/components/schemas/DirectLinkMedium'}
         requestedAt: {type: string, format: date-time}
         decidedAt: {type: string, format: date-time}
+        counsellor:
+          type: boolean
+          description: 'True when a counsellor knocks through the link of a direct invitation (ORISO-Frontend#2356); displayName is then their public display name. Let in, they join the call only.'
     OccurrenceOverrideRequest:
       type: object
       required: [originalStartUtc]
@@ -4395,6 +4482,28 @@ components:
           $ref: '#/components/schemas/AgencyDTO'
         latestMessage:
           $ref: '#/components/schemas/Date'
+        caseHandoverStatus:
+          allOf:
+            - $ref: '#/components/schemas/CaseHandoverListStatusDTO'
+          x-field-extra-annotation: "@com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_NULL)"
+
+    CaseHandoverListStatusDTO:
+      description: >-
+        Snapshot for the authenticated counsellor on an eligible case-handover candidate row.
+        Other session lists may omit it. Check the dedicated status endpoint before opening
+        protected content or submitting a handover action.
+      type: object
+      required: [status, canViewContent, hasRequest]
+      properties:
+        status:
+          type: string
+          description: Existing case-handover status, or NOT_REQUESTED if the counsellor has no visible request.
+        canViewContent:
+          type: boolean
+          description: Whether the counsellor could view the case at the time of this read.
+        hasRequest:
+          type: boolean
+          description: Whether the status comes from a request for this counsellor.
 
     GroupSessionListResponseDTO:
       type: object

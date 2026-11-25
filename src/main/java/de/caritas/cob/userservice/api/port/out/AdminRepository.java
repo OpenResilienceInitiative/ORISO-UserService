@@ -106,6 +106,18 @@ public interface AdminRepository
   @Query(value = "SELECT a FROM Admin a WHERE tenantId = ?1 AND type = ?2")
   List<Admin> findByTenantIdAndType(Long tenantId, Admin.AdminType type);
 
+  interface LoginEmailByTenant {
+    Long getTenantId();
+
+    String getEmail();
+  }
+
+  @Query(
+      "SELECT a.tenantId AS tenantId, a.email AS email FROM Admin a"
+          + " WHERE a.tenantId IN :tenantIds AND a.type = :type")
+  List<LoginEmailByTenant> findLoginEmailsByTenantIdsAndType(
+      @Param("tenantIds") Collection<Long> tenantIds, @Param("type") Admin.AdminType type);
+
   List<Admin> findByType(Admin.AdminType type);
 
   /** Admins of the given type that administrate at least one agency, ordered by id. */

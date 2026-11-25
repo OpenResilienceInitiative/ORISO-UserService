@@ -29,6 +29,7 @@ import de.caritas.cob.userservice.api.service.email.sender.SenderOrganisationRes
 import de.caritas.cob.userservice.api.service.emailsupplier.TenantTemplateSupplier;
 import de.caritas.cob.userservice.tenantadminservice.generated.web.model.DpaSignatureDTO;
 import de.caritas.cob.userservice.tenantservice.generated.web.model.RestrictedTenantDTO;
+import java.time.Clock;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
@@ -79,7 +80,14 @@ class DpaSignedNoticeFooterTest {
                         .primaryColor("#1c4f8f")));
     when(transactionManager.getTransaction(any())).thenReturn(new SimpleTransactionStatus());
     when(noticeRepository.save(any(DpaSignedNotice.class)))
-        .thenAnswer(invocation -> invocation.getArgument(0));
+        .thenAnswer(
+            invocation -> {
+              DpaSignedNotice notice = invocation.getArgument(0);
+              if (notice.getId() == null) notice.setId((long) notice.getNoticeRole().ordinal() + 1);
+              return notice;
+            });
+    when(noticeRepository.lockAdminPreparation(eq(1L), any()))
+        .thenReturn(Optional.of(new DpaSignedNotice()));
     when(templateRepository.findByKindAndActiveTrueAndTenantIdIsNullOrderByCreateDateDesc(
             InviteEmailTemplateKind.DPA_SIGNED_NOTICE))
         .thenReturn(List.of());
@@ -187,7 +195,8 @@ class DpaSignedNoticeFooterTest {
             tenantService,
             transactionManager,
             metrics,
-            new AdminPanelUrl("https://admin.example.org"));
+            new AdminPanelUrl("https://admin.example.org"),
+            Clock.systemUTC());
     service.useExecutor(Runnable::run);
 
     service.onSignatureHint(TENANT_ID);

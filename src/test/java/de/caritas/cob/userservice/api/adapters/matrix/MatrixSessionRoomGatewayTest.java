@@ -1,11 +1,13 @@
 package de.caritas.cob.userservice.api.adapters.matrix;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import de.caritas.cob.userservice.api.adapters.matrix.config.MatrixConfig;
 import de.caritas.cob.userservice.api.adapters.matrix.dto.MatrixCreateRoomResponseDTO;
 import de.caritas.cob.userservice.api.adapters.matrix.dto.MatrixCreateUserResponseDTO;
+import java.util.Optional;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -111,5 +113,17 @@ class MatrixSessionRoomGatewayTest {
 
     assertThat(gateway.setUserPowerLevel("!room", "@user", 100, "token")).isTrue();
     assertThat(gateway.removeUserFromRoom("!room", "@user", "token")).isTrue();
+  }
+
+  @Test
+  void onlyPositiveRoomStateConfirmsAbsenceAfterRequestingLeave() {
+    when(matrixSynapseService.isOutOfRoom("!room", "@user"))
+        .thenReturn(Optional.empty(), Optional.of(false), Optional.of(true));
+
+    gateway.leaveRoom("!room", "token");
+    assertThat(gateway.isConfirmedOutOfRoom("!room", "@user")).isFalse();
+    assertThat(gateway.isConfirmedOutOfRoom("!room", "@user")).isFalse();
+    assertThat(gateway.isConfirmedOutOfRoom("!room", "@user")).isTrue();
+    verify(matrixSynapseService).leaveRoom("!room", "token");
   }
 }

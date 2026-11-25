@@ -3,6 +3,7 @@ package de.caritas.cob.userservice.api.service.chat;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -49,6 +50,10 @@ class GroupChatAdmissionProcessorTest {
   @Mock private GroupChatMembershipService membership;
   @Mock private GroupAppointmentSeriesEventProducer appointmentEvents;
   @Mock private GroupChatAdmissionMatrixRepairService repair;
+
+  @Mock
+  private de.caritas.cob.userservice.api.service.matrix.GroupModeratorPowerService moderatorPower;
+
   @InjectMocks private GroupChatAdmissionProcessor processor;
 
   private GroupChatJoinRequest request;
@@ -120,6 +125,116 @@ class GroupChatAdmissionProcessorTest {
     processor.process(7L);
     verify(membership, times(2)).addMemberToRoom(series, "@r:test");
     verify(appointmentEvents).recordMemberJoined(series, RecipientRole.COUNSELOR, "requester");
+  }
+
+  /** ORISO-Frontend#2229: a colleague admitted as co-moderator may blur passages right away. */
+  @Test
+  void aColleagueAdmittedAsCoModeratorIsRaisedToTheMatrixModeratorLevel() {
+    request.setAdmittedRole(ParticipantRole.CO_MODERATOR);
+    when(membership.isMemberInRoom(series, "@r:test")).thenReturn(Optional.of(false));
+    when(membership.addMemberToRoom(series, "@r:test")).thenReturn(true);
+
+    processor.process(7L);
+
+    var order = org.mockito.Mockito.inOrder(participants, moderatorPower);
+    order.verify(participants).save(any());
+    order
+        .verify(moderatorPower)
+        .grantModeratorsAfterCommit(series, java.util.Collections.singletonList("@r:test"));
+  }
+
+  /** A former moderator who comes back as a participant does not keep an old moderator level. */
+  @Test
+  void aColleagueAdmittedAsParticipantHoldsNoMatrixModeratorLevel() {
+    when(membership.isMemberInRoom(series, "@r:test")).thenReturn(Optional.of(false));
+    when(membership.addMemberToRoom(series, "@r:test")).thenReturn(true);
+
+    processor.process(7L);
+
+    verify(moderatorPower).reconcileOrFail(series, "@r:test", ParticipantRole.PARTICIPANT);
+  }
+
+  @Test
+  void aColleagueAdmittedAsParticipantIsNotAdmittedWhenMatrixKeepsTheModeratorLevel() {
+    when(membership.isMemberInRoom(series, "@r:test")).thenReturn(Optional.of(false));
+    when(membership.resolveMatrixRoomId(series)).thenReturn("!room:test");
+    when(membership.addMemberToRoom(series, "@r:test")).thenReturn(true);
+    var refused = matrixKeepsTheModeratorLevel();
+
+    assertThatThrownBy(() -> processor.process(7L)).isSameAs(refused);
+    rollBack();
+
+    assertThat(request.getStatus()).isEqualTo(Status.ADMITTING);
+    // The join of this attempt is undone with the rolled-back admission.
+    verify(membership).removeMemberFromRoom("!room:test", "@r:test");
+  }
+
+  /**
+   * A participant row may exist already (an earlier admission that was repaired). The Matrix level
+   * is still brought in line with that row's role, and a refusal still blocks the admission.
+   */
+  @Test
+  void anExistingParticipantRowIsReconciledAndBlocksTheAdmissionWhenMatrixRefuses() {
+    when(participants.findBySeriesIdForUpdate(11L))
+        .thenReturn(
+            List.of(
+                GroupChatParticipant.builder()
+                    .chatId(19L)
+                    .seriesId(11L)
+                    .consultantId("owner")
+                    .role(ParticipantRole.OWNER)
+                    .build(),
+                GroupChatParticipant.builder()
+                    .chatId(19L)
+                    .seriesId(11L)
+                    .consultantId("requester")
+                    .role(ParticipantRole.PARTICIPANT)
+                    .build()));
+    lenient().when(membership.isMemberInRoom(series, "@r:test")).thenReturn(Optional.of(true));
+    lenient().when(membership.addMemberToRoom(series, "@r:test")).thenReturn(true);
+    var refused = matrixKeepsTheModeratorLevel();
+
+    assertThatThrownBy(() -> processor.process(7L)).isSameAs(refused);
+
+    verify(participants, never()).save(any());
+    assertThat(request.getStatus()).isEqualTo(Status.ADMITTING);
+  }
+
+  /** Someone who was in the room before this attempt is not taken out by its rollback. */
+  @Test
+  void aRolledBackParticipantAdmissionKeepsAMemberWhoWasInTheRoomBefore() {
+    when(membership.isMemberInRoom(series, "@r:test")).thenReturn(Optional.of(true));
+    lenient().when(membership.resolveMatrixRoomId(series)).thenReturn("!room:test");
+    lenient().when(membership.addMemberToRoom(series, "@r:test")).thenReturn(true);
+    var refused = matrixKeepsTheModeratorLevel();
+
+    assertThatThrownBy(() -> processor.process(7L)).isSameAs(refused);
+    rollBack();
+
+    verify(membership, never()).removeMemberFromRoom(any(), any());
+  }
+
+  private de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHttpStatusException
+      matrixKeepsTheModeratorLevel() {
+    var refused =
+        new de.caritas.cob.userservice.api.exception.httpresponses
+            .CustomValidationHttpStatusException(
+            de.caritas.cob.userservice.api.exception.httpresponses.customheader
+                .HttpStatusExceptionReason.INTERNAL_CHAT_MEMBERSHIP_FAILED,
+            org.springframework.http.HttpStatus.BAD_GATEWAY);
+    doThrow(refused)
+        .when(moderatorPower)
+        .reconcileOrFail(series, "@r:test", ParticipantRole.PARTICIPANT);
+    return refused;
+  }
+
+  private static void rollBack() {
+    TransactionSynchronizationManager.getSynchronizations()
+        .forEach(
+            synchronization ->
+                synchronization.afterCompletion(
+                    org.springframework.transaction.support.TransactionSynchronization
+                        .STATUS_ROLLED_BACK));
   }
 
   @Test

@@ -1,16 +1,21 @@
 package de.caritas.cob.userservice.api.adapters.web.controller;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.neovisionaries.i18n.LanguageCode;
+import de.caritas.cob.userservice.api.adapters.web.dto.AgencyDTO;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.model.*;
 import de.caritas.cob.userservice.api.port.out.*;
+import de.caritas.cob.userservice.api.service.dpa.TenantDpaGateReadClient;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
+import de.caritas.cob.userservice.tenantservice.generated.web.model.DpaGateStatusDTO;
 import java.time.LocalDateTime;
 import java.util.Set;
 import java.util.UUID;
@@ -56,6 +61,14 @@ class EnquiryRejectionControllerIT {
   @Autowired private EnquiryRejectionRepository rejections;
   @Autowired private EventNotificationRepository events;
   @MockitoBean private de.caritas.cob.userservice.api.service.agency.AgencyService agencyMetadata;
+  @MockitoBean private TenantDpaGateReadClient dpaGate;
+
+  // Rejection is under test here, not the Team-Chat switch (Träger AND Beratungsstelle, FE#2491,
+  // covered by TeamDiscussionFeatureGateTest): the gate lets every team-discussion call through.
+  @MockitoBean
+  private de.caritas.cob.userservice.api.service.teamdiscussion.TeamDiscussionFeatureGate
+      teamDiscussionGate;
+
   private MockMvc mvc;
   private String seekerId;
   private String actorId;
@@ -1171,7 +1184,12 @@ class EnquiryRejectionControllerIT {
             new de.caritas.cob.userservice.api.service.erstantwort.ErstantwortTenantTextResolver(
                 org.mockito.Mockito.mock(
                     de.caritas.cob.userservice.api.service.erstantwort
-                        .TenantErstantwortContentClient.class)));
+                        .TenantErstantwortContentClient.class)),
+            org.mockito.Mockito.mock(
+                de.caritas.cob.userservice.api.service.erstantwort.ErstantwortPlatformTextService
+                    .class),
+            org.mockito.Mockito.mock(
+                de.caritas.cob.userservice.api.service.erstantwort.JourneyFirstReplyBuilder.class));
     when(matrix.loginAsUserAccessToken(original.getMatrixUserId()))
         .thenReturn("synthetic-seeker-token");
     when(matrix.getRoomEvent(
@@ -1452,6 +1470,18 @@ class EnquiryRejectionControllerIT {
 
   @Test
   void independentPublicAcceptWaitsForTheSameRejectionRowLockThenCannotReopenIt() throws Exception {
+    when(agencyMetadata.getAgencyWithoutCaching(70L))
+        .thenReturn(new AgencyDTO().id(70L).tenantId(7L));
+    when(dpaGate.read(7L))
+        .thenReturn(
+            new DpaGateStatusDTO()
+                .dpaPublished(true)
+                .dpaSigned(true)
+                .dpaStatus("VALID")
+                .currentDpaVersion("synthetic-test-version")
+                .renewalGraceActive(false)
+                .newCounsellingAllowed(true));
+
     var locked = new java.util.concurrent.CountDownLatch(1);
     var acceptEntered = new java.util.concurrent.CountDownLatch(1);
     var release = new java.util.concurrent.CountDownLatch(1);
@@ -1475,7 +1505,8 @@ class EnquiryRejectionControllerIT {
               return invocation.callRealMethod();
             })
         .when(sessionService)
-        .getSessionForUpdate(sessionId);
+        .updateConsultantAndStatusForSession(
+            any(Session.class), any(Consultant.class), eq(Session.SessionStatus.IN_PROGRESS));
     try {
       var rejection =
           executor.submit(

@@ -75,6 +75,8 @@ import org.springframework.transaction.support.TransactionTemplate;
 })
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
 class SessionOwnershipMariaDbIT {
+  @MockitoBean
+  private de.caritas.cob.userservice.api.service.session.AgencyEnquiryRoomDecisions roomDecisions;
 
   private static final String USER_ID = "ownership-proof-user";
   private static final String OWNER_A_ID = "ownership-proof-owner-a";
@@ -941,7 +943,11 @@ class SessionOwnershipMariaDbIT {
             transactionManager,
             mock(de.caritas.cob.userservice.api.service.agency.AgencyService.class),
             mock(de.caritas.cob.userservice.api.admin.service.admin.AdminScope.class),
-            mock(de.caritas.cob.userservice.api.service.chat.MembersOnlyChatAccess.class));
+            mock(de.caritas.cob.userservice.api.service.chat.MembersOnlyChatAccess.class),
+            org.mockito.Mockito.mock(
+                de.caritas.cob.userservice.api.service.agency.CaseSharingGate.class),
+            org.mockito.Mockito.mock(
+                de.caritas.cob.userservice.api.port.out.MatrixRoomMembershipLookup.class));
     var factory = new org.springframework.aop.framework.ProxyFactory(service);
     factory.setProxyTargetClass(true);
     factory.addAdvice(

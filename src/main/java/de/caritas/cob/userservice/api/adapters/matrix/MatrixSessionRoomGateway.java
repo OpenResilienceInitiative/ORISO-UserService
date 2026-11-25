@@ -4,12 +4,14 @@ import de.caritas.cob.userservice.api.adapters.matrix.config.MatrixConfig;
 import de.caritas.cob.userservice.api.exception.matrix.MatrixCreateRoomException;
 import de.caritas.cob.userservice.api.exception.matrix.MatrixCreateUserException;
 import de.caritas.cob.userservice.api.exception.matrix.MatrixInviteUserException;
+import de.caritas.cob.userservice.api.exception.matrix.MatrixJoinRateLimitedException;
+import de.caritas.cob.userservice.api.exception.matrix.MatrixJoinTemporarilyUnavailableException;
 import de.caritas.cob.userservice.api.port.out.SessionRoomGateway;
 import java.nio.charset.StandardCharsets;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
-/** Matrix transport adapter for the session module's room-provisioning port. */
+/** Matrix transport adapter for the session module's room port. */
 @Component
 @RequiredArgsConstructor
 public class MatrixSessionRoomGateway implements SessionRoomGateway {
@@ -75,6 +77,12 @@ public class MatrixSessionRoomGateway implements SessionRoomGateway {
   }
 
   @Override
+  public boolean joinRoomOnce(String roomId, String accessToken)
+      throws MatrixJoinRateLimitedException, MatrixJoinTemporarilyUnavailableException {
+    return matrixSynapseService.joinRoomOnce(roomId, accessToken);
+  }
+
+  @Override
   public boolean ensureAdminInRoom(String roomId, String memberMatrixUserId) {
     return matrixSynapseService.ensureAdminInRoom(roomId, memberMatrixUserId);
   }
@@ -88,6 +96,16 @@ public class MatrixSessionRoomGateway implements SessionRoomGateway {
   @Override
   public boolean removeUserFromRoom(String roomId, String matrixUserId, String accessToken) {
     return matrixSynapseService.removeUserFromRoom(roomId, matrixUserId, accessToken);
+  }
+
+  @Override
+  public void leaveRoom(String roomId, String accessToken) {
+    matrixSynapseService.leaveRoom(roomId, accessToken);
+  }
+
+  @Override
+  public boolean isConfirmedOutOfRoom(String roomId, String matrixUserId) {
+    return matrixSynapseService.isOutOfRoom(roomId, matrixUserId).orElse(false);
   }
 
   @Override

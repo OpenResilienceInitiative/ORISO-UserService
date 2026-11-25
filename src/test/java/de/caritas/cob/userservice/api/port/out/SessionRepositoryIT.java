@@ -1,5 +1,6 @@
 package de.caritas.cob.userservice.api.port.out;
 
+import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -16,14 +17,19 @@ import de.caritas.cob.userservice.api.model.SessionData.SessionDataType;
 import de.caritas.cob.userservice.api.model.User;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.EntityManagerFactory;
+import java.util.Arrays;
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.stream.Collectors;
 import org.apache.commons.lang3.RandomStringUtils;
+import org.hibernate.SessionFactory;
 import org.jeasy.random.EasyRandom;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.data.jpa.test.autoconfigure.DataJpaTest;
 import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase;
@@ -345,6 +351,121 @@ class SessionRepositoryIT {
     var found = underTest.findOneToOneSessions(consultant, user, 1);
 
     assertEquals(List.of(oneToOne.getId()), found.stream().map(Session::getId).toList());
+  }
+
+  /** FE#2494 *4: the read-only sweep touches Teamberatung 1:1 cases, never team group chats. */
+  @Test
+  void findTeamReadOnlyCandidates_Should_SkipGroupChats_AndKeepOneToOneAndLegacyCases() {
+    givenAUser();
+    var consultant = consultantRepository.findAll().iterator().next();
+    var ids = new java.util.ArrayList<Long>();
+    for (var type :
+        java.util.Arrays.asList(
+            ConversationType.AGENCY_COUNSELLING,
+            null,
+            ConversationType.INTERNAL_GROUP,
+            ConversationType.SELF_HELP,
+            ConversationType.LIVE_CHAT)) {
+      var team = validSession(null, 1);
+      team.setConsultant(consultant);
+      team.setTeamSession(true);
+      team.setStatus(SessionStatus.IN_PROGRESS);
+      team.setMatrixRoomId("!team-" + ids.size() + ":matrix.example");
+      team.setConversationType(type);
+      ids.add(underTest.save(team).getId());
+    }
+    entityManager.flush();
+    entityManager.clear();
+
+    var found =
+        underTest.findTeamReadOnlyCandidates(
+            SessionStatus.IN_PROGRESS,
+            ids.get(0) - 1,
+            org.springframework.data.domain.PageRequest.of(0, 50));
+
+    assertEquals(ids.subList(0, 2), found, "found " + found + " of " + ids);
+    assertFalse(found.contains(ids.get(2)));
+    assertFalse(found.contains(ids.get(3)));
+    assertFalse(found.contains(ids.get(4)));
+
+    // The cursor and the page size hold: after the first eligible case, one per page.
+    assertEquals(
+        List.of(ids.get(1)),
+        underTest.findTeamReadOnlyCandidates(
+            SessionStatus.IN_PROGRESS,
+            ids.get(0),
+            org.springframework.data.domain.PageRequest.of(0, 1)));
+    assertEquals(
+        List.of(ids.get(0)),
+        underTest.findTeamReadOnlyCandidates(
+            SessionStatus.IN_PROGRESS,
+            ids.get(0) - 1,
+            org.springframework.data.domain.PageRequest.of(0, 1)));
+  }
+
+  @ParameterizedTest
+  @ValueSource(booleans = {true, false})
+  void handoverCandidateScanLoadsOnlyRequestedNamesWithoutLoadingPersonEntities(
+      boolean includeNames) {
+    givenAUser();
+    var consultants = consultantRepository.findAll();
+    var owner = consultants.get(0);
+    var requester = consultants.get(1);
+    var askerUsername = user.getUsername();
+    var consultantUsername = owner.getUsername();
+    owner.setDisplayName("Public Alias");
+    owner.setInternalDisplayName("Internal Alias");
+    owner.setFirstName("Given Name");
+    owner.setLastName("Family Name");
+    long agencyId = 98_765L;
+    var candidate = validSession(agencyId, 1);
+    candidate.setConsultant(owner);
+    candidate.setStatus(SessionStatus.IN_PROGRESS);
+    candidate = underTest.save(candidate);
+    entityManager.flush();
+    var candidateId = candidate.getId();
+    entityManager.clear();
+
+    var statistics = entityManagerFactory.unwrap(SessionFactory.class).getStatistics();
+    boolean enabled = statistics.isStatisticsEnabled();
+    statistics.setStatisticsEnabled(true);
+    statistics.clear();
+    try {
+      var results =
+          underTest.findHandoverCandidates(
+              List.of(agencyId), requester, List.of(SessionStatus.IN_PROGRESS), includeNames);
+      assertEquals(1, results.size());
+      var projected = results.getFirst();
+      assertEquals(candidateId, projected.getId());
+      var expectedNames =
+          includeNames
+              ? List.of(
+                  askerUsername,
+                  consultantUsername,
+                  "Public Alias",
+                  "Internal Alias",
+                  "Given Name",
+                  "Family Name")
+              : Collections.nCopies(6, null);
+      assertAll(
+          () ->
+              assertEquals(
+                  expectedNames,
+                  Arrays.asList(
+                      projected.getAskerUsername(),
+                      projected.getConsultantUsername(),
+                      projected.getConsultantDisplayName(),
+                      projected.getConsultantInternalDisplayName(),
+                      projected.getConsultantFirstName(),
+                      projected.getConsultantLastName())),
+          () ->
+              assertEquals(0, statistics.getEntityStatistics(User.class.getName()).getLoadCount()),
+          () ->
+              assertEquals(
+                  0, statistics.getEntityStatistics(Consultant.class.getName()).getLoadCount()));
+    } finally {
+      statistics.setStatisticsEnabled(enabled);
+    }
   }
 
   private void appointmentOf(Session session) {

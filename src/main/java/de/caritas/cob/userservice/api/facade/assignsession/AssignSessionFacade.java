@@ -45,6 +45,10 @@ public class AssignSessionFacade {
    */
   private final @NonNull SessionSupervisorFacade sessionSupervisorFacade;
 
+  /** FE#2494 *4: Teamberatung colleagues kept in the room read, only the new owner writes. */
+  private final @NonNull de.caritas.cob.userservice.api.service.session.TeamSessionReadOnlyService
+      teamSessionReadOnly;
+
   /**
    * Assigns the given {@link Session} session to the given {@link Consultant}. Removes consultants
    * from the Matrix room when they no longer have the right to view this session.
@@ -69,6 +73,8 @@ public class AssignSessionFacade {
     // is unsupervised", never to "the reassignment failed". This method is not transactional, so
     // the direct call is safe here — the handover paths need an after-commit hook instead.
     sessionSupervisorFacade.attachStandingSupervisorIfAssigned(session.getId(), consultantToAssign);
+    // FE#2494 *4: the team colleagues kept in the room, the former owner included, become readers.
+    teamSessionReadOnly.enforceAfterCommit(session.getId());
 
     var event =
         new AssignSessionStatisticsEvent(

@@ -17,6 +17,12 @@ runs:
       java-version: ${{ inputs.java_version }}
       distribution: 'temurin'
       cache: maven
+      # Keep direct Central artifacts in a separate cache from the mirror jobs.
+      cache-dependency-path: |
+        **/pom.xml
+        **/.mvn/wrapper/maven-wrapper.properties
+        **/.mvn/extensions.xml
+        scripts/ci/run-maven-with-central-retry.sh
 
   - name: Bind SigNoz unit report to the Maven invocation
     id: unit-report-start
@@ -39,7 +45,7 @@ runs:
     shell: bash
     run: |
       test_status=0
-      ./mvnw -B test || test_status=$?
+      bash scripts/ci/run-maven-with-central-retry.sh -B test || test_status=$?
       echo "MAVEN_TEST_STATUS=${test_status}" >> "$GITHUB_ENV"
 
   - name: Prepare sanitized SigNoz unit report

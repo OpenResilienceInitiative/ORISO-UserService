@@ -150,7 +150,7 @@ class OpenApiContractGateTest(unittest.TestCase):
             workflow,
             re.compile(
                 r"repository: OpenResilienceInitiative/ORISO-AgencyService.*"
-                r"c25826f5e247ce9e711206bda340beca0b91fdd7",
+                r"a8a427247fd89daa35bc1b66689207aee4869016",
                 re.DOTALL,
             ),
         )
@@ -166,9 +166,9 @@ class OpenApiContractGateTest(unittest.TestCase):
             workflow,
             re.compile(
                 r"repository: OpenResilienceInitiative/ORISO-TenantService.*"
-                # TenantService provider: TenantService#368 head (dev including #357 plus the
-                # featureGuestAccount* caps of UserService#1662).
-                r"b9e4036bf8924e49a0b033af1f85670dc4ca998a",
+                # TenantService #405 includes dev (proof-bound release, assignment confirmation)
+                # and featureTeamDiscussionAfterAcceptEnabled.
+                r"bd15fe30ced95362a3eeaeae1303831588d07c98",
                 re.DOTALL,
             ),
         )

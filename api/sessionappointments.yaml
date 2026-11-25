@@ -130,8 +130,11 @@ paths:
         Sprechstunden (not their working hours; days off and the public holidays of their region
         count) that no appointment, request, group date, blocker or imported busy time touches,
         starting no earlier than the minimum lead time and less than 14 days ahead (the booking
-        horizon), earliest first, each INSTANT or REQUEST. A counsellor without Sprechstunden
-        offers none. [Authorization: the asker of the session]'
+        horizon), earliest first, each INSTANT or REQUEST. Plus the counsellor''s one-off
+        Sprechstunden (ORISO-Frontend#2494): days off and holidays do not remove them, each slot
+        starts no earlier than the one-off''s own noticeMinutes, and is INSTANT when the
+        counsellor accepts automatically, else REQUEST. A counsellor without either offers none.
+        [Authorization: the asker of the session]'
       operationId: getSessionAppointmentSlots
       parameters:
         - $ref: '#/components/parameters/SessionId'
@@ -212,7 +215,8 @@ paths:
           description: 'CONFLICT - the time is no longer free, or the conversation is not running.
             X-Reason SELF_BOOKING_LIMIT_REACHED: the conversation already has an upcoming
             appointment or a request waiting (one at a time). X-Reason SLOT_OUTSIDE_BOOKING_WINDOW: the start lies
-            inside the lead time or 14 days or more ahead.'
+            inside the lead time (inside a one-off Sprechstunde: its own notice) or 14 days or
+            more ahead.'
           headers:
             X-Reason:
               schema:

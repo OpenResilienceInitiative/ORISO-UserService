@@ -192,64 +192,26 @@ class RequiredCiContractTest(unittest.TestCase):
             "DeleteUserAccountSchedulerMariaDbReplicaIT",
             "DeleteUsersRegisteredOnlySchedulerMariaDbReplicaIT",
             "SupportRoomMigrationConvergenceIT",
+            "AgencyEnquiryRoomPublicationDatabaseIT",
+            "ConsultantAgencyLateJoinerMembershipMariaDbIT",
             "GroupChatMatrixCleanupAdoptionMariaDbIT",
         ):
             self.assertIn(f"!{mariadb_owned_test}", arguments)
         self.assertIn("-Dtest=**/*IT,", arguments)
+        self.assertNotIn("!AgencyEnquiryAcceptanceDepartureIT", arguments)
         self.assertNotIn("!GroupChatMatrixCleanupAdoptionIT", arguments)
+        self.assertNotIn("!InvitationAppointmentKindMigrationMariaDbIT", arguments)
 
-    def test_every_test_excluded_from_the_required_runner_is_run_by_the_mariadb_job(self):
-        """No test may fall between the two required jobs.
+    def test_mariadb_jobs_consume_the_assignment_with_separate_database_settings(self):
+        workflow = (ROOT / ".github/workflows/mariadb-contract.yml").read_text()
+        guest, standard = workflow.split("    - name: Verify real MariaDB schema contracts")
 
-        The required runner excludes real-MariaDB tests from discovery so that JUnit's
-        environment conditions cannot manufacture green skips. That is only honest while the
-        mariadb-contract job actually runs every excluded test. Asserting the exclusion list
-        alone cannot see the gap: a name added to the exclusions and to nothing else silently
-        removes the test from required CI, which is how SupportRoomMigrationConvergenceIT was
-        lost.
-        """
-        runner = ROOT / "scripts/ci/run-required-integration-tests.sh"
-        with tempfile.TemporaryDirectory() as temp_dir:
-            temp_root = Path(temp_dir)
-            arguments_file = temp_root / "arguments"
-            fake_maven = temp_root / "mvnw"
-            fake_maven.write_text(
-                "#!/usr/bin/env python3\n"
-                "import os\n"
-                "from pathlib import Path\n"
-                "import sys\n"
-                "Path(os.environ['MAVEN_ARGUMENTS_FILE']).write_text('\\n'.join(sys.argv[1:]))\n"
-                "raise SystemExit(23)\n"
-            )
-            fake_maven.chmod(0o755)
-            env = os.environ.copy()
-            env["ORISO_MAVEN_WRAPPER"] = str(fake_maven)
-            env["MAVEN_ARGUMENTS_FILE"] = str(arguments_file)
-
-            subprocess.run([runner], cwd=temp_root, env=env, check=False)
-
-            arguments = arguments_file.read_text()
-
-        excluded = {
-            selector[1:]
-            for line in arguments.splitlines()
-            if line.startswith("-Dtest=")
-            for selector in line[len("-Dtest=") :].split(",")
-            if selector.startswith("!")
-        }
-        self.assertTrue(excluded, "the runner must exclude the real-MariaDB tests")
-
-        mariadb_workflow = (ROOT / ".github/workflows/mariadb-contract.yml").read_text()
-        mariadb_selectors = set()
-        for match in re.finditer(r"-Dtest=([^\s]+)", mariadb_workflow):
-            mariadb_selectors.update(match.group(1).split(","))
-
-        self.assertIn("GroupChatMatrixCleanupAdoptionMariaDbIT", mariadb_selectors)
-        self.assertEqual(
-            set(),
-            excluded - mariadb_selectors,
-            "excluded from the required runner but not run by the mariadb-contract job",
-        )
+        self.assertIn("GUEST_PROMOTION_TEST_DB_URL", guest)
+        self.assertIn("CREATE DATABASE migration_guest", guest)
+        self.assertIn("python3 scripts/ci/database-test-assignment.py guest", guest)
+        self.assertIn("python3 scripts/ci/database-test-assignment.py standard", standard)
+        self.assertNotIn("GUEST_PROMOTION_TEST_DB_URL", standard)
+        self.assertNotIn("-Dtest=", workflow)
 
     def test_pull_request_has_one_truthful_required_conclusion(self):
         workflow = (ROOT / ".github/workflows/ci-pull-request.yml").read_text()
@@ -304,14 +266,16 @@ class RequiredCiContractTest(unittest.TestCase):
         self.assertIn("workflow_call:", reusable)
         self.assertIn("image: mariadb:10.11", reusable)
         self.assertIn("LIQUIBASE_IT_DB_URL", reusable)
-        self.assertIn("DatabaseChangelogDriftIT", reusable)
-        self.assertIn("AdminStatisticsRepositoryMariaDbIT", reusable)
-        self.assertIn("ProvisioningCompensationMariaDbIT", reusable)
-        self.assertIn("ScheduledTaskClaimMariaDbIT", reusable)
-        self.assertIn("TutorialProgressServiceMariaDbReplicaIT", reusable)
-        self.assertIn("DeactivateGroupChatSchedulerMariaDbReplicaIT", reusable)
-        self.assertIn("DeleteUserAccountSchedulerMariaDbReplicaIT", reusable)
-        self.assertIn("DeleteUsersRegisteredOnlySchedulerMariaDbReplicaIT", reusable)
+        assignment = (ROOT / "scripts/ci/mariadb-contract-tests.txt").read_text()
+        self.assertIn("standard DatabaseChangelogDriftIT", assignment)
+        self.assertIn("standard AdminStatisticsRepositoryMariaDbIT", assignment)
+        self.assertIn("standard ProvisioningCompensationMariaDbIT", assignment)
+        self.assertIn("standard ScheduledTaskClaimMariaDbIT", assignment)
+        self.assertIn("standard TutorialProgressServiceMariaDbReplicaIT", assignment)
+        self.assertIn("standard DeactivateGroupChatSchedulerMariaDbReplicaIT", assignment)
+        self.assertIn("standard DeleteUserAccountSchedulerMariaDbReplicaIT", assignment)
+        self.assertIn("standard DeleteUsersRegisteredOnlySchedulerMariaDbReplicaIT", assignment)
+        self.assertIn("guest LiveChatPromotionMigrationIT", assignment)
         self.assertNotIn("continue-on-error:", reusable)
 
         for relative_path in (

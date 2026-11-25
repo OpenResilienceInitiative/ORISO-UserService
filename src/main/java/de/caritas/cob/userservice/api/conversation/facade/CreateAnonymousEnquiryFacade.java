@@ -5,53 +5,36 @@ import static org.apache.commons.lang3.BooleanUtils.isFalse;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateAnonymousEnquiryDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateAnonymousEnquiryResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.UserDTO;
-import de.caritas.cob.userservice.api.conversation.model.AnonymousUserCredentials;
-import de.caritas.cob.userservice.api.conversation.service.AnonymousConversationCreatorService;
-import de.caritas.cob.userservice.api.conversation.service.user.anonymous.AnonymousUserCreatorService;
 import de.caritas.cob.userservice.api.conversation.service.user.anonymous.AnonymousUsernameRegistry;
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
-import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
+import de.caritas.cob.userservice.api.facade.CreateUserFacade;
 import de.caritas.cob.userservice.api.helper.UserHelper;
 import de.caritas.cob.userservice.api.manager.consultingtype.ConsultingTypeManager;
+import de.caritas.cob.userservice.api.model.Session.RegistrationType;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
-import de.caritas.cob.userservice.api.tenant.TenantContextProvider;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
-/** Facade to encapsulate the steps of creating a new anonymous conversation. */
+/**
+ * Opens a live chat for a guest. The guest account itself is created by the one registration entry,
+ * {@link CreateUserFacade}; this facade only decides whether a guest may enter and under which
+ * name.
+ */
 @Service
 @RequiredArgsConstructor
 public class CreateAnonymousEnquiryFacade {
 
-  private final @NonNull AnonymousUserCreatorService anonymousUserCreatorService;
+  private final @NonNull CreateUserFacade createUserFacade;
   private final @NonNull de.caritas.cob.userservice.api.service.dpa.NewCounsellingDpaPolicy
       dpaPolicy;
-  private final @NonNull AnonymousConversationCreatorService anonymousConversationCreatorService;
   private final @NonNull AnonymousUsernameRegistry usernameRegistry;
   private final @NonNull UserHelper userHelper;
   private final @NonNull ConsultingTypeManager consultingTypeManager;
-  private final @NonNull TenantContextProvider tenantContextProvider;
   private final @NonNull de.caritas.cob.userservice.api.admin.service.tenant.TenantService
       tenantService;
 
   private static final String DEFAULT_ANONYMOUS_POSTCODE = "00000";
-
-  /**
-   * Creates an anonymous user account and its corresponding anonymous conversation resp. session
-   * and returns all needed user credentials.
-   *
-   * @param createAnonymousEnquiryDTO {@link CreateAnonymousEnquiryDTO}
-   * @return {@link CreateAnonymousEnquiryResponseDTO}
-   */
-  public CreateAnonymousEnquiryResponseDTO createAnonymousEnquiry(
-      CreateAnonymousEnquiryDTO createAnonymousEnquiryDTO) {
-    // Without a tenant the new user and session would be written without one.
-    if (tenantContextProvider.isMultiTenancyEnabled() && !TenantContext.contextIsSet()) {
-      throw new ForbiddenException("An anonymous enquiry needs a tenant");
-    }
-    return createAnonymousEnquiry(createAnonymousEnquiryDTO, false);
-  }
 
   /**
    * @param skipConsultingTypeAnonymousCheck when {@code true} the consulting-type-level "anonymous
@@ -61,6 +44,19 @@ public class CreateAnonymousEnquiryFacade {
   public CreateAnonymousEnquiryResponseDTO createAnonymousEnquiry(
       CreateAnonymousEnquiryDTO createAnonymousEnquiryDTO,
       boolean skipConsultingTypeAnonymousCheck) {
+    return createAnonymousEnquiry(
+        createAnonymousEnquiryDTO, skipConsultingTypeAnonymousCheck, null);
+  }
+
+  /**
+   * @param chosenUsername the animal handle the guest rolled on the entry page, or {@code null} to
+   *     let the server roll one. A handle the generator cannot produce is refused (400), a taken
+   *     one reported (409) — in both cases before anything is created.
+   */
+  public CreateAnonymousEnquiryResponseDTO createAnonymousEnquiry(
+      CreateAnonymousEnquiryDTO createAnonymousEnquiryDTO,
+      boolean skipConsultingTypeAnonymousCheck,
+      String chosenUsername) {
 
     tenantService.requireOperationalTenant(TenantContext.getCurrentTenant());
     if (!skipConsultingTypeAnonymousCheck) {
@@ -68,18 +64,18 @@ public class CreateAnonymousEnquiryFacade {
     }
 
     dpaPolicy.requireForTenant(TenantContext.getCurrentTenant());
-    var userDto = buildUserDto(createAnonymousEnquiryDTO);
-    AnonymousUserCredentials credentials = anonymousUserCreatorService.createAnonymousUser(userDto);
-    var session =
-        anonymousConversationCreatorService.createAnonymousConversation(userDto, credentials);
+    var userDto = buildUserDto(createAnonymousEnquiryDTO, chosenUsername);
+    var guest =
+        createUserFacade.createUserAccountWithInitializedConsultingType(
+            userDto, RegistrationType.ANONYMOUS);
 
     return new CreateAnonymousEnquiryResponseDTO()
         .userName(userDto.getUsername())
-        .accessToken(credentials.getAccessToken())
-        .refreshToken(credentials.getRefreshToken())
-        .expiresIn(credentials.getExpiresIn())
-        .refreshExpiresIn(credentials.getRefreshExpiresIn())
-        .sessionId(session.getId());
+        .accessToken(guest.login().accessToken())
+        .refreshToken(guest.login().refreshToken())
+        .expiresIn(guest.login().expiresIn())
+        .refreshExpiresIn(guest.login().refreshExpiresIn())
+        .sessionId(guest.sessionId());
   }
 
   private void checkIfConsultingTypeHasAnonymousConsulting(int consultingTypeId) {
@@ -90,10 +86,15 @@ public class CreateAnonymousEnquiryFacade {
     }
   }
 
-  private UserDTO buildUserDto(CreateAnonymousEnquiryDTO createAnonymousEnquiryDTO) {
+  private UserDTO buildUserDto(
+      CreateAnonymousEnquiryDTO createAnonymousEnquiryDTO, String chosenUsername) {
+    var username =
+        chosenUsername == null
+            ? usernameRegistry.generateUniqueUsername()
+            : usernameRegistry.claimChosenUsername(chosenUsername);
     return UserDTO.builder()
         .consultingType(String.valueOf(createAnonymousEnquiryDTO.getConsultingType()))
-        .username(usernameRegistry.generateUniqueUsername())
+        .username(username)
         .password(userHelper.getRandomPassword())
         .postcode(DEFAULT_ANONYMOUS_POSTCODE)
         .termsAccepted("true")

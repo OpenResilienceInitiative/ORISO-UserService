@@ -48,6 +48,7 @@ import de.caritas.cob.userservice.api.manager.consultingtype.ConsultingTypeManag
 import de.caritas.cob.userservice.api.model.Chat;
 import de.caritas.cob.userservice.api.model.ConversationType;
 import de.caritas.cob.userservice.api.model.Session;
+import de.caritas.cob.userservice.api.model.Session.RegistrationType;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.out.IdentityAccountRemover;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
@@ -151,7 +152,9 @@ public class CreateUserFacadeTest {
             mock(de.caritas.cob.userservice.api.service.SessionDataService.class),
             temporaryAccountLinkResolver,
             temporaryAccountSettings,
-            lifecycleEvents);
+            lifecycleEvents,
+            anonymousConversationCreatorService,
+            identityAuthentication);
 
     org.mockito.Mockito.lenient()
         .when(consultingTypeManager.getConsultingTypeSettings(org.mockito.ArgumentMatchers.any()))
@@ -210,6 +213,13 @@ public class CreateUserFacadeTest {
   @Mock private MatrixSynapseService matrixSynapseService;
   @Mock private WelcomeEmailService welcomeEmailService;
   @Mock private GroupInviteRegistration groupInviteRegistration;
+
+  @Mock
+  private de.caritas.cob.userservice.api.conversation.service.AnonymousConversationCreatorService
+      anonymousConversationCreatorService;
+
+  @Mock
+  private de.caritas.cob.userservice.api.port.out.IdentityAuthentication identityAuthentication;
 
   @Spy
   private ProvisioningCompensator provisioningCompensator =
@@ -780,11 +790,9 @@ public class CreateUserFacadeTest {
   public void
       createUserAccountWithInitializedConsultingType_Should_ProvisionMatrixAndInitializeSession_When_ConsultingTypeIsKreuzbundAndNoTenantIsSet()
           throws Exception {
-    // Was named "..._Should_LogOutFromRocketChat_When_...RocketChatLoginSucceeded"
-    // and asserted nothing at all — it only checked that the call did not throw,
-    // for a log-out that no longer exists. It covers the Kreuzbund path without a
-    // tenant context (the sibling test below covers it with one), so assert what
-    // that path is actually supposed to do.
+    // Covers the Kreuzbund path without a tenant context; the sibling test below covers the
+    // tenant-specific path. The assertions verify Matrix provisioning, session initialization,
+    // and credential cleanup.
     when(consultingTypeManager.getConsultingTypeSettings(any()))
         .thenReturn(CONSULTING_TYPE_SETTINGS_KREUZBUND);
     when(identityClient.createUser(any())).thenReturn(CREATED_IDENTITY_WITH_USER_ID);
@@ -852,7 +860,11 @@ public class CreateUserFacadeTest {
         .thenReturn(CONSULTING_TYPE_SETTINGS_KREUZBUND);
     doNothing().when(identityPasswordUpdater).updatePassword(anyString(), anyString());
 
-    createUserFacade.updateIdentityAndCreateAccount(USER_ID, USER_DTO_SUCHT, UserRole.USER);
+    createUserFacade.updateIdentityAndCreateAccount(
+        USER_ID,
+        USER_DTO_SUCHT,
+        RegistrationType.REGISTERED,
+        new RecoveryPolicySnapshot("LOGIN_PASSWORD", 3));
 
     verify(identityClient, times(1)).updateRole(any(), any(UserRole.class));
     verify(identityPasswordUpdater, times(1)).updatePassword(anyString(), anyString());
@@ -869,7 +881,10 @@ public class CreateUserFacadeTest {
             RuntimeException.class,
             () ->
                 createUserFacade.updateIdentityAndCreateAccount(
-                    USER_ID, USER_DTO_SUCHT, UserRole.USER));
+                    USER_ID,
+                    USER_DTO_SUCHT,
+                    RegistrationType.REGISTERED,
+                    new RecoveryPolicySnapshot("LOGIN_PASSWORD", 3)));
 
     assertThat(propagated, is(identityFailure));
     verify(userService, never()).createUser(any(), any(), any(), any(), anyBoolean(), any(), any());
@@ -886,7 +901,10 @@ public class CreateUserFacadeTest {
             RuntimeException.class,
             () ->
                 createUserFacade.updateIdentityAndCreateAccount(
-                    USER_ID, USER_DTO_SUCHT, UserRole.USER));
+                    USER_ID,
+                    USER_DTO_SUCHT,
+                    RegistrationType.REGISTERED,
+                    new RecoveryPolicySnapshot("LOGIN_PASSWORD", 3)));
 
     assertThat(propagated, is(identityFailure));
     verify(userService, never()).createUser(any(), any(), any(), any(), anyBoolean(), any(), any());
@@ -925,7 +943,11 @@ public class CreateUserFacadeTest {
           when(userService.createUser(any(), any(), any(), any(), anyBoolean(), any(), any()))
               .thenThrow(new IllegalArgumentException());
 
-          createUserFacade.updateIdentityAndCreateAccount(USER_ID, USER_DTO_SUCHT, UserRole.USER);
+          createUserFacade.updateIdentityAndCreateAccount(
+              USER_ID,
+              USER_DTO_SUCHT,
+              RegistrationType.REGISTERED,
+              new RecoveryPolicySnapshot("LOGIN_PASSWORD", 3));
         });
   }
 
@@ -1539,7 +1561,8 @@ public class CreateUserFacadeTest {
   }
 
   @Test
-  void updateIdentityAndCreateAccount_Should_ClearPrivacyConfirmations_When_RoleIsAnonymous() {
+  void
+      updateIdentityAndCreateAccount_Should_ClearPrivacyConfirmations_When_RegistrationIsAnonymous() {
     when(consultingTypeManager.getConsultingTypeSettings(any()))
         .thenReturn(CONSULTING_TYPE_SETTINGS_KREUZBUND);
     doNothing().when(identityPasswordUpdater).updatePassword(anyString(), anyString());
@@ -1552,7 +1575,10 @@ public class CreateUserFacadeTest {
 
     User result =
         createUserFacade.updateIdentityAndCreateAccount(
-            USER_ID, USER_DTO_SUCHT, UserRole.ANONYMOUS);
+            USER_ID,
+            USER_DTO_SUCHT,
+            RegistrationType.ANONYMOUS,
+            new RecoveryPolicySnapshot("LOGIN_PASSWORD", 3));
 
     assertThat(result.getTermsAndConditionsConfirmation(), nullValue());
     assertThat(result.getDataPrivacyConfirmation(), nullValue());
@@ -1561,39 +1587,18 @@ public class CreateUserFacadeTest {
 
   @Test
   void
-      updateIdentityAndCreateAccount_Should_ThrowInternalServerError_When_KeycloakFailsForAnonymousUser() {
-    doThrow(new RuntimeException("kc down"))
-        .when(identityClient)
-        .updateRole(anyString(), any(UserRole.class));
-
-    assertThrows(
-        InternalServerErrorException.class,
-        () ->
-            createUserFacade.updateIdentityAndCreateAccount(
-                USER_ID, USER_DTO_SUCHT, UserRole.ANONYMOUS));
-
-    verify(userService, never()).createUser(any(), any(), any(), any(), anyBoolean(), any(), any());
-  }
-
-  @Test
-  void
       updateIdentityAndCreateAccount_Should_AbortBeforeDatabaseWrite_When_UserIdIsNullAndRoleIsUser() {
 
     assertThrows(
         InternalServerErrorException.class,
-        () -> createUserFacade.updateIdentityAndCreateAccount(null, USER_DTO_SUCHT, UserRole.USER));
-
-    verify(userService, never()).createUser(any(), any(), any(), any(), anyBoolean(), any(), any());
-  }
-
-  @Test
-  void
-      updateIdentityAndCreateAccount_Should_ThrowInternalServerError_When_UserIdIsNullAndRoleIsAnonymous() {
-    assertThrows(
-        InternalServerErrorException.class,
         () ->
             createUserFacade.updateIdentityAndCreateAccount(
-                null, USER_DTO_SUCHT, UserRole.ANONYMOUS));
+                null,
+                USER_DTO_SUCHT,
+                RegistrationType.REGISTERED,
+                new RecoveryPolicySnapshot("LOGIN_PASSWORD", 3)));
+
+    verify(userService, never()).createUser(any(), any(), any(), any(), anyBoolean(), any(), any());
   }
 
   @Test
@@ -1617,7 +1622,11 @@ public class CreateUserFacadeTest {
             .consultingType(USER_DTO_SUCHT.getConsultingType())
             .build();
 
-    createUserFacade.updateIdentityAndCreateAccount(USER_ID, userDtoWithBlankEmail, UserRole.USER);
+    createUserFacade.updateIdentityAndCreateAccount(
+        USER_ID,
+        userDtoWithBlankEmail,
+        RegistrationType.REGISTERED,
+        new RecoveryPolicySnapshot("LOGIN_PASSWORD", 3));
 
     verify(identityDummyEmailUpdater, times(1))
         .updateDummyEmail(eq(USER_ID), any(IdentityDummyEmailUpdate.class));
@@ -1644,8 +1653,10 @@ public class CreateUserFacadeTest {
 
     User result =
         createUserFacade.updateIdentityAndCreateAccount(
-            USER_ID, anonymousPostcodeDto, UserRole.USER);
-    verify(chatRecoveryEnrollmentPolicyService).forNewAsker(org.mockito.ArgumentMatchers.any());
+            USER_ID,
+            anonymousPostcodeDto,
+            RegistrationType.REGISTERED,
+            new RecoveryPolicySnapshot("LOGIN_PASSWORD", 3));
     verify(userService)
         .createUser(
             any(),
@@ -1662,7 +1673,38 @@ public class CreateUserFacadeTest {
 
   @Test
   void
-      updateIdentityAndCreateAccount_Should_ClearPrivacyConfirmations_When_UsernameStartsWithAnonymousPrefix() {
+      updateIdentityAndCreateAccount_Should_KeepPrivacyConfirmations_When_OnlyTheUsernameLooksAnonymous() {
+    // ORISO-UserService#1697: the User-ID text does not decide; the regular postcode does.
+    when(consultingTypeManager.getConsultingTypeSettings(any()))
+        .thenReturn(CONSULTING_TYPE_SETTINGS_KREUZBUND);
+    User user = new User();
+    user.setTermsAndConditionsConfirmation(LocalDateTime.now());
+    user.setDataPrivacyConfirmation(LocalDateTime.now());
+    when(userService.createUser(any(), any(), any(), any(), anyBoolean(), any(), any()))
+        .thenReturn(user);
+    UserDTO anonymousUsernameDto =
+        UserDTO.builder()
+            .email(USER_DTO_SUCHT.getEmail())
+            .username("Anonymous-1234")
+            .postcode(USER_DTO_SUCHT.getPostcode())
+            .consultingType(USER_DTO_SUCHT.getConsultingType())
+            .build();
+
+    User result =
+        createUserFacade.updateIdentityAndCreateAccount(
+            USER_ID,
+            anonymousUsernameDto,
+            RegistrationType.REGISTERED,
+            new RecoveryPolicySnapshot("LOGIN_PASSWORD", 3));
+
+    assertThat(result.getTermsAndConditionsConfirmation(), notNullValue());
+    assertThat(result.getDataPrivacyConfirmation(), notNullValue());
+    verify(userService, never()).saveUser(any());
+  }
+
+  @Test
+  void
+      updateIdentityAndCreateAccount_Should_ClearPrivacyConfirmations_When_AnimalGuestRegistersWithLiveChatPostcode() {
     when(consultingTypeManager.getConsultingTypeSettings(any()))
         .thenReturn(CONSULTING_TYPE_SETTINGS_KREUZBUND);
     User user = new User();
@@ -1674,16 +1716,18 @@ public class CreateUserFacadeTest {
     UserDTO anonymousUsernameDto =
         UserDTO.builder()
             .email(USER_DTO_SUCHT.getEmail())
-            .username("Anonymous-1234")
-            .postcode(USER_DTO_SUCHT.getPostcode())
+            .username("katze_sam_4821")
+            .postcode("00000")
             .consultingType(USER_DTO_SUCHT.getConsultingType())
             .build();
 
     User result =
         createUserFacade.updateIdentityAndCreateAccount(
-            USER_ID, anonymousUsernameDto, UserRole.USER);
+            USER_ID,
+            anonymousUsernameDto,
+            RegistrationType.REGISTERED,
+            new RecoveryPolicySnapshot("LOGIN_PASSWORD", 3));
 
-    verify(chatRecoveryEnrollmentPolicyService).forNewAsker(org.mockito.ArgumentMatchers.any());
     verify(userService)
         .createUser(
             any(),
@@ -1696,5 +1740,185 @@ public class CreateUserFacadeTest {
 
     assertThat(result.getTermsAndConditionsConfirmation(), nullValue());
     assertThat(result.getDataPrivacyConfirmation(), nullValue());
+  }
+
+  // ---------------------------------------------------------------------------
+  // Live-chat guest through the same entry (ADR-038, #1745)
+  // ---------------------------------------------------------------------------
+
+  private static final String GUEST_HANDLE = "katze_sam_4821";
+  private static final String GUEST_USERNAME =
+      new de.caritas.cob.userservice.api.helper.UsernameTranscoder().encodeUsername(GUEST_HANDLE);
+  private static final de.caritas.cob.userservice.api.port.out.IdentityLogin GUEST_LOGIN =
+      new de.caritas.cob.userservice.api.port.out.IdentityLogin("access", 300, 1800, "refresh");
+
+  private UserDTO guestRegistration() {
+    return UserDTO.builder()
+        .consultingType("1")
+        .username(GUEST_USERNAME)
+        .password("generated-password")
+        .postcode("00000")
+        .termsAccepted("true")
+        .mainTopicId(11L)
+        .build();
+  }
+
+  private User givenAGuestCanBeProvisioned() throws Exception {
+    when(identityClient.createUser(any())).thenReturn(CREATED_IDENTITY_WITH_USER_ID);
+    User user = givenAFullyPersistedUser();
+    var matrixResponseBody = new MatrixCreateUserResponseDTO();
+    matrixResponseBody.setUserId("@" + GUEST_HANDLE + ":matrix.example.org");
+    lenient()
+        .when(matrixSynapseService.createUser(anyString(), anyString(), anyString()))
+        .thenReturn(ResponseEntity.ok(matrixResponseBody));
+    lenient().when(matrixSynapseService.deactivateUser(anyString())).thenReturn(true);
+    return user;
+  }
+
+  @Test
+  void aGuestIsCreatedThroughTheRegistrationEntryAndSignedIn() throws Exception {
+    User user = givenAGuestCanBeProvisioned();
+    var waiting = new Session();
+    waiting.setId(77L);
+    var guest = guestRegistration();
+    when(identityAuthentication.login(GUEST_USERNAME, "generated-password"))
+        .thenReturn(GUEST_LOGIN);
+    when(anonymousConversationCreatorService.createAnonymousConversation(guest, user))
+        .thenReturn(waiting);
+
+    var created =
+        createUserFacade.createUserAccountWithInitializedConsultingType(
+            guest, RegistrationType.ANONYMOUS);
+
+    assertThat(created.userId(), is(USER_ID));
+    assertThat(created.sessionId(), is(77L));
+    assertThat(created.login(), is(GUEST_LOGIN));
+    // The same role, password and chat identity steps as a Mailberatung registration.
+    verify(identityClient).updateRole(USER_ID, UserRole.USER);
+    verify(identityPasswordUpdater).updatePassword(USER_ID, "generated-password");
+    verify(matrixSynapseService).createUser(eq(GUEST_HANDLE), anyString(), eq(GUEST_HANDLE));
+    verify(provisioningCompensator)
+        .begin(
+            de.caritas.cob.userservice.api.service.provisioning.ProvisioningWorkflow
+                .LIVE_CHAT_GUEST);
+    assertThat(user.getTermsAndConditionsConfirmation(), nullValue());
+    assertThat(user.getDataPrivacyConfirmation(), nullValue());
+    // Nothing of a registered counselling request: no agency, enquiry, statistic or welcome mail.
+    verify(agencyVerifier, never()).checkIfConsultingTypeMatchesToAgency(any());
+    verify(createNewSessionFacade, never())
+        .initializeNewSession(any(), any(), any(ExtendedConsultingTypeResponseDTO.class));
+    verify(statisticsService, never()).fireEvent(any());
+    verify(welcomeEmailService, never()).sendWelcomeEmail(any(), any());
+    verify(identityAccountRemover, never()).rollbackUser(anyString());
+    verify(matrixSynapseService, never()).deactivateUser(anyString());
+  }
+
+  @Test
+  void aGuestNameComesFromTheRegistrationNotFromLeftoverRequestCredentials() throws Exception {
+    User user = givenAGuestCanBeProvisioned();
+    var guest = guestRegistration();
+    when(identityAuthentication.login(any(), any())).thenReturn(GUEST_LOGIN);
+    when(anonymousConversationCreatorService.createAnonymousConversation(guest, user))
+        .thenReturn(new Session());
+    PlainCredentialsHolder.set("someone-else", "other-password");
+
+    createUserFacade.createUserAccountWithInitializedConsultingType(
+        guest, RegistrationType.ANONYMOUS);
+
+    verify(matrixSynapseService).createUser(eq(GUEST_HANDLE), anyString(), eq(GUEST_HANDLE));
+    assertThat(PlainCredentialsHolder.get(), nullValue());
+  }
+
+  @Test
+  void aTypedGuestNameIsRefusedBeforeAnythingIsCreated() {
+    // The real name rule, not a stub: a typed name is refused, a rolled handle is accepted.
+    var names =
+        new de.caritas.cob.userservice.api.service.SessionDataService(
+            mock(de.caritas.cob.userservice.api.port.out.SessionDataRepository.class),
+            mock(de.caritas.cob.userservice.api.helper.SessionDataProvider.class),
+            sessionService,
+            mock(de.caritas.cob.userservice.api.helper.AuthenticatedUser.class),
+            tenantService,
+            new de.caritas.cob.userservice.api.service.GeneratedPseudonyms(),
+            mock(de.caritas.cob.userservice.api.service.chat.MembersOnlyChatAccess.class),
+            mock(org.springframework.transaction.PlatformTransactionManager.class));
+    org.springframework.test.util.ReflectionTestUtils.setField(
+        createUserFacade, "sessionDataService", names);
+    var typed = guestRegistration();
+    typed.setUsername(
+        new de.caritas.cob.userservice.api.helper.UsernameTranscoder()
+            .encodeUsername("max_mustermann"));
+
+    assertThrows(
+        de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException.class,
+        () ->
+            createUserFacade.createUserAccountWithInitializedConsultingType(
+                typed, RegistrationType.ANONYMOUS));
+
+    verify(identityClient, never()).createUser(any());
+    org.mockito.Mockito.verifyNoInteractions(
+        matrixSynapseService, identityAuthentication, anonymousConversationCreatorService);
+    org.junit.jupiter.api.Assertions.assertDoesNotThrow(
+        () -> names.requireGeneratedUsername(GUEST_USERNAME));
+  }
+
+  @Test
+  void noHalfCreatedGuestRemainsWhenTheIdentityProviderFails() {
+    when(identityClient.createUser(any())).thenReturn(CREATED_IDENTITY_WITH_USER_ID);
+    doThrow(new RuntimeException("identity provider down"))
+        .when(identityPasswordUpdater)
+        .updatePassword(anyString(), anyString());
+
+    assertThrows(
+        RuntimeException.class,
+        () ->
+            createUserFacade.createUserAccountWithInitializedConsultingType(
+                guestRegistration(), RegistrationType.ANONYMOUS));
+
+    verify(identityAccountRemover).rollbackUser(USER_ID);
+    verify(userService, never()).createUser(any(), any(), any(), any(), anyBoolean(), any(), any());
+    org.mockito.Mockito.verifyNoInteractions(
+        matrixSynapseService, identityAuthentication, anonymousConversationCreatorService);
+  }
+
+  @Test
+  void noHalfCreatedGuestRemainsWhenTheGuestCannotBeSignedIn() throws Exception {
+    User user = givenAGuestCanBeProvisioned();
+    when(identityAuthentication.login(any(), any()))
+        .thenThrow(new InternalServerErrorException("login refused"));
+
+    assertThrows(
+        InternalServerErrorException.class,
+        () ->
+            createUserFacade.createUserAccountWithInitializedConsultingType(
+                guestRegistration(), RegistrationType.ANONYMOUS));
+
+    // No waiting place was opened, and all three stores are cleaned — the chat identity too,
+    // which the former guest-only rollback left behind.
+    org.mockito.Mockito.verifyNoInteractions(anonymousConversationCreatorService);
+    verify(matrixSynapseService).deactivateUser("@" + GUEST_HANDLE + ":matrix.example.org");
+    verify(userService).deleteUser(user);
+    verify(identityAccountRemover).rollbackUser(USER_ID);
+  }
+
+  @Test
+  void noHalfCreatedGuestRemainsWhenTheWaitingPlaceCannotBeOpened() throws Exception {
+    User user = givenAGuestCanBeProvisioned();
+    var staleSession = new Session();
+    when(identityAuthentication.login(any(), any())).thenReturn(GUEST_LOGIN);
+    when(anonymousConversationCreatorService.createAnonymousConversation(any(), any()))
+        .thenThrow(new InternalServerErrorException("Could not create the live-chat session"));
+    when(sessionService.getSessionsForUser(user)).thenReturn(java.util.List.of(staleSession));
+
+    assertThrows(
+        InternalServerErrorException.class,
+        () ->
+            createUserFacade.createUserAccountWithInitializedConsultingType(
+                guestRegistration(), RegistrationType.ANONYMOUS));
+
+    verify(sessionService).deleteSession(staleSession);
+    verify(matrixSynapseService).deactivateUser("@" + GUEST_HANDLE + ":matrix.example.org");
+    verify(userService).deleteUser(user);
+    verify(identityAccountRemover).rollbackUser(USER_ID);
   }
 }

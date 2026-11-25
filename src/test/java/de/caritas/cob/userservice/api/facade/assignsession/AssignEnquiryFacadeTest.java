@@ -16,14 +16,17 @@ import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.atLeastOnce;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import de.caritas.cob.userservice.api.adapters.keycloak.KeycloakService;
+import de.caritas.cob.userservice.api.exception.httpresponses.ConflictException;
 import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException;
 import de.caritas.cob.userservice.api.exception.matrix.MatrixCreateRoomException;
 import de.caritas.cob.userservice.api.exception.matrix.MatrixCreateUserException;
@@ -32,6 +35,7 @@ import de.caritas.cob.userservice.api.helper.ConsultantDisplayNameResolver;
 import de.caritas.cob.userservice.api.helper.UserHelper;
 import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
 import de.caritas.cob.userservice.api.model.Consultant;
+import de.caritas.cob.userservice.api.model.ConversationType;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.Session.RegistrationType;
 import de.caritas.cob.userservice.api.model.Session.SessionStatus;
@@ -42,6 +46,7 @@ import de.caritas.cob.userservice.api.port.out.UserRepository;
 import de.caritas.cob.userservice.api.service.agency.AgencyMatrixCredentialClient;
 import de.caritas.cob.userservice.api.service.agency.dto.AgencyMatrixCredentialsDTO;
 import de.caritas.cob.userservice.api.service.notification.EventNotificationService;
+import de.caritas.cob.userservice.api.service.session.AgencyEnquiryRoomRetirements;
 import de.caritas.cob.userservice.api.service.session.SessionOwnershipService.OwnershipChange;
 import de.caritas.cob.userservice.api.service.session.SessionService;
 import de.caritas.cob.userservice.api.service.statistics.StatisticsService;
@@ -77,6 +82,7 @@ class AssignEnquiryFacadeTest {
   @Mock UserHelper userHelper;
   @Mock UsernameTranscoder usernameTranscoder;
   @Mock AgencyMatrixCredentialClient agencyMatrixCredentialClient;
+  @Mock AgencyEnquiryRoomRetirements roomRetirements;
   @Mock EventNotificationService eventNotificationService;
   @Mock de.caritas.cob.userservice.api.facade.SessionSupervisorFacade sessionSupervisorFacade;
   @Mock de.caritas.cob.userservice.api.facade.TeamDiscussionFacade teamDiscussionFacade;
@@ -94,6 +100,9 @@ class AssignEnquiryFacadeTest {
   @Mock
   de.caritas.cob.userservice.api.service.furthercounselling.TopicDuplicateService
       topicDuplicateService;
+
+  @Mock
+  de.caritas.cob.userservice.api.service.session.TeamSessionReadOnlyService teamSessionReadOnly;
 
   private static final String USER_MATRIX_ID = "@user:matrix.example.com";
   private static final String CONSULTANT_MATRIX_ID = "@consultant:matrix.example.com";
@@ -122,6 +131,7 @@ class AssignEnquiryFacadeTest {
             usernameTranscoder,
             consultantDisplayNameResolver,
             agencyMatrixCredentialClient,
+            roomRetirements,
             eventNotificationService,
             anonymousEnquiryDepartmentResolver,
             sessionSupervisorFacade,
@@ -129,7 +139,8 @@ class AssignEnquiryFacadeTest {
             acceptanceNotices,
             acceptanceDelivery,
             topicDuplicateService,
-            messaging);
+            messaging,
+            teamSessionReadOnly);
     CONSULTANT_WITH_AGENCY.setTenantId(41L);
     // ADR-002 §2: the display name comes from the resolver, never from the real name.
     lenient()
@@ -484,6 +495,14 @@ class AssignEnquiryFacadeTest {
         .createInquiryAcceptedNotification(SESSION_WITHOUT_CONSULTANT, CONSULTANT_WITH_AGENCY);
   }
 
+  /** FE#2494 *4: in Teamberatung only the accepting counsellor writes. */
+  @Test
+  void assignRegisteredEnquiry_Should_makeTheTeamColleaguesReaders() {
+    assignEnquiryFacade.assignRegisteredEnquiry(SESSION_WITHOUT_CONSULTANT, CONSULTANT_WITH_AGENCY);
+
+    verify(teamSessionReadOnly).enforceAfterCommit(SESSION_WITHOUT_CONSULTANT.getId());
+  }
+
   @Test
   void assignRegisteredEnquiry_Should_retireTheOtherConsultantsNewRequestEntries() {
     assignEnquiryFacade.assignRegisteredEnquiry(SESSION_WITHOUT_CONSULTANT, CONSULTANT_WITH_AGENCY);
@@ -731,8 +750,13 @@ class AssignEnquiryFacadeTest {
   }
 
   @Test
-  void assignEnquiry_Should_FallBackToNewRoom_When_AgencyCredentialsAbsent() throws Exception {
+  void assignEnquiry_Should_RetireItsFormerHoldingRoom_When_AgencyCredentialsAbsent()
+      throws Exception {
     Session session = sessionWithUser(USER_MATRIX_ID, "!existing-room:matrix.example.com");
+    session.setAgencyId(21L);
+    session.setTenantId(41L);
+    session.setIsConsultantDirectlySet(false);
+    session.setConversationType(null);
     Consultant consultant = consultantWithMatrixId(CONSULTANT_MATRIX_ID);
 
     when(agencyMatrixCredentialClient.fetchMatrixCredentials(any())).thenReturn(Optional.empty());
@@ -740,6 +764,9 @@ class AssignEnquiryFacadeTest {
     assignEnquiryFacade.assignRegisteredEnquiry(session, consultant);
 
     verify(sessionRoomGateway).createRoomAsUser(any(), any(), any());
+    verify(roomRetirements)
+        .replaceRoom(eq(session), any(OwnershipChange.class), eq(MATRIX_ROOM_ID));
+    verify(sessionService, never()).saveSession(session);
   }
 
   @Test
@@ -829,6 +856,26 @@ class AssignEnquiryFacadeTest {
         .updateConsultantAndStatusForSession(any(), any(), eq(SessionStatus.IN_PROGRESS));
     ordered.verify(sessionRoomGateway, times(2)).joinRoom(anyString(), anyString());
     ordered.verify(acceptanceNotices).recordSuccessfulInitialAcceptance(SESSION_WITHOUT_CONSULTANT);
+  }
+
+  @Test
+  void lostPreparationCannotReachMatrixOrPublishAcceptance() {
+    var enquiry = sessionWithUser(null, "!holding:example.invalid");
+    enquiry.setId(1L);
+    enquiry.setAgencyId(19L);
+    enquiry.setTenantId(41L);
+    enquiry.setConversationType(ConversationType.AGENCY_COUNSELLING);
+    enquiry.setIsConsultantDirectlySet(false);
+    var consultant = consultantWithMatrixId(null);
+    doThrow(new ConflictException("Preparation expired"))
+        .when(roomRetirements)
+        .startExternalWork(eq(enquiry), any(OwnershipChange.class));
+
+    assertThrows(
+        ConflictException.class,
+        () -> assignEnquiryFacade.assignRegisteredEnquiry(enquiry, consultant));
+
+    verifyNoInteractions(sessionRoomGateway, agencyMatrixCredentialClient, acceptanceNotices);
   }
 
   @Test

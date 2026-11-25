@@ -59,17 +59,12 @@ public class AgencyAdminDataProvider {
     try {
       return agencyService.getAgencies(agencyIds);
     } catch (RestClientResponseException e) {
-      log.warn(
-          "Could not load agencies for agency admin {}: status={}, body={}",
-          authenticatedUser.getUserId(),
-          e.getStatusCode().value(),
-          e.getResponseBodyAsString());
+      log.warn("Could not load agencies for agency admin (status={})", e.getStatusCode().value());
       return List.of();
     } catch (RestClientException e) {
       log.warn(
-          "Could not load agencies for agency admin {}; returning user data without agencies",
-          authenticatedUser.getUserId(),
-          e);
+          "Could not load agencies for agency admin; returning user data without agencies (failure={})",
+          e.getClass().getSimpleName());
       return List.of();
     }
   }

@@ -99,6 +99,11 @@ public enum HttpStatusExceptionReason {
   /** A moderator banned the caller from this group chat; joining again is refused. */
   USER_BANNED_FROM_CHAT,
   /**
+   * An audio or video self-help circle is entered by knocking: the caller has not been let in from
+   * its waiting room (ORISO-UserService#1747).
+   */
+  GROUP_ADMISSION_REQUIRED,
+  /**
    * A self-help group invite link was refused: unknown or foreign group, not a self-help group, or
    * a wrong token. Says only that the link does not work, never whether the group exists (#1483).
    */
@@ -139,5 +144,22 @@ public enum HttpStatusExceptionReason {
    * ORISO-Frontend#2287: the requested time has passed or something else takes it now, so the
    * request cannot be confirmed; the counsellor declines it instead.
    */
-  REQUESTED_TIME_TAKEN
+  REQUESTED_TIME_TAKEN,
+  /**
+   * ORISO-Frontend#2494: a one-off Sprechstunde overlaps one of the counsellor's own blockers and
+   * they have not confirmed releasing it over their Sperrzeit (overBlocker); nothing is stored.
+   */
+  CONSULTATION_ONCE_OVER_BLOCKER,
+  /** ORISO-Frontend#2494: the end of a one-off Sprechstunde is not after its start. */
+  CONSULTATION_ONCE_END_NOT_AFTER_START,
+  /** ORISO-Frontend#2494: a one-off Sprechstunde whose end does not lie in the future. */
+  CONSULTATION_ONCE_END_IN_PAST,
+  /** ORISO-Frontend#2494: a one-off Sprechstunde lasts more than 12 hours. */
+  CONSULTATION_ONCE_TOO_LONG,
+  /** ORISO-Frontend#2494: the notice of a one-off is not one of 0, 30, 60, 120, 720, 1440. */
+  CONSULTATION_ONCE_NOTICE_NOT_OFFERED,
+  /** ORISO-Frontend#2494: a one-off Sprechstunde overlaps another one-off of the counsellor. */
+  CONSULTATION_ONCE_OVERLAP,
+  /** ORISO-Frontend#2494: the counsellor has 50 upcoming one-off Sprechstunden already. */
+  CONSULTATION_ONCE_LIMIT_REACHED
 }

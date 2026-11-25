@@ -42,6 +42,8 @@ class CreateChatMatrixMembershipTest {
     var names = mock(ConsultantDisplayNameResolver.class);
     var membership =
         new AgencySilentMembershipService(consultants, gateway, helper, transcoder, names);
+    var moderatorPower =
+        mock(de.caritas.cob.userservice.api.service.matrix.GroupModeratorPowerService.class);
     var facade =
         new CreateChatFacade(
             chats,
@@ -58,7 +60,8 @@ class CreateChatMatrixMembershipTest {
             membership,
             mock(de.caritas.cob.userservice.api.service.chat.GroupCounsellingDpaPolicy.class),
             mock(de.caritas.cob.userservice.api.service.chat.GroupChatMatrixCleanupService.class),
-            mock(org.springframework.transaction.PlatformTransactionManager.class));
+            mock(org.springframework.transaction.PlatformTransactionManager.class),
+            moderatorPower);
     var owner = new Consultant();
     owner.setId("owner");
     owner.setTenantId(40L);
@@ -123,6 +126,10 @@ class CreateChatMatrixMembershipTest {
       verify(consultants).save(colleague);
     }
     assertThat(owner.getMatrixUserId()).isEqualTo("@owner:matrix.org");
+    // The identity provisioned during creation is the one raised to the moderator level.
+    verify(moderatorPower)
+        .grantModerators(
+            "!group:matrix.org", "@owner:matrix.org", List.of("@colleague:matrix.org"));
     if (newOwner) verify(consultants).save(owner);
     else verify(consultants, never()).save(owner);
     if (!selfHelp) {

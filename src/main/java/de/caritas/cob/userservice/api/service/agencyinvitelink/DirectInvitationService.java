@@ -38,6 +38,7 @@ import java.util.stream.Collectors;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.hibernate.Hibernate;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
@@ -122,10 +123,28 @@ public class DirectInvitationService {
     requireFuture(schedule);
     var appointment = new SessionAppointment();
     appointment.setStatus(SessionAppointment.Status.SCHEDULED);
+    appointment.setKind(kindOf(link));
     appointment.setStartTime(start.toInstant(ZoneOffset.UTC));
     appointment.setEndTime(end.toInstant(ZoneOffset.UTC));
     link.setAppointmentId(appointments.save(appointment).getId());
     apply(link, schedule);
+  }
+
+  /**
+   * How the invitation's appointment takes place, from the link's medium: the app shows a chat,
+   * phone or camera symbol for it. Without a kind it falls back to the camera, so a chat
+   * appointment looked like a video call.
+   */
+  static SessionAppointment.Kind kindOf(AgencyInviteLink link) {
+    if (link.getChatType() == null) {
+      return null;
+    }
+    return switch (link.getChatType()) {
+      case "CHAT" -> SessionAppointment.Kind.CHAT;
+      case "AUDIO" -> SessionAppointment.Kind.PHONE;
+      case "VIDEO" -> SessionAppointment.Kind.VIDEO;
+      default -> null;
+    };
   }
 
   /** An invitation from a 1:1 meets at an appointment of that conversation. */
@@ -210,7 +229,10 @@ public class DirectInvitationService {
     if (appointment.getStatus() == SessionAppointment.Status.CANCELLED) {
       throw new DirectLinkInactiveException();
     }
-    var session = appointment.getSession();
+    /* Loaded here, not a lazy reference: the caller reads the room after this transaction ended
+    (open-in-view is off), and a reference answered every return visit with HTTP 500
+    (ORISO-UserService#1694). */
+    var session = (Session) Hibernate.unproxy(appointment.getSession());
     if (session == null) {
       var created = newConversation.get();
       if (created == null

@@ -60,6 +60,9 @@ class InternalChatInvitationFacadeTest {
   @Mock private PlatformTransactionManager transactions;
   @Mock private GroupChatMembershipService groupChatMembershipService;
 
+  @Mock
+  private de.caritas.cob.userservice.api.service.matrix.GroupModeratorPowerService moderatorPower;
+
   @InjectMocks private InternalChatInvitationFacade facade;
 
   private final Consultant owner = consultant("owner");
@@ -101,6 +104,28 @@ class InternalChatInvitationFacadeTest {
         .when(groupChatMembershipService.ensureOwnerCanInvite(ROOM, "@owner:oriso.test"))
         .thenReturn(true);
     lenient().when(matrixSynapseService.joinRoom(ROOM, "token")).thenReturn(true);
+  }
+
+  /** ORISO-Frontend#2229: an invited colleague is a co-moderator and may blur passages. */
+  @Test
+  void invite_raises_the_recorded_colleague_to_the_matrix_moderator_level() throws Exception {
+    facade.invite(caller, CHAT_ID, "colleague");
+
+    var order = org.mockito.Mockito.inOrder(participantRepository, moderatorPower);
+    order.verify(participantRepository).save(any(GroupChatParticipant.class));
+    order
+        .verify(moderatorPower)
+        .grantCurrentModerators(
+            CHAT_ID, ROOM, "@owner:oriso.test", List.of("@colleague:oriso.test"));
+  }
+
+  @Test
+  void invite_raises_nobody_when_the_colleague_cannot_join() throws Exception {
+    when(matrixSynapseService.joinRoom(ROOM, "token")).thenReturn(false);
+
+    assertThatThrownBy(() -> facade.invite(caller, CHAT_ID, "colleague"));
+
+    org.mockito.Mockito.verifyNoInteractions(moderatorPower);
   }
 
   @Test

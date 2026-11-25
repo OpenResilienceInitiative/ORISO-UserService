@@ -51,6 +51,8 @@ import org.springframework.transaction.annotation.Transactional;
   de.caritas.cob.userservice.api.helper.ConsultantDisplayNameResolver.class
 })
 class DeleteDatabaseConsultantActionIT {
+  @MockitoBean
+  private de.caritas.cob.userservice.api.service.session.AgencyEnquiryRoomDecisions roomDecisions;
 
   @Autowired private DeleteDatabaseConsultantAction action;
   @Autowired private ConsultantRepository consultantRepository;

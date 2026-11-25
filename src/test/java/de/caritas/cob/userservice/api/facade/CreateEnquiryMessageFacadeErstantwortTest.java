@@ -68,6 +68,15 @@ class CreateEnquiryMessageFacadeErstantwortTest {
   @Mock private MatrixSessionSystemMessageService matrixSessionSystemMessageService;
   @Mock private TenantErstantwortContentClient tenantContentClient;
 
+  @Mock
+  private de.caritas.cob.userservice.api.service.erstantwort.ErstantwortPlatformTextService
+      platformTextService;
+
+  @Mock private de.caritas.cob.userservice.api.service.journey.PublicJourneyService journeys;
+
+  private de.caritas.cob.userservice.api.service.erstantwort.JourneyFirstReplyBuilder
+      journeyFirstReplyBuilder;
+
   private CreateEnquiryMessageFacade facade;
 
   private Session session;
@@ -75,6 +84,11 @@ class CreateEnquiryMessageFacadeErstantwortTest {
 
   @BeforeEach
   void setUp() {
+    journeyFirstReplyBuilder =
+        new de.caritas.cob.userservice.api.service.erstantwort.JourneyFirstReplyBuilder(
+            journeys, new ErstantwortPayloadBuilder());
+    org.springframework.test.util.ReflectionTestUtils.setField(
+        journeyFirstReplyBuilder, "enabled", true);
     facade =
         new CreateEnquiryMessageFacade(
             sessionService,
@@ -87,7 +101,9 @@ class CreateEnquiryMessageFacadeErstantwortTest {
             agencyPreAssignmentRoomService,
             erstantwortPayloadBuilder,
             matrixSessionSystemMessageService,
-            new ErstantwortTenantTextResolver(tenantContentClient));
+            new ErstantwortTenantTextResolver(tenantContentClient),
+            platformTextService,
+            journeyFirstReplyBuilder);
     user = new User();
     user.setUserId("asker-1");
     user.setMatrixUserId("@asker:matrix.test");
@@ -124,6 +140,56 @@ class CreateEnquiryMessageFacadeErstantwortTest {
     when(consultantAgencyService.findConsultantsByAgencyId(1L))
         .thenReturn(List.<ConsultantAgency>of());
     when(erstantwortPayloadBuilder.buildFirstResponseBody(any())).thenReturn(BODY);
+  }
+
+  /** ADR-036 decision 42: a topic that no journey reaches keeps the version-1 first reply. */
+  @Test
+  void aTopicWithoutAJourneyKeepsTheVersionOneFirstReply() {
+    session.setMainTopicId(5L);
+    when(journeys.forRegistration(5L, 1L)).thenReturn(Optional.empty());
+
+    facade.createEnquiryMessage(enquiryData());
+
+    verify(erstantwortPayloadBuilder).buildFirstResponseBody(any());
+    verify(matrixSessionSystemMessageService).postFirstResponseMessage(session, BODY);
+  }
+
+  /** ADR-036 decision 42: a topic a journey reaches gets the journey's on-board steps. */
+  @Test
+  void aTopicWithAJourneyGetsTheJourneysOnBoardSteps() {
+    session.setMainTopicId(5L);
+    var panel =
+        Map.<String, Object>of(
+            "id",
+            "u25:info",
+            "kind",
+            "panel",
+            "aspects",
+            List.of(
+                Map.of(
+                    "id",
+                    "u25:aspect",
+                    "title",
+                    Map.of("de", "Neu bei U25"),
+                    "body",
+                    Map.of("de", "<p>Wir antworten Dir bald.</p>"))));
+    when(journeys.forRegistration(5L, 1L))
+        .thenReturn(
+            Optional.of(
+                new de.caritas.cob.userservice.api.service.journey.PublicJourneyService
+                    .PublicJourney(
+                    "j1", Map.of("phases", Map.of("flight", List.of(panel))), null)));
+
+    facade.createEnquiryMessage(enquiryData());
+
+    verify(erstantwortPayloadBuilder, org.mockito.Mockito.never()).buildFirstResponseBody(any());
+    var body = ArgumentCaptor.forClass(String.class);
+    verify(matrixSessionSystemMessageService).postFirstResponseMessage(eq(session), body.capture());
+    assertThat(body.getValue())
+        .contains("\"version\":2")
+        .contains("Neu bei U25")
+        .contains("Wir antworten Dir bald.")
+        .contains("0800 111 0 111");
   }
 
   private EnquiryData enquiryData() {
@@ -184,6 +250,50 @@ class CreateEnquiryMessageFacadeErstantwortTest {
         .contains("emergencyAddition")
         .contains("Notruf Sonnenblume 0800")
         .doesNotContain("<p>", "</p>");
+  }
+
+  /** ADR-018 §6: the centre's own text wins over the Träger's for this centre. */
+  @Test
+  void aCentresOwnGreetingWinsOverTheTragers() {
+    session.setTenantId(77L);
+    when(tenantContentClient.readContent(77L))
+        .thenReturn(
+            new MultilingualContent().erstantwortGreeting(Map.of("de", "<p>Träger-Gruß</p>")));
+    when(platformTextService.resolveAgencyTexts(1L, "de", false))
+        .thenReturn(
+            de.caritas.cob.userservice.api.service.erstantwort.ErstantwortTenantTexts.builder()
+                .greeting("Gruß der Beratungsstelle")
+                .build());
+    when(erstantwortPayloadBuilder.buildFirstResponseBody(any()))
+        .thenAnswer(
+            call -> new ErstantwortPayloadBuilder().buildFirstResponseBody(call.getArgument(0)));
+    var data = enquiryData();
+    data.setUiLocale("de");
+
+    facade.createEnquiryMessage(data);
+
+    var body = ArgumentCaptor.forClass(String.class);
+    verify(matrixSessionSystemMessageService).postFirstResponseMessage(eq(session), body.capture());
+    assertThat(body.getValue()).contains("Gruß der Beratungsstelle").doesNotContain("Träger-Gruß");
+  }
+
+  /** The platform admin's texts reach the payload for the asker's language and formality. */
+  @Test
+  void platformAdminTextsReachThePostedPayload() {
+    user.setLanguageFormal(false);
+    when(platformTextService.resolvePlatformTexts("en", true))
+        .thenReturn(Map.of("greeting", "Welcome from the platform"));
+    when(erstantwortPayloadBuilder.buildFirstResponseBody(any()))
+        .thenAnswer(
+            call -> new ErstantwortPayloadBuilder().buildFirstResponseBody(call.getArgument(0)));
+    var data = enquiryData();
+    data.setUiLocale("en");
+
+    facade.createEnquiryMessage(data);
+
+    var body = ArgumentCaptor.forClass(String.class);
+    verify(matrixSessionSystemMessageService).postFirstResponseMessage(eq(session), body.capture());
+    assertThat(body.getValue()).contains("Welcome from the platform");
   }
 
   /**

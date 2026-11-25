@@ -19,7 +19,9 @@ import org.springframework.data.repository.query.Param;
 import org.springframework.transaction.annotation.Transactional;
 
 public interface ConsultantRepository
-    extends JpaRepository<Consultant, String>, JpaSpecificationExecutor<Consultant> {
+    extends JpaRepository<Consultant, String>,
+        JpaSpecificationExecutor<Consultant>,
+        ConsultantRowLock {
 
   boolean existsByIdAndManagedPausedTrue(String id);
 
@@ -237,6 +239,12 @@ public interface ConsultantRepository
   long countByDeleteDateIsNull();
 
   long countByTenantIdAndDeleteDateIsNull(Long tenantId);
+
+  /** Counsellors of a Träger, marked or not; its row goes only once this is 0 (Admin#1525). */
+  long countByTenantId(Long tenantId);
+
+  /** Counsellors of a Träger not yet marked for deletion; the Träger deletion marks them. */
+  List<Consultant> findByTenantIdAndDeleteDateIsNull(Long tenantId);
 
   /**
    * Opens the account-setup gate once the counsellor has reset their own password (#1699). Native

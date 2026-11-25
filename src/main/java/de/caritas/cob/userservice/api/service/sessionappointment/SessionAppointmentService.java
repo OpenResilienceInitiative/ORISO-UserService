@@ -18,6 +18,7 @@ import de.caritas.cob.userservice.api.model.Session.SessionStatus;
 import de.caritas.cob.userservice.api.model.SessionAppointment;
 import de.caritas.cob.userservice.api.model.SessionAppointment.Status;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
+import de.caritas.cob.userservice.api.port.out.DirectInvitationMemberRepository;
 import de.caritas.cob.userservice.api.port.out.SessionAppointmentRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.service.CaseHandoverService;
@@ -80,11 +81,12 @@ public class SessionAppointmentService {
   private final CaseHandoverService caseHandovers;
   private final CounsellorFreeTime freeTime;
   private final ConsultantRepository consultants;
+  private final DirectInvitationMemberRepository invitationMembers;
   private final UsernameTranscoder usernameTranscoder = new UsernameTranscoder();
 
   @Transactional(readOnly = true)
   public List<SessionAppointmentDTO> list(Long sessionId) {
-    var session = sessionOfParticipant(sessionId);
+    var session = sessionOfReader(sessionId);
     return appointments
         .findNewestOfSession(session.getId(), PageRequest.of(0, SESSION_LIST_LIMIT))
         .stream()
@@ -173,12 +175,14 @@ public class SessionAppointmentService {
     if (!end.isAfter(start)) {
       throw new BadRequestException("The end of an appointment must be after its start.");
     }
-    if (start.isBefore(freeTime.earliestStart()) || !start.isBefore(freeTime.latestStart())) {
+    var consultantId = session.getConsultant().getId();
+    // Inside the minimum lead time only a one-off's slot after its own notice
+    // (ORISO-Frontend#2494).
+    if (!freeTime.isInsideBookingWindow(consultantId, start, end)) {
       throw new ConflictException(
           "The start lies inside the lead time or beyond the booking horizon.",
           HttpStatusExceptionReason.SLOT_OUTSIDE_BOOKING_WINDOW);
     }
-    var consultantId = session.getConsultant().getId();
     consultants.lockConsultant(consultantId);
     // One upcoming appointment per conversation: an asker cannot flood the counsellor's calendar.
     if (!appointments.lockUpcomingOfSession(session.getId(), Instant.now()).isEmpty()) {
@@ -295,6 +299,30 @@ public class SessionAppointmentService {
         .filter(this::isInCallersTenant)
         .filter(found -> isResponsibleCounsellor(found) || isAsker(found))
         .orElseThrow(() -> new NotFoundException(NOT_FOUND));
+  }
+
+  /**
+   * #1747: reading also opens to a confirmed member of the shared conversation of an appointment
+   * invitation, who is not its owner. Changes keep {@link #sessionOfParticipant}.
+   */
+  private Session sessionOfReader(Long sessionId) {
+    return sessions
+        .findById(sessionId)
+        .filter(this::isInCallersTenant)
+        .filter(
+            found -> isResponsibleCounsellor(found) || isAsker(found) || isInvitationMember(found))
+        .orElseThrow(() -> new NotFoundException(NOT_FOUND));
+  }
+
+  private boolean isInvitationMember(Session session) {
+    return !caller.isConsultant()
+        && caller.getUserId() != null
+        && invitationMembers
+            .findBySessionIdAndUserId(session.getId(), caller.getUserId())
+            .filter(
+                de.caritas.cob.userservice.api.service.agencyinvitelink.DirectInvitationMemberships
+                    ::isMember)
+            .isPresent();
   }
 
   private boolean isInCallersTenant(Session session) {

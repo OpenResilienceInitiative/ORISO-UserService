@@ -1,16 +1,12 @@
 package de.caritas.cob.userservice.api.adapters.web.controller;
 
-import static de.caritas.cob.userservice.api.testHelper.RequestBodyConstants.INVALID_USER_REQUEST_BODY;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
-import de.caritas.cob.userservice.api.adapters.web.dto.CreateAnonymousEnquiryDTO;
 import de.caritas.cob.userservice.api.adapters.web.mapping.ConversationDtoMapper;
 import de.caritas.cob.userservice.api.config.auth.RoleAuthorizationAuthorityMapper;
 import de.caritas.cob.userservice.api.config.observability.LiveChatDiagnosticMetrics;
@@ -21,7 +17,6 @@ import de.caritas.cob.userservice.api.conversation.service.ConversationListResol
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.port.in.Messaging;
 import de.caritas.cob.userservice.api.service.consultingtype.TopicConsultantRoutingService;
-import org.jeasy.random.EasyRandom;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
@@ -40,7 +35,6 @@ class ConversationControllerIT {
   private static final String ENQUIRIES_BASE_PATH = "/conversations/consultants/enquiries/";
   static final String GET_ANONYMOUS_ENQUIRIES_PATH = ENQUIRIES_BASE_PATH + "anonymous";
   static final String GET_REGISTERED_ENQUIRIES_PATH = ENQUIRIES_BASE_PATH + "registered";
-  static final String POST_CREATE_ANONYMOUS_ENQUIRY_PATH = "/conversations/askers/anonymous/new";
   static final String ACCEPT_ANONYMOUS_ENQUIRY_PATH = "/conversations/askers/anonymous/1/accept";
   static final String FINISH_ANONYMOUS_CONVERSATION_PATH = "/conversations/anonymous/1/finish";
 
@@ -177,33 +171,6 @@ class ConversationControllerIT {
         .andExpect(status().isBadRequest());
 
     verifyNoInteractions(this.acceptAnonymousEnquiryFacade);
-  }
-
-  @Test
-  void createAnonymousEnquiry_Should_ReturnCreated_WhenProvidedWithValidRequestBody()
-      throws Exception {
-    this.mvc
-        .perform(
-            post(POST_CREATE_ANONYMOUS_ENQUIRY_PATH)
-                .content(
-                    new ObjectMapper()
-                        .writeValueAsString(
-                            new EasyRandom().nextObject(CreateAnonymousEnquiryDTO.class)))
-                .contentType(MediaType.APPLICATION_JSON)
-                .accept(MediaType.APPLICATION_JSON))
-        .andExpect(status().isCreated());
-  }
-
-  @Test
-  void createAnonymousEnquiry_Should_ReturnBadRequest_WhenProvidedWithInvalidRequestBody()
-      throws Exception {
-    this.mvc
-        .perform(
-            post(POST_CREATE_ANONYMOUS_ENQUIRY_PATH)
-                .content(INVALID_USER_REQUEST_BODY)
-                .contentType(MediaType.APPLICATION_JSON)
-                .accept(MediaType.APPLICATION_JSON))
-        .andExpect(status().isBadRequest());
   }
 
   @Test

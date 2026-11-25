@@ -69,6 +69,7 @@ import de.caritas.cob.userservice.api.port.out.IdentitySecondFactor;
 import de.caritas.cob.userservice.api.port.out.IdentityTenantUpdater;
 import de.caritas.cob.userservice.api.port.out.IdentityUsernameAvailability;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
+import de.caritas.cob.userservice.api.port.out.SessionRoomGateway;
 import de.caritas.cob.userservice.api.port.out.SessionSupervisorRepository;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
 import de.caritas.cob.userservice.api.service.CaseHandoverLogsService;
@@ -129,6 +130,7 @@ import org.springframework.transaction.support.TransactionTemplate;
 @RecordApplicationEvents
 @Import({
   SessionOwnershipService.class,
+  de.caritas.cob.userservice.api.service.session.AgencyEnquiryRoomDecisions.class,
   de.caritas.cob.userservice.api.service.matrix.InquiryAcceptanceNoticeStore.class,
   de.caritas.cob.userservice.api.helper.ConsultantDisplayNameResolver.class,
   EventNotificationService.class,
@@ -136,6 +138,7 @@ import org.springframework.transaction.support.TransactionTemplate;
   ConsultantTenantChangeService.class,
   OldTraegerRoomFinder.class,
   ConsultantAgencyAdminService.class,
+  de.caritas.cob.userservice.api.service.session.AgencyEnquiryRevocations.class,
   ConsultantAgencyDeletionValidationService.class,
   ConsultantAgencyService.class,
   ConsultantAgencyRelationCreatorService.class,
@@ -193,6 +196,10 @@ class ConsultantTenantChangeMariaDbIT {
   @Autowired private PlatformTransactionManager transactionManager;
   @Autowired private ConsultantTenantChangeService tenantChangeService;
   @Autowired private ApplicationEvents events;
+
+  @MockitoBean
+  private de.caritas.cob.userservice.api.service.session.AgencyEnquiryRoomRetirements retiredRooms;
+
   @MockitoBean private IdentityTombstoneService identityTombstoneService;
 
   @MockitoBean
@@ -200,6 +207,11 @@ class ConsultantTenantChangeMariaDbIT {
       matrixFeedUpdateSignalService;
 
   @MockitoBean private AgencyService agencyService;
+
+  @MockitoBean
+  private de.caritas.cob.userservice.api.service.agency.AgencyMatrixCredentialClient
+      agencyMatrixCredentialClient;
+
   @MockitoBean private AgencyAdminService agencyAdminService;
   @MockitoBean private RemoveConsultantFromSessionRoomsService removeFromSessionRoomsService;
   @MockitoBean private AccountManaging accountManaging;
@@ -236,6 +248,7 @@ class ConsultantTenantChangeMariaDbIT {
   private IdentityTenantUpdater identityTenantUpdater;
   @MockitoBean private ConsultingTypeManager consultingTypeManager;
   @MockitoBean private MatrixSynapseService matrixSynapseService;
+  @MockitoBean private SessionRoomGateway sessionRoomGateway;
 
   private TransactionTemplate transactions;
   private Long sessionId;
@@ -1032,7 +1045,11 @@ class ConsultantTenantChangeMariaDbIT {
         transactionManager,
         agencyService,
         mock(AdminScope.class),
-        mock(MembersOnlyChatAccess.class));
+        mock(MembersOnlyChatAccess.class),
+        org.mockito.Mockito.mock(
+            de.caritas.cob.userservice.api.service.agency.CaseSharingGate.class),
+        org.mockito.Mockito.mock(
+            de.caritas.cob.userservice.api.port.out.MatrixRoomMembershipLookup.class));
   }
 
   private static String matrixId(String consultantId) {

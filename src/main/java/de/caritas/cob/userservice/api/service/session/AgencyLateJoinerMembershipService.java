@@ -3,22 +3,21 @@ package de.caritas.cob.userservice.api.service.session;
 import static org.apache.commons.lang3.StringUtils.isBlank;
 
 import de.caritas.cob.userservice.api.model.Consultant;
-import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.Session.SessionStatus;
 import de.caritas.cob.userservice.api.model.TeamDiscussion;
 import de.caritas.cob.userservice.api.port.out.ConsultantAgencyRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRoomGateway;
+import de.caritas.cob.userservice.api.port.out.SessionRoomRow;
 import de.caritas.cob.userservice.api.port.out.TeamDiscussionRepository;
 import de.caritas.cob.userservice.api.service.agency.AgencyMatrixCredentialClient;
 import java.time.Duration;
-import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.stream.Stream;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.apache.commons.lang3.StringUtils;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 
 /**
@@ -53,21 +52,11 @@ import org.springframework.stereotype.Service;
 @Slf4j
 public class AgencyLateJoinerMembershipService {
 
-  /**
-   * What counts as an open enquiry, mirroring {@code ConsultantAgencyDeletionValidationService}:
-   * {@code NEW} is an enquiry waiting to be picked up, {@code INITIAL} one whose room exists but
-   * whose first message is still unwritten. Backfilling an {@code INITIAL} enquiry is the better of
-   * the two outcomes, not merely extra coverage — the late joiner is then already a member when the
-   * asker sends, so the Megolm session reaches their device and they read plaintext instead of
-   * depending on a client-side history-key transfer.
-   */
-  private static final List<SessionStatus> OPEN_ENQUIRY_STATES =
-      List.of(SessionStatus.NEW, SessionStatus.INITIAL);
-
   private final @NonNull SessionRepository sessionRepository;
   private final @NonNull AgencyMatrixCredentialClient matrixCredentialClient;
   private final @NonNull SessionRoomGateway sessionRoomGateway;
-  private final @NonNull AgencySilentMembershipService agencySilentMembershipService;
+  private final @NonNull AgencyOpenEnquiryMembership openEnquiryMembership;
+  private final @NonNull MatrixRateLimitPause rateLimitPause;
   private final @NonNull TeamDiscussionRepository teamDiscussionRepository;
   private final @NonNull ConsultantAgencyRepository consultantAgencyRepository;
   private final @NonNull de.caritas.cob.userservice.api.service.teamdiscussion
@@ -76,6 +65,8 @@ public class AgencyLateJoinerMembershipService {
   private final @NonNull de.caritas.cob.userservice.api.workflow.scheduling
           .ScheduledTaskClaimService
       claims;
+
+  static final int ENQUIRY_ROOM_PAGE_SIZE = 100;
 
   public static final String TEAM_ACCESS_REPAIR_TASK = "team-discussion-access-repair";
 
@@ -88,76 +79,102 @@ public class AgencyLateJoinerMembershipService {
    * @return number of enquiry rooms the counsellor ended up joined into
    */
   public int joinConsultantIntoOpenEnquiryRooms(Consultant consultant, Long agencyId) {
-    var roomIds = openEnquiryRoomIds(consultant, agencyId);
-    if (roomIds.isEmpty()) {
+    if (consultant == null || agencyId == null) {
+      return 0;
+    }
+    var upperId = sessionRepository.findAgencySessionUpperId(agencyId).orElse(null);
+    if (upperId == null) {
       return 0;
     }
 
-    var agencyToken = resolveAgencyToken(agencyId);
-    if (isBlank(agencyToken)) {
-      return 0;
-    }
-
+    var page = PageRequest.ofSize(ENQUIRY_ROOM_PAGE_SIZE);
+    long afterId = Long.MIN_VALUE;
+    String agencyToken = null;
+    int candidates = 0;
     int joined = 0;
-    for (String roomId : roomIds) {
-      try {
-        if (agencySilentMembershipService.joinConsultantIntoRoom(consultant, roomId, agencyToken)) {
+    while (afterId < upperId) {
+      var rooms =
+          sessionRepository.findLateJoinerEnquiryRooms(
+              agencyId, AgencyOpenEnquiryMembership.OPEN_STATUSES, afterId, upperId, page);
+      if (rooms.isEmpty()) {
+        break;
+      }
+      afterId = rooms.getLast().sessionId();
+      for (var room : rooms) {
+        // SQL TRIM handles spaces. Keep the Java blank check for other whitespace.
+        if (isBlank(room.roomId())) {
+          continue;
+        }
+        if (agencyToken == null) {
+          agencyToken = resolveAgencyToken(agencyId);
+          if (isBlank(agencyToken)) {
+            return 0;
+          }
+        }
+        candidates++;
+        if (joinOpenEnquiry(consultant.getId(), agencyId, room, agencyToken)) {
           joined++;
         }
-      } catch (RuntimeException ex) {
-        log.warn(
-            "Could not backfill consultant {} into enquiry room {} of agency {}: {}",
-            consultant.getId(),
-            roomId,
-            agencyId,
-            ex.getMessage());
+      }
+      if (rooms.size() < page.getPageSize()) {
+        break;
       }
     }
 
-    log.info(
-        "Backfilled consultant {} into {} of {} open enquiry rooms of agency {}",
-        consultant.getId(),
-        joined,
-        roomIds.size(),
-        agencyId);
+    if (candidates > 0) {
+      log.info(
+          "Backfilled consultant {} into {} of {} open enquiry rooms of agency {}",
+          consultant.getId(),
+          joined,
+          candidates,
+          agencyId);
+    }
     return joined;
   }
 
-  /**
-   * Revokes the membership a counsellor holds in the open enquiry and joined team-discussion rooms
-   * of an agency they were just detached from. Without this the counsellor keeps syncing rooms of
-   * an agency they no longer belong to — the exact stale access the at-creation fan-out would
-   * otherwise create.
-   *
-   * <p>A counsellor without a Matrix account never joined anything, so there is nothing to revoke
-   * and no account is provisioned here.
-   *
-   * <p>Main-room scope is the same open enquiries the join side covers. In addition, all open
-   * team-discussion rooms that record this counsellor as a participant are revoked. Accepted main
-   * rooms remain outside this path: {@code AssignEnquiryFacade} removes the agency service account
-   * when an enquiry is accepted, so its token can no longer kick anyone out of an accepted case.
-   * Those rooms need the assigned counsellor's own token and are handled by the
-   * case-handover/team-session paths.
-   *
-   * @param consultant the detached counsellor
-   * @param agencyId the agency they were detached from
-   * @return number of main enquiry and team-discussion rooms the counsellor was removed from
-   */
-  public int removeConsultantFromAgencyRooms(Consultant consultant, Long agencyId) {
+  private boolean joinOpenEnquiry(
+      String consultantId, Long agencyId, SessionRoomRow room, String token) {
+    try {
+      // Match the existing Matrix invite cap, with the wait outside the entitlement transaction.
+      for (int attempt = 1; attempt <= 3; attempt++) {
+        var outcome =
+            openEnquiryMembership.joinIfCurrent(
+                consultantId, agencyId, room.sessionId(), room.roomId(), token);
+        if (outcome.isEmpty()) {
+          return false;
+        }
+        var result = outcome.get();
+        if (!result.rateLimited()) {
+          return result.joined();
+        }
+        if (attempt == 3 || !rateLimitPause.pause(Math.min(result.retryAfterMs(), 2_000L))) {
+          return false;
+        }
+      }
+    } catch (RuntimeException ex) {
+      log.warn(
+          "Could not backfill consultant {} into enquiry room {} of agency {}: {}",
+          consultantId,
+          room.roomId(),
+          agencyId,
+          ex.getClass().getSimpleName());
+    }
+    return false;
+  }
+
+  /** Revokes recorded team-discussion membership after the counsellor leaves the agency. */
+  public int removeConsultantFromTeamRooms(Consultant consultant, Long agencyId) {
     if (consultant == null || isBlank(consultant.getMatrixUserId())) {
       return 0;
     }
 
     var roomIds =
-        Stream.concat(
-                openEnquiryRoomIds(consultant, agencyId).stream(),
-                Stream.of(TeamDiscussion.Status.OPEN, TeamDiscussion.Status.ARCHIVED)
-                    .flatMap(
-                        status ->
-                            teamDiscussionRepository
-                                .findRoomIdsForParticipantInAgency(
-                                    consultant.getId(), agencyId, status)
-                                .stream()))
+        Stream.of(TeamDiscussion.Status.values())
+            .flatMap(
+                status ->
+                    teamDiscussionRepository
+                        .findRoomIdsForParticipantInAgency(consultant.getId(), agencyId, status)
+                        .stream())
             .distinct()
             .toList();
     if (roomIds.isEmpty()) {
@@ -172,15 +189,12 @@ public class AgencyLateJoinerMembershipService {
     int removed = 0;
     for (String roomId : roomIds) {
       try {
-        if (teamDiscussionRepository.findByMatrixRoomId(roomId).isPresent()
-            ? removeTeamMemberWithLease(consultant, agencyId, roomId, agencyToken)
-            : sessionRoomGateway.removeUserFromRoom(
-                roomId, consultant.getMatrixUserId(), agencyToken)) {
+        if (removeTeamMemberWithLease(consultant, agencyId, roomId, agencyToken)) {
           removed++;
         }
       } catch (RuntimeException ex) {
         log.warn(
-            "Could not remove consultant {} from enquiry room {} of agency {}: {}",
+            "Could not remove consultant {} from team room {} of agency {}: {}",
             consultant.getId(),
             roomId,
             agencyId,
@@ -189,7 +203,7 @@ public class AgencyLateJoinerMembershipService {
     }
 
     log.info(
-        "Removed consultant {} from {} of {} open enquiry and team rooms of agency {}",
+        "Removed consultant {} from {} of {} team rooms of agency {}",
         consultant.getId(),
         removed,
         roomIds.size(),
@@ -224,23 +238,6 @@ public class AgencyLateJoinerMembershipService {
     var token = resolveAgencyToken(agencyId);
     return !isBlank(token)
         && sessionRoomGateway.removeUserFromRoom(roomId, consultant.getMatrixUserId(), token);
-  }
-
-  private List<String> openEnquiryRoomIds(Consultant consultant, Long agencyId) {
-    if (consultant == null || agencyId == null) {
-      return List.of();
-    }
-
-    return OPEN_ENQUIRY_STATES.stream()
-        .map(
-            status ->
-                sessionRepository.findByAgencyIdAndStatusAndConsultantIsNull(agencyId, status))
-        .flatMap(List::stream)
-        .filter(session -> !Boolean.TRUE.equals(session.getIsConsultantDirectlySet()))
-        .map(Session::getMatrixRoomId)
-        .filter(StringUtils::isNotBlank)
-        .distinct()
-        .toList();
   }
 
   /**

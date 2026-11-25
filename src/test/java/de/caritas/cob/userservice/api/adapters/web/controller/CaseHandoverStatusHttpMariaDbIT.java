@@ -8,11 +8,16 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.neovisionaries.i18n.LanguageCode;
+import de.caritas.cob.userservice.api.admin.service.tenant.TenantService;
 import de.caritas.cob.userservice.api.model.*;
 import de.caritas.cob.userservice.api.port.out.*;
+import de.caritas.cob.userservice.api.tenant.TenantContext;
 import de.caritas.cob.userservice.api.workflow.accountinactivity.AccountInactivityService;
+import de.caritas.cob.userservice.tenantservice.generated.web.model.RestrictedTenantDTO;
 import java.time.Instant;
 import java.time.LocalDateTime;
+import java.time.ZoneOffset;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.AfterEach;
@@ -34,7 +39,11 @@ import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
 
 /** Real HTTP/security/service transaction and MariaDB regression for PR1388. */
-@SpringBootTest
+@SpringBootTest(
+    properties = {
+      "multitenancy.enabled=true",
+      "feature.multitenancy.with.single.domain.enabled=true"
+    })
 @AutoConfigureMockMvc
 @ActiveProfiles("testing")
 @EnabledIfEnvironmentVariable(named = "LIQUIBASE_IT_DB_URL", matches = ".+")
@@ -49,14 +58,18 @@ class CaseHandoverStatusHttpMariaDbIT {
   @Autowired UserRepository userRepository;
   @Autowired CaseHandoverRequestRepository caseHandoverRequestRepository;
   @Autowired ConsultantAgencyRepository consultantAgencyRepository;
+  @Autowired ConsultantTopicRepository consultantTopicRepository;
+  @Autowired SessionTopicRepository sessionTopicRepository;
   @Autowired AccountInactivityService inactivity;
   @Autowired PlatformTransactionManager transactionManager;
   @Autowired JdbcTemplate jdbc;
   @MockitoBean JwtDecoder jwtDecoder;
+  @MockitoBean TenantService tenantService;
   private TransactionTemplate transactions;
   private Long sessionId;
   private Long secondSessionId;
   private Consultant ownerA, ownerB, ownerC;
+  private final List<Long> candidateSessionIds = new ArrayList<>();
 
   @DynamicPropertySource
   static void databaseProperties(DynamicPropertyRegistry registry) {
@@ -79,6 +92,7 @@ class CaseHandoverStatusHttpMariaDbIT {
 
   @BeforeEach
   void createFixture() {
+    TenantContext.setCurrentTenant(0L);
     transactions = new TransactionTemplate(transactionManager);
     sessionId =
         transactions.execute(
@@ -120,12 +134,17 @@ class CaseHandoverStatusHttpMariaDbIT {
 
   @AfterEach
   void removeFixture() {
+    TenantContext.setCurrentTenant(0L);
     try {
       if (sessionId != null)
         transactions.executeWithoutResult(
             ignored -> {
               caseHandoverRequestRepository.deleteAllBySessionId(sessionId);
+              candidateSessionIds.forEach(caseHandoverRequestRepository::deleteAllBySessionId);
+              candidateSessionIds.forEach(sessionTopicRepository::deleteAllBySessionId);
+              sessionRepository.deleteAllById(candidateSessionIds);
               sessionRepository.deleteAllById(List.of(sessionId, secondSessionId));
+              jdbc.update("DELETE FROM consultant_topic WHERE consultant_id = ?", OWNER_B_ID);
               consultantAgencyRepository.deleteAll(
                   consultantAgencyRepository.findByConsultantIdAndDeleteDateIsNull(OWNER_B_ID));
               consultantRepository.deleteAllById(List.of(OWNER_A_ID, OWNER_B_ID, OWNER_C_ID));
@@ -134,7 +153,138 @@ class CaseHandoverStatusHttpMariaDbIT {
     } finally {
       for (String id : List.of(OWNER_A_ID, OWNER_B_ID, OWNER_C_ID))
         jdbc.update("DELETE FROM account_inactivity WHERE identity_id=?", id);
+      TenantContext.clear();
     }
+  }
+
+  @Test
+  void candidatesPageIncludesScopedSecondaryTopicsAndCountsOnlyVisibleCases() throws Exception {
+    transactions.executeWithoutResult(
+        ignored -> {
+          var now = LocalDateTime.now(ZoneOffset.UTC).minusMinutes(1);
+          var user = userRepository.findById(USER_ID).orElseThrow();
+          var owner = consultantRepository.findById(OWNER_A_ID).orElseThrow();
+          var requester = consultantRepository.findById(OWNER_B_ID).orElseThrow();
+          consultantTopicRepository.save(
+              ConsultantTopic.builder()
+                  .consultant(requester)
+                  .agencyId(700L)
+                  .topicId(5L)
+                  .createDate(now)
+                  .updateDate(now)
+                  .build());
+
+          Session secondaryMatch = proofSession(user, owner, now);
+          secondaryMatch.setMainTopicId(99L);
+          candidateSessionIds.add(sessionRepository.save(secondaryMatch).getId());
+          saveCandidateRequest(
+              secondaryMatch, requester, CaseHandoverRequest.Status.DENIED, now, null, 7L);
+          saveCandidateRequest(
+              secondaryMatch,
+              requester,
+              CaseHandoverRequest.Status.GRANTED_PENDING_CLIENT_OPTOUT,
+              now,
+              now.plusHours(2),
+              7L);
+          saveCandidateRequest(
+              secondaryMatch,
+              requester,
+              CaseHandoverRequest.Status.DENIED,
+              now.plusSeconds(1),
+              null,
+              8L);
+          saveCandidateRequest(
+              secondaryMatch,
+              ownerC,
+              CaseHandoverRequest.Status.DENIED,
+              now.plusSeconds(2),
+              null,
+              7L);
+          sessionTopicRepository.save(
+              SessionTopic.builder()
+                  .session(secondaryMatch)
+                  .topicId(5L)
+                  .createDate(now)
+                  .updateDate(now)
+                  .build());
+
+          Session primaryMatch = proofSession(user, owner, now);
+          primaryMatch.setMainTopicId(5L);
+          candidateSessionIds.add(sessionRepository.save(primaryMatch).getId());
+          saveCandidateRequest(
+              primaryMatch,
+              requester,
+              CaseHandoverRequest.Status.GRANTED,
+              now,
+              now.minusSeconds(1),
+              7L);
+
+          Session formerTakeover = proofSession(user, owner, now);
+          formerTakeover.setMainTopicId(5L);
+          candidateSessionIds.add(sessionRepository.save(formerTakeover).getId());
+          saveCandidateRequest(
+              formerTakeover,
+              requester,
+              CaseHandoverRequest.Status.GRANTED,
+              CaseHandoverRequest.AccessType.TAKEOVER,
+              now,
+              null,
+              7L);
+
+          Session noRequest = proofSession(user, owner, now);
+          noRequest.setMainTopicId(5L);
+          candidateSessionIds.add(sessionRepository.save(noRequest).getId());
+          saveCandidateRequest(noRequest, ownerC, CaseHandoverRequest.Status.DENIED, now, null, 7L);
+
+          Session outOfScope = proofSession(user, owner, now.plusSeconds(3));
+          outOfScope.setMainTopicId(99L);
+          outOfScope.setAgencyId(701L);
+          candidateSessionIds.add(sessionRepository.save(outOfScope).getId());
+          sessionTopicRepository.save(
+              SessionTopic.builder()
+                  .session(outOfScope)
+                  .topicId(5L)
+                  .createDate(now)
+                  .updateDate(now)
+                  .build());
+        });
+
+    var expectedStatuses =
+        List.of("GRANTED_PENDING_CLIENT_OPTOUT", "EXPIRED", "GRANTED", "NOT_REQUESTED");
+    for (String term : List.of("", "  STATUS-HTTP-USER  ")) {
+      for (int offset = 0; offset < expectedStatuses.size(); offset++) {
+        mvc.perform(
+                get("/service/users/case-handover/candidates")
+                    .header("Authorization", "Bearer " + OWNER_B_ID)
+                    .param("query", term)
+                    .param("count", "1")
+                    .param("offset", Integer.toString(offset)))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.total").value(expectedStatuses.size()))
+            .andExpect(jsonPath("$.offset").value(offset))
+            .andExpect(jsonPath("$.count").value(1))
+            .andExpect(jsonPath("$.sessions[0].session.id").value(candidateSessionIds.get(offset)))
+            .andExpect(jsonPath("$.sessions[0].caseHandoverStatus.length()").value(3))
+            .andExpect(
+                jsonPath("$.sessions[0].caseHandoverStatus.status")
+                    .value(expectedStatuses.get(offset)))
+            .andExpect(
+                jsonPath("$.sessions[0].caseHandoverStatus.canViewContent").value(offset == 0))
+            .andExpect(jsonPath("$.sessions[0].caseHandoverStatus.hasRequest").value(offset < 3));
+        mvc.perform(
+                get("/service/users/sessions/" + candidateSessionIds.get(offset) + "/case-handover")
+                    .header("Authorization", "Bearer " + OWNER_B_ID))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.status").value(expectedStatuses.get(offset)))
+            .andExpect(jsonPath("$.canViewContent").value(offset == 0));
+      }
+    }
+    mvc.perform(
+            get("/service/users/case-handover/candidates")
+                .header("Authorization", "Bearer " + OWNER_C_ID))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.total").value(0))
+        .andExpect(jsonPath("$.sessions").isEmpty());
   }
 
   @Test
@@ -179,7 +329,7 @@ class CaseHandoverStatusHttpMariaDbIT {
           .andExpect(jsonPath("$.canViewContent").value(false));
       mvc.perform(get(route).header("Authorization", "Bearer " + OWNER_C_ID))
           .andExpect(status().isNotFound());
-      mvc.perform(get(route)).andExpect(status().isUnauthorized());
+      mvc.perform(get(route).header("tenantId", "7")).andExpect(status().isUnauthorized());
       mvc.perform(
               get(prefix + "/users/sessions/" + secondSessionId + "/case-handover")
                   .header("Authorization", "Bearer " + OWNER_B_ID))
@@ -192,8 +342,50 @@ class CaseHandoverStatusHttpMariaDbIT {
     }
   }
 
+  private void saveCandidateRequest(
+      Session session,
+      Consultant requester,
+      CaseHandoverRequest.Status status,
+      LocalDateTime createdAt,
+      LocalDateTime expiresAt,
+      Long tenantId) {
+    saveCandidateRequest(session, requester, status, null, createdAt, expiresAt, tenantId);
+  }
+
+  private void saveCandidateRequest(
+      Session session,
+      Consultant requester,
+      CaseHandoverRequest.Status status,
+      CaseHandoverRequest.AccessType accessType,
+      LocalDateTime createdAt,
+      LocalDateTime expiresAt,
+      Long tenantId) {
+    caseHandoverRequestRepository.save(
+        CaseHandoverRequest.builder()
+            .session(session)
+            .requesterConsultant(requester)
+            .initiatorConsultant(requester)
+            .previousConsultant(session.getConsultant())
+            .expectedOwnershipRevision(session.getOwnershipRevision())
+            .reasonCode("COUNSELLOR_ASKED_FOR_ADVICE")
+            .reasonLabel("Synthetic case status")
+            .explanation("")
+            .status(status)
+            .accessType(accessType)
+            .clientConsent(CaseHandoverConsentMode.OPT_OUT)
+            .clientConsentRequired(false)
+            .policyAuthority("test")
+            .auditOutcome(status.name())
+            .createdAt(createdAt)
+            .expiresAt(expiresAt)
+            .tenantId(tenantId)
+            .build());
+  }
+
   @BeforeEach
   void configureIdentityBoundary() {
+    when(tenantService.getRestrictedTenantDataFresh(7L))
+        .thenReturn(new RestrictedTenantDTO().id(7L).active(true).subdomain("synthetic"));
     for (String id : List.of(OWNER_A_ID, OWNER_B_ID, OWNER_C_ID)) {
       Jwt token =
           Jwt.withTokenValue(id)

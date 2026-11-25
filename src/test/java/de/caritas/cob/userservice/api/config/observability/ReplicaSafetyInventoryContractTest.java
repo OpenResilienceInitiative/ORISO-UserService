@@ -15,6 +15,7 @@ class ReplicaSafetyInventoryContractTest {
   private static final Set<String> REQUIRED_COMPONENTS =
       Set.of(
           "email-template-cache",
+          "agency-holding-room-repair-guard",
           "matrix-access-token-cache",
           "matrix-feed-signal-coalescer",
           "internal-group-chat-recipient-scope-cache",
@@ -41,10 +42,13 @@ class ReplicaSafetyInventoryContractTest {
           "account-invite-reservation-release-scheduler",
           "account-invite-expiry-number-release-scheduler",
           "account-invite-dpa-reconciliation-scheduler",
+          "dpa-signed-notice-admin-recovery",
+          "dpa-signed-notice-exact-outbox",
           "case-handover-policy-cache-refresh",
           "live-chat-queue-policy-refresh",
           "case-handover-co-access-expiry",
           "case-handover-matrix-repair",
+          "agency-enquiry-access-revocation",
           "enquiry-rejection-repair",
           "inquiry-acceptance-notice-retry",
           "call-share-link-sweep",
@@ -81,6 +85,7 @@ class ReplicaSafetyInventoryContractTest {
           "team-discussion-orphan-cleanup-scheduler",
           "agency-deletion-audit-pull-scheduler",
           "team-discussion-access-repair",
+          "team-session-read-only-repair",
           "statistics-dashboard-snapshot-scheduler",
           "calendar-import-scheduler",
           "calendar-visibility-policy-cache");

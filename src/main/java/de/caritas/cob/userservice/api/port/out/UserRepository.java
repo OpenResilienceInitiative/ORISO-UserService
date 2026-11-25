@@ -101,6 +101,15 @@ public interface UserRepository extends CrudRepository<User, String> {
       @Param("claimedState") DeletionLifecycleState claimedState,
       @Param("readyState") DeletionLifecycleState readyState);
 
+  /** Returns report IDs using the same session membership as the mapped collection. */
+  @Query(
+      """
+      SELECT u.userId FROM User u
+       WHERE u.sessions IS EMPTY
+         AND NOT EXISTS (SELECT 1 FROM UserAgency ua WHERE ua.user = u)
+      """)
+  List<String> findIdsWithoutSessionOrChatRelations();
+
   /**
    * Find all users whose create date is older than given date and having no new registered session
    * after the given create date and no running sessions.
@@ -165,4 +174,57 @@ public interface UserRepository extends CrudRepository<User, String> {
       "SELECT COUNT(u) FROM User u WHERE u.tenantId = :tenantId AND u.deleteDate IS NULL"
           + " AND u.userId NOT LIKE 'group-chat-system%'")
   long countActiveAdviceSeekersOfTenant(@Param("tenantId") Long tenantId);
+
+  /**
+   * Advice seekers of a Träger, marked or not, without the technical group-chat users; the Träger
+   * row goes only once this is 0 (ORISO-Admin#1525).
+   */
+  @Query(
+      "SELECT COUNT(u) FROM User u WHERE u.tenantId = :tenantId"
+          + " AND u.userId NOT LIKE 'group-chat-system%'")
+  long countAdviceSeekersOfTenant(@Param("tenantId") Long tenantId);
+
+  /** The technical group-chat users of a Träger; they go with it, last (ORISO-Admin#1525). */
+  @Query(
+      "SELECT u FROM User u WHERE u.tenantId = :tenantId"
+          + " AND u.userId LIKE 'group-chat-system%'")
+  List<User> findTechnicalUsersOfTenant(@Param("tenantId") Long tenantId);
+
+  /**
+   * Active advice seekers linked to the given Beratungsstelle by a session or membership
+   * (ORISO-Admin#1524). The cascade decides about each of them with {@code
+   * AgencyAdviceSeekerUnlinker}.
+   */
+  @Query(
+      "SELECT u.userId "
+          + "FROM User u WHERE u.deleteDate IS NULL"
+          + " AND u.userId NOT LIKE 'group-chat-system%'"
+          + " AND (EXISTS (SELECT 1 FROM Session s WHERE s.user = u AND s.agencyId = :agencyId)"
+          + " OR EXISTS (SELECT 1 FROM UserAgency ua WHERE ua.user = u AND ua.agencyId = :agencyId))")
+  List<String> findActiveAdviceSeekerIdsLinkedToAgency(@Param("agencyId") Long agencyId);
+
+  /**
+   * Advice seekers whose only Beratungsstelle is the given one, by session or membership
+   * (ORISO-Admin#1524): deleting the Beratungsstelle deletes them. The technical group-chat users
+   * go with their Träger only. Counted for the deletion preview.
+   */
+  @Query(
+      "SELECT COUNT(u) "
+          + "FROM User u WHERE u.deleteDate IS NULL"
+          + " AND u.userId NOT LIKE 'group-chat-system%'"
+          + " AND (EXISTS (SELECT 1 FROM Session s WHERE s.user = u AND s.agencyId = :agencyId)"
+          + " OR EXISTS (SELECT 1 FROM UserAgency ua WHERE ua.user = u AND ua.agencyId = :agencyId))"
+          + " AND NOT EXISTS (SELECT 1 FROM Session s2 WHERE s2.user = u"
+          + " AND s2.agencyId <> :agencyId AND s2.deleteDate IS NULL)"
+          + " AND NOT EXISTS (SELECT 1 FROM UserAgency ua2 WHERE ua2.user = u"
+          + " AND ua2.agencyId <> :agencyId)")
+  long countActiveAdviceSeekersOnlyInAgency(@Param("agencyId") Long agencyId);
+
+  /**
+   * The advice seekers {@link #countActiveAdviceSeekersOfTenant(Long)} counts (ORISO-Admin#1525).
+   */
+  @Query(
+      "SELECT u FROM User u WHERE u.tenantId = :tenantId AND u.deleteDate IS NULL"
+          + " AND u.userId NOT LIKE 'group-chat-system%'")
+  List<User> findActiveAdviceSeekersOfTenant(@Param("tenantId") Long tenantId);
 }

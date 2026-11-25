@@ -2,9 +2,13 @@ package de.caritas.cob.userservice.api.service.session;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.inOrder;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -13,19 +17,27 @@ import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.Session.SessionStatus;
 import de.caritas.cob.userservice.api.model.TeamDiscussion;
+import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRoomGateway;
+import de.caritas.cob.userservice.api.port.out.SessionRoomRow;
 import de.caritas.cob.userservice.api.port.out.TeamDiscussionRepository;
 import de.caritas.cob.userservice.api.service.agency.AgencyMatrixCredentialClient;
 import de.caritas.cob.userservice.api.service.agency.dto.AgencyMatrixCredentialsDTO;
+import de.caritas.cob.userservice.api.service.session.AgencySilentMembershipService.JoinAttempt;
+import java.util.Arrays;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Optional;
+import java.util.stream.IntStream;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.InjectMocks;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.data.domain.PageRequest;
 
 /**
  * US#1060 / FE#811. {@link AgencySilentMembershipService} closes the gap for enquiries that arrive
@@ -58,11 +70,43 @@ class AgencyLateJoinerMembershipServiceTest {
 
   @Mock private de.caritas.cob.userservice.api.workflow.scheduling.ScheduledTaskClaimService claims;
 
-  @InjectMocks private AgencyLateJoinerMembershipService underTest;
+  @Mock private MatrixRateLimitPause rateLimitPause;
+  @Mock private ConsultantRepository consultants;
+  private AgencyLateJoinerMembershipService underTest;
 
-  private void guardedTeamRoom(String roomId) {
-    when(teamDiscussionRepository.findByMatrixRoomId(roomId))
-        .thenReturn(Optional.of(TeamDiscussion.builder().matrixRoomId(roomId).build()));
+  @BeforeEach
+  void buildService() {
+    var access =
+        new AgencyOpenEnquiryMembership(
+            consultants,
+            consultantAgencyRepository,
+            sessionRepository,
+            agencySilentMembershipService);
+    underTest =
+        new AgencyLateJoinerMembershipService(
+            sessionRepository,
+            matrixCredentialClient,
+            sessionRoomGateway,
+            access,
+            rateLimitPause,
+            teamDiscussionRepository,
+            consultantAgencyRepository,
+            participantWriter,
+            claims);
+  }
+
+  private void entitled(Consultant consultant, Session... rooms) {
+    when(consultants.findActiveByIdForUpdate(consultant.getId()))
+        .thenReturn(Optional.of(consultant));
+    when(consultantAgencyRepository.existsByConsultantIdAndAgencyIdAndDeleteDateIsNull(
+            consultant.getId(), AGENCY_ID))
+        .thenReturn(true);
+    for (Session room : rooms) {
+      when(sessionRepository.findByIdForUpdate(room.getId())).thenReturn(Optional.of(room));
+    }
+  }
+
+  private void guardedTeamRoom() {
     var lease =
         new de.caritas.cob.userservice.api.workflow.scheduling.ScheduledTaskClaimService.ClaimLease(
             AgencyLateJoinerMembershipService.TEAM_ACCESS_REPAIR_TASK,
@@ -110,41 +154,160 @@ class AgencyLateJoinerMembershipServiceTest {
     when(sessionRoomGateway.loginAsUser(AGENCY_MATRIX_USER_ID)).thenReturn(AGENCY_TOKEN);
   }
 
-  /** The service consults both open-enquiry queues, so every fixture has to answer for both. */
   private void openEnquiries(Session... sessions) {
-    givenEnquiriesWithStatus(SessionStatus.NEW, sessions);
-    givenEnquiriesWithStatus(SessionStatus.INITIAL);
+    openEnquiriesThrough(
+        Arrays.stream(sessions).mapToLong(Session::getId).max().orElse(1), sessions);
   }
 
-  private void enquiriesAwaitingTheirFirstMessage(Session... sessions) {
-    givenEnquiriesWithStatus(SessionStatus.NEW);
-    givenEnquiriesWithStatus(SessionStatus.INITIAL, sessions);
-  }
-
-  private void givenEnquiriesWithStatus(SessionStatus status, Session... sessions) {
-    when(sessionRepository.findByAgencyIdAndStatusAndConsultantIsNull(AGENCY_ID, status))
-        .thenReturn(List.of(sessions));
+  private void openEnquiriesThrough(long upperId, Session... sessions) {
+    var rows =
+        Arrays.stream(sessions)
+            .map(session -> new SessionRoomRow(session.getId(), session.getMatrixRoomId()))
+            .sorted(Comparator.comparing(SessionRoomRow::sessionId))
+            .toList();
+    when(sessionRepository.findAgencySessionUpperId(AGENCY_ID)).thenReturn(Optional.of(upperId));
+    var page = PageRequest.ofSize(AgencyLateJoinerMembershipService.ENQUIRY_ROOM_PAGE_SIZE);
+    when(sessionRepository.findLateJoinerEnquiryRooms(
+            eq(AGENCY_ID),
+            eq(AgencyOpenEnquiryMembership.OPEN_STATUSES),
+            anyLong(),
+            eq(upperId),
+            eq(page)))
+        .thenAnswer(
+            invocation ->
+                rows.stream()
+                    .filter(row -> row.sessionId() > invocation.<Long>getArgument(2))
+                    .limit(page.getPageSize())
+                    .toList());
   }
 
   @Test
   @DisplayName("a counsellor added to the agency is joined into every open enquiry room")
   void joinConsultantIntoOpenEnquiryRooms_joinsEveryOpenEnquiryRoomOfTheAgency() {
     var consultant = lateJoiner();
-    openEnquiries(openEnquiry(1L, "!one:example.org"), openEnquiry(2L, "!two:example.org"));
+    var one = openEnquiry(1L, "!one:example.org");
+    var two = openEnquiry(2L, "!two:example.org");
+    openEnquiries(one, two);
+    entitled(consultant, one, two);
     agencyServiceAccountAvailable();
-    when(agencySilentMembershipService.joinConsultantIntoRoom(
+    when(agencySilentMembershipService.tryJoinConsultantIntoRoom(
             consultant, "!one:example.org", AGENCY_TOKEN))
-        .thenReturn(true);
-    when(agencySilentMembershipService.joinConsultantIntoRoom(
+        .thenReturn(JoinAttempt.JOINED);
+    when(agencySilentMembershipService.tryJoinConsultantIntoRoom(
             consultant, "!two:example.org", AGENCY_TOKEN))
-        .thenReturn(true);
+        .thenReturn(JoinAttempt.JOINED);
 
     assertEquals(2, underTest.joinConsultantIntoOpenEnquiryRooms(consultant, AGENCY_ID));
+    verify(sessionRepository, never()).findByAgencyIdAndStatusAndConsultantIsNull(any(), any());
 
     verify(agencySilentMembershipService)
-        .joinConsultantIntoRoom(consultant, "!one:example.org", AGENCY_TOKEN);
+        .tryJoinConsultantIntoRoom(consultant, "!one:example.org", AGENCY_TOKEN);
     verify(agencySilentMembershipService)
-        .joinConsultantIntoRoom(consultant, "!two:example.org", AGENCY_TOKEN);
+        .tryJoinConsultantIntoRoom(consultant, "!two:example.org", AGENCY_TOKEN);
+  }
+
+  @Test
+  void joinsUsableRoomsOnceAcrossPagesUsingOneAgencyToken() {
+    var consultant = lateJoiner();
+    int pageSize = AgencyLateJoinerMembershipService.ENQUIRY_ROOM_PAGE_SIZE;
+    var rooms =
+        IntStream.rangeClosed(1, pageSize + 1)
+            .mapToObj(
+                id -> openEnquiry((long) id, id == pageSize ? "\t" : "!room" + id + ":example.org"))
+            .toArray(Session[]::new);
+    var usableRooms =
+        Arrays.stream(rooms).filter(room -> room.getId() != pageSize).toArray(Session[]::new);
+    long upperId = rooms.length + 1L;
+    openEnquiriesThrough(upperId, rooms);
+    entitled(consultant, usableRooms);
+    agencyServiceAccountAvailable();
+    when(agencySilentMembershipService.tryJoinConsultantIntoRoom(
+            eq(consultant), anyString(), eq(AGENCY_TOKEN)))
+        .thenReturn(JoinAttempt.JOINED);
+
+    assertEquals(
+        usableRooms.length, underTest.joinConsultantIntoOpenEnquiryRooms(consultant, AGENCY_ID));
+
+    var reads = inOrder(sessionRepository);
+    reads.verify(sessionRepository).findAgencySessionUpperId(AGENCY_ID);
+    reads
+        .verify(sessionRepository)
+        .findLateJoinerEnquiryRooms(
+            AGENCY_ID,
+            AgencyOpenEnquiryMembership.OPEN_STATUSES,
+            Long.MIN_VALUE,
+            upperId,
+            PageRequest.ofSize(pageSize));
+    reads
+        .verify(sessionRepository)
+        .findLateJoinerEnquiryRooms(
+            AGENCY_ID,
+            AgencyOpenEnquiryMembership.OPEN_STATUSES,
+            pageSize,
+            upperId,
+            PageRequest.ofSize(pageSize));
+    verify(sessionRepository, times(2))
+        .findLateJoinerEnquiryRooms(any(), any(), anyLong(), anyLong(), any());
+    verify(matrixCredentialClient).fetchMatrixCredentials(AGENCY_ID);
+    verify(sessionRoomGateway).loginAsUser(AGENCY_MATRIX_USER_ID);
+    var roomIds = ArgumentCaptor.forClass(String.class);
+    verify(agencySilentMembershipService, times(usableRooms.length))
+        .tryJoinConsultantIntoRoom(eq(consultant), roomIds.capture(), eq(AGENCY_TOKEN));
+    assertEquals(
+        Arrays.stream(usableRooms).map(Session::getMatrixRoomId).toList(), roomIds.getAllValues());
+  }
+
+  @Test
+  void aRoomChangedSinceTheSnapshotGetsNoDepartmentGrant() {
+    var consultant = lateJoiner();
+    var selected = openEnquiry(1L, "!original:example.org");
+    var current = openEnquiry(1L, "!replacement:example.org");
+    openEnquiries(selected);
+    entitled(consultant, current);
+    agencyServiceAccountAvailable();
+
+    assertEquals(0, underTest.joinConsultantIntoOpenEnquiryRooms(consultant, AGENCY_ID));
+
+    verify(sessionRepository).findByIdForUpdate(selected.getId());
+    verifyNoInteractions(agencySilentMembershipService);
+  }
+
+  @Test
+  void detachedCounsellorIsNotJoinedFromAnOldEvent() {
+    var consultant = lateJoiner();
+    openEnquiries(openEnquiry(1L, "!one:example.org"));
+    agencyServiceAccountAvailable();
+    when(consultants.findActiveByIdForUpdate(consultant.getId()))
+        .thenReturn(Optional.of(consultant));
+    lenient()
+        .when(
+            agencySilentMembershipService.tryJoinConsultantIntoRoom(
+                consultant, "!one:example.org", AGENCY_TOKEN))
+        .thenReturn(JoinAttempt.JOINED);
+
+    assertEquals(0, underTest.joinConsultantIntoOpenEnquiryRooms(consultant, AGENCY_ID));
+
+    var order = inOrder(consultants, consultantAgencyRepository);
+    order.verify(consultants).findActiveByIdForUpdate(consultant.getId());
+    order
+        .verify(consultantAgencyRepository)
+        .existsByConsultantIdAndAgencyIdAndDeleteDateIsNull(consultant.getId(), AGENCY_ID);
+    verifyNoInteractions(agencySilentMembershipService);
+  }
+
+  @Test
+  void aCaseAcceptedSinceTheSnapshotGetsNoDepartmentGrant() {
+    var consultant = lateJoiner();
+    var earlier = openEnquiry(1L, "!one:example.org");
+    var accepted = openEnquiry(1L, "!one:example.org");
+    accepted.setStatus(SessionStatus.IN_PROGRESS);
+    openEnquiries(earlier);
+    entitled(consultant, accepted);
+    agencyServiceAccountAvailable();
+
+    assertEquals(0, underTest.joinConsultantIntoOpenEnquiryRooms(consultant, AGENCY_ID));
+
+    verifyNoInteractions(agencySilentMembershipService);
   }
 
   @Test
@@ -153,16 +316,17 @@ class AgencyLateJoinerMembershipServiceTest {
     var consultant = lateJoiner();
     var awaitingFirstMessage = openEnquiry(3L, "!awaiting:example.org");
     awaitingFirstMessage.setStatus(SessionStatus.INITIAL);
-    enquiriesAwaitingTheirFirstMessage(awaitingFirstMessage);
+    openEnquiries(awaitingFirstMessage);
+    entitled(consultant, awaitingFirstMessage);
     agencyServiceAccountAvailable();
-    when(agencySilentMembershipService.joinConsultantIntoRoom(
+    when(agencySilentMembershipService.tryJoinConsultantIntoRoom(
             consultant, "!awaiting:example.org", AGENCY_TOKEN))
-        .thenReturn(true);
+        .thenReturn(JoinAttempt.JOINED);
 
     assertEquals(1, underTest.joinConsultantIntoOpenEnquiryRooms(consultant, AGENCY_ID));
 
     verify(agencySilentMembershipService)
-        .joinConsultantIntoRoom(consultant, "!awaiting:example.org", AGENCY_TOKEN);
+        .tryJoinConsultantIntoRoom(consultant, "!awaiting:example.org", AGENCY_TOKEN);
   }
 
   @Test
@@ -171,23 +335,25 @@ class AgencyLateJoinerMembershipServiceTest {
     var consultant = lateJoiner();
     var directEnquiry = openEnquiry(1L, "!direct:example.org");
     directEnquiry.setIsConsultantDirectlySet(true);
-    openEnquiries(directEnquiry, openEnquiry(2L, "!department:example.org"));
+    var department = openEnquiry(2L, "!department:example.org");
+    openEnquiries(directEnquiry, department);
+    entitled(consultant, directEnquiry, department);
     agencyServiceAccountAvailable();
-    when(agencySilentMembershipService.joinConsultantIntoRoom(
+    when(agencySilentMembershipService.tryJoinConsultantIntoRoom(
             consultant, "!department:example.org", AGENCY_TOKEN))
-        .thenReturn(true);
+        .thenReturn(JoinAttempt.JOINED);
 
     assertEquals(1, underTest.joinConsultantIntoOpenEnquiryRooms(consultant, AGENCY_ID));
 
     verify(agencySilentMembershipService, never())
-        .joinConsultantIntoRoom(any(), eq("!direct:example.org"), anyString());
+        .tryJoinConsultantIntoRoom(any(), eq("!direct:example.org"), anyString());
   }
 
   @Test
   @DisplayName("an enquiry without a Matrix room yet is skipped instead of failing the assignment")
   void joinConsultantIntoOpenEnquiryRooms_skipsEnquiriesWithoutRoom() {
     var consultant = lateJoiner();
-    openEnquiries(openEnquiry(1L, null), openEnquiry(2L, "  "));
+    openEnquiries(openEnquiry(1L, null), openEnquiry(2L, "  "), openEnquiry(3L, "\t"));
 
     assertEquals(0, underTest.joinConsultantIntoOpenEnquiryRooms(consultant, AGENCY_ID));
 
@@ -211,14 +377,17 @@ class AgencyLateJoinerMembershipServiceTest {
   @DisplayName("one unjoinable room does not cost the late joiner the remaining rooms")
   void joinConsultantIntoOpenEnquiryRooms_isBestEffortPerRoom() {
     var consultant = lateJoiner();
-    openEnquiries(openEnquiry(1L, "!broken:example.org"), openEnquiry(2L, "!healthy:example.org"));
+    var broken = openEnquiry(1L, "!broken:example.org");
+    var healthy = openEnquiry(2L, "!healthy:example.org");
+    openEnquiries(broken, healthy);
+    entitled(consultant, broken, healthy);
     agencyServiceAccountAvailable();
-    when(agencySilentMembershipService.joinConsultantIntoRoom(
+    when(agencySilentMembershipService.tryJoinConsultantIntoRoom(
             consultant, "!broken:example.org", AGENCY_TOKEN))
         .thenThrow(new RuntimeException("synapse rejected this room"));
-    when(agencySilentMembershipService.joinConsultantIntoRoom(
+    when(agencySilentMembershipService.tryJoinConsultantIntoRoom(
             consultant, "!healthy:example.org", AGENCY_TOKEN))
-        .thenReturn(true);
+        .thenReturn(JoinAttempt.JOINED);
 
     assertEquals(1, underTest.joinConsultantIntoOpenEnquiryRooms(consultant, AGENCY_ID));
   }
@@ -247,31 +416,14 @@ class AgencyLateJoinerMembershipServiceTest {
   }
 
   @Test
-  @DisplayName("a counsellor removed from the agency loses membership in its open enquiry rooms")
-  void removeConsultantFromAgencyRooms_removesFromEveryOpenEnquiryRoom() {
-    var consultant = lateJoiner();
-    openEnquiries(openEnquiry(1L, "!one:example.org"), openEnquiry(2L, "!two:example.org"));
-    agencyServiceAccountAvailable();
-    when(sessionRoomGateway.removeUserFromRoom(
-            "!one:example.org", CONSULTANT_MATRIX_USER_ID, AGENCY_TOKEN))
-        .thenReturn(true);
-    when(sessionRoomGateway.removeUserFromRoom(
-            "!two:example.org", CONSULTANT_MATRIX_USER_ID, AGENCY_TOKEN))
-        .thenReturn(true);
-
-    assertEquals(2, underTest.removeConsultantFromAgencyRooms(consultant, AGENCY_ID));
-  }
-
-  @Test
   @DisplayName("agency removal also revokes open team discussions the counsellor joined")
-  void removeConsultantFromAgencyRooms_removesJoinedTeamDiscussionRooms() {
+  void removeConsultantFromTeamRooms_removesJoinedTeamDiscussionRooms() {
     var consultant = lateJoiner();
-    openEnquiries();
     when(teamDiscussionRepository.findRoomIdsForParticipantInAgency(
             consultant.getId(), AGENCY_ID, TeamDiscussion.Status.OPEN))
         .thenReturn(List.of("!team:example.org"));
     agencyServiceAccountAvailable();
-    guardedTeamRoom("!team:example.org");
+    guardedTeamRoom();
     var marked = new java.util.concurrent.atomic.AtomicBoolean();
     org.mockito.Mockito.doAnswer(
             invocation -> {
@@ -288,57 +440,47 @@ class AgencyLateJoinerMembershipServiceTest {
               return true;
             });
 
-    assertEquals(1, underTest.removeConsultantFromAgencyRooms(consultant, AGENCY_ID));
+    assertEquals(1, underTest.removeConsultantFromTeamRooms(consultant, AGENCY_ID));
 
     verify(sessionRoomGateway)
         .removeUserFromRoom("!team:example.org", CONSULTANT_MATRIX_USER_ID, AGENCY_TOKEN);
   }
 
   @Test
-  void removeConsultantFromAgencyRooms_alsoRevokesArchivedTeamRooms() {
-    guardedTeamRoom("!archive:example.org");
+  void removeConsultantFromTeamRooms_alsoRevokesArchivedTeamRooms() {
+    guardedTeamRoom();
     var consultant = lateJoiner();
-    openEnquiries();
     when(teamDiscussionRepository.findRoomIdsForParticipantInAgency(
             consultant.getId(), AGENCY_ID, TeamDiscussion.Status.ARCHIVED))
         .thenReturn(List.of("!archive:example.org"));
     when(teamDiscussionRepository.findRoomIdsForParticipantInAgency(
             consultant.getId(), AGENCY_ID, TeamDiscussion.Status.OPEN))
         .thenReturn(List.of());
+    // FE#2491: a team chat switched off on an open enquiry is revoked as well.
+    when(teamDiscussionRepository.findRoomIdsForParticipantInAgency(
+            consultant.getId(), AGENCY_ID, TeamDiscussion.Status.CLOSED))
+        .thenReturn(List.of("!closed:example.org"));
+    when(sessionRoomGateway.removeUserFromRoom(
+            "!closed:example.org", CONSULTANT_MATRIX_USER_ID, AGENCY_TOKEN))
+        .thenReturn(true);
     agencyServiceAccountAvailable();
     when(sessionRoomGateway.removeUserFromRoom(
             "!archive:example.org", CONSULTANT_MATRIX_USER_ID, AGENCY_TOKEN))
         .thenReturn(true);
 
-    assertEquals(1, underTest.removeConsultantFromAgencyRooms(consultant, AGENCY_ID));
+    assertEquals(2, underTest.removeConsultantFromTeamRooms(consultant, AGENCY_ID));
   }
 
   @Test
   @DisplayName("a counsellor without a Matrix account has nothing to revoke")
-  void removeConsultantFromAgencyRooms_skipsConsultantWithoutMatrixAccount() {
+  void removeConsultantFromTeamRooms_skipsConsultantWithoutMatrixAccount() {
     var consultant = lateJoiner();
     consultant.setMatrixUserId(null);
 
-    assertEquals(0, underTest.removeConsultantFromAgencyRooms(consultant, AGENCY_ID));
+    assertEquals(0, underTest.removeConsultantFromTeamRooms(consultant, AGENCY_ID));
 
     verifyNoInteractions(sessionRepository);
     verifyNoInteractions(matrixCredentialClient);
     verifyNoInteractions(sessionRoomGateway);
-  }
-
-  @Test
-  @DisplayName("one failing removal does not stop the remaining rooms from being revoked")
-  void removeConsultantFromAgencyRooms_isBestEffortPerRoom() {
-    var consultant = lateJoiner();
-    openEnquiries(openEnquiry(1L, "!broken:example.org"), openEnquiry(2L, "!healthy:example.org"));
-    agencyServiceAccountAvailable();
-    when(sessionRoomGateway.removeUserFromRoom(
-            "!broken:example.org", CONSULTANT_MATRIX_USER_ID, AGENCY_TOKEN))
-        .thenThrow(new RuntimeException("synapse rejected this room"));
-    when(sessionRoomGateway.removeUserFromRoom(
-            "!healthy:example.org", CONSULTANT_MATRIX_USER_ID, AGENCY_TOKEN))
-        .thenReturn(true);
-
-    assertEquals(1, underTest.removeConsultantFromAgencyRooms(consultant, AGENCY_ID));
   }
 }

@@ -14,6 +14,15 @@ public interface ConsultantAgencyRepository extends CrudRepository<ConsultantAge
 
   List<ConsultantAgency> findByAgencyIdAndDeleteDateIsNull(Long agencyId);
 
+  /**
+   * Ids of the counsellors with an active relation to the Beratungsstelle, without loading the
+   * relations and their eagerly fetched counsellors (ORISO-Admin#1524).
+   */
+  @Query(
+      "select distinct ca.consultant.id from ConsultantAgency ca"
+          + " where ca.agencyId = :agencyId and ca.deleteDate is null")
+  List<String> findActiveConsultantIdsByAgencyId(@Param("agencyId") Long agencyId);
+
   List<ConsultantAgency> findByConsultantIdAndDeleteDateIsNull(String consultantId);
 
   /** The relations removed together with the consultant, i.e. stamped with its delete date. */
@@ -25,6 +34,45 @@ public interface ConsultantAgencyRepository extends CrudRepository<ConsultantAge
 
   List<ConsultantAgency> findByConsultantIdAndAgencyIdAndDeleteDateIsNull(
       String consultantId, Long agencyId);
+
+  @Query(
+      """
+      select removed.consultant.id as consultantId, removed.id as relationId
+      from ConsultantAgency removed
+      where removed.agencyId = :agencyId
+        and removed.consultant.id in :consultantIds
+        and removed.deleteDate is not null
+        and not exists (
+          select 1 from ConsultantAgency active
+          where active.agencyId = removed.agencyId
+            and active.consultant.id = removed.consultant.id
+            and active.deleteDate is null
+        )
+        and not exists (
+          select 1 from ConsultantAgency newer
+          where newer.agencyId = removed.agencyId
+            and newer.consultant.id = removed.consultant.id
+            and (newer.deleteDate > removed.deleteDate
+              or (newer.deleteDate = removed.deleteDate and newer.id > removed.id))
+        )
+        and not exists (
+          select 1 from AgencyEnquiryRevocationTask pending
+          where pending.consultantAgencyId = removed.id
+            and pending.sessionId = :sessionId
+            and pending.roomId = :roomId
+        )
+      """)
+  List<PublicationRevocationCandidate> findPublicationRevocationCandidates(
+      @Param("agencyId") Long agencyId,
+      @Param("consultantIds") Collection<String> consultantIds,
+      @Param("sessionId") Long sessionId,
+      @Param("roomId") String roomId);
+
+  interface PublicationRevocationCandidate {
+    String getConsultantId();
+
+    Long getRelationId();
+  }
 
   boolean existsByConsultantIdAndAgencyIdAndDeleteDateIsNull(String consultantId, Long agencyId);
 

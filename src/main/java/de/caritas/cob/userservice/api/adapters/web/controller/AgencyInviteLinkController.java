@@ -182,12 +182,17 @@ public class AgencyInviteLinkController {
   }
 
   // ---------------------------------------------------------------------------------------------
-  // POST /users/invitelinks/{token}/redeem — public; marks link used and returns registration
-  // metadata.
+  // POST /users/invitelinks/{token}/redeem — public. Returns a Live Chat session or
+  // registration routing metadata. Successful redemption keeps the link active.
   // ---------------------------------------------------------------------------------------------
+  // An optional body carries the animal handle a Live Chat guest rolled; it becomes the login.
+  // Without it (older clients) the server rolls one. Never anon_N (ORISO-Frontend#2346).
   @PostMapping("/users/invitelinks/{token}/redeem")
-  public ResponseEntity<RedeemResponseDTO> redeem(@PathVariable String token) {
-    AgencyInviteLinkService.RedeemContext ctx = agencyInviteLinkService.redeemWithContext(token);
+  public ResponseEntity<RedeemResponseDTO> redeem(
+      @PathVariable String token, @RequestBody(required = false) RedeemRequestDTO request) {
+    AgencyInviteLinkService.RedeemContext ctx =
+        agencyInviteLinkService.redeemWithContext(
+            token, request == null ? null : request.getUsername());
     CreateAnonymousEnquiryResponseDTO session = ctx.getSession();
 
     RedeemResponseDTO response = new RedeemResponseDTO();
@@ -438,6 +443,19 @@ public class AgencyInviteLinkController {
    * Redeem response — registration metadata; optional session credentials when server creates
    * session.
    */
+  /** The handle the guest rolled on the entry page, e.g. {@code katze_sam_4821}. */
+  public static class RedeemRequestDTO {
+    private String username;
+
+    public String getUsername() {
+      return username;
+    }
+
+    public void setUsername(String username) {
+      this.username = username;
+    }
+  }
+
   public static class RedeemResponseDTO {
     // New session credentials (new frontend uses these)
     public String userName;

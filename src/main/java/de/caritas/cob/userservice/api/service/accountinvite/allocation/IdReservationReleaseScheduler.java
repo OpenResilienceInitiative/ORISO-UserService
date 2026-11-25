@@ -9,6 +9,8 @@ import de.caritas.cob.userservice.api.tenant.TenantContext;
 import de.caritas.cob.userservice.api.tenant.TenantContextProvider;
 import de.caritas.cob.userservice.api.workflow.scheduling.ScheduledTaskClaimService;
 import java.time.Duration;
+import java.util.List;
+import java.util.function.Consumer;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -46,7 +48,8 @@ public class IdReservationReleaseScheduler {
       lease = acquiredLease.get();
       tenantContextProvider.setTechnicalContextIfMultiTenancyIsEnabled();
       var pendingTaskIds = processor.pendingTaskIds();
-      if (pendingTaskIds.isEmpty()) {
+      var pendingTenantTaskIds = processor.pendingTenantTaskIds();
+      if (pendingTaskIds.isEmpty() && pendingTenantTaskIds.isEmpty()) {
         // No work, no service session: the technical identity is only used when a release is due.
         return;
       }
@@ -55,13 +58,12 @@ public class IdReservationReleaseScheduler {
               TaskPurpose.INVITE_RESERVATIONS, identityClientConfig, identityAuthentication);
       // Ambient (not explicit) because the allocation clients are shared with the admin-triggered
       // invite flow, which must keep sending the admin's own token. Scoped to the releases only.
-      for (Long taskId : pendingTaskIds) {
-        try {
-          TechnicalAccessTokenContext.runWith(token, () -> processor.process(taskId));
-        } catch (RuntimeException exception) {
-          log.warn("Could not process reservation release task {}", taskId, exception);
-        }
-      }
+      TechnicalAccessTokenContext.runWith(
+          token,
+          () -> {
+            processPending(pendingTaskIds, processor::process);
+            processPending(pendingTenantTaskIds, processor::processTenant);
+          });
     } catch (RuntimeException exception) {
       log.warn("Could not process pending account-invite reservation releases", exception);
     } finally {
@@ -73,6 +75,19 @@ public class IdReservationReleaseScheduler {
         } catch (RuntimeException exception) {
           log.warn("Could not release account-invite reservation scheduler claim", exception);
         }
+      }
+    }
+  }
+
+  private static void processPending(List<Long> taskIds, Consumer<Long> processTask) {
+    for (Long taskId : taskIds) {
+      try {
+        processTask.accept(taskId);
+      } catch (RuntimeException exception) {
+        log.warn(
+            "Could not process reservation release task {} ({})",
+            taskId,
+            exception.getClass().getSimpleName());
       }
     }
   }

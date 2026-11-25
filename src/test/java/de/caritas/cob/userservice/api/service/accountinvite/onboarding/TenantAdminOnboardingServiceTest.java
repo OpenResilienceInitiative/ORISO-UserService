@@ -44,6 +44,7 @@ import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteTargetR
 import de.caritas.cob.userservice.api.service.accountinvite.EmailVerificationStatus;
 import de.caritas.cob.userservice.api.service.accountinvite.InviteUnitCreatedEvent;
 import de.caritas.cob.userservice.api.service.accountinvite.InviteUnitType;
+import de.caritas.cob.userservice.api.service.accountinvite.ReservationLedger;
 import de.caritas.cob.userservice.api.service.accountinvite.TwoFactorGateStatus;
 import de.caritas.cob.userservice.api.service.accountinvite.onboarding.OperatorDpaContentClient.DpaUnavailableReason;
 import de.caritas.cob.userservice.api.service.accountinvite.onboarding.OperatorDpaContentClient.OperatorDpa;
@@ -73,6 +74,7 @@ class TenantAdminOnboardingServiceTest {
 
   @Mock private AccountInviteRepository accountInviteRepository;
   @Mock private AccountInviteService accountInviteService;
+  @Mock private ReservationLedger reservationLedger;
   @Mock private CreateAdminService createAdminService;
   @Mock private IdentityClient identityClient;
   @Mock private IdentitySecondFactor identitySecondFactor;
@@ -104,6 +106,7 @@ class TenantAdminOnboardingServiceTest {
         new TenantAdminOnboardingService(
             accountInviteRepository,
             accountInviteService,
+            reservationLedger,
             createAdminService,
             identityClient,
             identitySecondFactor,
@@ -197,6 +200,26 @@ class TenantAdminOnboardingServiceTest {
 
     assertEquals(invite, state.invite());
     assertFalse(state.pendingTwoFactorResume());
+  }
+
+  @Test
+  void cofounderResolutionRequiresTheCurrentAssignmentForItsOriginalProof() {
+    AccountInvite invite = tenantAdminInvite(AccountInviteStatus.EMAIL_SENT);
+    when(accountInviteRepository.findByTokenHash(TOKEN_HASH)).thenReturn(Optional.of(invite));
+    when(accountInviteRepository
+            .existsByTargetRoleAndTenantIdAndTenantIdReservationTokenAndStatusAndIdNot(
+                AccountInviteTargetRole.TENANT_ADMIN,
+                RESERVED_TENANT_ID,
+                RESERVATION_TOKEN,
+                AccountInviteStatus.ACCEPTED,
+                invite.getId()))
+        .thenReturn(true);
+    when(tenantCreationClient.hasAssignmentProof(RESERVED_TENANT_ID, RESERVATION_TOKEN))
+        .thenReturn(true, false);
+
+    assertTrue(service.resolveOnboardingInvite(RAW_TOKEN).joinsExistingTenant());
+    assertThrows(ConflictException.class, () -> service.resolveOnboardingInvite(RAW_TOKEN));
+    verify(operatorDpaContentClient, never()).lookupPublishedDpa();
   }
 
   @Test
@@ -473,10 +496,12 @@ class TenantAdminOnboardingServiceTest {
     assertEquals("kc-user-1", invite.getAcceptedByUserId());
     assertEquals("TOTPSECRET", invite.getTotpPendingSecret());
     verify(accountInviteRepository).save(invite);
+    verify(accountInviteRepository)
+        .stampTraegerCreated(eq(RESERVED_TENANT_ID), eq(RESERVATION_TOKEN), any());
     verify(eventPublisher)
         .publishEvent(
             new InviteUnitCreatedEvent(
-                InviteUnitType.TENANT, RESERVED_TENANT_ID, RESERVED_TENANT_ID));
+                InviteUnitType.TENANT, RESERVED_TENANT_ID, RESERVED_TENANT_ID, RESERVATION_TOKEN));
   }
 
   /**

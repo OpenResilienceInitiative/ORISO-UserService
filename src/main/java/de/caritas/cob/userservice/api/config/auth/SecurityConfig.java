@@ -75,6 +75,9 @@ public class SecurityConfig {
   @Value("${keycloak.principal-attribute:preferred_username}")
   private String principalAttribute;
 
+  @Value("${keycloak.config.app-client-id:}")
+  private String appClientId;
+
   private final @Nullable HttpTenantFilter tenantFilter;
   private final @Nullable IpPrivacyHeaderFilter ipPrivacyHeaderFilter;
 
@@ -216,6 +219,15 @@ public class SecurityConfig {
                 .permitAll()
                 .requestMatchers(HttpMethod.GET, "/users/invitelinks/*/context")
                 .permitAll()
+                // Journeys an advice seeker runs (ADR-036 part E, ORISO-Frontend#2333): read before
+                // registering, so without a login; the answer leaves out what only editors see.
+                .requestMatchers(
+                    HttpMethod.GET,
+                    "/users/journeys/registration",
+                    "/service/users/journeys/registration",
+                    "/users/journeys/links/*",
+                    "/service/users/journeys/links/*")
+                .permitAll()
                 // #1662: a Gesprächskreis entry page reads the circle's guest account mode; the
                 // invite secret is the credential and GroupInviteRegistration checks it.
                 .requestMatchers(HttpMethod.GET, "/users/chat/*/invite-context")
@@ -239,8 +251,6 @@ public class SecurityConfig {
                 .permitAll()
                 .requestMatchers(
                     "/users/askers/new",
-                    "/conversations/askers/anonymous/new",
-                    "/service/conversations/askers/anonymous/new",
                     "/conversations/anonymous/availability",
                     "/service/conversations/anonymous/availability",
                     "/users/consultants/{consultantId:" + PUBLIC_CONSULTANT_ID_PATTERN + "}",
@@ -375,7 +385,9 @@ public class SecurityConfig {
                     CONSULTANT_DEFAULT,
                     SINGLE_TENANT_ADMIN,
                     TENANT_ADMIN,
-                    RESTRICTED_AGENCY_ADMIN)
+                    RESTRICTED_AGENCY_ADMIN,
+                    // Agency admins carry user-admin only; they see the admin tours too.
+                    USER_ADMIN)
                 // Uses the platform SMTP credentials: platform admin only.
                 .requestMatchers("/users/system-notification-emails/platform-settings")
                 .access(this::isPlatformAdmin)
@@ -470,6 +482,11 @@ public class SecurityConfig {
                     "/service/users/directlinks/{linkId:[0-9]+}/renewal",
                     "/users/sessions/{sessionId:[0-9]+}/direct-invitations",
                     "/service/users/sessions/{sessionId:[0-9]+}/direct-invitations")
+                .hasAuthority(CONSULTANT_DEFAULT)
+                // ORISO-Frontend#2356: a counsellor who holds the link joins its call only. The
+                // service decides what they get; /conversations below stays for advice seekers.
+                .requestMatchers(
+                    "/users/invitelinks/*/staff-join", "/service/users/invitelinks/*/staff-join")
                 .hasAuthority(CONSULTANT_DEFAULT)
                 .requestMatchers(
                     HttpMethod.POST,
@@ -602,7 +619,9 @@ public class SecurityConfig {
                     "/users/sessions/{sessionId:[0-9]+}/rejection",
                     "/service/users/sessions/{sessionId:[0-9]+}/rejection",
                     "/users/sessions/{sessionId:[0-9]+}/team-discussion",
-                    "/service/users/sessions/{sessionId:[0-9]+}/team-discussion")
+                    "/service/users/sessions/{sessionId:[0-9]+}/team-discussion",
+                    "/users/sessions/{sessionId:[0-9]+}/team-discussion/join",
+                    "/service/users/sessions/{sessionId:[0-9]+}/team-discussion/join")
                 .hasAuthority(CONSULTANT_DEFAULT)
                 .requestMatchers(
                     "/conversations/anonymous/{sessionId:[0-9]+}/finish",
@@ -653,8 +672,19 @@ public class SecurityConfig {
                     "/useradmin/tenants/{tenantId:[0-9]+}/deletion-blockers",
                     "/service/useradmin/tenants/{tenantId:[0-9]+}/deletion-blockers")
                 .hasAnyAuthority(USER_ADMIN, TENANT_ADMIN, SINGLE_TENANT_ADMIN)
+                // Called by TenantService when the platform administrator deletes a Träger
+                // (ORISO-Admin#1525). Only that person may empty a Träger, never a Träger admin.
+                .requestMatchers(
+                    HttpMethod.POST,
+                    "/useradmin/tenants/{tenantId:[0-9]+}/deletion",
+                    "/service/useradmin/tenants/{tenantId:[0-9]+}/deletion")
+                .access(this::isHumanPlatformAdmin)
                 .requestMatchers(HttpMethod.GET, "/useradmin/tenantadmins/search")
                 .hasAnyAuthority(TENANT_ADMIN, USER_ADMIN)
+                .requestMatchers(
+                    "/useradmin/tenantadmins/login-emails",
+                    "/service/useradmin/tenantadmins/login-emails")
+                .access(this::isHumanPlatformAdmin)
                 .requestMatchers(
                     "/useradmin/tenantadmins",
                     "/useradmin/tenantadmins/**",
@@ -780,6 +810,11 @@ public class SecurityConfig {
                 .access(this::isPlatformAdmin)
                 // An admin's own list sorts (#1263): every admin role that sees a user list keeps
                 // its own; the data is always the caller's, so no other access widens.
+                // The platform admin's own Erstantwort texts (Settings → Begrüßung), above the
+                // built-in default. Must precede the generic /useradmin/** rule.
+                .requestMatchers(
+                    "/useradmin/erstantwort/platform", "/service/useradmin/erstantwort/platform")
+                .access(this::isPlatformAdmin)
                 // Platform default Erstantwort texts for the Träger editor (Admin#601); read-only.
                 .requestMatchers(
                     HttpMethod.GET,
@@ -790,6 +825,21 @@ public class SecurityConfig {
                 .requestMatchers("/useradmin/list-preferences", "/useradmin/list-preferences/**")
                 .hasAnyAuthority(
                     USER_ADMIN, TENANT_ADMIN, SINGLE_TENANT_ADMIN, RESTRICTED_AGENCY_ADMIN)
+                // A Beratungsstelle's own Erstantwort texts (ADR-018 §6). Every admin role reaches
+                // it; the controller narrows to the caller's AdminScope.
+                .requestMatchers(
+                    "/useradmin/erstantwort/agencies/{agencyId:[0-9]+}",
+                    "/service/useradmin/erstantwort/agencies/{agencyId:[0-9]+}")
+                .hasAnyAuthority(
+                    USER_ADMIN, TENANT_ADMIN, SINGLE_TENANT_ADMIN, RESTRICTED_AGENCY_ADMIN)
+                // Deleting a Beratungsstelle (ORISO-Admin#1524): the preview and the cascade
+                // AgencyService calls with the deleting admin's token. Träger and platform admins
+                // only, as for deleting the Beratungsstelle itself; AgencyDeletionCascadeService
+                // narrows to the caller's AdminScope.
+                .requestMatchers(
+                    "/useradmin/agencies/{agencyId:[0-9]+}/deletion",
+                    "/service/useradmin/agencies/{agencyId:[0-9]+}/deletion")
+                .hasAnyAuthority(USER_ADMIN, TENANT_ADMIN, SINGLE_TENANT_ADMIN)
                 // Contact person per counselling centre and Träger (ORISO-Admin#1534). Every admin
                 // role reaches it; ContactPersonAdminService narrows to the caller's AdminScope
                 // (agency admins: own centres only, never the Träger default).
@@ -800,6 +850,32 @@ public class SecurityConfig {
                     "/service/useradmin/agencies/{agencyId:[0-9]+}/contactperson",
                     "/service/useradmin/agencies/{agencyId:[0-9]+}/contactperson/candidates",
                     "/service/useradmin/agencycontacts/coverage")
+                .hasAnyAuthority(
+                    USER_ADMIN, TENANT_ADMIN, SINGLE_TENANT_ADMIN, RESTRICTED_AGENCY_ADMIN)
+                // Journeys (ADR-036 part E, #1689): every admin reads the platform journeys and
+                // the layers within its reach (the controller narrows by AdminScope); only the
+                // platform admin writes platform journeys. Must precede the /useradmin/** rule.
+                .requestMatchers(
+                    HttpMethod.PUT,
+                    "/useradmin/journeys/platform/*",
+                    "/service/useradmin/journeys/platform/*")
+                .access(this::isPlatformAdmin)
+                .requestMatchers(
+                    HttpMethod.DELETE,
+                    "/useradmin/journeys/platform/*",
+                    "/service/useradmin/journeys/platform/*")
+                .access(this::isPlatformAdmin)
+                .requestMatchers(
+                    "/useradmin/journeys/platform",
+                    "/service/useradmin/journeys/platform",
+                    "/useradmin/journeys/tenants/{tenantId:[0-9]+}/layers",
+                    "/useradmin/journeys/tenants/{tenantId:[0-9]+}/layers/*",
+                    "/service/useradmin/journeys/tenants/{tenantId:[0-9]+}/layers",
+                    "/service/useradmin/journeys/tenants/{tenantId:[0-9]+}/layers/*",
+                    "/useradmin/journeys/agencies/{agencyId:[0-9]+}/layers",
+                    "/useradmin/journeys/agencies/{agencyId:[0-9]+}/layers/*",
+                    "/service/useradmin/journeys/agencies/{agencyId:[0-9]+}/layers",
+                    "/service/useradmin/journeys/agencies/{agencyId:[0-9]+}/layers/*")
                 .hasAnyAuthority(
                     USER_ADMIN, TENANT_ADMIN, SINGLE_TENANT_ADMIN, RESTRICTED_AGENCY_ADMIN)
                 .requestMatchers(
@@ -856,6 +932,10 @@ public class SecurityConfig {
                     "/service/users/calendar/working-hours",
                     "/users/calendar/consultation-hours",
                     "/service/users/calendar/consultation-hours",
+                    "/users/calendar/consultation-hours/once",
+                    "/service/users/calendar/consultation-hours/once",
+                    "/users/calendar/consultation-hours/once/{onceId}",
+                    "/service/users/calendar/consultation-hours/once/{onceId}",
                     "/users/calendar/working-hours/exceptions/{date}",
                     "/service/users/calendar/working-hours/exceptions/{date}",
                     "/users/calendar/proposals",
@@ -1126,6 +1206,18 @@ public class SecurityConfig {
             && roles.contains(UserRole.TENANT_ADMIN.getValue());
 
     return new AuthorizationDecision(hasPlatformAdminRoles && isPlatformTenant(jwt));
+  }
+
+  private AuthorizationDecision isHumanPlatformAdmin(
+      Supplier<? extends Authentication> authentication, RequestAuthorizationContext context) {
+    return new AuthorizationDecision(
+        authentication.get() instanceof JwtAuthenticationToken caller
+            && caller.isAuthenticated()
+            && caller.getToken().getClaims().get("azp") instanceof String authorizedParty
+            && !authorizedParty.isBlank()
+            && authorizedParty.equals(appClientId)
+            && hasAnyAuthority(authentication, TENANT_ADMIN)
+            && isPlatformAdmin(authentication, context).isGranted());
   }
 
   private boolean isPlatformTenant(Jwt jwt) {

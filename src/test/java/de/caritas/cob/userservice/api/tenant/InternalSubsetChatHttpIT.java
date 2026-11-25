@@ -1948,6 +1948,8 @@ class InternalSubsetChatHttpIT {
       final Set<String> invited = new LinkedHashSet<>();
       final Set<String> joined = new LinkedHashSet<>();
       boolean encrypted;
+      String creator;
+      String powerLevels;
     }
 
     private static void pause(int millis) {
@@ -2035,6 +2037,7 @@ class InternalSubsetChatHttpIT {
         var room = new Room();
         var roomId = "!room" + (++numbering) + ":" + SERVER;
         room.joined.add(actor);
+        room.creator = actor;
         var initialState = node.path("initial_state");
         for (JsonNode event : initialState) {
           if ("m.room.encryption".equals(event.path("type").asText())) {
@@ -2044,6 +2047,47 @@ class InternalSubsetChatHttpIT {
         rooms.put(roomId, room);
         created.incrementAndGet();
         return withSuccess("{\"room_id\":\"" + roomId + "\"}", MediaType.APPLICATION_JSON)
+            .createResponse(request);
+      }
+      if (path.startsWith("/_matrix/client/r0/rooms/")
+          && path.endsWith("/state/m.room.power_levels")) {
+        // The passage-blur rule (ORISO-Frontend#2229) is written right after creation.
+        var room = rooms.get(roomOf(path, "/state/m.room.power_levels"));
+        if (room == null || !room.joined.contains(actor)) {
+          return withStatus(HttpStatus.FORBIDDEN)
+              .body("{\"errcode\":\"M_FORBIDDEN\"}")
+              .contentType(MediaType.APPLICATION_JSON)
+              .createResponse(request);
+        }
+        if (HttpMethod.PUT.equals(method)) {
+          room.powerLevels = body;
+          return withSuccess("{\"event_id\":\"$power\"}", MediaType.APPLICATION_JSON)
+              .createResponse(request);
+        }
+        return withSuccess(powerLevelsOf(room), MediaType.APPLICATION_JSON).createResponse(request);
+      }
+      if (path.startsWith("/_synapse/admin/v1/rooms/") && path.endsWith("/state")) {
+        // Read before a named moderator is raised (ORISO-Frontend#2229).
+        var room =
+            rooms.get(
+                URLDecoder.decode(
+                    path.substring(
+                        "/_synapse/admin/v1/rooms/".length(), path.length() - "/state".length()),
+                    StandardCharsets.UTF_8));
+        if (room == null) {
+          return withStatus(HttpStatus.NOT_FOUND).createResponse(request);
+        }
+        var state = new java.util.ArrayList<String>();
+        state.add(
+            "{\"type\":\"m.room.power_levels\",\"state_key\":\"\",\"content\":"
+                + powerLevelsOf(room)
+                + "}");
+        room.joined.forEach(member -> state.add(memberEvent(member, "join")));
+        room.invited.stream()
+            .filter(member -> !room.joined.contains(member))
+            .forEach(member -> state.add(memberEvent(member, "invite")));
+        return withSuccess(
+                "{\"state\":[" + String.join(",", state) + "]}", MediaType.APPLICATION_JSON)
             .createResponse(request);
       }
       if (path.startsWith("/_matrix/client/r0/rooms/") && path.endsWith("/invite")) {
@@ -2122,6 +2166,24 @@ class InternalSubsetChatHttpIT {
             .createResponse(request);
       }
       throw new AssertionError("Unexpected Matrix path: " + method + " " + path);
+    }
+
+    private static String powerLevelsOf(Room room) {
+      return room.powerLevels != null
+          ? room.powerLevels
+          : "{\"users\":{\""
+              + room.creator
+              + "\":100},\"users_default\":0,"
+              + "\"events\":{\"m.room.power_levels\":100},\"events_default\":0,"
+              + "\"state_default\":50,\"redact\":50,\"invite\":0}";
+    }
+
+    private static String memberEvent(String member, String membership) {
+      return "{\"type\":\"m.room.member\",\"state_key\":\""
+          + member
+          + "\",\"content\":{\"membership\":\""
+          + membership
+          + "\"}}";
     }
 
     private static String roomOf(String path, String suffix) {

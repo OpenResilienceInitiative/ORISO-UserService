@@ -3,7 +3,10 @@ package de.caritas.cob.userservice.api.service.accountinvite;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -13,9 +16,11 @@ import de.caritas.cob.userservice.api.exception.httpresponses.ConflictException;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.model.AccountInvite;
 import de.caritas.cob.userservice.api.model.IdReservationReleaseTask;
+import de.caritas.cob.userservice.api.model.TenantReservationReleaseTask;
 import de.caritas.cob.userservice.api.port.out.AccountInviteRepository;
 import de.caritas.cob.userservice.api.port.out.IdReservationReleaseTaskRepository;
 import de.caritas.cob.userservice.api.port.out.IdentityEmailOwnerLookup;
+import de.caritas.cob.userservice.api.port.out.TenantReservationReleaseTaskRepository;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteService.CreateAccountInviteCommand;
 import de.caritas.cob.userservice.api.service.accountinvite.allocation.AgencyIdAllocationClient;
 import de.caritas.cob.userservice.api.service.accountinvite.allocation.IdAllocationMode;
@@ -29,7 +34,8 @@ import de.caritas.cob.userservice.api.tenant.Tenants;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Set;
+import java.util.Map;
+import java.util.UUID;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CountDownLatch;
@@ -37,6 +43,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
+import org.apache.commons.codec.digest.DigestUtils;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -67,6 +74,7 @@ import org.springframework.transaction.annotation.Transactional;
   AccountInviteService.class,
   InviteTargetResolver.class,
   ReservationLedger.class,
+  IdReservationReleaseProcessor.class,
   UnitQueue.class,
   InviteDelivery.class,
   AccountInviteAccessPolicy.class,
@@ -79,6 +87,7 @@ class AccountInviteReservationOrchestrationIT {
   @Autowired private AccountInviteService service;
   @Autowired private AccountInviteRepository accountInviteRepository;
   @Autowired private IdReservationReleaseTaskRepository reservationReleaseTaskRepository;
+  @Autowired private TenantReservationReleaseTaskRepository tenantReleaseTaskRepository;
 
   @MockitoBean(answers = Answers.CALLS_REAL_METHODS)
   private AuthenticatedUser authenticatedUser;
@@ -91,7 +100,6 @@ class AccountInviteReservationOrchestrationIT {
   @MockitoBean private TenantIdAllocationClient tenantIdAllocationClient;
   @MockitoBean private AgencyIdAllocationClient agencyIdAllocationClient;
   @MockitoBean private AgencyFacts agencyFacts;
-  @MockitoBean private IdReservationReleaseProcessor reservationReleaseProcessor;
 
   // TEN-INV-U6 collaborators of the send path — not exercised by these creation-focused tests.
   @MockitoBean private InviteAcceptUrlBuilder inviteAcceptUrlBuilder;
@@ -103,7 +111,7 @@ class AccountInviteReservationOrchestrationIT {
   @MockitoBean private InviteEmailDeliveryFailureRecorder deliveryFailureRecorder;
 
   /** In-memory stand-in for the TenantService reservation ledger (U1). */
-  private final Set<Long> tenantIdLedger = ConcurrentHashMap.newKeySet();
+  private final Map<Long, String> tenantIdLedger = new ConcurrentHashMap<>();
 
   @BeforeEach
   void setUpRealisticTenantIdLedger() {
@@ -121,8 +129,9 @@ class AccountInviteReservationOrchestrationIT {
         .thenAnswer(
             invocation -> {
               for (long candidate = 1; ; candidate++) {
-                if (tenantIdLedger.add(candidate)) {
-                  return new TenantIdReservation(candidate, "token-" + candidate);
+                String proof = UUID.randomUUID().toString();
+                if (tenantIdLedger.putIfAbsent(candidate, proof) == null) {
+                  return new TenantIdReservation(candidate, proof);
                 }
               }
             });
@@ -131,31 +140,39 @@ class AccountInviteReservationOrchestrationIT {
         .thenAnswer(
             invocation -> {
               long requested = invocation.getArgument(0);
-              if (!tenantIdLedger.add(requested)) {
+              String proof = UUID.randomUUID().toString();
+              if (tenantIdLedger.putIfAbsent(requested, proof) != null) {
                 throw new ConflictException(
                     "tenantId " + requested + " is already assigned or reserved");
               }
-              return new TenantIdReservation(requested, "token-" + requested);
+              return new TenantIdReservation(requested, proof);
             });
     when(tenantIdAllocationClient.getAvailability(anyLong()))
         .thenAnswer(
             invocation ->
-                tenantIdLedger.contains((long) invocation.getArgument(0))
+                tenantIdLedger.containsKey(invocation.getArgument(0))
                     ? IdAllocationStatus.RESERVED
                     : IdAllocationStatus.FREE);
+    when(tenantIdAllocationClient.hasReservationProof(anyLong(), anyString()))
+        .thenAnswer(
+            invocation ->
+                invocation
+                    .getArgument(1, String.class)
+                    .equals(tenantIdLedger.get(invocation.getArgument(0))));
     org.mockito.Mockito.doAnswer(
             invocation -> {
-              tenantIdLedger.remove((long) invocation.getArgument(0));
+              tenantIdLedger.remove(invocation.getArgument(0), invocation.getArgument(1));
               return true;
             })
         .when(tenantIdAllocationClient)
-        .release(anyLong());
+        .release(anyLong(), anyString());
   }
 
   @AfterEach
   void cleanUp() {
     accountInviteRepository.deleteAll();
     reservationReleaseTaskRepository.deleteAll();
+    tenantReleaseTaskRepository.deleteAll();
     tenantIdLedger.clear();
   }
 
@@ -171,7 +188,9 @@ class AccountInviteReservationOrchestrationIT {
     assertThat(invites.get(0).getTenantIdReservationToken())
         .isNotEqualTo(invites.get(1).getTenantIdReservationToken());
     assertThat(accountInviteRepository.count()).isEqualTo(2);
-    assertThat(tenantIdLedger).contains(invites.get(0).getTenantId(), invites.get(1).getTenantId());
+    assertThat(tenantIdLedger)
+        .containsEntry(invites.get(0).getTenantId(), invites.get(0).getTenantIdReservationToken())
+        .containsEntry(invites.get(1).getTenantId(), invites.get(1).getTenantIdReservationToken());
   }
 
   @Test
@@ -195,10 +214,10 @@ class AccountInviteReservationOrchestrationIT {
     assertThat(successes).extracting(AccountInvite::getTenantId).containsOnly(21L);
     assertThat(successes)
         .extracting(AccountInvite::getTenantIdReservationToken)
-        .containsOnly("token-21");
+        .containsOnly(tenantIdLedger.get(21L));
     assertThat(accountInviteRepository.count()).isEqualTo(successes.size());
     // The winner's reservation is still held — the loser's conflict released nothing.
-    assertThat(tenantIdLedger).containsExactly(21L);
+    assertThat(tenantIdLedger).containsOnlyKeys(21L);
   }
 
   @Test
@@ -211,13 +230,14 @@ class AccountInviteReservationOrchestrationIT {
             () -> createTenantAdminInvite(21L, IdAllocationMode.MANUAL, "owner@example.org"))
         .isInstanceOf(ConflictException.class);
 
-    verify(tenantIdAllocationClient).release(21L);
+    verify(tenantIdAllocationClient).release(eq(21L), anyString());
     assertThat(accountInviteRepository.count()).isZero();
     assertThat(tenantIdLedger).isEmpty();
+    assertThat(tenantReleaseTaskRepository.count()).isZero();
   }
 
   @Test
-  void staleReleaseTask_ShouldBlockAReissuedReservationUntilCleanupCompletes() {
+  void unprovenLegacyReleaseTask_ShouldNotBlockAProvenNewReservation() {
     reservationReleaseTaskRepository.saveAndFlush(
         IdReservationReleaseTask.builder()
             .allocationType(IdReservationReleaseType.TENANT)
@@ -226,14 +246,42 @@ class AccountInviteReservationOrchestrationIT {
             .createDate(LocalDateTime.now())
             .build());
 
-    assertThatThrownBy(
-            () -> createTenantAdminInvite(21L, IdAllocationMode.MANUAL, "owner@example.org"))
-        .isInstanceOf(ConflictException.class)
-        .hasMessageContaining("pending reservation cleanup");
+    var current = createTenantAdminInvite(21L, IdAllocationMode.MANUAL, "owner@example.org");
 
-    verify(tenantIdAllocationClient).release(21L);
-    assertThat(accountInviteRepository.count()).isZero();
-    assertThat(tenantIdLedger).isEmpty();
+    verify(tenantIdAllocationClient, never()).release(anyLong(), anyString());
+    assertThat(reservationReleaseTaskRepository.count()).isEqualTo(1);
+    assertThat(tenantIdLedger).containsEntry(21L, current.getTenantIdReservationToken());
+  }
+
+  @Test
+  void releaseTaskForAnEarlierReservation_ShouldNotBlockAReissuedId() {
+    String earlierProof = UUID.randomUUID().toString();
+    tenantReleaseTaskRepository.saveAndFlush(
+        new TenantReservationReleaseTask(
+            21L, earlierProof, DigestUtils.sha256Hex(earlierProof), LocalDateTime.now()));
+
+    var current = createTenantAdminInvite(21L, IdAllocationMode.MANUAL, "owner@example.org");
+
+    verify(tenantIdAllocationClient, never()).release(anyLong(), anyString());
+    assertThat(tenantReleaseTaskRepository.count()).isEqualTo(1);
+    assertThat(current.getTenantIdReservationToken()).isNotEqualTo(earlierProof);
+    assertThat(tenantIdLedger).containsEntry(21L, current.getTenantIdReservationToken());
+  }
+
+  @Test
+  void aPendingInviteCannotShareTheProofOfAnEarlierReservation() {
+    var earlier = createTenantAdminInvite(21L, IdAllocationMode.MANUAL, "earlier@example.org");
+    String currentProof = UUID.randomUUID().toString();
+    tenantIdLedger.put(21L, currentProof);
+
+    assertThatThrownBy(
+            () -> createTenantAdminInvite(21L, IdAllocationMode.MANUAL, "later@example.org"))
+        .isInstanceOf(ConflictException.class);
+
+    assertThat(accountInviteRepository.findAll())
+        .extracting(AccountInvite::getId)
+        .containsExactly(earlier.getId());
+    assertThat(tenantIdLedger).containsEntry(21L, currentProof);
   }
 
   private AccountInvite createTenantAdminInvite(

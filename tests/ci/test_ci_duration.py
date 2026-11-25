@@ -73,6 +73,20 @@ class CiDurationTest(unittest.TestCase):
                     if response == "123" and exit_code == 0:
                         self.assertIn("repos/example/service/pulls/123", commands[1])
 
+    def test_temporary_merge_queue_branches_only_use_merge_group_validation(self):
+        workflows = ROOT / ".github/workflows"
+        branch = yaml.load(
+            (workflows / "ci-feature-branch.yml").read_text(), Loader=yaml.BaseLoader
+        )
+        pull_request = yaml.load(
+            (workflows / "ci-pull-request.yml").read_text(), Loader=yaml.BaseLoader
+        )
+
+        self.assertIn("gh-readonly-queue/**", branch["on"]["push"]["branches-ignore"])
+        self.assertEqual(
+            ["checks_requested"], pull_request["on"]["merge_group"]["types"]
+        )
+
     def test_all_branch_checks_defer_to_the_same_pr_route(self):
         jobs = document(".github/workflows/ci-feature-branch.yml")["jobs"]
         self.assertEqual(
@@ -105,7 +119,7 @@ class CiDurationTest(unittest.TestCase):
                 ).removeprefix("${").removesuffix("}")
                 self.assertIn(f"-D{property_name}=true", package["run"])
         tests = next(step for step in steps if step["name"] == "Run Maven tests")
-        self.assertIn("./mvnw -B test", tests["run"])
+        self.assertIn("bash scripts/ci/run-maven-with-central-retry.sh -B test", tests["run"])
         self.assertNotIn("-Dskip", tests["run"])
 
     def test_parallel_build_hands_its_jar_to_a_publish_job_blocked_on_all_checks(self):

@@ -2,8 +2,10 @@ package de.caritas.cob.userservice.api.service;
 
 import static org.apache.commons.lang3.StringUtils.isBlank;
 
+import com.google.common.collect.Lists;
 import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
 import de.caritas.cob.userservice.api.adapters.web.dto.AgencyDTO;
+import de.caritas.cob.userservice.api.adapters.web.dto.CaseHandoverListStatusDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantSessionListResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantSessionResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.SessionConsultantForConsultantDTO;
@@ -32,15 +34,18 @@ import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.ConsultantAgency;
 import de.caritas.cob.userservice.api.model.ConsultantTopic;
 import de.caritas.cob.userservice.api.model.ConversationType;
+import de.caritas.cob.userservice.api.model.HandoverCandidate;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.Session.SessionStatus;
 import de.caritas.cob.userservice.api.model.SessionTopic;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.out.CaseHandoverReasonPolicyRepository;
 import de.caritas.cob.userservice.api.port.out.CaseHandoverRequestRepository;
+import de.caritas.cob.userservice.api.port.out.CaseHandoverRequestRepository.CandidateStatusRequest;
 import de.caritas.cob.userservice.api.port.out.ConsultantAgencyRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
+import de.caritas.cob.userservice.api.service.agency.CaseSharingGate;
 import de.caritas.cob.userservice.api.service.chat.MembersOnlyChatAccess;
 import de.caritas.cob.userservice.api.service.matrix.MatrixSessionSystemMessageService;
 import de.caritas.cob.userservice.api.service.notification.AskerNotificationChannelPolicy;
@@ -56,6 +61,7 @@ import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -84,6 +90,7 @@ import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
+import org.springframework.transaction.annotation.Isolation;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionSynchronization;
@@ -97,6 +104,7 @@ public class CaseHandoverService {
 
   private static final String ADVICE_NEEDED = CaseHandoverReasonCodes.ADVICE_REQUESTED;
   private static final int DEFAULT_ADVICE_ACCESS_DURATION_MINUTES = 180;
+  private static final int CANDIDATE_TOPIC_BATCH_SIZE = 500;
   private static final String POLICY_AUTHORITY = "platform-admin-default-case-handover-policy";
   private static final String TENANT_POLICY_AUTHORITY = "tenant-service-resolved";
   private static final String OUTCOME_ACTIVE_OWNER = "ACTIVE_OWNER";
@@ -115,6 +123,7 @@ public class CaseHandoverService {
   private static final String OUTCOME_ACCESS_EXPIRED = "ACCESS_EXPIRED";
   private static final String OUTCOME_ALREADY_ANSWERED = "ALREADY_ANSWERED";
   private static final String OUTCOME_NOT_REQUESTED = "NOT_REQUESTED";
+  static final String OUTCOME_TEAM_READER = "TEAM_READER";
   private static final String OUTCOME_RECLAIMED = "RECLAIMED";
 
   /** ADR-002: "counsellor left" has no reclaim. ASSIGNMENT_ENDED is its successor (#1245). */
@@ -364,6 +373,12 @@ public class CaseHandoverService {
   private final @NonNull AgencyService agencyService;
   private final @NonNull AdminScope adminScope;
   private final @NonNull MembersOnlyChatAccess membersOnlyChatAccess;
+
+  /** #374 / UserService#1687: case handover only where it is the centre's case sharing mode. */
+  private final @NonNull CaseSharingGate caseSharingGate;
+
+  private final @NonNull de.caritas.cob.userservice.api.port.out.MatrixRoomMembershipLookup
+      matrixRoomMembershipLookup;
 
   /**
    * When topics are off, a department degenerates to the agency. When they are on, an empty topic
@@ -665,7 +680,39 @@ public class CaseHandoverService {
         takeoverFrom(session, requester)
             .filter(takeover -> isReclaimable(session, takeover))
             .isPresent());
+    // FE#2494 *4 (decision d): in Teamberatung a room member of the department reads the case
+    // without a request; writing stays with the owner (TeamSessionReadOnlyService). Only the read
+    // fields change, so a pending offer, a takeover and its reclaim keep their state.
+    if (!status.isCanViewContent()
+        && isTeamReader(session, new java.util.HashMap<>(), joinedRooms(requester))) {
+      status.setCanViewContent(true);
+      if (OUTCOME_NOT_REQUESTED.equals(status.getStatus())) {
+        status.setStatus(Status.GRANTED.name());
+        status.setAuditOutcome(OUTCOME_TEAM_READER);
+      }
+    }
     return status;
+  }
+
+  /**
+   * The rooms the requester is joined to, asked at most once. A team read grant is only reported
+   * where it can be exercised: the requester must already be a member of the case room.
+   */
+  private java.util.function.Supplier<java.util.Set<String>> joinedRooms(Consultant requester) {
+    var memo = new java.util.concurrent.atomic.AtomicReference<java.util.Set<String>>();
+    return () -> {
+      if (memo.get() == null) {
+        java.util.Set<String> rooms =
+            requester == null || requester.getMatrixUserId() == null
+                ? java.util.Set.of()
+                : matrixRoomMembershipLookup
+                    .findJoinedRoomsForMatrixUser(requester.getMatrixUserId())
+                    .map(java.util.Set::copyOf)
+                    .orElse(java.util.Set.of());
+        memo.set(rooms);
+      }
+      return memo.get();
+    };
   }
 
   /**
@@ -815,11 +862,12 @@ public class CaseHandoverService {
     return consent != CaseHandoverConsentMode.NONE;
   }
 
-  @Transactional(readOnly = true)
+  // The eligibility scan and page hydration must observe the same database snapshot.
+  @Transactional(readOnly = true, isolation = Isolation.REPEATABLE_READ)
   public ConsultantSessionListResponseDTO searchCandidates(
       String query, int offset, int count, boolean archived) {
     Consultant requester = retrieveCurrentConsultant();
-    List<Long> agencyIds = new ArrayList<>(consultantAgencyIds(requester));
+    Set<Long> agencyIds = consultantAgencyIds(requester);
     int safeOffset = Math.max(0, offset);
     int safeCount = Math.max(1, Math.min(count, 200));
 
@@ -831,30 +879,132 @@ public class CaseHandoverService {
         archived
             ? List.of(SessionStatus.IN_ARCHIVE)
             : List.of(SessionStatus.IN_PROGRESS, SessionStatus.DONE);
-    List<Session> candidates =
-        sessionRepository.findByAgencyIdInAndConsultantNotAndStatusInOrderByUpdateDateDesc(
-            agencyIds, requester, statuses);
+    String normalizedQuery = normalizeSearchText(query);
+    List<HandoverCandidate> candidates =
+        sessionRepository.findHandoverCandidates(
+            new ArrayList<>(agencyIds), requester, statuses, !normalizedQuery.isBlank());
 
     var membersOnlyCases = membersOnlyChatAccess.membersOnlySessionIds(candidates);
-    List<Session> matchingCandidates =
-        candidates.stream()
-            .filter(session -> !membersOnlyCases.contains(session.getId()))
-            .filter(session -> isInRequesterDepartment(session, requester))
-            .filter(session -> matchesCandidateQuery(session, query))
-            .collect(Collectors.toList());
-    List<Session> pageSessions =
-        matchingCandidates.stream().skip(safeOffset).limit(safeCount).toList();
+    Set<Long> topicMatches =
+        candidateIdsInTopicScope(candidates, agencyIds, membersOnlyCases, requester);
+    List<Long> pageIds = new ArrayList<>();
+    int total = 0;
+    for (HandoverCandidate candidate : candidates) {
+      if (!topicMatches.contains(candidate.getId())
+          || !matchesCandidateQuery(candidate, normalizedQuery)) {
+        continue;
+      }
+      if (total >= safeOffset && pageIds.size() < safeCount) {
+        pageIds.add(candidate.getId());
+      }
+      total++;
+    }
+    List<Session> pageSessions = loadCandidatePage(pageIds);
     Map<Long, String> agencyNames = candidateAgencyNames(pageSessions);
+    List<Long> authorizedPageIds = pageSessions.stream().map(Session::getId).toList();
+    Map<Long, CandidateStatusRequest> requestsBySession =
+        authorizedPageIds.isEmpty()
+            ? Map.of()
+            : caseHandoverRequestRepository
+                .findLatestCandidateStatusRequests(authorizedPageIds, requester.getId())
+                .stream()
+                .collect(
+                    Collectors.toMap(CandidateStatusRequest::getSessionId, Function.identity()));
+    LocalDateTime now = LocalDateTime.now(clock);
+    Map<Long, Boolean> teamCentres = new java.util.HashMap<>();
+    var requesterRooms = joinedRooms(requester);
     List<ConsultantSessionResponseDTO> page =
         pageSessions.stream()
-            .map(candidate -> toCandidateDto(candidate, agencyNames))
+            .map(
+                candidate ->
+                    toCandidateDto(candidate, agencyNames)
+                        .caseHandoverStatus(
+                            isTeamReader(candidate, teamCentres, requesterRooms)
+                                ? teamReaderCandidateStatus()
+                                : candidateStatus(requestsBySession.get(candidate.getId()), now)))
             .collect(Collectors.toList());
 
     return new ConsultantSessionListResponseDTO()
         .sessions(page)
         .offset(safeOffset)
         .count(page.size())
-        .total(matchingCandidates.size());
+        .total(total);
+  }
+
+  /** FE#2494 *4: a colleague's team case opens for reading straight from the search. */
+  private static CaseHandoverListStatusDTO teamReaderCandidateStatus() {
+    return new CaseHandoverListStatusDTO()
+        .status(Status.GRANTED.name())
+        .canViewContent(true)
+        .hasRequest(false);
+  }
+
+  private CaseHandoverListStatusDTO candidateStatus(
+      CandidateStatusRequest request, LocalDateTime now) {
+    if (request == null) {
+      return new CaseHandoverListStatusDTO()
+          .status(OUTCOME_NOT_REQUESTED)
+          .canViewContent(false)
+          .hasRequest(false);
+    }
+    Status status = request.getStatus();
+    AccessType accessType = effectiveAccessType(request.getAccessType(), request.getReasonCode());
+    boolean expired = isExpired(status, accessType, request.getExpiresAt(), now);
+    // The candidate page excludes cases the requester already owns.
+    boolean canView = hasGrantedAccess(status) && accessType == AccessType.CO_ACCESS && !expired;
+    return new CaseHandoverListStatusDTO()
+        .status(expired ? Status.EXPIRED.name() : status.name())
+        .canViewContent(canView)
+        .hasRequest(true);
+  }
+
+  private List<Session> loadCandidatePage(List<Long> pageIds) {
+    if (pageIds.isEmpty()) {
+      return List.of();
+    }
+    Map<Long, Session> byId =
+        sessionRepository.findHandoverCandidatePage(pageIds).stream()
+            .collect(Collectors.toMap(Session::getId, Function.identity()));
+    return pageIds.stream().map(byId::get).filter(Objects::nonNull).toList();
+  }
+
+  private Set<Long> candidateIdsInTopicScope(
+      List<HandoverCandidate> candidates,
+      Set<Long> agencyIds,
+      Set<Long> membersOnlyCases,
+      Consultant requester) {
+    Set<Long> matches = new HashSet<>();
+    Map<Long, Set<Long>> topicsByAgency = new HashMap<>();
+    Map<Long, List<Long>> secondaryTopicCandidates = new HashMap<>();
+    for (HandoverCandidate candidate : candidates) {
+      Long agencyId = candidate.getAgencyId();
+      Long sessionId = candidate.getId();
+      if (agencyId == null
+          || !agencyIds.contains(agencyId)
+          || membersOnlyCases.contains(sessionId)) {
+        continue;
+      }
+      Set<Long> topics =
+          topicsByAgency.computeIfAbsent(agencyId, id -> consultantTopicIds(requester, id));
+      if (topics.isEmpty()) {
+        if (!topicsEnabled) {
+          matches.add(sessionId);
+        }
+      } else if (topics.contains(candidate.getMainTopicId())) {
+        matches.add(sessionId);
+      } else {
+        secondaryTopicCandidates.computeIfAbsent(agencyId, id -> new ArrayList<>()).add(sessionId);
+      }
+    }
+    secondaryTopicCandidates.forEach(
+        (agencyId, sessionIds) -> {
+          for (var batch : Lists.partition(sessionIds, CANDIDATE_TOPIC_BATCH_SIZE)) {
+            matches.addAll(
+                sessionRepository.findSessionIdsWithAnyAdditionalTopic(
+                    batch, topicsByAgency.get(agencyId)));
+          }
+        });
+    return matches;
   }
 
   @Value("${multitenancy.enabled:true}")
@@ -1601,9 +1751,7 @@ public class CaseHandoverService {
     }
 
     LocalDateTime now = LocalDateTime.now(clock);
-    session.setConsultant(original);
-    session.setUpdateDate(now);
-    sessionRepository.save(session);
+    sessionOwnershipService.updateOwner(session, original, session.getStatus(), now);
     takeover.setStatus(Status.RECLAIMED);
     takeover.setAuditOutcome(OUTCOME_RECLAIMED);
     takeover.setResolvedAt(now);
@@ -1751,8 +1899,7 @@ public class CaseHandoverService {
         .total(0);
   }
 
-  private boolean matchesCandidateQuery(Session session, String query) {
-    String normalizedQuery = normalizeSearchText(query);
+  private boolean matchesCandidateQuery(HandoverCandidate session, String normalizedQuery) {
     if (normalizedQuery.isBlank()) {
       return true;
     }
@@ -1763,32 +1910,14 @@ public class CaseHandoverService {
             nullable(session.getAgencyId()),
             nullable(session.getPostcode()),
             nullable(session.getMainTopicId()),
-            nullable(session.getUser() != null ? session.getUser().getUsername() : null),
-            nullable(
-                session.getUser() != null ? decodeUsername(session.getUser().getUsername()) : null),
-            nullable(
-                session.getConsultant() != null ? session.getConsultant().getUsername() : null),
-            nullable(
-                session.getConsultant() != null
-                    ? decodeUsername(session.getConsultant().getUsername())
-                    : null),
-            nullable(
-                session.getConsultant() != null
-                    ? decodeUsername(session.getConsultant().getDisplayName())
-                    : null),
-            // Colleagues search by internal name too (#996, #1725); public name stays searchable.
-            nullable(
-                session.getConsultant() != null
-                    ? decodeUsername(session.getConsultant().getInternalDisplayNameOrFallback())
-                    : null),
-            nullable(
-                session.getConsultant() != null ? session.getConsultant().getFirstName() : null),
-            nullable(
-                session.getConsultant() != null ? session.getConsultant().getLastName() : null),
-            nullable(
-                session.getConsultant() != null
-                    ? decodeUsername(session.getConsultant().getInternalDisplayNameOrRealName())
-                    : null));
+            nullable(session.getAskerUsername()),
+            nullable(decodeUsername(session.getAskerUsername())),
+            nullable(session.getConsultantUsername()),
+            nullable(decodeUsername(session.getConsultantUsername())),
+            nullable(decodeUsername(session.getConsultantDisplayName())),
+            nullable(session.getConsultantFirstName()),
+            nullable(session.getConsultantLastName()),
+            nullable(decodeUsername(session.getConsultantInternalDisplayNameOrRealName())));
 
     return haystack.stream()
         .map(this::normalizeSearchText)
@@ -1809,7 +1938,10 @@ public class CaseHandoverService {
         || !consultantAgencyIds(requester).contains(session.getAgencyId())) {
       return false;
     }
-    Set<Long> requesterTopicIds = consultantTopicIds(requester, session.getAgencyId());
+    return isInTopicScope(session, consultantTopicIds(requester, session.getAgencyId()));
+  }
+
+  private boolean isInTopicScope(Session session, Set<Long> requesterTopicIds) {
     if (requesterTopicIds.isEmpty()) {
       return !topicsEnabled;
     }
@@ -1924,6 +2056,29 @@ public class CaseHandoverService {
 
   private String decodeUsername(String username) {
     return username == null ? null : new UsernameTranscoder().decodeUsername(username);
+  }
+
+  /**
+   * Department eligibility is checked before. The team reader needs an accepted Teamberatung 1:1
+   * case in a centre whose <em>current</em> case sharing model is Teamberatung: after a switch to
+   * case handover or "none" the old team flag no longer opens the case, and a case handover centre
+   * keeps its request, handover and reclaim flow.
+   */
+  private boolean isTeamReader(
+      Session session,
+      Map<Long, Boolean> teamCentres,
+      java.util.function.Supplier<java.util.Set<String>> requesterRooms) {
+    if (!session.isTeamCounsellingCase()
+        || session.getConsultant() == null
+        || session.getStatus() != Session.SessionStatus.IN_PROGRESS
+        || session.getAgencyId() == null
+        || session.getMatrixRoomId() == null) {
+      return false;
+    }
+    return teamCentres.computeIfAbsent(
+            session.getAgencyId(),
+            agencyId -> caseSharingGate.isTeamCounselling(agencyId, session.getTenantId()))
+        && requesterRooms.get().contains(session.getMatrixRoomId());
   }
 
   private void verifyEligibleForSession(Session session, Consultant requester) {
@@ -2217,13 +2372,19 @@ public class CaseHandoverService {
         initial.needsPolicy()
             ? caseHandoverPolicyCacheService.getCurrent(initial.tenantId())
             : null;
+    if (initial.needsPolicy()) {
+      // outside any lock, like the policy read: the centre must have chosen case handover
+      caseSharingGate.requireCaseHandover(
+          initial.agencyId(), initial.tenantId(), initial.conversationType());
+    }
     return inNewTransaction(
         () -> {
           PreparedAction current = prepare.apply(true);
           if (current.terminal() != null) return current.terminal();
           if (!initial.stamp().equals(current.stamp())
               || initial.needsPolicy() != current.needsPolicy()
-              || !Objects.equals(initial.tenantId(), current.tenantId())) {
+              || !Objects.equals(initial.tenantId(), current.tenantId())
+              || !Objects.equals(initial.agencyId(), current.agencyId())) {
             throw new ConflictException("Case handover changed while its policy was checked");
           }
           return current.effect().apply(policy);
@@ -2243,7 +2404,7 @@ public class CaseHandoverService {
   }
 
   private PreparedAction terminalAction(CaseHandoverStatus status) {
-    return new PreparedAction(null, null, false, status, null);
+    return new PreparedAction(null, null, null, null, false, status, null);
   }
 
   private PreparedAction preparedAction(
@@ -2254,6 +2415,8 @@ public class CaseHandoverService {
     return new PreparedAction(
         PolicyStamp.capture(session, request),
         needsPolicy ? policyTenant(session) : null,
+        session.getAgencyId(),
+        AskerNotificationChannelPolicy.conversationType(session),
         needsPolicy,
         null,
         effect);
@@ -2262,6 +2425,8 @@ public class CaseHandoverService {
   private record PreparedAction(
       PolicyStamp stamp,
       Long tenantId,
+      Long agencyId,
+      ConversationType conversationType,
       boolean needsPolicy,
       CaseHandoverStatus terminal,
       Function<CaseHandoverPolicyCacheService.CurrentPolicy, CaseHandoverStatus> effect) {}
@@ -2487,9 +2652,11 @@ public class CaseHandoverService {
   }
 
   private AccessType effectiveAccessType(CaseHandoverRequest request) {
-    return request.getAccessType() != null
-        ? request.getAccessType()
-        : accessType(request.getReasonCode());
+    return effectiveAccessType(request.getAccessType(), request.getReasonCode());
+  }
+
+  private AccessType effectiveAccessType(AccessType recordedType, String reasonCode) {
+    return recordedType != null ? recordedType : accessType(reasonCode);
   }
 
   private Integer maxAccessDurationMinutes(CaseHandoverReason reason) {
@@ -2552,10 +2719,19 @@ public class CaseHandoverService {
   }
 
   private boolean isExpired(CaseHandoverRequest request) {
-    return hasGrantedAccess(request.getStatus())
-        && effectiveAccessType(request) == AccessType.CO_ACCESS
-        && request.getExpiresAt() != null
-        && !request.getExpiresAt().isAfter(LocalDateTime.now(clock));
+    return isExpired(
+        request.getStatus(),
+        effectiveAccessType(request),
+        request.getExpiresAt(),
+        LocalDateTime.now(clock));
+  }
+
+  private boolean isExpired(
+      Status status, AccessType accessType, LocalDateTime expiresAt, LocalDateTime now) {
+    return hasGrantedAccess(status)
+        && accessType == AccessType.CO_ACCESS
+        && expiresAt != null
+        && !expiresAt.isAfter(now);
   }
 
   /**
