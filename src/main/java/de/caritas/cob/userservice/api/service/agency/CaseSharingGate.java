@@ -58,18 +58,27 @@ public class CaseSharingGate {
    * "no": nobody gains read access on an unknown setting.
    */
   public boolean isTeamCounselling(Long agencyId, Long tenantId) {
+    return teamCounsellingMode(agencyId, tenantId).orElse(false);
+  }
+
+  /**
+   * As {@link #isTeamCounselling}, but empty when the setting could not be read, so a caller can
+   * retry instead of treating an outage as "not Teamberatung".
+   */
+  public java.util.Optional<Boolean> teamCounsellingMode(Long agencyId, Long tenantId) {
     Settings settings;
     try {
       settings = readSettings(agencyId, tenantId);
     } catch (RuntimeException unavailableOrRefused) {
-      return false;
+      return java.util.Optional.empty();
     }
     if (settings == null) {
-      return false;
+      return java.util.Optional.of(false);
     }
     AgencyCaseSharingPolicy caseSharing = settings.getCaseSharing();
-    return caseSharing == null
-        || caseSharing.getValue() == AgencyCaseSharingPolicy.ValueEnum.TEAM_COUNSELLING;
+    return java.util.Optional.of(
+        caseSharing == null
+            || caseSharing.getValue() == AgencyCaseSharingPolicy.ValueEnum.TEAM_COUNSELLING);
   }
 
   private Settings readSettings(Long agencyId, Long tenantId) {

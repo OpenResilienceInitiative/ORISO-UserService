@@ -44,11 +44,14 @@ class TeamSessionReadOnlyServiceTest {
   @Mock ConsultantRepository consultants;
   @Mock SessionSupervisorRepository supervisors;
   @Mock SessionRepository sessions;
+  @Mock de.caritas.cob.userservice.api.service.agency.CaseSharingGate caseSharing;
   TeamSessionReadOnlyService service;
 
   @BeforeEach
   void setUp() {
-    service = new TeamSessionReadOnlyService(matrix, consultants, supervisors, sessions);
+    service =
+        new TeamSessionReadOnlyService(matrix, consultants, supervisors, sessions, caseSharing);
+    lenient().when(caseSharing.teamCounsellingMode(7L, 1L)).thenReturn(Optional.of(true));
   }
 
   @Test
@@ -182,6 +185,35 @@ class TeamSessionReadOnlyServiceTest {
     verify(matrix, never())
         .setUserPowerLevel(any(), any(), org.mockito.ArgumentMatchers.anyInt(), any());
     verify(matrix, never()).makeUserReadOnly(any(), any(), eq(-1), any(), any(), any());
+  }
+
+  @Test
+  void aCentreThatLeftTeamberatungLowersNobody() {
+    var session = current(session());
+    when(caseSharing.teamCounsellingMode(7L, 1L)).thenReturn(Optional.of(false));
+    givenOwnerAndColleagueAtPower(100, 0);
+
+    assertThat(service.enforce(session)).isTrue();
+    verify(matrix, never()).makeUserReadOnly(any(), any(), eq(-1), any(), any(), any());
+  }
+
+  @Test
+  void anUnreadableSettingLowersNobodyAndStaysPending() {
+    var session = current(session());
+    when(caseSharing.teamCounsellingMode(7L, 1L)).thenReturn(Optional.empty());
+    givenOwnerAndColleagueAtPower(100, 0);
+
+    assertThat(service.enforce(session)).isFalse();
+    verify(matrix, never()).makeUserReadOnly(any(), any(), eq(-1), any(), any(), any());
+  }
+
+  private void givenOwnerAndColleagueAtPower(int owner, int colleague) {
+    when(matrix.getRoomMembers(ROOM)).thenReturn(Optional.of(List.of(OWNER, COLLEAGUE)));
+    when(consultants.findAllByMatrixUserIdInAndDeleteDateIsNull(List.of(COLLEAGUE)))
+        .thenReturn(List.of(consultant(COLLEAGUE)));
+    when(matrix.loginAsUserAccessToken(OWNER)).thenReturn("owner-token");
+    when(matrix.getPowerLevels(ROOM, "owner-token"))
+        .thenReturn(Optional.of(Map.of("users", Map.of(OWNER, owner, COLLEAGUE, colleague))));
   }
 
   @Test

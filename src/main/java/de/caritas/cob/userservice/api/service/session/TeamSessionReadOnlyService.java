@@ -9,6 +9,7 @@ import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.port.out.SessionSupervisorRepository;
 import de.caritas.cob.userservice.api.port.out.TeamSessionRoomAccess;
+import de.caritas.cob.userservice.api.service.agency.CaseSharingGate;
 import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.Map;
@@ -29,10 +30,9 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
  * owner, so it keeps writing; a co-access grant is a reader by design.
  *
  * <p>Applies only to 1:1 counselling cases ({@link Session#isTeamCounsellingCase()}), never to
- * group chats. It does not depend on the centre's current case sharing model: a colleague in a team
- * case room never writes, also after a switch away from Teamberatung, and an unreadable setting
- * cannot leave anybody writing. Read access, which does depend on the model, is decided in {@code
- * CaseHandoverService}.
+ * group chats, and lowers colleagues only while the centre currently resolves to Teamberatung
+ * (decision A, 2026-11-23: all Teamberatung centres, including existing cases). An unreadable
+ * setting leaves the case pending for the repair job; it is never read as "not Teamberatung".
  *
  * <p>Lowers colleagues; the only raise restores an owner that a run racing a reassignment left
  * below a colleague. Every change re-reads the committed owner first, so it is safe to repeat and
@@ -50,6 +50,7 @@ public class TeamSessionReadOnlyService {
   private final @NonNull ConsultantRepository consultants;
   private final @NonNull SessionSupervisorRepository supervisors;
   private final @NonNull SessionRepository sessions;
+  private final @NonNull CaseSharingGate caseSharing;
 
   /** Enforces once the caller's transaction has committed; the repair job retries a failure. */
   public void enforceAfterCommit(Long sessionId) {
@@ -99,13 +100,19 @@ public class TeamSessionReadOnlyService {
     if (owner == null || isBlank(owner.getMatrixUserId()) || isBlank(roomId)) {
       return true;
     }
+    var teamMode =
+        session.getAgencyId() == null
+            ? java.util.Optional.of(false)
+            : caseSharing.teamCounsellingMode(session.getAgencyId(), session.getTenantId());
+    boolean lowerColleagues = teamMode.orElse(false);
+    boolean modeKnown = teamMode.isPresent();
     var members = matrix.getRoomMembers(roomId);
     if (members.isEmpty()) {
       return false;
     }
     Set<String> colleagueIds = colleagueMatrixIds(session, owner, members.get());
     if (colleagueIds.isEmpty()) {
-      return true;
+      return modeKnown;
     }
     String ownerToken = matrix.loginAsUserAccessToken(owner.getMatrixUserId());
     if (isBlank(ownerToken)) {
@@ -134,6 +141,9 @@ public class TeamSessionReadOnlyService {
         return false;
       }
       ownerPower = highestPower;
+    }
+    if (!lowerColleagues) {
+      return modeKnown;
     }
     boolean complete = true;
     for (String colleagueId : colleagueIds) {
