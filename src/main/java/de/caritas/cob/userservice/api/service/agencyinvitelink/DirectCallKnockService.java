@@ -20,6 +20,7 @@ import de.caritas.cob.userservice.api.service.chat.GroupWaitingRoomService;
 import de.caritas.cob.userservice.api.service.matrix.MatrixCallGuestService;
 import de.caritas.cob.userservice.api.service.matrix.MatrixSessionCallBindingService;
 import de.caritas.cob.userservice.api.service.notification.EventNotificationService;
+import de.caritas.cob.userservice.api.tenant.TenantContext;
 import java.time.LocalDateTime;
 import java.util.Comparator;
 import java.util.EnumSet;
@@ -289,6 +290,120 @@ public class DirectCallKnockService {
         .toList();
   }
 
+  /**
+   * ORISO-Frontend#2356: the counsellor's latest knock on the call that started at {@code
+   * callStartedAt}, locked. A knock from before that call is stale: an admission or a decline
+   * counts for one call only, never for a later call of the same conversation. The caller holds the
+   * conversation's row lock (lock order binding, conversation, knocks).
+   */
+  public Optional<GroupChatJoinRequest> latestStaffKnock(
+      Long sessionId, String consultantId, LocalDateTime callStartedAt) {
+    return repository
+        .findCallKnocksOfPersonForUpdate(
+            sessionId,
+            consultantId,
+            Via.STAFF_LINK,
+            org.springframework.data.domain.PageRequest.of(0, 1))
+        .stream()
+        .findFirst()
+        .filter(knock -> !knock.getRequestedAt().isBefore(callStartedAt));
+  }
+
+  /** Whether a waiting staff knock is recent enough to still show in the counsellor's list. */
+  public boolean stillWaitingStaffKnock(GroupChatJoinRequest knock) {
+    return knock.isPending() && stillWaiting(knock);
+  }
+
+  /**
+   * ORISO-Frontend#2356: a counsellor who holds the link knocks on the running call. Earlier open
+   * knocks of theirs in this conversation no longer wait. Tells the conversation's counsellor.
+   */
+  public GroupChatJoinRequest openStaffKnock(
+      Session session, String consultantId, Long inviteLinkId, InviteLinkChatType medium) {
+    cancelWaitingStaffKnocks(session.getId(), consultantId, null);
+    var knock =
+        repository.save(
+            GroupChatJoinRequest.builder()
+                .via(Via.STAFF_LINK)
+                .sessionId(session.getId())
+                .userId(consultantId)
+                .inviteLinkId(inviteLinkId)
+                .medium(medium.name())
+                .status(Status.PENDING)
+                .requestedAt(LocalDateTime.now())
+                .build());
+    tellCounsellorAfterCommit(session, knock);
+    return knock;
+  }
+
+  /** ORISO-Frontend#2356, "Anklopfen" off: let in without waiting, nobody is rung. */
+  public GroupChatJoinRequest admitStaffWithoutKnock(
+      Session session, String consultantId, Long inviteLinkId, InviteLinkChatType medium) {
+    cancelWaitingStaffKnocks(session.getId(), consultantId, null);
+    var now = LocalDateTime.now();
+    return repository.save(
+        GroupChatJoinRequest.builder()
+            .via(Via.STAFF_LINK)
+            .sessionId(session.getId())
+            .userId(consultantId)
+            .inviteLinkId(inviteLinkId)
+            .medium(medium.name())
+            .status(Status.ADMITTED)
+            .requestedAt(now)
+            .decidedAt(now)
+            .decidedBy(session.getConsultant() == null ? null : session.getConsultant().getId())
+            .build());
+  }
+
+  /**
+   * ORISO-Frontend#2356: the counsellor left the waiting page. Their open knocks through this link
+   * are cancelled; a decided knock is left as it is. Returns how many were cancelled.
+   */
+  @Transactional
+  public int cancelWaitingStaffKnocks(Long inviteLinkId, String consultantId) {
+    var now = LocalDateTime.now();
+    // Locked on the first read: an admission or decline committed meanwhile is not PENDING any
+    // more and is left as it is (a decline must keep holding).
+    var waiting =
+        repository.findPendingKnocksOfLinkForUpdate(inviteLinkId, consultantId, Via.STAFF_LINK);
+    for (var knock : waiting) {
+      knock.setStatus(Status.CANCELLED);
+      knock.setDecidedAt(now);
+      knock.setDecidedBy(consultantId);
+      repository.save(knock);
+    }
+    return waiting.size();
+  }
+
+  private void cancelWaitingStaffKnocks(Long sessionId, String consultantId, Long except) {
+    var now = LocalDateTime.now();
+    repository.findPendingCallKnocksForUpdate(sessionId, consultantId, Via.STAFF_LINK).stream()
+        .filter(knock -> !Objects.equals(knock.getId(), except))
+        .forEach(
+            knock -> {
+              knock.setStatus(Status.CANCELLED);
+              knock.setDecidedAt(now);
+              repository.save(knock);
+            });
+  }
+
+  /**
+   * ORISO-Frontend#2356: a staff knock is on one running call. Once that call is over (no running
+   * call of the conversation started before the knock), nobody can be let in any more and the knock
+   * drops off the counsellor's list.
+   */
+  private boolean onRunningCall(GroupChatJoinRequest knock) {
+    if (knock.getSessionId() == null) {
+      return false;
+    }
+    long now = System.currentTimeMillis();
+    return callBindings.findBySessionIdIn(List.of(knock.getSessionId())).stream()
+        .anyMatch(
+            binding ->
+                binding.isLive(now)
+                    && !knock.getRequestedAt().isBefore(StaffCallClock.startOf(binding)));
+  }
+
   public GroupChatJoinRequest getOwn(Long knockId, User user) {
     return requireOwn(knockId, user);
   }
@@ -349,6 +464,18 @@ public class DirectCallKnockService {
                         since,
                         scope.sessionId())
                     .stream()
+                : Stream.<GroupChatJoinRequest>empty(),
+            // ORISO-Frontend#2356: counsellors who hold the link and knock on the running call.
+            scope.directLinks()
+                ? repository
+                    .findCallKnocksForConsultant(
+                        consultant.getId(),
+                        Via.STAFF_LINK,
+                        Status.PENDING,
+                        since,
+                        scope.sessionId())
+                    .stream()
+                    .filter(this::onRunningCall)
                 : Stream.<GroupChatJoinRequest>empty(),
             scope.callLinks()
                 ? repository
@@ -447,6 +574,17 @@ public class DirectCallKnockService {
                         scope.sessionId())
                     .stream()
                 : Stream.<GroupChatJoinRequest>empty(),
+            scope.directLinks()
+                ? repository
+                    .findCallKnocksForConsultantForUpdate(
+                        consultant.getId(),
+                        Via.STAFF_LINK,
+                        Status.PENDING,
+                        since,
+                        scope.sessionId())
+                    .stream()
+                    .filter(this::onRunningCall)
+                : Stream.<GroupChatJoinRequest>empty(),
             scope.callLinks()
                 ? repository
                     .findCallLinkKnocksForConsultantForUpdate(
@@ -505,6 +643,11 @@ public class DirectCallKnockService {
         && outcome == Status.DECLINED) {
       return revokeCallLinkAdmission(knock, consultant);
     }
+    if (knock.getVia() == Via.STAFF_LINK
+        && knock.getStatus() == Status.ADMITTED
+        && outcome == Status.DECLINED) {
+      return revokeStaffAdmission(knock, consultant);
+    }
     if (!knock.isPending()) {
       throw new ConflictException("Call knock is already " + knock.getStatus());
     }
@@ -548,9 +691,42 @@ public class DirectCallKnockService {
     return repository.save(knock);
   }
 
+  /**
+   * ORISO-Frontend#2356: declining an admitted counsellor guest takes the admission back, as for a
+   * share-link guest. They lose the call-room seat of every running call of the conversation at
+   * once, and the DECLINED knock keeps them out for the rest of that call.
+   */
+  private GroupChatJoinRequest revokeStaffAdmission(
+      GroupChatJoinRequest knock, Consultant consultant) {
+    knock.setStatus(Status.DECLINED);
+    knock.setDecidedAt(LocalDateTime.now());
+    knock.setDecidedBy(consultant.getId());
+    // The guest may be a counsellor of another Träger: read them across tenants.
+    var guestMatrixId =
+        TenantContext.supplyAcrossTenants(
+            () ->
+                consultants
+                    .findByIdAndDeleteDateIsNull(knock.getUserId())
+                    .map(Consultant::getMatrixUserId)
+                    .orElse(null));
+    var moderator =
+        consultants
+            .findByIdAndDeleteDateIsNull(consultant.getId())
+            .map(Consultant::getMatrixUserId)
+            .orElse(null);
+    // An admission holds for one call: only the call it was given for loses the seat, never a
+    // later call of the same conversation the counsellor was let into anew.
+    long now = System.currentTimeMillis();
+    callBindings.findBySessionIdIn(List.of(knock.getSessionId())).stream()
+        .filter(binding -> binding.isLive(now))
+        .filter(binding -> !knock.getRequestedAt().isBefore(StaffCallClock.startOf(binding)))
+        .forEach(binding -> callGuests.revokeSeat(binding, guestMatrixId, moderator));
+    return repository.save(knock);
+  }
+
   private boolean decides(GroupChatJoinRequest knock, Consultant consultant) {
     return switch (knock.getVia()) {
-      case DIRECT_LINK -> isCounsellorOf(knock.getSessionId(), consultant);
+      case DIRECT_LINK, STAFF_LINK -> isCounsellorOf(knock.getSessionId(), consultant);
       case CALL_LINK -> isInCallOfLink(knock.getInviteLinkId(), consultant);
       case WAITING_ROOM -> waitingRooms.mayAdmit(knock, consultant);
       default -> false;

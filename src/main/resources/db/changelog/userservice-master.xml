@@ -324,5 +324,6 @@
   <include file="db/changelog/changeset/20261124_calendar_consultation_once_2494/changeSet.xml"/>
   <include file="db/changelog/changeset/20261124_calendar_consultation_once_blocker_2494/changeSet.xml"/>
   <include file="db/changelog/changeset/20261124_session_delete_date_1524/changeSet.xml"/>
+  <include file="db/changelog/changeset/20261124_session_supervisor_replace_2494/changeSet.xml"/>
   <include file="db/changelog/changeset/20261125_session_case_sharing_model_2494/changeSet.xml"/>
 </databaseChangeLog>

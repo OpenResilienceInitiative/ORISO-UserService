@@ -59,6 +59,30 @@ public class SupervisorAddedEmailNotificationService {
       Long sessionId,
       TenantData tenantData,
       String accessToken) {
+    sendSupervisorAdded(sessionUser, supervisor, sessionId, tenantData, true);
+  }
+
+  /**
+   * ORISO-Frontend#2494 *6: a swap mails the supervisors as usual; the advice seeker gets at most
+   * one mail, and only when the counsellor chose to tell them.
+   */
+  @Async
+  public void notifySupervisorAdded(
+      User sessionUser,
+      Consultant supervisor,
+      Long sessionId,
+      TenantData tenantData,
+      String accessToken,
+      boolean includeAdviceSeeker) {
+    sendSupervisorAdded(sessionUser, supervisor, sessionId, tenantData, includeAdviceSeeker);
+  }
+
+  private void sendSupervisorAdded(
+      User sessionUser,
+      Consultant supervisor,
+      Long sessionId,
+      TenantData tenantData,
+      boolean includeAdviceSeeker) {
     var session = loadEmailableSession(sessionId);
     if (session == null) return;
     Long tenantId =
@@ -71,7 +95,9 @@ public class SupervisorAddedEmailNotificationService {
     String consultantChatUrl = buildSessionUrl(appUrl, sessionId, true);
 
     User recipientUser = resolveUserWithEmail(sessionUser);
-    if (hasValidUserEmail(recipientUser) && traegerAllowsAdviceSeekerEmail(tenantId, session)) {
+    if (includeAdviceSeeker
+        && hasValidUserEmail(recipientUser)
+        && traegerAllowsAdviceSeekerEmail(tenantId, session)) {
       // Neither the case reference nor a session-specific route reaches the advice seeker's
       // copy: both name what happened as precisely as the anonymised statement text refuses to.
       renderAndSendTeamChange(
@@ -114,6 +140,30 @@ public class SupervisorAddedEmailNotificationService {
       Long sessionId,
       TenantData tenantData,
       String accessToken) {
+    sendSupervisorRemoved(sessionUser, supervisor, sessionId, tenantData, true);
+  }
+
+  /**
+   * ORISO-Frontend#2494 *6: a swap mails the supervisors as usual; the advice seeker gets at most
+   * one mail, and only when the counsellor chose to tell them.
+   */
+  @Async
+  public void notifySupervisorRemoved(
+      User sessionUser,
+      Consultant supervisor,
+      Long sessionId,
+      TenantData tenantData,
+      String accessToken,
+      boolean includeAdviceSeeker) {
+    sendSupervisorRemoved(sessionUser, supervisor, sessionId, tenantData, includeAdviceSeeker);
+  }
+
+  private void sendSupervisorRemoved(
+      User sessionUser,
+      Consultant supervisor,
+      Long sessionId,
+      TenantData tenantData,
+      boolean includeAdviceSeeker) {
     var session = loadEmailableSession(sessionId);
     if (session == null) return;
     Long tenantId =
@@ -126,7 +176,9 @@ public class SupervisorAddedEmailNotificationService {
     String consultantChatUrl = buildSessionUrl(appUrl, sessionId, true);
 
     User recipientUser = resolveUserWithEmail(sessionUser);
-    if (hasValidUserEmail(recipientUser) && traegerAllowsAdviceSeekerEmail(tenantId, session)) {
+    if (includeAdviceSeeker
+        && hasValidUserEmail(recipientUser)
+        && traegerAllowsAdviceSeekerEmail(tenantId, session)) {
       renderAndSendTeamChange(
           tenantId,
           route,

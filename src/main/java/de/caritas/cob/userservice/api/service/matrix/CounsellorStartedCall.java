@@ -42,6 +42,7 @@ import org.springframework.transaction.annotation.Transactional;
 @RequiredArgsConstructor
 public class CounsellorStartedCall {
   private final MatrixCallBindingRepository bindings;
+  private final de.caritas.cob.userservice.api.port.out.MatrixCallGuestRepository guests;
   private final MatrixCallObservationRepository observations;
   private final ConsultantRepository consultants;
   private final AccountInactivityService accountLifecycle;
@@ -80,6 +81,12 @@ public class CounsellorStartedCall {
               .map(device -> device.getSenderMatrixId())
               .distinct()
               .filter(member -> call.isInCall(member, now))
+              // ORISO-Frontend#2356: a counsellor seated as a guest does not keep the call open.
+              .filter(
+                  member ->
+                      call.getId() == null
+                          || !guests.existsByBindingIdAndMatrixUserIdAndRevokedAtIsNull(
+                              call.getId(), member))
               .anyMatch(member -> isActiveCounsellor(member, tenantId));
     }
     var observed =

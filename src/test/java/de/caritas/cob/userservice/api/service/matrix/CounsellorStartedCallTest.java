@@ -39,13 +39,15 @@ class CounsellorStartedCallTest {
   private static final long NOW = System.currentTimeMillis();
 
   private final MatrixCallBindingRepository bindings = mock(MatrixCallBindingRepository.class);
+  private final de.caritas.cob.userservice.api.port.out.MatrixCallGuestRepository guests =
+      mock(de.caritas.cob.userservice.api.port.out.MatrixCallGuestRepository.class);
   private final MatrixCallObservationRepository observations =
       mock(MatrixCallObservationRepository.class);
   private final ConsultantRepository consultants = mock(ConsultantRepository.class);
   private final AccountInactivityService accounts = mock(AccountInactivityService.class);
   private final MatrixSynapseService matrix = mock(MatrixSynapseService.class);
   private final CounsellorStartedCall calls =
-      new CounsellorStartedCall(bindings, observations, consultants, accounts, matrix);
+      new CounsellorStartedCall(bindings, guests, observations, consultants, accounts, matrix);
 
   @BeforeEach
   void setUp() {
@@ -117,6 +119,15 @@ class CounsellorStartedCallTest {
   @Test
   void aCallEveryCounsellorLeftIsNotJoinable() {
     bound(call(COUNSELLOR, device(COUNSELLOR, NOW - 1), device(ASKER, NOW + 60_000)));
+
+    assertThat(calls.isRunning(SOURCE, MEDIA, TENANT, NOW)).isFalse();
+  }
+
+  /** ORISO-Frontend#2356: a colleague seated as a guest does not keep the call open for others. */
+  @Test
+  void aCounsellorSeatedAsGuestDoesNotKeepTheCallJoinable() {
+    bound(call(COUNSELLOR, device(COUNSELLOR, NOW - 1), device(COLLEAGUE, NOW + 60_000)));
+    when(guests.existsByBindingIdAndMatrixUserIdAndRevokedAtIsNull(1L, COLLEAGUE)).thenReturn(true);
 
     assertThat(calls.isRunning(SOURCE, MEDIA, TENANT, NOW)).isFalse();
   }

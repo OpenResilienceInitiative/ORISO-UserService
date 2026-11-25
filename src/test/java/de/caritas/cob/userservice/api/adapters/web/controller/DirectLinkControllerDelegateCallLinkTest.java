@@ -30,6 +30,8 @@ class DirectLinkControllerDelegateCallLinkTest {
   private final UserAccountService accounts = mock(UserAccountService.class);
   private final DirectCallKnockService knocks = mock(DirectCallKnockService.class);
   private final UserRepository users = mock(UserRepository.class);
+  private final de.caritas.cob.userservice.api.port.out.ConsultantRepository consultantRepository =
+      mock(de.caritas.cob.userservice.api.port.out.ConsultantRepository.class);
   private final de.caritas.cob.userservice.api.service.chat.GroupWaitingRoomService waitingRooms =
       mock(de.caritas.cob.userservice.api.service.chat.GroupWaitingRoomService.class);
   private final Consultant counsellor = new Consultant();
@@ -60,7 +62,11 @@ class DirectLinkControllerDelegateCallLinkTest {
             waitingRooms,
             users,
             mock(TemporaryAccountService.class),
-            mock(de.caritas.cob.userservice.api.service.session.SessionConsentService.class));
+            mock(de.caritas.cob.userservice.api.service.session.SessionConsentService.class),
+            mock(
+                de.caritas.cob.userservice.api.service.agencyinvitelink.DirectLinkStaffJoinService
+                    .class),
+            consultantRepository);
     counsellor.setId("counsellor-1");
     when(accounts.retrieveValidatedConsultant()).thenReturn(counsellor);
     var guest = new User();
@@ -83,6 +89,40 @@ class DirectLinkControllerDelegateCallLinkTest {
               assertThat(dto.getDisplayName()).isEqualTo(PSEUDONYM);
               assertThat(dto.getCallShareLinkId()).isEqualTo(5L);
               assertThat(dto.getSessionId()).isNull();
+            });
+  }
+
+  /** ORISO-Frontend#2356: a counsellor who knocks shows with their public name, marked. */
+  @Test
+  void staffKnock_Should_CarryTheCounsellorsPublicName_AndBeMarked() {
+    var colleague = new Consultant();
+    colleague.setId("colleague-9");
+    colleague.setDisplayName("Frau Bouvier");
+    colleague.setFirstName("Selma");
+    when(consultantRepository.findByIdAndDeleteDateIsNull("colleague-9"))
+        .thenReturn(java.util.Optional.of(colleague));
+    var staff =
+        GroupChatJoinRequest.builder()
+            .id(12L)
+            .via(GroupChatJoinRequest.Via.STAFF_LINK)
+            .sessionId(45L)
+            .userId("colleague-9")
+            .inviteLinkId(5L)
+            .medium("VIDEO")
+            .status(GroupChatJoinRequest.Status.PENDING)
+            .requestedAt(java.time.LocalDateTime.now())
+            .build();
+    when(knocks.pendingFor(counsellor, 45L, null)).thenReturn(List.of(staff));
+
+    var body = delegate.getPendingCallKnocks(45L, null).getBody();
+
+    assertThat(body)
+        .singleElement()
+        .satisfies(
+            dto -> {
+              assertThat(dto.getDisplayName()).isEqualTo("Frau Bouvier");
+              assertThat(dto.getCounsellor()).isTrue();
+              assertThat(dto.getSessionId()).isEqualTo(45L);
             });
   }
 
