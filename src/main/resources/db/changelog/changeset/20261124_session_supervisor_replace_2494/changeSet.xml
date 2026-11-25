@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+  xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.3.xsd">
+  <!--
+    ORISO-Frontend#2494 *6: a supervisor swap is one event. The new row points at the row it
+    replaced, and every removal records who made it, so the Admin log can show "A → B, by C".
+    Additive, nullable (old rows keep NULL) and kept on application rollback.
+  -->
+  <changeSet id="20261124-session-supervisor-replaces-2494" author="oriso">
+    <preConditions onFail="MARK_RAN" onError="HALT">
+      <not><columnExists tableName="session_supervisor" columnName="replaces_session_supervisor_id"/></not>
+    </preConditions>
+    <addColumn tableName="session_supervisor">
+      <column name="replaces_session_supervisor_id" type="bigint"/>
+    </addColumn>
+    <rollback><sql>SELECT 1</sql></rollback>
+  </changeSet>
+  <changeSet id="20261124-session-supervisor-removed-by-2494" author="oriso">
+    <preConditions onFail="MARK_RAN" onError="HALT">
+      <not><columnExists tableName="session_supervisor" columnName="removed_by_consultant_id"/></not>
+    </preConditions>
+    <addColumn tableName="session_supervisor">
+      <column name="removed_by_consultant_id" type="varchar(255)"/>
+    </addColumn>
+    <rollback><sql>SELECT 1</sql></rollback>
+  </changeSet>
+</databaseChangeLog>

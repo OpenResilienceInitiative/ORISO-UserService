@@ -1,12 +1,14 @@
 package de.caritas.cob.userservice.api.port.out;
 
 import de.caritas.cob.userservice.api.model.SessionSupervisor;
+import jakarta.persistence.LockModeType;
 import java.time.LocalDateTime;
 import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 import org.springframework.data.jpa.repository.EntityGraph;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
@@ -14,6 +16,14 @@ import org.springframework.data.repository.query.Param;
 public interface SessionSupervisorRepository extends JpaRepository<SessionSupervisor, Long> {
 
   Optional<SessionSupervisor> findByMatrixRoomId(String matrixRoomId);
+
+  /**
+   * The row locked for a swap (ORISO-Frontend#2494 *6): a second swap of the same supervisor waits
+   * and then sees the row inactive, instead of both swaps adding a successor.
+   */
+  @Lock(LockModeType.PESSIMISTIC_WRITE)
+  @Query("SELECT ss FROM SessionSupervisor ss WHERE ss.id = :id")
+  Optional<SessionSupervisor> findByIdForUpdate(@Param("id") Long id);
 
   @EntityGraph(attributePaths = {"session", "supervisorConsultant"})
   List<SessionSupervisor> findByMatrixRoomIdAndIsActiveTrue(String matrixRoomId);

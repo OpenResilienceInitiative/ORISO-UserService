@@ -180,6 +180,67 @@ class SupervisorLogsServiceTest {
 
   // ─── helpers ──────────────────────────────────────────────────────────────
 
+  // ─── ORISO-Frontend#2494 *6: a swap is one REPLACED row ───────────────────
+
+  @Test
+  void listSupervisorLogs_Should_listASwapOnce_withThePreviousSupervisorAndWhoRemoved() {
+    ArgumentCaptor<String> sqlCaptor = ArgumentCaptor.forClass(String.class);
+    when(namedParameterJdbcTemplate.queryForObject(
+            sqlCaptor.capture(), any(SqlParameterSource.class), eq(Long.class)))
+        .thenReturn(0L);
+    when(namedParameterJdbcTemplate.query(
+            sqlCaptor.capture(), any(SqlParameterSource.class), any(RowMapper.class)))
+        .thenReturn(List.of());
+
+    service.listSupervisorLogs(1, 10);
+
+    assertThat(sqlCaptor.getAllValues())
+        .hasSize(2)
+        .allSatisfy(
+            sql ->
+                // The removal half of a swap is hidden in the list AND in the count.
+                assertThat(sql)
+                    .contains("NOT EXISTS (SELECT 1 FROM session_supervisor nx")
+                    .contains("replaces_session_supervisor_id"));
+    String listSql =
+        sqlCaptor.getAllValues().stream()
+            .filter(sql -> sql.contains("AS action"))
+            .findFirst()
+            .orElseThrow();
+    assertThat(listSql)
+        .contains("ELSE 'REPLACED' END AS action")
+        .contains("prev.consultant_id AS previousSupervisorConsultantId")
+        .contains("ss.removed_by_consultant_id AS actorConsultantId");
+  }
+
+  @Test
+  @SuppressWarnings("unchecked")
+  void listSupervisorLogs_Should_mapThePreviousSupervisorOfAReplacedRow() throws Exception {
+    ArgumentCaptor<RowMapper<SupervisorLogEntry>> mapper = ArgumentCaptor.forClass(RowMapper.class);
+    when(namedParameterJdbcTemplate.queryForObject(
+            anyString(), any(SqlParameterSource.class), eq(Long.class)))
+        .thenReturn(1L);
+    when(namedParameterJdbcTemplate.query(
+            anyString(), any(SqlParameterSource.class), mapper.capture()))
+        .thenReturn(List.of());
+    service.listSupervisorLogs(1, 10);
+
+    java.sql.ResultSet rs = org.mockito.Mockito.mock(java.sql.ResultSet.class);
+    when(rs.getString("action")).thenReturn("REPLACED");
+    when(rs.getString("supervisorName")).thenReturn("Blinky Fish");
+    when(rs.getString("previousSupervisorConsultantId")).thenReturn("c-mona");
+    when(rs.getString("previousSupervisorName")).thenReturn("Mona Simpson");
+    when(rs.getString("actorName")).thenReturn("Bart Simpson");
+
+    SupervisorLogEntry entry = mapper.getValue().mapRow(rs, 0);
+
+    assertThat(entry.getAction()).isEqualTo("REPLACED");
+    assertThat(entry.getSupervisorName()).isEqualTo("Blinky Fish");
+    assertThat(entry.getPreviousSupervisorConsultantId()).isEqualTo("c-mona");
+    assertThat(entry.getPreviousSupervisorName()).isEqualTo("Mona Simpson");
+    assertThat(entry.getActorName()).isEqualTo("Bart Simpson");
+  }
+
   private void stubJdbc(long total, List<SupervisorLogEntry> data) {
     when(namedParameterJdbcTemplate.queryForObject(
             anyString(), any(SqlParameterSource.class), eq(Long.class)))

@@ -67,6 +67,14 @@ public class SessionSupervisor {
   @JdbcTypeCode(SqlTypes.LONGVARCHAR)
   private String notes;
 
+  /** ORISO-Frontend#2494 *6: the row this one replaced in a swap; null for a plain add. */
+  @Column(name = "replaces_session_supervisor_id")
+  private Long replacesSessionSupervisorId;
+
+  /** ORISO-Frontend#2494 *6: who removed or replaced this supervisor; null for older rows. */
+  @Column(name = "removed_by_consultant_id")
+  private String removedByConsultantId;
+
   @Override
   public boolean equals(Object o) {
     if (this == o) {
