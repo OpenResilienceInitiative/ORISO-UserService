@@ -162,6 +162,11 @@ class UserAdminAgencyScopeIT {
   @MockitoBean SessionTopicEnrichmentService sessionTopicEnrichmentService;
   @MockitoBean MatrixSynapseService matrixSynapseService;
   @MockitoBean AgencyService agencyService;
+
+  @MockitoBean
+  de.caritas.cob.userservice.api.service.agency.EffectiveAgencySettingsLookup
+      effectiveAgencySettings;
+
   @MockitoBean AgencyAdminService agencyAdminService;
   @MockitoBean ConsultingTypeManager consultingTypeManager;
 
@@ -270,6 +275,12 @@ class UserAdminAgencyScopeIT {
   @AsAgencyAdmin
   void changeAgencyType_Should_Succeed_When_AgencyAdminChangesOwnAgency() throws Exception {
     actAsAgencyAdmin();
+    // FE#2494 *4: the type change first reads the centre's declared case sharing setting.
+    when(effectiveAgencySettings.findEffectiveSettings(
+            org.mockito.ArgumentMatchers.eq(OWN_AGENCY), any()))
+        .thenReturn(
+            java.util.Optional.of(
+                new de.caritas.cob.userservice.agencyserivce.generated.web.model.Settings()));
 
     mockMvc.perform(changeTypeToTeam(OWN_AGENCY)).andExpect(status().isOk());
 

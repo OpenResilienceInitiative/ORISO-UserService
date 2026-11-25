@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.neovisionaries.i18n.LanguageCode;
+import de.caritas.cob.userservice.api.model.CaseSharingModel;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.ConversationType;
 import de.caritas.cob.userservice.api.model.Session;
@@ -353,27 +354,41 @@ class SessionRepositoryIT {
     assertEquals(List.of(oneToOne.getId()), found.stream().map(Session::getId).toList());
   }
 
-  /** FE#2494 *4: the read-only sweep touches Teamberatung 1:1 cases, never team group chats. */
+  /**
+   * FE#2494 *4: the repair touches only Teamberatung 1:1 cases marked read-only at accept or
+   * reassignment, never unmarked (pre-release) cases and never group chats.
+   */
   @Test
-  void findTeamReadOnlyCandidates_Should_SkipGroupChats_AndKeepOneToOneAndLegacyCases() {
+  void findTeamReadOnlyCandidates_Should_KeepOnlyMarkedOneToOneTeamCases() {
     givenAUser();
     var consultant = consultantRepository.findAll().iterator().next();
     var ids = new java.util.ArrayList<Long>();
     for (var type :
         java.util.Arrays.asList(
-            ConversationType.AGENCY_COUNSELLING,
-            null,
-            ConversationType.INTERNAL_GROUP,
-            ConversationType.SELF_HELP,
-            ConversationType.LIVE_CHAT)) {
+            ConversationType.AGENCY_COUNSELLING, null, ConversationType.INTERNAL_GROUP)) {
       var team = validSession(null, 1);
       team.setConsultant(consultant);
       team.setTeamSession(true);
       team.setStatus(SessionStatus.IN_PROGRESS);
       team.setMatrixRoomId("!team-" + ids.size() + ":matrix.example");
       team.setConversationType(type);
+      // marked in the accepting save (SessionOwnershipService), group chat included on purpose
+      team.setTeamReadOnlySince(java.time.LocalDateTime.now());
       ids.add(underTest.save(team).getId());
     }
+    var legacy = validSession(null, 1);
+    legacy.setConsultant(consultant);
+    legacy.setTeamSession(true);
+    legacy.setStatus(SessionStatus.IN_PROGRESS);
+    legacy.setMatrixRoomId("!legacy:matrix.example");
+    var legacyId = underTest.save(legacy).getId();
+    // the stored stamp wins over the team flag, in both directions
+    var stampedTeam = markedOneToOne(consultant, "!stamped-team:matrix.example", false);
+    stampedTeam.setCaseSharingModel(CaseSharingModel.TEAM_COUNSELLING);
+    var stampedTeamId = underTest.save(stampedTeam).getId();
+    var stampedNone = markedOneToOne(consultant, "!stamped-none:matrix.example", true);
+    stampedNone.setCaseSharingModel(CaseSharingModel.NONE);
+    var stampedNoneId = underTest.save(stampedNone).getId();
     entityManager.flush();
     entityManager.clear();
 
@@ -383,24 +398,210 @@ class SessionRepositoryIT {
             ids.get(0) - 1,
             org.springframework.data.domain.PageRequest.of(0, 50));
 
-    assertEquals(ids.subList(0, 2), found, "found " + found + " of " + ids);
-    assertFalse(found.contains(ids.get(2)));
-    assertFalse(found.contains(ids.get(3)));
-    assertFalse(found.contains(ids.get(4)));
+    assertEquals(
+        List.of(ids.get(0), ids.get(1), stampedTeamId), found, "group chats are never repaired");
+    assertFalse(found.contains(stampedNoneId), "a case stamped none is no team case");
+    assertFalse(found.contains(legacyId), "a case accepted before read-only stays as it is");
+  }
 
-    // The cursor and the page size hold: after the first eligible case, one per page.
+  /**
+   * FE#2494 *4: before a centre's type changes, its unstamped 1:1 cases with the given team flag
+   * are stamped; stamped cases, group and live chats and other centres are left alone.
+   */
+  @Test
+  void stampUnstampedCasesOfAgency_Should_StampOnlyTheCentresUnstampedOneToOneCasesOfTheFlag() {
+    givenAUser();
+    var handover = unstampedCase(5L, ConversationType.AGENCY_COUNSELLING, false);
+    var legacyOneToOne = unstampedCase(5L, null, false);
+    var team = unstampedCase(5L, ConversationType.AGENCY_COUNSELLING, true);
+    var group = unstampedCase(5L, ConversationType.INTERNAL_GROUP, false);
+    var otherCentre = unstampedCase(6L, ConversationType.AGENCY_COUNSELLING, false);
+    var liveChat = unstampedCase(5L, ConversationType.LIVE_CHAT, false);
+    var legacyAnonymous = validSession(null, 1);
+    legacyAnonymous.setAgencyId(5L);
+    legacyAnonymous.setConversationType(null);
+    legacyAnonymous.setRegistrationType(RegistrationType.ANONYMOUS);
+    legacyAnonymous.setTeamSession(false);
+    var legacyAnonymousId = underTest.save(legacyAnonymous).getId();
+    var legacyPostcode = validSession(null, 1);
+    legacyPostcode.setAgencyId(5L);
+    legacyPostcode.setConversationType(null);
+    legacyPostcode.setRegistrationType(RegistrationType.REGISTERED);
+    legacyPostcode.setPostcode("00000");
+    legacyPostcode.setTeamSession(false);
+    var legacyPostcodeId = underTest.save(legacyPostcode).getId();
+    var stamped = validSession(null, 1);
+    stamped.setAgencyId(5L);
+    stamped.setConversationType(ConversationType.AGENCY_COUNSELLING);
+    stamped.setCaseSharingModel(CaseSharingModel.NONE);
+    var stampedId = underTest.save(stamped).getId();
+    entityManager.flush();
+    entityManager.clear();
+
+    int count =
+        underTest.stampUnstampedCasesOfAgency(
+            5L, false, CaseSharingModel.CASE_HANDOVER, RegistrationType.ANONYMOUS);
+
+    assertEquals(2, count);
+    assertEquals(CaseSharingModel.CASE_HANDOVER, modelOf(handover));
+    assertEquals(CaseSharingModel.CASE_HANDOVER, modelOf(legacyOneToOne));
+    assertEquals(null, modelOf(team), "the team flag is stamped by its own call");
+    assertEquals(null, modelOf(group), "a group chat is no counselling case");
+    assertEquals(null, modelOf(otherCentre));
+    assertEquals(null, modelOf(liveChat), "a live chat is no counselling case");
+    assertEquals(null, modelOf(legacyAnonymousId), "a legacy anonymous live chat neither");
+    assertEquals(null, modelOf(legacyPostcodeId), "a legacy 00000 live chat neither");
+    assertEquals(CaseSharingModel.NONE, modelOf(stampedId), "a stamp is never overwritten");
+  }
+
+  private Long unstampedCase(Long agencyId, ConversationType type, boolean teamFlag) {
+    var session = validSession(null, 1);
+    session.setAgencyId(agencyId);
+    session.setConversationType(type);
+    session.setRegistrationType(RegistrationType.REGISTERED);
+    session.setPostcode("12345");
+    session.setTeamSession(teamFlag);
+    return underTest.save(session).getId();
+  }
+
+  private CaseSharingModel modelOf(Long id) {
+    return underTest.findById(id).orElseThrow().getCaseSharingModel();
+  }
+
+  /**
+   * FE#2494 *4: the snapshot stamps unstamped 1:1 cases with a centre once, never group chats or
+   * live chats (also legacy ones without a modality), and a stamp is never overwritten, not even by
+   * a stale whole-entity save.
+   */
+  @Test
+  void findUnstampedCases_Should_SkipGroupAndLiveChatsAndStampedCases_AndStampOnlyOnce() {
+    givenAUser();
+    var ids = new java.util.ArrayList<Long>();
+    for (var type :
+        java.util.Arrays.asList(
+            ConversationType.AGENCY_COUNSELLING,
+            null,
+            ConversationType.INTERNAL_GROUP,
+            ConversationType.SELF_HELP,
+            ConversationType.LIVE_CHAT)) {
+      var unstamped = validSession(null, 1);
+      unstamped.setAgencyId(5L);
+      unstamped.setConversationType(type);
+      unstamped.setRegistrationType(RegistrationType.REGISTERED);
+      unstamped.setPostcode("12345");
+      unstamped.setTeamSession(type == null);
+      ids.add(underTest.save(unstamped).getId());
+    }
+    var legacyLiveChat = validSession(null, 1);
+    legacyLiveChat.setAgencyId(5L);
+    legacyLiveChat.setConversationType(null);
+    legacyLiveChat.setRegistrationType(RegistrationType.ANONYMOUS);
+    var legacyLiveChatId = underTest.save(legacyLiveChat).getId();
+    var stamped = validSession(null, 1);
+    stamped.setAgencyId(5L);
+    stamped.setCaseSharingModel(de.caritas.cob.userservice.api.model.CaseSharingModel.NONE);
+    var stampedId = underTest.save(stamped).getId();
+    entityManager.flush();
+    entityManager.clear();
+
+    var found =
+        underTest
+            .findUnstampedCases(
+                ids.get(0) - 1,
+                RegistrationType.ANONYMOUS,
+                org.springframework.data.domain.PageRequest.of(0, 50))
+            .stream()
+            .toList();
+
+    var foundIds = found.stream().map(SessionRepository.UnstampedCase::getId).toList();
+    assertEquals(ids.subList(0, 2), foundIds, "found " + foundIds + " of " + ids);
+    assertFalse(foundIds.contains(legacyLiveChatId), "a legacy live chat is no counselling case");
+    assertFalse(foundIds.contains(stampedId));
+    assertEquals(5L, found.get(1).getAgencyId());
+    assertTrue(found.get(1).isTeamSession());
+    assertFalse(found.get(0).isTeamSession());
+
+    // The cursor and the page size hold.
     assertEquals(
         List.of(ids.get(1)),
-        underTest.findTeamReadOnlyCandidates(
-            SessionStatus.IN_PROGRESS,
-            ids.get(0),
-            org.springframework.data.domain.PageRequest.of(0, 1)));
+        underTest
+            .findUnstampedCases(
+                ids.get(0),
+                RegistrationType.ANONYMOUS,
+                org.springframework.data.domain.PageRequest.of(0, 1))
+            .stream()
+            .map(SessionRepository.UnstampedCase::getId)
+            .toList());
+
     assertEquals(
-        List.of(ids.get(0)),
-        underTest.findTeamReadOnlyCandidates(
-            SessionStatus.IN_PROGRESS,
-            ids.get(0) - 1,
-            org.springframework.data.domain.PageRequest.of(0, 1)));
+        1,
+        underTest.stampCaseSharingModel(
+            ids.get(0), de.caritas.cob.userservice.api.model.CaseSharingModel.CASE_HANDOVER));
+    assertEquals(
+        0,
+        underTest.stampCaseSharingModel(
+            stampedId, de.caritas.cob.userservice.api.model.CaseSharingModel.CASE_HANDOVER));
+    entityManager.clear();
+    assertEquals(
+        de.caritas.cob.userservice.api.model.CaseSharingModel.NONE,
+        underTest.findById(stampedId).orElseThrow().getCaseSharingModel());
+
+    // A stale whole-entity save cannot write over the stamp: the column is write-once.
+    var stale = underTest.findById(stampedId).orElseThrow();
+    stale.setCaseSharingModel(null);
+    underTest.save(stale);
+    entityManager.flush();
+    entityManager.clear();
+    assertEquals(
+        de.caritas.cob.userservice.api.model.CaseSharingModel.NONE,
+        underTest.findById(stampedId).orElseThrow().getCaseSharingModel());
+
+    assertEquals(
+        List.of(ids.get(1)),
+        underTest
+            .findUnstampedCases(
+                ids.get(0) - 1,
+                RegistrationType.ANONYMOUS,
+                org.springframework.data.domain.PageRequest.of(0, 50))
+            .stream()
+            .map(SessionRepository.UnstampedCase::getId)
+            .toList());
+  }
+
+  /** FE#2494 *4: an open team case, an enquiry not yet accepted included, keeps team access. */
+  @Test
+  void existsTeamCase_Should_CountOpenTeamCasesByStampOrFlag() {
+    givenAUser();
+    var open = List.of(SessionStatus.INITIAL, SessionStatus.NEW, SessionStatus.IN_PROGRESS);
+    java.util.function.BiFunction<Long, SessionStatus, Session> teamCase =
+        (agencyId, status) -> {
+          var session = validSession(agencyId, 1);
+          session.setStatus(status);
+          session.setTeamSession(true);
+          return session;
+        };
+
+    underTest.save(teamCase.apply(7101L, SessionStatus.NEW));
+    underTest.save(teamCase.apply(7102L, SessionStatus.DONE));
+    var group = teamCase.apply(7103L, SessionStatus.IN_PROGRESS);
+    group.setConversationType(ConversationType.INTERNAL_GROUP);
+    underTest.save(group);
+    var stampedNone = teamCase.apply(7104L, SessionStatus.IN_PROGRESS);
+    stampedNone.setCaseSharingModel(de.caritas.cob.userservice.api.model.CaseSharingModel.NONE);
+    underTest.save(stampedNone);
+    var stampedTeam = validSession(7105L, 1);
+    stampedTeam.setStatus(SessionStatus.IN_PROGRESS);
+    stampedTeam.setCaseSharingModel(
+        de.caritas.cob.userservice.api.model.CaseSharingModel.TEAM_COUNSELLING);
+    underTest.save(stampedTeam);
+    entityManager.flush();
+    entityManager.clear();
+
+    assertTrue(underTest.existsTeamCase(7101L, open), "a pending team enquiry counts");
+    assertFalse(underTest.existsTeamCase(7102L, open), "a finished case does not");
+    assertFalse(underTest.existsTeamCase(7103L, open), "a group chat is no team case");
+    assertFalse(underTest.existsTeamCase(7104L, open), "the stamp wins over the flag");
+    assertTrue(underTest.existsTeamCase(7105L, open), "a stamped team case counts");
   }
 
   @ParameterizedTest
@@ -488,7 +689,8 @@ class SessionRepositoryIT {
     validSession.setConsultingTypeId(consultingTypeId);
     validSession.setRegistrationType(easyRandom.nextObject(RegistrationType.class));
     validSession.setPostcode(RandomStringUtils.randomNumeric(5));
-    validSession.setLanguageCode(easyRandom.nextObject(LanguageCode.class));
+    // fixed: EasyRandom's seeded sequence can draw LanguageCode.undefined, too long for the column
+    validSession.setLanguageCode(LanguageCode.de);
     validSession.setStatus(easyRandom.nextObject(SessionStatus.class));
     validSession.setIsConsultantDirectlySet(false);
     validSession.setConversationType(ConversationType.AGENCY_COUNSELLING);
@@ -513,5 +715,16 @@ class SessionRepositoryIT {
 
   private void givenAUser() {
     user = userRepository.findAll().iterator().next();
+  }
+
+  private Session markedOneToOne(Consultant consultant, String roomId, boolean teamFlag) {
+    var session = validSession(null, 1);
+    session.setConsultant(consultant);
+    session.setTeamSession(teamFlag);
+    session.setStatus(SessionStatus.IN_PROGRESS);
+    session.setMatrixRoomId(roomId);
+    session.setConversationType(ConversationType.AGENCY_COUNSELLING);
+    session.setTeamReadOnlySince(java.time.LocalDateTime.now());
+    return session;
   }
 }

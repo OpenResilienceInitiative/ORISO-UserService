@@ -63,6 +63,7 @@ public class AssignSessionFacade {
     sessionToConsultantVerifier.verifyPreconditionsForAssignment(consultantSessionDTO);
 
     sessionAssignmentChatGateway.prepareAssignment(session, consultantToAssign);
+    boolean acceptsEnquiry = session.getStatus() == SessionStatus.NEW;
     updateSessionInDatabase(session, consultantToAssign);
     removeUnauthorizedMembersFromGroups(session, consultantToAssign, authConsultant);
     if (!authenticatedUser.isAdviceSeeker()) {
@@ -73,8 +74,13 @@ public class AssignSessionFacade {
     // is unsupervised", never to "the reassignment failed". This method is not transactional, so
     // the direct call is safe here — the handover paths need an after-commit hook instead.
     sessionSupervisorFacade.attachStandingSupervisorIfAssigned(session.getId(), consultantToAssign);
-    // FE#2494 *4: the team colleagues kept in the room, the former owner included, become readers.
-    teamSessionReadOnly.enforceAfterCommit(session.getId());
+    // FE#2494 *4: accepting an enquiry makes the team colleagues readers. A reassignment keeps the
+    // case as it is: only a case that is already read-only is enforced again for the new owner.
+    if (acceptsEnquiry) {
+      teamSessionReadOnly.enforceAfterCommit(session.getId());
+    } else {
+      teamSessionReadOnly.reenforceAfterCommitIfMarked(session.getId());
+    }
 
     var event =
         new AssignSessionStatisticsEvent(

@@ -66,6 +66,8 @@ public class ConsultantAdminFacade {
   private final @NonNull AuthenticatedUser authenticatedUser;
 
   private final @NonNull AgencyService agencyService;
+  private final @NonNull de.caritas.cob.userservice.api.service.session.CaseSharingTypeChangeStamper
+      caseSharingTypeChangeStamper;
 
   private final @NonNull ConsultantChatIdentityService consultantChatIdentityService;
 
@@ -299,18 +301,25 @@ public class ConsultantAdminFacade {
   }
 
   /**
-   * Changes the consultant flag is_team_consultant and assignments for agency type changes.
+   * Changes the consultant flag is_team_consultant for agency type changes. Running cases keep the
+   * case sharing model they were created under (ORISO-Frontend#2494).
    *
    * @param agencyId the id of the changed agency
    * @param agencyTypeDTO the request object containing the target type
    */
   public void changeAgencyType(Long agencyId, AgencyTypeDTO agencyTypeDTO) {
     adminScope.assertMay(Target.agencies(List.of(agencyId)));
+    // FE#2494 *4: running cases keep the model they were created under, so the ones the snapshot
+    // has not stamped yet are stamped with the pre-switch model before anything else changes.
+    caseSharingTypeChangeStamper.stampBeforeTypeChange(
+        agencyId,
+        agencyService.getAgency(agencyId).getTenantId(),
+        TEAM_AGENCY.equals(agencyTypeDTO.getAgencyType()));
     if (TEAM_AGENCY.equals(agencyTypeDTO.getAgencyType())) {
       this.consultantAgencyAdminService.markAllAssignedConsultantsAsTeamConsultant(agencyId);
     }
     if (DEFAULT_AGENCY.equals(agencyTypeDTO.getAgencyType())) {
-      this.consultantAgencyAdminService.removeConsultantsFromTeamSessionsByAgencyId(agencyId);
+      this.consultantAgencyAdminService.endTeamCounsellingForNewCases(agencyId);
     }
   }
 

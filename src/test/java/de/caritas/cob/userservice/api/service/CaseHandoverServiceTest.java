@@ -1455,7 +1455,30 @@ class CaseHandoverServiceTest {
 
     verify(caseSharingGate)
         .requireCaseHandover(
-            10L, 7L, de.caritas.cob.userservice.api.model.ConversationType.AGENCY_COUNSELLING);
+            10L,
+            7L,
+            de.caritas.cob.userservice.api.model.ConversationType.AGENCY_COUNSELLING,
+            null);
+  }
+
+  @Test
+  void createOffer_asksTheCaseSharingGateWithTheModelTheCaseWasCreatedUnder() {
+    // FE#2494 *4: the case keeps its model; the gate decides by the stamp, not the centre today.
+    session.setConsultant(requester);
+    session.setCaseSharingModel(
+        de.caritas.cob.userservice.api.model.CaseSharingModel.CASE_HANDOVER);
+    Consultant recipient = eligibleConsultant("recipient", "Recipient");
+    when(consultantService.getConsultant("recipient")).thenReturn(Optional.of(recipient));
+
+    caseHandoverService.createOffer(
+        123L, "recipient", "UNPLANNED_ABSENCE", null, 0L, UUID.randomUUID());
+
+    verify(caseSharingGate)
+        .requireCaseHandover(
+            10L,
+            7L,
+            de.caritas.cob.userservice.api.model.ConversationType.AGENCY_COUNSELLING,
+            de.caritas.cob.userservice.api.model.CaseSharingModel.CASE_HANDOVER);
   }
 
   @Test
@@ -1468,7 +1491,7 @@ class CaseHandoverServiceTest {
     org.mockito.Mockito.doThrow(new ForbiddenException("Case Handover exists only in Mailberatung"))
         .when(caseSharingGate)
         .requireCaseHandover(
-            10L, 7L, de.caritas.cob.userservice.api.model.ConversationType.LIVE_CHAT);
+            10L, 7L, de.caritas.cob.userservice.api.model.ConversationType.LIVE_CHAT, null);
 
     assertThrows(
         ForbiddenException.class,
@@ -3728,17 +3751,16 @@ class CaseHandoverServiceTest {
   }
 
   @Test
-  void getStatus_endsTeamReadingOnceTheCentreLeftTeamberatung() {
-    // The team flag stays on old sessions; the centre's current choice decides.
-    session.setTeamSession(true);
-    session.setStatus(Session.SessionStatus.IN_PROGRESS);
-    session.setMatrixRoomId(TEAM_ROOM);
-    when(caseSharingGate.isTeamCounselling(any(), any())).thenReturn(false);
+  void getStatus_keepsTeamReadingAfterTheCentreLeftTeamberatung() {
+    // FE#2494 *4 (Frank, 2026-11-25): the case keeps the model it was created under; the centre's
+    // current choice is not even read.
+    givenTeamRoomMember();
 
     CaseHandoverStatus status = caseHandoverService.getStatus(123L);
 
-    assertEquals("NOT_REQUESTED", status.getStatus());
-    assertFalse(status.isCanViewContent());
+    assertEquals("TEAM_READER", status.getAuditOutcome());
+    assertTrue(status.isCanViewContent());
+    verify(caseSharingGate, never()).currentModel(any(), any());
   }
 
   @Test
@@ -3778,7 +3800,7 @@ class CaseHandoverServiceTest {
     session.setMainTopicId(99L);
 
     assertThrows(ForbiddenException.class, () -> caseHandoverService.getStatus(123L));
-    verify(caseSharingGate, never()).isTeamCounselling(any(), any());
+    verify(caseSharingGate, never()).currentModel(any(), any());
   }
 
   @Test
@@ -3800,7 +3822,6 @@ class CaseHandoverServiceTest {
     session.setMatrixRoomId(TEAM_ROOM);
     requester.setMatrixUserId("@requester:matrix");
     previous.setMatrixUserId("@previous:matrix");
-    when(caseSharingGate.isTeamCounselling(any(), any())).thenReturn(true);
     org.mockito.Mockito.lenient()
         .when(matrixRoomMembershipLookup.findJoinedRoomsForMatrixUser(any()))
         .thenReturn(Optional.of(List.of(TEAM_ROOM)));
@@ -3816,7 +3837,7 @@ class CaseHandoverServiceTest {
     CaseHandoverStatus status = caseHandoverService.getStatus(123L);
 
     assertNotEquals("TEAM_READER", status.getAuditOutcome());
-    verify(caseSharingGate, never()).isTeamCounselling(any(), any());
+    verify(caseSharingGate, never()).currentModel(any(), any());
   }
 
   @Test

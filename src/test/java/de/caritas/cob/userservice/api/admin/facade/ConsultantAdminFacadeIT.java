@@ -391,6 +391,9 @@ class ConsultantAdminFacadeIT {
             .agencyId(convertedAgencyId)
             .status(ConsultantAgencyStatus.IN_PROGRESS)
             .build());
+    // FE#2494 *4: the type change reads the centre once to stamp its unstamped cases first.
+    when(agencyServiceApiControllerFactory.createControllerApi())
+        .thenReturn(new TeamAwareAgencyControllerApi(new ApiClient(), Map.of()));
 
     var agencyTypeDTO = new AgencyTypeDTO().agencyType(AgencyTypeEnum.DEFAULT_AGENCY);
 
