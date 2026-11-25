@@ -299,6 +299,17 @@ public class UserController implements UsersApi {
   }
 
   @Override
+  public ResponseEntity<de.caritas.cob.userservice.api.adapters.web.dto.DirectLinkStaffJoinDTO>
+      joinDirectLinkCallAsCounsellor(String token, Long waitingFor) {
+    return directLinkControllerDelegate.joinDirectLinkCallAsCounsellor(token, waitingFor);
+  }
+
+  @Override
+  public ResponseEntity<Void> leaveDirectLinkCallWaitingAsCounsellor(String token) {
+    return directLinkControllerDelegate.leaveDirectLinkCallWaitingAsCounsellor(token);
+  }
+
+  @Override
   public ResponseEntity<
           java.util.List<de.caritas.cob.userservice.api.adapters.web.dto.CallKnockDTO>>
       getPendingCallKnocks(Long sessionId, String matrixRoomId) {
