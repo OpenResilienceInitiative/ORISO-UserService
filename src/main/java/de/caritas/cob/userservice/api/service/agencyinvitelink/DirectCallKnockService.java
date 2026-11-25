@@ -20,6 +20,7 @@ import de.caritas.cob.userservice.api.service.chat.GroupWaitingRoomService;
 import de.caritas.cob.userservice.api.service.matrix.MatrixCallGuestService;
 import de.caritas.cob.userservice.api.service.matrix.MatrixSessionCallBindingService;
 import de.caritas.cob.userservice.api.service.notification.EventNotificationService;
+import de.caritas.cob.userservice.api.tenant.TenantContext;
 import java.time.LocalDateTime;
 import java.util.Comparator;
 import java.util.EnumSet;
@@ -650,6 +651,11 @@ public class DirectCallKnockService {
         && outcome == Status.DECLINED) {
       return revokeCallLinkAdmission(knock, consultant);
     }
+    if (knock.getVia() == Via.STAFF_LINK
+        && knock.getStatus() == Status.ADMITTED
+        && outcome == Status.DECLINED) {
+      return revokeStaffAdmission(knock, consultant);
+    }
     if (!knock.isPending()) {
       throw new ConflictException("Call knock is already " + knock.getStatus());
     }
@@ -690,6 +696,36 @@ public class DirectCallKnockService {
     if (binding != null) {
       callGuests.revokeSeat(binding, guestMatrixId, moderator);
     }
+    return repository.save(knock);
+  }
+
+  /**
+   * ORISO-Frontend#2356: declining an admitted counsellor guest takes the admission back, as for a
+   * share-link guest. They lose the call-room seat of every running call of the conversation at
+   * once, and the DECLINED knock keeps them out for the rest of that call.
+   */
+  private GroupChatJoinRequest revokeStaffAdmission(
+      GroupChatJoinRequest knock, Consultant consultant) {
+    knock.setStatus(Status.DECLINED);
+    knock.setDecidedAt(LocalDateTime.now());
+    knock.setDecidedBy(consultant.getId());
+    // The guest may be a counsellor of another Träger: read them across tenants.
+    var guestMatrixId =
+        TenantContext.supplyAcrossTenants(
+            () ->
+                consultants
+                    .findByIdAndDeleteDateIsNull(knock.getUserId())
+                    .map(Consultant::getMatrixUserId)
+                    .orElse(null));
+    var moderator =
+        consultants
+            .findByIdAndDeleteDateIsNull(consultant.getId())
+            .map(Consultant::getMatrixUserId)
+            .orElse(null);
+    long now = System.currentTimeMillis();
+    callBindings.findBySessionIdIn(List.of(knock.getSessionId())).stream()
+        .filter(binding -> binding.isLive(now))
+        .forEach(binding -> callGuests.revokeSeat(binding, guestMatrixId, moderator));
     return repository.save(knock);
   }
 

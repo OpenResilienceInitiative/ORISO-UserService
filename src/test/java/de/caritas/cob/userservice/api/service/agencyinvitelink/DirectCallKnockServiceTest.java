@@ -351,6 +351,43 @@ class DirectCallKnockServiceTest {
   }
 
   @Test
+  void declineAfterAdmit_Should_TakeTheCounsellorGuestsSeatBack() {
+    var knock = staffKnock(3L);
+    knock.setStatus(Status.ADMITTED);
+    when(repository.findByIdForUpdate(3L)).thenReturn(Optional.of(knock));
+    when(repository.save(any(GroupChatJoinRequest.class))).thenAnswer(i -> i.getArgument(0));
+    var guest = new Consultant();
+    guest.setId("colleague-9");
+    guest.setMatrixUserId("@colleague-9:m.test");
+    when(consultants.findByIdAndDeleteDateIsNull("colleague-9")).thenReturn(Optional.of(guest));
+    counsellor.setMatrixUserId("@counsellor-1:m.test");
+    when(consultants.findByIdAndDeleteDateIsNull("counsellor-1"))
+        .thenReturn(Optional.of(counsellor));
+    var running =
+        de.caritas.cob.userservice.api.model.MatrixCallBinding.builder()
+            .id(1L)
+            .sessionId(SESSION_ID)
+            .invitedAt(System.currentTimeMillis() - 60_000)
+            .inviteExpiresAt(System.currentTimeMillis() + 60_000)
+            .build();
+    var ended =
+        de.caritas.cob.userservice.api.model.MatrixCallBinding.builder()
+            .id(2L)
+            .sessionId(SESSION_ID)
+            .invitedAt(System.currentTimeMillis() - 7_200_000)
+            .inviteExpiresAt(System.currentTimeMillis() - 3_600_000)
+            .build();
+    when(callBindings.findBySessionIdIn(List.of(SESSION_ID))).thenReturn(List.of(running, ended));
+
+    var declined = service.decline(3L, counsellor);
+
+    assertThat(declined.getStatus()).isEqualTo(Status.DECLINED);
+    assertThat(declined.getDecidedBy()).isEqualTo("counsellor-1");
+    verify(callGuests).revokeSeat(running, "@colleague-9:m.test", "@counsellor-1:m.test");
+    verify(callGuests, org.mockito.Mockito.never()).revokeSeat(eq(ended), any(), any());
+  }
+
+  @Test
   void openStaffKnock_Should_RingTheCounsellor_AndEndAnEarlierOpenKnock() {
     var earlier = staffKnock(3L);
     when(repository.findPendingCallKnocksForUpdate(SESSION_ID, "colleague-9", Via.STAFF_LINK))
