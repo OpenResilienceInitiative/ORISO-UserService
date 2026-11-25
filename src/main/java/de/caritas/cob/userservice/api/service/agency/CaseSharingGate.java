@@ -51,6 +51,37 @@ public class CaseSharingGate {
     }
   }
 
+  /**
+   * FE#2494 *4: whether the centre's current case sharing model is Teamberatung, so colleagues may
+   * read its team cases. An AgencyService that predates #374 serves no {@code caseSharing}; then
+   * the session's own team flag (checked by the caller) decides alone. A refused or failed read is
+   * "no": nobody gains read access on an unknown setting.
+   */
+  public boolean isTeamCounselling(Long agencyId, Long tenantId) {
+    return teamCounsellingMode(agencyId, tenantId).orElse(false);
+  }
+
+  /**
+   * As {@link #isTeamCounselling}, but empty when the setting could not be read or was not served,
+   * so a caller can retry instead of treating either as "not Teamberatung". Only a served policy
+   * that names another model is a definite "no".
+   */
+  public java.util.Optional<Boolean> teamCounsellingMode(Long agencyId, Long tenantId) {
+    Settings settings;
+    try {
+      settings = readSettings(agencyId, tenantId);
+    } catch (RuntimeException unavailableOrRefused) {
+      return java.util.Optional.empty();
+    }
+    if (settings == null) {
+      return java.util.Optional.empty();
+    }
+    AgencyCaseSharingPolicy caseSharing = settings.getCaseSharing();
+    return java.util.Optional.of(
+        caseSharing == null
+            || caseSharing.getValue() == AgencyCaseSharingPolicy.ValueEnum.TEAM_COUNSELLING);
+  }
+
   private Settings readSettings(Long agencyId, Long tenantId) {
     try {
       return effectiveAgencySettingsLookup.findEffectiveSettings(agencyId, tenantId).orElse(null);

@@ -233,7 +233,9 @@ class CaseHandoverPolicyHttpContractTest {
             adminScope,
             mock(de.caritas.cob.userservice.api.service.chat.MembersOnlyChatAccess.class),
             org.mockito.Mockito.mock(
-                de.caritas.cob.userservice.api.service.agency.CaseSharingGate.class));
+                de.caritas.cob.userservice.api.service.agency.CaseSharingGate.class),
+            org.mockito.Mockito.mock(
+                de.caritas.cob.userservice.api.port.out.MatrixRoomMembershipLookup.class));
 
     TenantContext.setCurrentTenant(7L);
   }

@@ -412,6 +412,102 @@ class AgencyPasswordFreeSynapseIT {
   }
 
   @Test
+  void teamCounsellingLeavesOnlyTheAssignedCounsellorAbleToWrite() {
+    // FE#2494 *4 decision d: real Synapse power levels, not a mocked permission.
+    var colleague = new Consultant();
+    colleague.setId("colleague-" + UUID.randomUUID().toString().substring(0, 8));
+    colleague.setMatrixUserId(createUser(colleague.getId()));
+    session.setTeamSession(true);
+    when(consultants.findByConsultantAgenciesAgencyIdAndDeleteDateIsNull(7L))
+        .thenReturn(List.of(consultant, colleague));
+    holdingRoom();
+    var room = session.getMatrixRoomId();
+    when(consultants.findAllByMatrixUserIdInAndDeleteDateIsNull(any()))
+        .thenAnswer(
+            call -> {
+              java.util.Collection<?> ids = call.getArgument(0);
+              return java.util.stream.Stream.of(consultant, colleague)
+                  .filter(c -> ids.contains(c.getMatrixUserId()))
+                  .toList();
+            });
+    var supervisors =
+        mock(de.caritas.cob.userservice.api.port.out.SessionSupervisorRepository.class);
+    when(sessionRepository.findById(session.getId())).thenReturn(Optional.of(session));
+    var readOnly =
+        new de.caritas.cob.userservice.api.service.session.TeamSessionReadOnlyService(
+            new MatrixTeamSessionRoomAccess(matrix),
+            consultants,
+            supervisors,
+            sessionRepository,
+            teamCentre(),
+            new de.caritas.cob.userservice.api.config.observability.TeamSessionReadOnlyMetrics(
+                new io.micrometer.core.instrument.simple.SimpleMeterRegistry()));
+    var facade =
+        new AssignEnquiryFacade(
+            sessions,
+            de.caritas.cob.userservice.api.testHelper.PermittingDpaOwnerFixture.policy(),
+            gateway,
+            mock(
+                de.caritas.cob.userservice.api.facade.assignsession.SessionToConsultantVerifier
+                    .class),
+            mock(de.caritas.cob.userservice.api.service.statistics.StatisticsService.class),
+            mock(de.caritas.cob.userservice.api.facade.EmailNotificationFacade.class),
+            mock(jakarta.servlet.http.HttpServletRequest.class),
+            consultants,
+            mock(UserRepository.class),
+            mock(UserHelper.class),
+            mock(UsernameTranscoder.class),
+            mock(ConsultantDisplayNameResolver.class),
+            identities,
+            mock(de.caritas.cob.userservice.api.service.session.AgencyEnquiryRoomRetirements.class),
+            mock(
+                de.caritas.cob.userservice.api.service.notification.EventNotificationService.class),
+            mock(
+                de.caritas.cob.userservice.api.facade.assignsession
+                    .AnonymousEnquiryDepartmentResolver.class),
+            mock(de.caritas.cob.userservice.api.facade.SessionSupervisorFacade.class),
+            mock(TeamDiscussionFacade.class),
+            mock(de.caritas.cob.userservice.api.service.matrix.InquiryAcceptanceNoticeStore.class),
+            mock(
+                de.caritas.cob.userservice.api.service.matrix.InquiryAcceptanceNoticeDelivery
+                    .class),
+            mock(
+                de.caritas.cob.userservice.api.service.furthercounselling.TopicDuplicateService
+                    .class),
+            mock(de.caritas.cob.userservice.api.port.in.Messaging.class),
+            readOnly);
+    // SessionService is a double here, so the owner is set as the real update would set it.
+    session.setConsultant(consultant);
+    facade.assignRegisteredEnquiry(session, consultant);
+
+    var ownerToken = matrix.loginAsUserAccessToken(consultant.getMatrixUserId());
+    var colleagueToken = matrix.loginAsUserAccessToken(colleague.getMatrixUserId());
+    assertThat(members(room, ownerToken)).contains(colleague.getMatrixUserId());
+    assertThat(matrix.sendMessage(room, "colleague writes", colleagueToken))
+        .doesNotContainKey("event_id");
+    assertThat(matrix.sendMessage(room, "owner writes", ownerToken)).containsKey("event_id");
+    assertThat(matrix.sendMessage(room, "seeker writes", matrix.loginAsUserAccessToken(seekerId)))
+        .containsKey("event_id");
+    assertThat(matrix.getRoomMessages(room, colleagueToken))
+        .anySatisfy(
+            event ->
+                assertThat(objectMap(event.get("content"))).containsEntry("body", "owner writes"));
+
+    // Reassignment inside the team: the new owner writes, the former owner (still at 100 and
+    // equal in power) becomes a reader by lowering itself.
+    assertThat(matrix.setUserPowerLevel(room, colleague.getMatrixUserId(), 100, ownerToken))
+        .isTrue();
+    session.setConsultant(colleague);
+    assertThat(readOnly.enforce(session)).isTrue();
+    assertThat(matrix.sendMessage(room, "former owner writes", ownerToken))
+        .doesNotContainKey("event_id");
+    assertThat(matrix.sendMessage(room, "new owner writes", colleagueToken))
+        .containsKey("event_id");
+    // Repeating is harmless.
+    assertThat(readOnly.enforce(session)).isTrue();
+  }
+
+  @Test
   void acceptingEnquiryPreservesRoomHistoryAndGrantsCounsellorPower() {
     holdingRoom();
     var originalRoom = session.getMatrixRoomId();
@@ -448,7 +544,8 @@ class AgencyPasswordFreeSynapseIT {
             mock(
                 de.caritas.cob.userservice.api.service.furthercounselling.TopicDuplicateService
                     .class),
-            mock(de.caritas.cob.userservice.api.port.in.Messaging.class));
+            mock(de.caritas.cob.userservice.api.port.in.Messaging.class),
+            mock(de.caritas.cob.userservice.api.service.session.TeamSessionReadOnlyService.class));
     facade.assignRegisteredEnquiry(session, consultant);
     assertThat(session.getMatrixRoomId()).isEqualTo(originalRoom);
     var token = matrix.loginAsUserAccessToken(consultant.getMatrixUserId());
@@ -556,5 +653,16 @@ class AgencyPasswordFreeSynapseIT {
     headers.setContentType(MediaType.APPLICATION_JSON);
     if (token != null) headers.setBearerAuth(token);
     return new HttpEntity<>(body, headers);
+  }
+
+  private static de.caritas.cob.userservice.api.service.agency.CaseSharingGate teamCentre() {
+    var gate =
+        org.mockito.Mockito.mock(
+            de.caritas.cob.userservice.api.service.agency.CaseSharingGate.class);
+    org.mockito.Mockito.when(
+            gate.teamCounsellingMode(
+                org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any()))
+        .thenReturn(java.util.Optional.of(true));
+    return gate;
   }
 }

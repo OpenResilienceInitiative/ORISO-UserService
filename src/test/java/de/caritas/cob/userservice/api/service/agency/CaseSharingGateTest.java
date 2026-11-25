@@ -119,6 +119,60 @@ class CaseSharingGateTest {
     assertThatThrownBy(this::requireMailberatung).isInstanceOf(ServiceUnavailableException.class);
   }
 
+  @Test
+  void isTeamCounselling_onlyWhileTheCentreHasChosenTeamberatung() {
+    givenMode(AgencyCaseSharingPolicy.ValueEnum.TEAM_COUNSELLING);
+    assertThat(gate.isTeamCounselling(5L, 1L)).isTrue();
+  }
+
+  @Test
+  void isTeamCounselling_isFalseAfterASwitchToCaseHandoverOrNone() {
+    givenMode(AgencyCaseSharingPolicy.ValueEnum.CASE_HANDOVER);
+    assertThat(gate.isTeamCounselling(5L, 1L)).isFalse();
+    givenMode(AgencyCaseSharingPolicy.ValueEnum.NONE);
+    assertThat(gate.isTeamCounselling(5L, 1L)).isFalse();
+  }
+
+  @Test
+  void isTeamCounselling_failsClosedWhenTheSettingCannotBeRead() {
+    when(lookup.findEffectiveSettings(5L, 1L))
+        .thenThrow(new org.springframework.web.client.ResourceAccessException("down"));
+    assertThat(gate.isTeamCounselling(5L, 1L)).isFalse();
+  }
+
+  @Test
+  void isTeamCounselling_isFalseWithoutSettings_butTheModeStaysUnknown() {
+    when(lookup.findEffectiveSettings(5L, 1L)).thenReturn(Optional.empty());
+    assertThat(gate.isTeamCounselling(5L, 1L)).isFalse();
+    assertThat(gate.teamCounsellingMode(5L, 1L)).isEmpty();
+  }
+
+  @Test
+  void teamCounsellingMode_isUnknownWhenTheSettingCannotBeRead() {
+    when(lookup.findEffectiveSettings(5L, 1L))
+        .thenThrow(new org.springframework.web.client.ResourceAccessException("down"));
+    assertThat(gate.teamCounsellingMode(5L, 1L)).isEmpty();
+  }
+
+  @Test
+  void teamCounsellingMode_isADefiniteNoOnlyForAServedOtherModel() {
+    givenMode(AgencyCaseSharingPolicy.ValueEnum.CASE_HANDOVER);
+    assertThat(gate.teamCounsellingMode(5L, 1L)).contains(false);
+  }
+
+  @Test
+  void isTeamCounselling_keepsTheLegacyDefaultWhenNoPolicyIsServed() {
+    when(lookup.findEffectiveSettings(5L, 1L)).thenReturn(Optional.of(new Settings()));
+    assertThat(gate.isTeamCounselling(5L, 1L)).isTrue();
+  }
+
+  @Test
+  void isTeamCounselling_isFalseForAServedPolicyWithoutAValue() {
+    when(lookup.findEffectiveSettings(5L, 1L))
+        .thenReturn(Optional.of(new Settings(new AgencyCaseSharingPolicy())));
+    assertThat(gate.isTeamCounselling(5L, 1L)).isFalse();
+  }
+
   private void requireMailberatung() {
     gate.requireCaseHandover(5L, 1L, ConversationType.AGENCY_COUNSELLING);
   }
