@@ -276,6 +276,30 @@ public class ConsultantDataFacadeTest {
     assertEquals("Marge S.", consultant.getDisplayName());
   }
 
+  /** CodeRabbit: rows of the same counsellor share one lookup. */
+  @Test
+  public void
+      addConsultantDisplayNameToSessionList_GroupSession_Should_ResolveEachCounsellorOnce() {
+    var first = new de.caritas.cob.userservice.api.adapters.web.dto.GroupSessionConsultantDTO();
+    first.setId("owner-1");
+    var second = new de.caritas.cob.userservice.api.adapters.web.dto.GroupSessionConsultantDTO();
+    second.setId("owner-1");
+    var one = new de.caritas.cob.userservice.api.adapters.web.dto.GroupSessionResponseDTO();
+    one.setConsultant(first);
+    var two = new de.caritas.cob.userservice.api.adapters.web.dto.GroupSessionResponseDTO();
+    two.setConsultant(second);
+    var owner = new Consultant();
+    owner.setUsername("marge.public");
+    when(consultantService.getConsultant("owner-1")).thenReturn(Optional.of(owner));
+    when(accountManager.findConsultantByUsername("marge.public")).thenReturn(Optional.empty());
+
+    consultantDataFacade.addConsultantDisplayNameToSessionList(
+        new GroupSessionListResponseDTO().sessions(List.of(one, two)));
+
+    verify(consultantService, Mockito.times(1)).getConsultant("owner-1");
+    assertEquals("marge.public", second.getUsername());
+  }
+
   @Test
   public void
       addConsultantDisplayNameToSessionList_GroupSession_Should_LeaveNamesEmpty_When_IdIsUnknown() {
@@ -283,13 +307,16 @@ public class ConsultantDataFacadeTest {
     var consultant =
         new de.caritas.cob.userservice.api.adapters.web.dto.GroupSessionConsultantDTO();
     consultant.setId("gone");
+    consultant.setFirstName("Real");
+    consultant.setLastName("Name");
     session.setConsultant(consultant);
     var response = new GroupSessionListResponseDTO().sessions(List.of(session));
     when(consultantService.getConsultant("gone")).thenReturn(Optional.empty());
 
     consultantDataFacade.addConsultantDisplayNameToSessionList(response);
 
-    assertNull(consultant.getUsername());
+    assertNull(consultant.getUsername(), "never the real name");
+    assertNull(consultant.getDisplayName(), "never the real name");
     Mockito.verifyNoInteractions(accountManager);
   }
 
