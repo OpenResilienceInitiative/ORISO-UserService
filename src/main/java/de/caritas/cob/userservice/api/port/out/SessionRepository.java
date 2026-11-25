@@ -211,13 +211,16 @@ public interface SessionRepository extends CrudRepository<Session, Long>, Sessio
       boolean isTeamSession);
 
   /**
-   * Accepted team sessions with a case room, in id order after {@code afterId}: the sweep of {@code
-   * TeamSessionReadOnlyRepairScheduler} (FE#2494 *4, decision d).
+   * Accepted Teamberatung 1:1 cases with a case room (group chats excluded), in id order after
+   * {@code afterId}: the sweep of {@code TeamSessionReadOnlyRepairScheduler} (FE#2494 *4, decision
+   * d).
    */
   @Query(
       """
       select s.id from Session s
       where s.teamSession = true and s.status = :status and s.consultant is not null
+        and (s.conversationType is null
+          or s.conversationType = de.caritas.cob.userservice.api.model.ConversationType.AGENCY_COUNSELLING)
         and s.matrixRoomId is not null and s.id > :afterId
       order by s.id asc
       """)

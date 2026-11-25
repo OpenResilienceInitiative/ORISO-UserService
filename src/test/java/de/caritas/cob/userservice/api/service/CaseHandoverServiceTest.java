@@ -3,6 +3,7 @@ package de.caritas.cob.userservice.api.service;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -3710,6 +3711,7 @@ class CaseHandoverServiceTest {
     // owner.
     session.setTeamSession(true);
     session.setStatus(Session.SessionStatus.IN_PROGRESS);
+    when(caseSharingGate.isTeamCounselling(any(), any())).thenReturn(true);
 
     CaseHandoverStatus status = caseHandoverService.getStatus(123L);
 
@@ -3718,6 +3720,32 @@ class CaseHandoverServiceTest {
     assertEquals("TEAM_READER", status.getAuditOutcome());
     assertNull(status.getAccessType());
     verify(caseHandoverRequestRepository, never()).save(any());
+  }
+
+  @Test
+  void getStatus_endsTeamReadingOnceTheCentreLeftTeamberatung() {
+    // The team flag stays on old sessions; the centre's current choice decides.
+    session.setTeamSession(true);
+    session.setStatus(Session.SessionStatus.IN_PROGRESS);
+    when(caseSharingGate.isTeamCounselling(any(), any())).thenReturn(false);
+
+    CaseHandoverStatus status = caseHandoverService.getStatus(123L);
+
+    assertEquals("NOT_REQUESTED", status.getStatus());
+    assertFalse(status.isCanViewContent());
+  }
+
+  @Test
+  void getStatus_neverMakesAGroupChatColleagueATeamReader() {
+    session.setTeamSession(true);
+    session.setStatus(Session.SessionStatus.IN_PROGRESS);
+    session.setConversationType(
+        de.caritas.cob.userservice.api.model.ConversationType.INTERNAL_GROUP);
+
+    CaseHandoverStatus status = caseHandoverService.getStatus(123L);
+
+    assertNotEquals("TEAM_READER", status.getAuditOutcome());
+    verify(caseSharingGate, never()).isTeamCounselling(any(), any());
   }
 
   @Test
@@ -3839,6 +3867,7 @@ class CaseHandoverServiceTest {
   void searchCandidates_offersAColleaguesTeamCaseForReading_withoutARequest() {
     // FE#2494 *4: search a colleague, press Enter, open one of their cases and read it.
     session.setTeamSession(true);
+    when(caseSharingGate.isTeamCounselling(any(), any())).thenReturn(true);
     givenCandidates(session);
 
     var status =

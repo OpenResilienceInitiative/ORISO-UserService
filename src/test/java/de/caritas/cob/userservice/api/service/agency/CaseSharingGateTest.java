@@ -119,6 +119,27 @@ class CaseSharingGateTest {
     assertThatThrownBy(this::requireMailberatung).isInstanceOf(ServiceUnavailableException.class);
   }
 
+  @Test
+  void isTeamCounselling_onlyWhileTheCentreHasChosenTeamberatung() {
+    givenMode(AgencyCaseSharingPolicy.ValueEnum.TEAM_COUNSELLING);
+    assertThat(gate.isTeamCounselling(5L, 1L)).isTrue();
+  }
+
+  @Test
+  void isTeamCounselling_isFalseAfterASwitchToCaseHandoverOrNone() {
+    givenMode(AgencyCaseSharingPolicy.ValueEnum.CASE_HANDOVER);
+    assertThat(gate.isTeamCounselling(5L, 1L)).isFalse();
+    givenMode(AgencyCaseSharingPolicy.ValueEnum.NONE);
+    assertThat(gate.isTeamCounselling(5L, 1L)).isFalse();
+  }
+
+  @Test
+  void isTeamCounselling_failsClosedWhenTheSettingCannotBeRead() {
+    when(lookup.findEffectiveSettings(5L, 1L))
+        .thenThrow(new org.springframework.web.client.ResourceAccessException("down"));
+    assertThat(gate.isTeamCounselling(5L, 1L)).isFalse();
+  }
+
   private void requireMailberatung() {
     gate.requireCaseHandover(5L, 1L, ConversationType.AGENCY_COUNSELLING);
   }

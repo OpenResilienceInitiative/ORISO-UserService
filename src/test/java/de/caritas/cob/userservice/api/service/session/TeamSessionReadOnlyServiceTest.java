@@ -5,25 +5,34 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
+import de.caritas.cob.userservice.api.model.CaseHandoverRequest;
 import de.caritas.cob.userservice.api.model.Consultant;
+import de.caritas.cob.userservice.api.model.ConversationType;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.SessionSupervisor;
 import de.caritas.cob.userservice.api.model.User;
+import de.caritas.cob.userservice.api.port.out.CaseHandoverRequestRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.port.out.SessionSupervisorRepository;
 import de.caritas.cob.userservice.api.port.out.TeamSessionRoomAccess;
+import de.caritas.cob.userservice.api.service.agency.CaseSharingGate;
+import java.time.Clock;
+import java.time.Instant;
+import java.time.LocalDateTime;
+import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
@@ -42,7 +51,93 @@ class TeamSessionReadOnlyServiceTest {
   @Mock ConsultantRepository consultants;
   @Mock SessionSupervisorRepository supervisors;
   @Mock SessionRepository sessions;
-  @InjectMocks TeamSessionReadOnlyService service;
+  @Mock CaseSharingGate caseSharingGate;
+  @Mock CaseHandoverRequestRepository handoverRequests;
+  TeamSessionReadOnlyService service;
+
+  private static final Clock CLOCK =
+      Clock.fixed(Instant.parse("2026-11-25T10:00:00Z"), ZoneOffset.UTC);
+
+  @BeforeEach
+  void setUp() {
+    service =
+        new TeamSessionReadOnlyService(
+            matrix, consultants, supervisors, sessions, caseSharingGate, handoverRequests, CLOCK);
+    lenient().when(caseSharingGate.isTeamCounselling(7L, 1L)).thenReturn(true);
+  }
+
+  @Test
+  void aGroupChatIsNeverLoweredEvenWithTheTeamFlag() {
+    var session = session();
+    session.setConversationType(ConversationType.INTERNAL_GROUP);
+
+    assertThat(service.enforce(session)).isTrue();
+    session.setConversationType(ConversationType.SELF_HELP);
+    assertThat(service.enforce(session)).isTrue();
+    verifyNoInteractions(matrix);
+  }
+
+  @Test
+  void aCentreThatLeftTeamberatungIsLeftAsItIs() {
+    var session = session();
+    when(caseSharingGate.isTeamCounselling(7L, 1L)).thenReturn(false);
+
+    assertThat(service.enforce(session)).isTrue();
+    verifyNoInteractions(matrix);
+  }
+
+  @Test
+  void aColleagueWithAnActiveHandoverGrantKeepsWriting() {
+    var session = current(session());
+    var grant = new CaseHandoverRequest();
+    grant.setRequesterConsultant(consultant(COLLEAGUE));
+    grant.setExpiresAt(LocalDateTime.of(2026, 11, 26, 10, 0));
+    when(handoverRequests.findBySessionIdAndStatusOrderByCreatedAtDesc(
+            42L, CaseHandoverRequest.Status.GRANTED))
+        .thenReturn(List.of(grant));
+    when(matrix.getRoomMembers(ROOM)).thenReturn(Optional.of(List.of(OWNER, ASKER, COLLEAGUE)));
+
+    assertThat(service.enforce(session)).isTrue();
+    verify(matrix, never()).makeUserReadOnly(any(), any(), eq(-1), any(), any(), any());
+  }
+
+  @Test
+  void anExpiredGrantNoLongerExemptsTheColleague() {
+    var session = current(session());
+    var grant = new CaseHandoverRequest();
+    grant.setRequesterConsultant(consultant(COLLEAGUE));
+    grant.setExpiresAt(LocalDateTime.of(2026, 11, 24, 10, 0));
+    when(handoverRequests.findBySessionIdAndStatusOrderByCreatedAtDesc(
+            42L, CaseHandoverRequest.Status.GRANTED))
+        .thenReturn(List.of(grant));
+    when(matrix.getRoomMembers(ROOM)).thenReturn(Optional.of(List.of(OWNER, COLLEAGUE)));
+    when(consultants.findAllByMatrixUserIdInAndDeleteDateIsNull(List.of(COLLEAGUE)))
+        .thenReturn(List.of(consultant(COLLEAGUE)));
+    when(matrix.loginAsUserAccessToken(OWNER)).thenReturn("owner-token");
+    when(matrix.getPowerLevels(ROOM, "owner-token"))
+        .thenReturn(Optional.of(Map.of("users", Map.of(OWNER, 100))));
+    when(matrix.makeUserReadOnly(ROOM, COLLEAGUE, -1, OWNER, "owner-token", null))
+        .thenReturn(Optional.of(-1));
+
+    assertThat(service.enforce(session)).isTrue();
+  }
+
+  @Test
+  void aReassignmentDuringTheRunNeverLowersTheNewOwner() {
+    var session = session();
+    var reassigned = session();
+    reassigned.setConsultant(consultant(COLLEAGUE));
+    when(sessions.findById(42L)).thenReturn(Optional.of(reassigned));
+    when(matrix.getRoomMembers(ROOM)).thenReturn(Optional.of(List.of(OWNER, COLLEAGUE)));
+    when(consultants.findAllByMatrixUserIdInAndDeleteDateIsNull(List.of(COLLEAGUE)))
+        .thenReturn(List.of(consultant(COLLEAGUE)));
+    when(matrix.loginAsUserAccessToken(OWNER)).thenReturn("owner-token");
+    when(matrix.getPowerLevels(ROOM, "owner-token"))
+        .thenReturn(Optional.of(Map.of("users", Map.of(OWNER, 100))));
+
+    assertThat(service.enforce(session)).isFalse();
+    verify(matrix, never()).makeUserReadOnly(any(), any(), eq(-1), any(), any(), any());
+  }
 
   @Test
   void aSessionOutsideTeamCounsellingIsLeftAsItIs() {
@@ -55,7 +150,7 @@ class TeamSessionReadOnlyServiceTest {
 
   @Test
   void lowersEveryColleagueButNeverTheOwnerTheAskerASupervisorOrATechnicalAccount() {
-    var session = session();
+    var session = current(session());
     when(matrix.getRoomMembers(ROOM))
         .thenReturn(
             Optional.of(List.of(OWNER, ASKER, COLLEAGUE, FORMER_OWNER, SUPERVISOR, TECHNICAL)));
@@ -102,7 +197,7 @@ class TeamSessionReadOnlyServiceTest {
 
   @Test
   void unreadableMembersOrARefusedWriteStaysPendingForTheRepairJob() {
-    var session = session();
+    var session = current(session());
     when(matrix.getRoomMembers(ROOM)).thenReturn(Optional.empty());
     assertThat(service.enforce(session)).isFalse();
 
@@ -124,6 +219,11 @@ class TeamSessionReadOnlyServiceTest {
     verify(matrix, never()).getRoomMembers(isNull());
   }
 
+  private Session current(Session session) {
+    lenient().when(sessions.findById(42L)).thenReturn(Optional.of(session));
+    return session;
+  }
+
   private static Session session() {
     var asker = new User();
     asker.setMatrixUserId(ASKER);
@@ -133,6 +233,9 @@ class TeamSessionReadOnlyServiceTest {
     session.setMatrixRoomId(ROOM);
     session.setUser(asker);
     session.setConsultant(consultant(OWNER));
+    session.setAgencyId(7L);
+    session.setTenantId(1L);
+    session.setConversationType(ConversationType.AGENCY_COUNSELLING);
     return session;
   }
 

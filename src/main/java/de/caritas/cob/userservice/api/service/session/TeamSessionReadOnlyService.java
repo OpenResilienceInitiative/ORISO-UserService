@@ -2,15 +2,21 @@ package de.caritas.cob.userservice.api.service.session;
 
 import static org.apache.commons.lang3.StringUtils.isBlank;
 
+import de.caritas.cob.userservice.api.model.CaseHandoverRequest;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.SessionSupervisor;
+import de.caritas.cob.userservice.api.port.out.CaseHandoverRequestRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.port.out.SessionSupervisorRepository;
 import de.caritas.cob.userservice.api.port.out.TeamSessionRoomAccess;
+import de.caritas.cob.userservice.api.service.agency.CaseSharingGate;
+import java.time.Clock;
+import java.time.LocalDateTime;
 import java.util.HashSet;
 import java.util.LinkedHashSet;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
@@ -24,8 +30,12 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
 /**
  * Teamberatung is read-only for colleagues (FE#2494 *4, decision d): in a team session only the
  * assigned counsellor writes. Every other counsellor in the case room is lowered to the reader
- * power level, the same level a case-handover co-access viewer gets. The advice seeker, the owner
- * and active supervisors keep their level.
+ * power level, the same level a case-handover co-access viewer gets. The advice seeker, the owner,
+ * active supervisors and counsellors holding an active case handover grant (absence cover) keep
+ * their level.
+ *
+ * <p>Applies only to 1:1 counselling cases ({@link Session#isTeamCounsellingCase()}), never to
+ * group chats, and only while the centre's current case sharing model is Teamberatung.
  *
  * <p>Only ever lowers a power level, so it is safe to repeat. Matrix is the only hard boundary for
  * sending: there is no REST send endpoint.
@@ -41,6 +51,14 @@ public class TeamSessionReadOnlyService {
   private final @NonNull ConsultantRepository consultants;
   private final @NonNull SessionSupervisorRepository supervisors;
   private final @NonNull SessionRepository sessions;
+  private final @NonNull CaseSharingGate caseSharingGate;
+  private final @NonNull CaseHandoverRequestRepository handoverRequests;
+  private final @NonNull Clock clock;
+
+  private static final List<CaseHandoverRequest.Status> ACTIVE_GRANTS =
+      List.of(
+          CaseHandoverRequest.Status.GRANTED,
+          CaseHandoverRequest.Status.GRANTED_PENDING_CLIENT_OPTOUT);
 
   /** Enforces once the caller's transaction has committed; the repair job retries a failure. */
   public void enforceAfterCommit(Long sessionId) {
@@ -77,7 +95,11 @@ public class TeamSessionReadOnlyService {
    *     when Matrix could not be read or a colleague could not be lowered
    */
   public boolean enforce(Session session) {
-    if (session == null || !session.isTeamSession()) {
+    if (session == null || !session.isTeamCounsellingCase()) {
+      return true;
+    }
+    if (session.getAgencyId() == null
+        || !caseSharingGate.isTeamCounselling(session.getAgencyId(), session.getTenantId())) {
       return true;
     }
     Consultant owner = session.getConsultant();
@@ -107,6 +129,12 @@ public class TeamSessionReadOnlyService {
       int colleaguePower = power(powerLevels.get(), colleagueId);
       if (colleaguePower <= READER_POWER_LEVEL) {
         continue;
+      }
+      // A reassignment may have happened since the room was read: never lower the current owner.
+      if (!ownerStillIs(session.getId(), owner.getMatrixUserId(), colleagueId)) {
+        log.warn(
+            "Team read-only access for session {} stopped: the owner changed", session.getId());
+        return false;
       }
       // Matrix forbids lowering an equal peer (a former owner after a reassignment), but lets that
       // peer lower itself; makeUserReadOnly uses the member token only for that case.
@@ -143,6 +171,20 @@ public class TeamSessionReadOnlyService {
         .map(Consultant::getMatrixUserId)
         .filter(Objects::nonNull)
         .forEach(exempt::add);
+    // Absence cover and other handovers: a granted colleague keeps the access the grant gave.
+    LocalDateTime now = LocalDateTime.now(clock);
+    ACTIVE_GRANTS.stream()
+        .flatMap(
+            status ->
+                handoverRequests
+                    .findBySessionIdAndStatusOrderByCreatedAtDesc(session.getId(), status)
+                    .stream())
+        .filter(grant -> grant.getExpiresAt() == null || grant.getExpiresAt().isAfter(now))
+        .map(CaseHandoverRequest::getRequesterConsultant)
+        .filter(Objects::nonNull)
+        .map(Consultant::getMatrixUserId)
+        .filter(Objects::nonNull)
+        .forEach(exempt::add);
     var candidates = members.stream().filter(id -> !exempt.contains(id)).toList();
     if (candidates.isEmpty()) {
       return Set.of();
@@ -154,6 +196,15 @@ public class TeamSessionReadOnlyService {
         .filter(id -> !isBlank(id) && !exempt.contains(id))
         .forEach(colleagues::add);
     return colleagues;
+  }
+
+  private boolean ownerStillIs(Long sessionId, String ownerMatrixId, String colleagueId) {
+    var current = sessions.findById(sessionId).map(Session::getConsultant).orElse(null);
+    if (current == null || isBlank(current.getMatrixUserId())) {
+      return false;
+    }
+    return current.getMatrixUserId().equals(ownerMatrixId)
+        && !current.getMatrixUserId().equals(colleagueId);
   }
 
   private static int power(Map<String, Object> powerLevels, String userId) {

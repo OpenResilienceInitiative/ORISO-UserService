@@ -51,6 +51,27 @@ public class CaseSharingGate {
     }
   }
 
+  /**
+   * FE#2494 *4: whether the centre's current case sharing model is Teamberatung, so colleagues may
+   * read its team cases. An AgencyService that predates #374 serves no {@code caseSharing}; then
+   * the session's own team flag (checked by the caller) decides alone. A refused or failed read is
+   * "no": nobody gains read access on an unknown setting.
+   */
+  public boolean isTeamCounselling(Long agencyId, Long tenantId) {
+    Settings settings;
+    try {
+      settings = readSettings(agencyId, tenantId);
+    } catch (RuntimeException unavailableOrRefused) {
+      return false;
+    }
+    if (settings == null) {
+      return false;
+    }
+    AgencyCaseSharingPolicy caseSharing = settings.getCaseSharing();
+    return caseSharing == null
+        || caseSharing.getValue() == AgencyCaseSharingPolicy.ValueEnum.TEAM_COUNSELLING;
+  }
+
   private Settings readSettings(Long agencyId, Long tenantId) {
     try {
       return effectiveAgencySettingsLookup.findEffectiveSettings(agencyId, tenantId).orElse(null);

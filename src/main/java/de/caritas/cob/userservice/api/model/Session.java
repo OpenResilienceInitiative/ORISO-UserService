@@ -348,6 +348,17 @@ public class Session implements TenantAware, SessionRoom {
         || conversationType == ConversationType.LIVE_CHAT;
   }
 
+  /**
+   * FE#2494 *4: a Teamberatung 1:1 case, the only kind whose colleagues become readers. Group chats
+   * also carry {@code teamSession} (see {@code CreateChatFacade}) but are never counselling cases;
+   * legacy rooms without a modality are 1:1 cases.
+   */
+  @JsonIgnore
+  public boolean isTeamCounsellingCase() {
+    return teamSession
+        && (conversationType == null || conversationType == ConversationType.AGENCY_COUNSELLING);
+  }
+
   @JsonIgnore
   public boolean isAdvisedBy(Consultant consultant) {
     return nonNull(this.consultant) && nonNull(consultant) && this.consultant.equals(consultant);

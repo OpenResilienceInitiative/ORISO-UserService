@@ -661,7 +661,7 @@ public class CaseHandoverService {
 
     // FE#2494 *4 (decision d): in Teamberatung every counsellor of the department reads the case
     // without a request; writing stays with the owner (TeamSessionReadOnlyService).
-    if (isTeamReader(session)) {
+    if (isTeamReader(session, new java.util.HashMap<>())) {
       return CaseHandoverStatus.builder()
           .sessionId(sessionId)
           .status(Status.GRANTED.name())
@@ -891,13 +891,14 @@ public class CaseHandoverService {
                 .collect(
                     Collectors.toMap(CandidateStatusRequest::getSessionId, Function.identity()));
     LocalDateTime now = LocalDateTime.now(clock);
+    Map<Long, Boolean> teamCentres = new java.util.HashMap<>();
     List<ConsultantSessionResponseDTO> page =
         pageSessions.stream()
             .map(
                 candidate ->
                     toCandidateDto(candidate, agencyNames)
                         .caseHandoverStatus(
-                            isTeamReader(candidate)
+                            isTeamReader(candidate, teamCentres)
                                 ? teamReaderCandidateStatus()
                                 : candidateStatus(requestsBySession.get(candidate.getId()), now)))
             .collect(Collectors.toList());
@@ -2036,11 +2037,22 @@ public class CaseHandoverService {
     return username == null ? null : new UsernameTranscoder().decodeUsername(username);
   }
 
-  /** Department eligibility is checked before; the team reader needs an accepted team case. */
-  private static boolean isTeamReader(Session session) {
-    return session.isTeamSession()
-        && session.getConsultant() != null
-        && session.getStatus() == Session.SessionStatus.IN_PROGRESS;
+  /**
+   * Department eligibility is checked before. The team reader needs an accepted Teamberatung 1:1
+   * case in a centre whose <em>current</em> case sharing model is Teamberatung: after a switch to
+   * case handover or "none" the old team flag no longer opens the case, and a case handover centre
+   * keeps its request, handover and reclaim flow.
+   */
+  private boolean isTeamReader(Session session, Map<Long, Boolean> teamCentres) {
+    if (!session.isTeamCounsellingCase()
+        || session.getConsultant() == null
+        || session.getStatus() != Session.SessionStatus.IN_PROGRESS
+        || session.getAgencyId() == null) {
+      return false;
+    }
+    return teamCentres.computeIfAbsent(
+        session.getAgencyId(),
+        agencyId -> caseSharingGate.isTeamCounselling(agencyId, session.getTenantId()));
   }
 
   private void verifyEligibleForSession(Session session, Consultant requester) {
