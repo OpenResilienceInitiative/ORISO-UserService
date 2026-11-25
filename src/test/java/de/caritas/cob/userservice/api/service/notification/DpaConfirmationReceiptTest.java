@@ -34,6 +34,7 @@ import de.caritas.cob.userservice.api.service.email.sender.SenderOrganisationRes
 import de.caritas.cob.userservice.api.service.emailsupplier.TenantTemplateSupplier;
 import de.caritas.cob.userservice.tenantadminservice.generated.web.model.DpaSignatureDTO;
 import de.caritas.cob.userservice.tenantservice.generated.web.model.RestrictedTenantDTO;
+import java.time.Clock;
 import java.time.Instant;
 import java.util.HashMap;
 import java.util.List;
@@ -88,7 +89,14 @@ class DpaConfirmationReceiptTest {
                         .primaryColor("#1c4f8f")));
     when(transactionManager.getTransaction(any())).thenReturn(new SimpleTransactionStatus());
     when(noticeRepository.save(any(DpaSignedNotice.class)))
-        .thenAnswer(invocation -> invocation.getArgument(0));
+        .thenAnswer(
+            invocation -> {
+              DpaSignedNotice notice = invocation.getArgument(0);
+              if (notice.getId() == null) notice.setId((long) notice.getNoticeRole().ordinal() + 1);
+              return notice;
+            });
+    when(noticeRepository.lockAdminPreparation(eq(1L), any()))
+        .thenReturn(Optional.of(new DpaSignedNotice()));
     when(templateRepository.findByKindAndActiveTrueAndTenantIdIsNullOrderByCreateDateDesc(
             InviteEmailTemplateKind.DPA_SIGNED_NOTICE))
         .thenReturn(List.of());
@@ -244,6 +252,7 @@ class DpaConfirmationReceiptTest {
         .thenAnswer(
             invocation -> {
               DpaSignedNotice notice = invocation.getArgument(0);
+              if (notice.getId() == null) notice.setId((long) notice.getNoticeRole().ordinal() + 1);
               DpaSignedNotice existing = ledger.putIfAbsent(notice.getNoticeRole(), notice);
               if (existing != null && existing != notice) {
                 throw new DataIntegrityViolationException("duplicate recipient role");
@@ -304,7 +313,8 @@ class DpaConfirmationReceiptTest {
             tenantService,
             transactionManager,
             metrics,
-            new AdminPanelUrl("https://admin.example.org"));
+            new AdminPanelUrl("https://admin.example.org"),
+            Clock.systemUTC());
     service.useExecutor(Runnable::run);
 
     return service;

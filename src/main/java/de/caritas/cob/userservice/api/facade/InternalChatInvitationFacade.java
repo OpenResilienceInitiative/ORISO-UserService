@@ -67,6 +67,8 @@ public class InternalChatInvitationFacade {
   private final @NonNull ChatAgencyRepository chatAgencyRepository;
   private final @NonNull PlatformTransactionManager transactions;
   private final @NonNull GroupChatMembershipService groupChatMembershipService;
+  private final @NonNull de.caritas.cob.userservice.api.service.matrix.GroupModeratorPowerService
+      moderatorPower;
 
   /** What the read phase found: the room, who invites and the row to write after the join. */
   private record Admission(
@@ -115,6 +117,14 @@ public class InternalChatInvitationFacade {
       } catch (RuntimeException failure) {
         compensateJoin(admission, colleagueToken, failure);
       }
+      // An invited colleague is a co-moderator and may blur passages (ORISO-Frontend#2229).
+      // Raised under the participant-row lock a removal or leave takes, and only while the
+      // colleague is still in: a removal in between leaves no level behind.
+      moderatorPower.grantCurrentModerators(
+          admission.row().getSeriesId(),
+          admission.matrixRoomId(),
+          admission.ownerMatrixId(),
+          List.of(admission.colleagueMatrixId()));
       return true;
     }
   }

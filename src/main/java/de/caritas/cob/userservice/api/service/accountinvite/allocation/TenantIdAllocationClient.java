@@ -11,7 +11,9 @@ import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
+import org.springframework.util.StringUtils;
 import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.RestClientException;
 
@@ -52,25 +54,60 @@ public class TenantIdAllocationClient {
     return IdAllocationStatus.valueOf(availability.getStatus().getValue());
   }
 
+  public boolean hasReservationProof(long tenantId, String reservationToken) {
+    if (!StringUtils.hasText(reservationToken)) {
+      return false;
+    }
+    try {
+      return HttpStatus.NO_CONTENT.equals(
+          createControllerApi()
+              .checkTenantIdReservationProofWithHttpInfo(tenantId, reservationToken)
+              .getStatusCode());
+    } catch (HttpClientErrorException.NotFound | HttpClientErrorException.MethodNotAllowed e) {
+      return false;
+    }
+  }
+
+  /** Checks whether the original reservation became the current assignment. */
+  public boolean hasAssignmentProof(long tenantId, String reservationToken) {
+    if (!StringUtils.hasText(reservationToken)) {
+      return false;
+    }
+    try {
+      return HttpStatus.NO_CONTENT.equals(
+          createControllerApi()
+              .checkTenantIdAssignmentProofWithHttpInfo(tenantId, reservationToken)
+              .getStatusCode());
+    } catch (HttpClientErrorException.NotFound | HttpClientErrorException.MethodNotAllowed e) {
+      return false;
+    } catch (RestClientException exception) {
+      // An upstream response can echo the reservation proof in its body.
+      throw new RestClientException(
+          "Tenant assignment proof check failed (" + exception.getClass().getSimpleName() + ")");
+    }
+  }
+
   /**
-   * Releases an unconsumed reservation so the ID becomes assignable again.
+   * Releases the specific reservation using its original proof. An old provider or a transport
+   * failure leaves the task retryable.
    *
    * @return whether the reservation is now confirmed released; transient failures return false so
    *     callers can retain a durable retry task without masking the original creation failure
    */
-  public boolean release(long tenantId) {
+  public boolean release(long tenantId, String reservationToken) {
+    if (!StringUtils.hasText(reservationToken)) {
+      return false;
+    }
     try {
-      createControllerApi().releaseTenantIdReservation(tenantId);
-      return true;
-    } catch (HttpClientErrorException.NotFound exception) {
-      log.info("Tenant ID reservation {} was already released", tenantId);
-      return true;
+      return HttpStatus.NO_CONTENT.equals(
+          createControllerApi()
+              .releaseTenantIdReservationWithProofWithHttpInfo(tenantId, reservationToken)
+              .getStatusCode());
     } catch (RestClientException exception) {
-      log.error(
-          "Failed to release tenant ID reservation {} — possible orphaned reservation in"
-              + " TenantService",
+      log.warn(
+          "Tenant reservation release {} remains pending ({})",
           tenantId,
-          exception);
+          exception.getClass().getSimpleName());
       return false;
     }
   }

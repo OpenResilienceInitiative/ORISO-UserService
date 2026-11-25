@@ -37,11 +37,9 @@ public class QueuedInviteReleaseListener {
       }
       Optional<String> token = technicalToken();
       if (token.isPresent()) {
-        TechnicalAccessTokenContext.offerDuring(
-            token.get(),
-            () -> unitQueue.release(event.unitType(), event.unitId(), event.tenantId()));
+        TechnicalAccessTokenContext.offerDuring(token.get(), () -> unitQueue.release(event));
       } else {
-        unitQueue.release(event.unitType(), event.unitId(), event.tenantId());
+        unitQueue.release(event);
       }
     } catch (RuntimeException exception) {
       log.error(

@@ -55,6 +55,9 @@ public class TeamDiscussionNotificationService {
   private final @NonNull SessionRepository sessionRepository;
   private final @NonNull EventNotificationService eventNotificationService;
   private final @NonNull AccountInactivityService accountLifecycle;
+  private final @NonNull de.caritas.cob.userservice.api.service.teamdiscussion
+          .TeamDiscussionFeatureGate
+      teamDiscussionGate;
   private final ObjectMapper paramsObjectMapper = new ObjectMapper();
 
   /**
@@ -73,7 +76,8 @@ public class TeamDiscussionNotificationService {
       return;
     }
     TeamDiscussion discussion = discussionOpt.get();
-    if (discussion.getStatus() == TeamDiscussion.Status.ARCHIVED) {
+    if (discussion.getStatus() != TeamDiscussion.Status.OPEN) {
+      // ARCHIVED, or CLOSED (switched off): nobody can post, nothing to notify.
       return;
     }
     Optional<Session> sessionOpt = sessionRepository.findById(discussion.getSessionId());
@@ -81,9 +85,15 @@ public class TeamDiscussionNotificationService {
       return;
     }
     Session session = sessionOpt.get();
-    if (session.getConsultant() != null || session.getStatus() == Session.SessionStatus.REJECTED) {
+    if (discussion.getAgencyId() != null
+        && !discussion.getAgencyId().equals(session.getAgencyId())) {
+      // D4: the case moved away; the new Beratungsstelle never hears of the old team chat.
+      return;
+    }
+    if (session.getStatus() == Session.SessionStatus.REJECTED || !teamChatSwitchedOn(session)) {
       // Create/accept race guard: once the case is accepted, an OPEN row must not keep
-      // notifying — the facade lazily archives it on next access.
+      // notifying — the facade lazily archives it on next access — unless the team chat
+      // continues after acceptance (FE#2491). A switched-off team chat never notifies.
       return;
     }
 
@@ -254,5 +264,24 @@ public class TeamDiscussionNotificationService {
         + session.getId()
         + "&teamDiscussion=1&roomId="
         + discussion.getMatrixRoomId();
+  }
+
+  /**
+   * Open enquiry: the team chat switch (FE#2491); accepted case: the switch to continue after
+   * acceptance, which includes it. Settings that cannot be read: no notification rather than a
+   * failed message fan-out.
+   */
+  private boolean teamChatSwitchedOn(Session session) {
+    try {
+      return session.getConsultant() == null
+          ? teamDiscussionGate.isEnabled(session)
+          : teamDiscussionGate.continuesAfterAccept(session);
+    } catch (RuntimeException unavailable) {
+      log.warn(
+          "Team discussion notification for session {} skipped: {}",
+          session.getId(),
+          unavailable.getClass().getSimpleName());
+      return false;
+    }
   }
 }

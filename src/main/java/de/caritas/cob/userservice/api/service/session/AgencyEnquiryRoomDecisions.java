@@ -2,21 +2,28 @@ package de.caritas.cob.userservice.api.service.session;
 
 import static de.caritas.cob.userservice.api.model.AgencyEnquiryRevocationTask.WAITING_FOR_ROOM_DECISION;
 
+import de.caritas.cob.userservice.api.exception.httpresponses.ConflictException;
 import de.caritas.cob.userservice.api.model.AgencyEnquiryRevocationTask;
 import de.caritas.cob.userservice.api.model.AgencyEnquiryRoomDecision;
 import de.caritas.cob.userservice.api.model.AgencyEnquiryRoomDecision.Outcome;
 import de.caritas.cob.userservice.api.model.ConsultantAgency;
 import de.caritas.cob.userservice.api.model.ConversationType;
 import de.caritas.cob.userservice.api.model.Session;
+import de.caritas.cob.userservice.api.model.Session.SessionStatus;
 import de.caritas.cob.userservice.api.port.out.AgencyEnquiryRevocationTaskRepository;
 import de.caritas.cob.userservice.api.port.out.AgencyEnquiryRoomDecisionRepository;
 import java.time.Clock;
+import java.time.Duration;
 import java.time.LocalDateTime;
+import java.util.Collections;
 import java.util.List;
 import java.util.Optional;
 import lombok.RequiredArgsConstructor;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.lang.Nullable;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Isolation;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -25,6 +32,24 @@ import org.springframework.transaction.annotation.Transactional;
 @RequiredArgsConstructor
 @Transactional(propagation = Propagation.MANDATORY)
 public class AgencyEnquiryRoomDecisions {
+
+  static final int SWEEP_TRANSACTION_TIMEOUT_SECONDS = 5;
+  private static final Duration PREPARATION_LEASE = Duration.ofMinutes(2);
+  // Departures that already have an event order can still use REPLACED or REOPENED decisions.
+  // REUSED deliberately keeps silent membership, so such a departure cannot select it.
+  private static final String ERASABLE =
+      """
+      outcome = 'REUSED'
+      AND resolved_order IS NOT NULL
+      AND prepared_until IS NULL
+      AND NOT EXISTS (
+        SELECT 1 FROM session s WHERE s.id = agency_enquiry_room_decision.session_id
+      )
+      AND NOT EXISTS (
+        SELECT 1 FROM agency_enquiry_revocation_task t
+        WHERE t.room_decision_id = agency_enquiry_room_decision.id
+      )
+      """;
 
   private final AgencyEnquiryRoomDecisionRepository decisions;
   private final AgencyEnquiryRevocationTaskRepository tasks;
@@ -36,8 +61,106 @@ public class AgencyEnquiryRoomDecisions {
         && session.getConversationType() != ConversationType.LIVE_CHAT;
   }
 
-  void begin(Session accepted) {
-    decisions.save(new AgencyEnquiryRoomDecision(accepted));
+  void begin(Session accepted, SessionStatus openingStatus) {
+    decisions.save(
+        new AgencyEnquiryRoomDecision(
+            accepted, openingStatus, LocalDateTime.now(clock).plus(PREPARATION_LEASE)));
+  }
+
+  /** Start the work, or settle an expired preparation and return its original open status. */
+  Optional<SessionStatus> startExternalWork(Session current) {
+    var decision =
+        decisions
+            .lockDecision(current.getId(), current.getOwnershipRevision())
+            .filter(
+                candidate ->
+                    candidate.getOutcome() == Outcome.PENDING && candidate.matches(current))
+            .filter(candidate -> candidate.getPreparedUntil() != null)
+            .orElseThrow(this::preparationChanged);
+    if (decision.getPreparedUntil().isAfter(LocalDateTime.now(clock))) {
+      decision.clearPreparation();
+      return Optional.empty();
+    }
+    if (!hasOpeningStatus(decision)) {
+      throw preparationChanged();
+    }
+    settle(decision, Outcome.REOPENED);
+    return Optional.of(decision.getOpeningStatus());
+  }
+
+  private ConflictException preparationChanged() {
+    return new ConflictException("Enquiry room preparation is no longer current");
+  }
+
+  @Transactional(
+      propagation = Propagation.REQUIRES_NEW,
+      readOnly = true,
+      timeout = SWEEP_TRANSACTION_TIMEOUT_SECONDS)
+  List<AgencyEnquiryRoomDecision> expiredPreparations(int limit) {
+    return decisions.findByPreparedUntilLessThanEqualOrderByPreparedUntilAscIdAsc(
+        LocalDateTime.now(clock), PageRequest.of(0, limit));
+  }
+
+  /** Remove reused-room decisions only after physical erasure and dependent task completion. */
+  @Transactional(
+      propagation = Propagation.REQUIRES_NEW,
+      isolation = Isolation.READ_COMMITTED,
+      timeout = SWEEP_TRANSACTION_TIMEOUT_SECONDS)
+  void purgeErasedBatch(int limit) {
+    var candidates =
+        jdbc.queryForList(
+            "SELECT id FROM agency_enquiry_room_decision WHERE "
+                + ERASABLE
+                + " ORDER BY id LIMIT ?",
+            Long.class,
+            limit);
+    if (candidates.isEmpty()) {
+      return;
+    }
+
+    var selectedIds =
+        "id IN (" + String.join(", ", Collections.nCopies(candidates.size(), "?")) + ")";
+    var ids = candidates.toArray();
+    // A departure holds a shared decision lock until any dependent task is committed.
+    jdbc.queryForList(
+        "SELECT id FROM agency_enquiry_room_decision WHERE "
+            + selectedIds
+            + " ORDER BY id FOR UPDATE",
+        Long.class,
+        ids);
+    jdbc.update(
+        "DELETE FROM agency_enquiry_room_decision WHERE " + selectedIds + " AND " + ERASABLE, ids);
+  }
+
+  /** Lock decision after session, the same order used by the foreground room decision. */
+  Optional<SessionStatus> reopenExpiredPreparation(
+      AgencyEnquiryRoomDecision candidate, @Nullable Session current) {
+    var decision =
+        decisions
+            .lockDecision(candidate.getSessionId(), candidate.getOwnershipRevision())
+            .orElse(null);
+    if (decision == null
+        || decision.getOutcome() != Outcome.PENDING
+        || decision.getPreparedUntil() == null
+        || decision.getPreparedUntil().isAfter(LocalDateTime.now(clock))) {
+      return Optional.empty();
+    }
+    if (current == null
+        || current.getStatus() != SessionStatus.IN_PROGRESS
+        || current.getConsultant() == null
+        || !decision.matches(current)
+        || !hasOpeningStatus(decision)) {
+      // Keep ambiguous rows and their tasks held. They must not block the bounded sweep.
+      decision.clearPreparation();
+      return Optional.empty();
+    }
+    settle(decision, Outcome.REOPENED);
+    return Optional.of(decision.getOpeningStatus());
+  }
+
+  private boolean hasOpeningStatus(AgencyEnquiryRoomDecision decision) {
+    return decision.getOpeningStatus() != null
+        && AgencyOpenEnquiryMembership.OPEN_STATUSES.contains(decision.getOpeningStatus());
   }
 
   void resolve(Session accepted, Outcome outcome) {

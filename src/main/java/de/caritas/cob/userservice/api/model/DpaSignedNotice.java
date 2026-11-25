@@ -27,10 +27,14 @@ import lombok.ToString;
 @Entity
 @Table(
     name = "dpa_signed_notice",
-    uniqueConstraints =
-        @UniqueConstraint(
-            name = "uq_dpa_signed_notice_tenant_version_role",
-            columnNames = {"tenant_id", "dpa_version", "notice_role"}))
+    uniqueConstraints = {
+      @UniqueConstraint(
+          name = "uq_dpa_signed_notice_tenant_version_role",
+          columnNames = {"tenant_id", "dpa_version", "notice_role"}),
+      @UniqueConstraint(
+          name = "uq_dpa_admin_source_event",
+          columnNames = {"admin_source_event_id"})
+    })
 @Getter
 @Setter
 @NoArgsConstructor
@@ -70,6 +74,21 @@ public class DpaSignedNotice {
 
   @Column(name = "sent_at", columnDefinition = "datetime")
   private LocalDateTime sentAt;
+
+  /** Exact signing timestamp from the verified owner response, for new ADMIN work only. */
+  @Column(name = "admin_recovery_signature_at", length = 64, updatable = false)
+  private String adminRecoverySignatureAt;
+
+  /** Exact TenantService signature row, present only for independently verified outbox work. */
+  @Column(name = "admin_source_event_id", updatable = false)
+  private Long adminSourceEventId;
+
+  @Column(name = "admin_source_signed_at_epoch_millis", updatable = false)
+  private Long adminSourceSignedAtEpochMillis;
+
+  /** Non-null only while the verified ADMIN claim has not begun its mail handoff. */
+  @Column(name = "admin_next_attempt_at")
+  private LocalDateTime adminNextAttemptAt;
 
   @Column(name = "create_date", nullable = false, columnDefinition = "datetime")
   private LocalDateTime createDate;

@@ -2,21 +2,14 @@ package de.caritas.cob.userservice.api.service.notification;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
-import de.caritas.cob.userservice.api.model.CaseHandoverRequest;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.Session;
-import de.caritas.cob.userservice.api.model.SessionSupervisor;
 import de.caritas.cob.userservice.api.model.User;
-import de.caritas.cob.userservice.api.port.out.CaseHandoverRequestRepository;
-import de.caritas.cob.userservice.api.port.out.ConsultantAgencyRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
-import de.caritas.cob.userservice.api.port.out.SessionSupervisorRepository;
 import java.util.List;
 import java.util.Optional;
 import org.junit.jupiter.api.Test;
@@ -31,9 +24,6 @@ class MatrixCaseReplyActorAuthorizerTest {
   private de.caritas.cob.userservice.api.service.chat.MembersOnlyChatAccess membersOnlyChatAccess;
 
   @Mock ConsultantRepository consultants;
-  @Mock ConsultantAgencyRepository agencies;
-  @Mock CaseHandoverRequestRepository handovers;
-  @Mock SessionSupervisorRepository supervisors;
   @Mock MatrixSynapseService matrix;
   @InjectMocks MatrixCaseReplyActorAuthorizer authorizer;
 
@@ -49,7 +39,6 @@ class MatrixCaseReplyActorAuthorizerTest {
     assertThat(authorizer.isCurrentWriter(session, "@owner:matrix.example", false)).isTrue();
     assertThat(authorizer.isCurrentWriter(session, "@owner:matrix.example", true)).isTrue();
     assertThat(authorizer.isCurrentWriter(session, "@owner:matrix.example", true)).isFalse();
-    verifyNoInteractions(agencies, handovers, supervisors);
   }
 
   @Test
@@ -65,46 +54,22 @@ class MatrixCaseReplyActorAuthorizerTest {
   }
 
   @Test
-  void activeAgencyTeamMemberMayWriteButReadOnlyCoAccessCannot() {
+  void teamColleagueIsNoWriter_onlyTheAssignedCounsellorWrites() {
+    // FE#2494 *4 decision d: Teamberatung colleagues read only, so no reply mail goes out in
+    // their name.
     var session = session();
     session.setTeamSession(true);
     var team = consultant("team", "@team:matrix.example");
     team.setTeamConsultant(true);
     when(consultants.findByMatrixUserIdAndDeleteDateIsNull("@team:matrix.example"))
         .thenReturn(Optional.of(team));
-    when(agencies.existsByConsultantIdAndAgencyIdAndDeleteDateIsNull("team", 4711L))
-        .thenReturn(true);
-    when(handovers.findActiveGrantExcluding(eq(42L), eq("team"), eq(null), any(), any(), any()))
-        .thenReturn(List.of())
-        .thenReturn(
-            List.of(
-                CaseHandoverRequest.builder()
-                    .accessType(CaseHandoverRequest.AccessType.CO_ACCESS)
-                    .build()))
-        .thenReturn(
-            List.of(
-                CaseHandoverRequest.builder().reasonCode("COUNSELLOR_ASKED_FOR_ADVICE").build()));
-
-    assertThat(authorizer.isCurrentWriter(session, "@team:matrix.example", false)).isTrue();
-    assertThat(authorizer.isCurrentWriter(session, "@team:matrix.example", false)).isFalse();
-    assertThat(authorizer.isCurrentWriter(session, "@team:matrix.example", false)).isFalse();
-  }
-
-  @Test
-  void supervisorOrNonTeamAgencyMemberCannotSendAnAskerReplyMail() {
-    var session = session();
-    session.setTeamSession(true);
-    var team = consultant("team", "@team:matrix.example");
-    team.setTeamConsultant(true);
-    when(consultants.findByMatrixUserIdAndDeleteDateIsNull("@team:matrix.example"))
-        .thenReturn(Optional.of(team));
-    when(agencies.existsByConsultantIdAndAgencyIdAndDeleteDateIsNull("team", 4711L))
-        .thenReturn(true);
-    when(supervisors.findBySessionIdAndSupervisorConsultantIdAndIsActiveTrue(42L, "team"))
-        .thenReturn(Optional.of(new SessionSupervisor()));
+    when(consultants.findByMatrixUserIdAndDeleteDateIsNull("@owner:matrix.example"))
+        .thenReturn(Optional.of(session.getConsultant()));
 
     assertThat(authorizer.isCurrentWriter(session, "@team:matrix.example", false)).isFalse();
-    verifyNoInteractions(handovers, matrix);
+    assertThat(authorizer.isCurrentAssignedOrTeamWriter(session, team)).isFalse();
+    assertThat(authorizer.isCurrentWriter(session, "@owner:matrix.example", false)).isTrue();
+    verifyNoInteractions(matrix);
   }
 
   @Test
@@ -115,7 +80,7 @@ class MatrixCaseReplyActorAuthorizerTest {
 
     assertThat(authorizer.isCurrentAssignedOrTeamWriter(session, session.getConsultant())).isTrue();
     assertThat(authorizer.isCurrentWriter(session, "@owner:matrix.example", false)).isFalse();
-    verifyNoInteractions(consultants, agencies, handovers, supervisors, matrix);
+    verifyNoInteractions(consultants, matrix);
   }
 
   private static Session session() {

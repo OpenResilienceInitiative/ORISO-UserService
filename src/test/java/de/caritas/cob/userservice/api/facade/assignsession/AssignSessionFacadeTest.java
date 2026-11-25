@@ -31,6 +31,10 @@ class AssignSessionFacadeTest {
 
   @InjectMocks AssignSessionFacade assignSessionFacade;
   @Mock SessionAssignmentChatGateway sessionAssignmentChatGateway;
+
+  @Mock
+  de.caritas.cob.userservice.api.service.session.TeamSessionReadOnlyService teamSessionReadOnly;
+
   @Mock SessionService sessionService;
   @Mock EmailNotificationFacade emailNotificationFacade;
   @Mock AuthenticatedUser authenticatedUser;
@@ -113,5 +117,16 @@ class AssignSessionFacadeTest {
     assignSessionFacade.assignSession(session, consultantToAssign, authenticatedConsultant);
 
     verify(sessionSupervisorFacade).attachStandingSupervisorIfAssigned(42L, consultantToAssign);
+  }
+
+  /**
+   * FE#2494 *4: after a reassignment the colleagues kept in a team room, the former owner too,
+   * read.
+   */
+  @Test
+  void assignSession_makesTheKeptTeamColleaguesReaders() {
+    assignSessionFacade.assignSession(session, consultantToAssign, authenticatedConsultant);
+
+    verify(teamSessionReadOnly).enforceAfterCommit(42L);
   }
 }

@@ -135,6 +135,17 @@ public class ErstantwortTenantTextResolver {
    * @return plain text, or {@code null} when no usable text exists in any allowed language.
    */
   static String pick(Map<String, String> texts, String locale, boolean informal) {
+    var html = pickHtml(texts, locale, informal);
+    return html == null ? null : toPlainText(html);
+  }
+
+  /**
+   * The stored text {@link #pick} would choose, before it is reduced to plain text, so a caller can
+   * still read its link targets.
+   *
+   * @return the chosen HTML, or {@code null} when no usable text exists in any allowed language.
+   */
+  static String pickHtml(Map<String, String> texts, String locale, boolean informal) {
     if (texts == null || texts.isEmpty()) {
       return null;
     }
@@ -147,9 +158,8 @@ public class ErstantwortTenantTextResolver {
     addVariants(candidates, "en", informal);
     addVariants(candidates, "de", informal);
     for (var key : candidates) {
-      var plain = toPlainText(texts.get(key));
-      if (!plain.isEmpty()) {
-        return plain;
+      if (!toPlainText(texts.get(key)).isEmpty()) {
+        return texts.get(key);
       }
     }
     return null;

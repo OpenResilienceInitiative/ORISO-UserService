@@ -23,7 +23,12 @@ import org.hibernate.annotations.Filter;
  * accepted and is reachable read-only afterwards.
  */
 @Entity
-@Table(name = "team_discussion")
+@Table(
+    name = "team_discussion",
+    uniqueConstraints =
+        @jakarta.persistence.UniqueConstraint(
+            name = "uk_team_discussion_session_agency",
+            columnNames = {"session_id", "agency_id"}))
 @AllArgsConstructor
 @NoArgsConstructor
 @Getter
@@ -35,6 +40,11 @@ public class TeamDiscussion implements TenantAware {
 
   public enum Status {
     OPEN,
+    /**
+     * Switched off by a counsellor while the enquiry is still open (ORISO-Frontend#2491): the room
+     * is read-only like an archive, but switching on again reopens it. Never purged by retention.
+     */
+    CLOSED,
     ARCHIVED
   }
 
@@ -43,8 +53,16 @@ public class TeamDiscussion implements TenantAware {
   @Column(name = "id", updatable = false, nullable = false)
   private Long id;
 
-  @Column(name = "session_id", nullable = false, unique = true)
+  /**
+   * One discussion per case and Beratungsstelle (D4, FE#2491): when the case moves to another
+   * Beratungsstelle, the old discussion is archived and the new one may start its own.
+   */
+  @Column(name = "session_id", nullable = false)
   private Long sessionId;
+
+  /** The Beratungsstelle the discussion belongs to; null only on rows older than D4. */
+  @Column(name = "agency_id")
+  private Long agencyId;
 
   @Column(name = "matrix_room_id", nullable = false, length = 255)
   private String matrixRoomId;
@@ -59,6 +77,10 @@ public class TeamDiscussion implements TenantAware {
 
   @Column(name = "archive_date")
   private LocalDateTime archiveDate;
+
+  /** When the team chat was last switched off for its open enquiry; null while never closed. */
+  @Column(name = "closed_date")
+  private LocalDateTime closedDate;
 
   @Column(name = "created_by_consultant_id", length = 36)
   private String createdByConsultantId;

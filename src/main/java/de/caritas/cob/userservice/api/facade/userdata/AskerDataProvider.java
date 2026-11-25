@@ -124,11 +124,7 @@ public class AskerDataProvider {
     } catch (RestClientResponseException e) {
       // Do not block login when agency-service cannot provide metadata for this token/agency.
       // Return a minimal asker profile instead of surfacing agency errors as login failures.
-      log.warn(
-          "Could not load agencies for user {}: status={}, body={}",
-          user.getUserId(),
-          e.getStatusCode().value(),
-          e.getResponseBodyAsString());
+      log.warn("Could not load agencies for asker (status={})", e.getStatusCode().value());
       return List.of();
     }
   }

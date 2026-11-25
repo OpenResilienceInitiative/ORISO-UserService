@@ -7,6 +7,7 @@ import static de.caritas.cob.userservice.api.service.accountinvite.onboarding.On
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateAdminDTO;
 import de.caritas.cob.userservice.api.admin.service.admin.create.CreateAdminService;
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
+import de.caritas.cob.userservice.api.exception.httpresponses.ConflictException;
 import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException;
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
 import de.caritas.cob.userservice.api.helper.PasswordPolicy;
@@ -183,6 +184,7 @@ public class TenantAdminOnboardingService {
       return new OnboardingInviteState(resolved.invite(), false, null, null, true);
     }
     if (resolved.joinsExistingTenant()) {
+      assertExistingTenantAssignment(resolved.invite());
       // The Träger already has its own DPA; the invitee confirms nothing on its behalf.
       return new OnboardingInviteState(resolved.invite(), false, null, null, true);
     }
@@ -211,7 +213,7 @@ public class TenantAdminOnboardingService {
             if (expired != null) {
               return ResolvedOnboardingInvite.dead(expired);
             }
-            return joinsExistingTenant(invite)
+            return hasExistingTenantCandidate(invite)
                 ? ResolvedOnboardingInvite.openJoiningExistingTenant(invite)
                 : ResolvedOnboardingInvite.open(invite);
           }
@@ -269,7 +271,8 @@ public class TenantAdminOnboardingService {
       // noRollbackFor (see above) keeps the EXPIRED transition this just persisted.
       throw expired;
     }
-    if (joinsExistingTenant(invite)) {
+    if (hasExistingTenantCandidate(invite)) {
+      assertExistingTenantAssignment(invite);
       return joinExistingTenant(invite, command, now);
     }
     if (isBlank(command.organisationName())) {
@@ -380,8 +383,9 @@ public class TenantAdminOnboardingService {
       // Only now does the tenant exist whose inactivity policy the founding admin is enrolled in.
       createAdminService.enrollReservedTenantAdmin(admin);
       // The Admin's Träger tab dates "Träger angelegt" from this, for co-founders too.
-      accountInviteRepository.stampTraegerCreated(invite.getTenantId(), now);
-      publishTenantCreated(tenantId);
+      accountInviteRepository.stampTraegerCreated(
+          invite.getTenantId(), invite.getTenantIdReservationToken(), now);
+      publishTenantCreated(tenantId, invite.getTenantIdReservationToken());
       return new TenantAdminRegistrationResult(tenantId, otpInfo.secret(), otpInfo.secretQrCode());
     } catch (RuntimeException exception) {
       // Every database change rolls back with the exception; the Keycloak account is external
@@ -432,7 +436,9 @@ public class TenantAdminOnboardingService {
           "Tenant-admin onboarding of invite {} joined the existing tenant {}",
           invite.getId(),
           invite.getTenantId());
-      publishTenantCreated(invite.getTenantId());
+      if (invite.getTenantIdAllocationMode() != IdAllocationMode.EXISTING) {
+        publishTenantCreated(invite.getTenantId(), invite.getTenantIdReservationToken());
+      }
       return new TenantAdminRegistrationResult(
           invite.getTenantId(), otpInfo.secret(), otpInfo.secretQrCode());
     } catch (RuntimeException exception) {
@@ -442,23 +448,34 @@ public class TenantAdminOnboardingService {
   }
 
   /** Also a further admin of a new Träger: whoever registers first creates it. */
-  private boolean joinsExistingTenant(AccountInvite invite) {
+  private boolean hasExistingTenantCandidate(AccountInvite invite) {
     if (invite.getTenantIdAllocationMode() == IdAllocationMode.EXISTING) {
       return true;
     }
     return invite.getTenantId() != null
         && invite.getId() != null
-        && accountInviteRepository.existsByTargetRoleAndTenantIdAndStatusAndIdNot(
-            AccountInviteTargetRole.TENANT_ADMIN,
-            invite.getTenantId(),
-            AccountInviteStatus.ACCEPTED,
-            invite.getId());
+        && !isBlank(invite.getTenantIdReservationToken())
+        && accountInviteRepository
+            .existsByTargetRoleAndTenantIdAndTenantIdReservationTokenAndStatusAndIdNot(
+                AccountInviteTargetRole.TENANT_ADMIN,
+                invite.getTenantId(),
+                invite.getTenantIdReservationToken(),
+                AccountInviteStatus.ACCEPTED,
+                invite.getId());
+  }
+
+  private void assertExistingTenantAssignment(AccountInvite invite) {
+    if (invite.getTenantIdAllocationMode() != IdAllocationMode.EXISTING
+        && !tenantCreationClient.hasAssignmentProof(
+            invite.getTenantId(), invite.getTenantIdReservationToken())) {
+      throw new ConflictException("The original organisation assignment could not be verified");
+    }
   }
 
   /** The Träger exists and has an admin: release the invites waiting for it. */
-  private void publishTenantCreated(Long tenantId) {
+  private void publishTenantCreated(Long tenantId, String reservationProof) {
     eventPublisher.publishEvent(
-        new InviteUnitCreatedEvent(InviteUnitType.TENANT, tenantId, tenantId));
+        new InviteUnitCreatedEvent(InviteUnitType.TENANT, tenantId, tenantId, reservationProof));
   }
 
   /**
@@ -497,6 +514,12 @@ public class TenantAdminOnboardingService {
     // shape of this method).
     reserved.rethrowLinkDeath();
     AccountInvite invite = reserved.invite();
+    if (reserved.joiningExistingTenant()) {
+      assertExistingTenantAssignment(invite);
+      throw new BadRequestException(
+          "This invitation joins an existing tenant; its data processing agreement is not"
+              + " part of the onboarding");
+    }
 
     // The provider contract is checked BEFORE anything is recorded and regardless of whether a
     // mail follows. A missing or unparseable expiry is TenantService breaking its contract (see
@@ -589,10 +612,8 @@ public class TenantAdminOnboardingService {
             // the link-death exception leaves the flow.
             return ReservedDpaForward.dead(expired);
           }
-          if (joinsExistingTenant(invite)) {
-            throw new BadRequestException(
-                "This invitation joins an existing tenant; its data processing agreement is not"
-                    + " part of the onboarding");
+          if (hasExistingTenantCandidate(invite)) {
+            return ReservedDpaForward.joining(invite);
           }
           if (invite.getTenantId() == null || isBlank(invite.getTenantIdReservationToken())) {
             throw new InternalServerErrorException(
@@ -661,17 +682,21 @@ public class TenantAdminOnboardingService {
   }
 
   /**
-   * Outcome of {@link #reserveDpaForwardAttempt}: either a reserved attempt on a live invite, or a
-   * link-death answer whose EXPIRED transition already committed and must be thrown only now
-   * (mirrors {@link ResolvedOnboardingInvite}).
+   * Result of classifying the invite under its row lock. The caller handles link-death and
+   * existing-tenant responses after the transaction commits.
    */
-  private record ReservedDpaForward(AccountInvite invite, AccountInviteLinkException linkDeath) {
+  private record ReservedDpaForward(
+      AccountInvite invite, AccountInviteLinkException linkDeath, boolean joiningExistingTenant) {
     static ReservedDpaForward reserved(AccountInvite invite) {
-      return new ReservedDpaForward(invite, null);
+      return new ReservedDpaForward(invite, null, false);
+    }
+
+    static ReservedDpaForward joining(AccountInvite invite) {
+      return new ReservedDpaForward(invite, null, true);
     }
 
     static ReservedDpaForward dead(AccountInviteLinkException linkDeath) {
-      return new ReservedDpaForward(null, linkDeath);
+      return new ReservedDpaForward(null, linkDeath, false);
     }
 
     void rethrowLinkDeath() {

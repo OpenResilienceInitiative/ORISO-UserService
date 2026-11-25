@@ -17,7 +17,8 @@ import java.util.Map;
  * the lead time allows, and touch no busy time. A date's working hours are its day exception if it
  * has one (none = day off), else none on a public holiday of the counsellor's region, else the
  * weekly windows of its weekday, the same order as the counsellor's calendar. Times are wall-clock
- * times in the platform's zone, so 09:00 stays 09:00 across a clock change. Pure.
+ * times in the platform's zone, so 09:00 stays 09:00 across a clock change. One-off windows
+ * (ORISO-Frontend#2494) are dated instants and cut by {@link #onceSlots}. Pure.
  */
 final class FreeSlotGrid {
 
@@ -90,6 +91,42 @@ final class FreeSlotGrid {
       }
     }
     result.sort(BY_START);
+    return result;
+  }
+
+  /**
+   * The free slots of one one-off window [windowStart, windowEnd) (ORISO-Frontend#2494) that start
+   * in [from, to) and not before {@code earliest}, by start: cut from the window's start on the
+   * step, each of the length and inside the window; a window shorter than the length is one slot of
+   * the window's own length. The window is a dated instant range, so no clock change moves it.
+   */
+  static List<FreeSlot> onceSlots(
+      Instant windowStart,
+      Instant windowEnd,
+      List<BusySlot> busy,
+      Instant from,
+      Instant to,
+      Instant earliest,
+      Duration length,
+      Duration step) {
+    var notBefore = earliest.isAfter(from) ? earliest : from;
+    var result = new ArrayList<FreeSlot>();
+    for (var start = windowStart; start.isBefore(windowEnd); start = start.plus(step)) {
+      var end = start.plus(length);
+      if (end.isAfter(windowEnd)) {
+        if (!start.equals(windowStart)) {
+          break;
+        }
+        end = windowEnd;
+      }
+      var slotEnd = end;
+      var slotStart = start;
+      if (!start.isBefore(notBefore)
+          && start.isBefore(to)
+          && busy.stream().noneMatch(taken -> overlaps(taken, slotStart, slotEnd))) {
+        result.add(new FreeSlot(start, end));
+      }
+    }
     return result;
   }
 

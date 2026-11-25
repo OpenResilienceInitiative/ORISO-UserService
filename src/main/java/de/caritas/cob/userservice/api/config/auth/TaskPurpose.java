@@ -15,7 +15,9 @@ public enum TaskPurpose {
   RUNTIME_POLICY(TaskActor.RUNTIME),
   MATRIX_AGENCY(TaskActor.RUNTIME),
   /** Pulls finished agency purges from AgencyService into the deletion log (OBP 2.1 #130). */
-  DELETION_AUDIT_PULL(TaskActor.RUNTIME);
+  DELETION_AUDIT_PULL(TaskActor.RUNTIME),
+  /** Lists Träger in deletion and removes them once nothing references them (Admin#1525). */
+  TENANT_DELETION(TaskActor.RUNTIME);
 
   private final TaskActor actor;
 

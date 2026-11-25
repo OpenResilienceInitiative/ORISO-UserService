@@ -7,6 +7,7 @@ import de.caritas.cob.userservice.api.service.accountinvite.AccountInvitePurpose
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteStatus;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteTargetRole;
 import de.caritas.cob.userservice.api.service.accountinvite.EmailVerificationStatus;
+import de.caritas.cob.userservice.api.service.accountinvite.InviteUnitType;
 import de.caritas.cob.userservice.api.service.accountinvite.TwoFactorGateStatus;
 import de.caritas.cob.userservice.api.service.accountinvite.allocation.IdAllocationMode;
 import jakarta.persistence.LockModeType;
@@ -494,13 +495,24 @@ public interface AccountInviteRepository
   @Query(
       "UPDATE AccountInvite i SET i.status ="
           + " de.caritas.cob.userservice.api.service.accountinvite.AccountInviteStatus.DRAFT,"
-          + " i.waitingForUnit = NULL, i.expiresAt = :expiresAt, i.updateDate = :now,"
+          + " i.waitingForUnit = NULL, i.waitingTenantReservationToken = NULL,"
+          + " i.expiresAt = :expiresAt, i.updateDate = :now,"
           + " i.unitCreatedAt = :now"
           + " WHERE i.id = :id AND i.status ="
           + " de.caritas.cob.userservice.api.service.accountinvite.AccountInviteStatus"
-          + ".WAITING_FOR_UNIT")
+          + ".WAITING_FOR_UNIT AND i.waitingForUnit = :unit AND ("
+          + " (i.waitingForUnit ="
+          + " de.caritas.cob.userservice.api.service.accountinvite.InviteUnitType.TENANT"
+          + " AND i.tenantId = :unitId AND i.waitingTenantReservationToken = :proof)"
+          + " OR (i.waitingForUnit ="
+          + " de.caritas.cob.userservice.api.service.accountinvite.InviteUnitType.AGENCY"
+          + " AND i.agencyId = :unitId AND (:tenantId IS NULL OR i.tenantId = :tenantId)))")
   int claimWaitingInvite(
       @Param("id") Long id,
+      @Param("unit") InviteUnitType unit,
+      @Param("unitId") Long unitId,
+      @Param("tenantId") Long tenantId,
+      @Param("proof") String proof,
       @Param("expiresAt") LocalDateTime expiresAt,
       @Param("now") LocalDateTime now);
 
@@ -511,7 +523,8 @@ public interface AccountInviteRepository
   @Modifying(clearAutomatically = true, flushAutomatically = true)
   @Query(
       "UPDATE AccountInvite i SET i.unitCreatedAt = :now"
-          + " WHERE i.tenantId = :tenantId AND i.unitCreatedAt IS NULL AND i.targetRole ="
+          + " WHERE i.tenantId = :tenantId AND i.tenantIdReservationToken = :proof"
+          + " AND i.unitCreatedAt IS NULL AND i.targetRole ="
           + " de.caritas.cob.userservice.api.service.accountinvite.AccountInviteTargetRole"
           + ".TENANT_ADMIN AND (i.tenantIdAllocationMode IS NULL OR i.tenantIdAllocationMode <>"
           + " de.caritas.cob.userservice.api.service.accountinvite.allocation.IdAllocationMode"
@@ -519,16 +532,22 @@ public interface AccountInviteRepository
           + " de.caritas.cob.userservice.api.service.accountinvite.AccountInviteStatus.DRAFT,"
           + " de.caritas.cob.userservice.api.service.accountinvite.AccountInviteStatus.EMAIL_SENT,"
           + " de.caritas.cob.userservice.api.service.accountinvite.AccountInviteStatus.ACCEPTED)")
-  int stampTraegerCreated(@Param("tenantId") Long tenantId, @Param("now") LocalDateTime now);
+  int stampTraegerCreated(
+      @Param("tenantId") Long tenantId,
+      @Param("proof") String proof,
+      @Param("now") LocalDateTime now);
 
   /** The invites waiting for a tenant that is about to exist. */
   @Query(
       "SELECT i.id FROM AccountInvite i WHERE i.status = :status"
           + " AND i.waitingForUnit ="
           + " de.caritas.cob.userservice.api.service.accountinvite.InviteUnitType.TENANT"
-          + " AND i.tenantId = :tenantId ORDER BY i.createDate ASC")
+          + " AND i.tenantId = :tenantId AND i.waitingTenantReservationToken = :proof"
+          + " ORDER BY i.createDate ASC")
   List<Long> findIdsWaitingForTenant(
-      @Param("status") AccountInviteStatus status, @Param("tenantId") Long tenantId);
+      @Param("status") AccountInviteStatus status,
+      @Param("tenantId") Long tenantId,
+      @Param("proof") String proof);
 
   /** A further admin of the same new agency shares this reservation instead of taking another. */
   @Query(
@@ -575,16 +594,28 @@ public interface AccountInviteRepository
   @Query(
       "SELECT COUNT(i) > 0 FROM AccountInvite i WHERE i.tenantId = :tenantId"
           + " AND i.id <> :excludedId"
-          + " AND (i.tenantIdReservationToken IS NOT NULL"
-          + "      OR i.waitingForUnit ="
-          + " de.caritas.cob.userservice.api.service.accountinvite.InviteUnitType.TENANT)"
+          + " AND (i.tenantIdReservationToken = :proof"
+          + "      OR (i.waitingForUnit ="
+          + " de.caritas.cob.userservice.api.service.accountinvite.InviteUnitType.TENANT"
+          + "          AND (i.waitingTenantReservationToken = :proof"
+          + "               OR i.waitingTenantReservationToken IS NULL)))"
           + " AND i.status IN :statuses"
           + " AND (i.expiresAt IS NULL OR i.expiresAt > :now)")
-  boolean existsPendingInviteOnTenantNumber(
+  boolean existsPendingInviteUsingTenantReservation(
       @Param("tenantId") Long tenantId,
       @Param("excludedId") Long excludedId,
+      @Param("proof") String proof,
       @Param("statuses") Collection<AccountInviteStatus> statuses,
       @Param("now") LocalDateTime now);
+
+  @Query(
+      "SELECT DISTINCT i.waitingTenantReservationToken FROM AccountInvite i"
+          + " WHERE i.tenantId = :tenantId AND i.status = :waiting"
+          + " AND i.waitingForUnit ="
+          + " de.caritas.cob.userservice.api.service.accountinvite.InviteUnitType.TENANT"
+          + " AND i.waitingTenantReservationToken IS NOT NULL")
+  List<String> findWaitingTenantReservationProofs(
+      @Param("tenantId") Long tenantId, @Param("waiting") AccountInviteStatus waiting);
 
   /**
    * Ids of elapsed invites the expiry sweep settles, after {@code afterId} in id order:
@@ -647,13 +678,12 @@ public interface AccountInviteRepository
       @Param("statuses") Collection<AccountInviteStatus> statuses,
       @Param("now") LocalDateTime now);
 
-  /** The newest TENANT_ADMIN invite holding a tenant-ID reservation token for this tenant. */
-  Optional<AccountInvite>
-      findFirstByTargetRoleAndTenantIdAndTenantIdReservationTokenIsNotNullOrderByCreateDateDesc(
-          AccountInviteTargetRole targetRole, Long tenantId);
-
-  boolean existsByTargetRoleAndTenantIdAndStatusAndIdNot(
-      AccountInviteTargetRole targetRole, Long tenantId, AccountInviteStatus status, Long id);
+  boolean existsByTargetRoleAndTenantIdAndTenantIdReservationTokenAndStatusAndIdNot(
+      AccountInviteTargetRole targetRole,
+      Long tenantId,
+      String tenantIdReservationToken,
+      AccountInviteStatus status,
+      Long id);
 
   List<AccountInvite> findAllByAcceptedByUserIdAndTwoFactorStatus(
       String acceptedByUserId, TwoFactorGateStatus twoFactorStatus);

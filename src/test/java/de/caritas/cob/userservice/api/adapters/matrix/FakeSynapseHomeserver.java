@@ -67,6 +67,7 @@ public final class FakeSynapseHomeserver extends RestTemplate {
   private int roomCounter;
   private int adminJoinRequests;
   private int makeRoomAdminRequests;
+  private int stateReads;
   private boolean adminJoinFailsAfterInvite;
   private boolean leavesAreRefused;
   private final List<String> impersonated = new ArrayList<>();
@@ -78,6 +79,8 @@ public final class FakeSynapseHomeserver extends RestTemplate {
     private final Map<String, Integer> users = new LinkedHashMap<>();
     private int usersDefault;
     private int eventsDefault;
+    private final List<Map<String, Object>> stateBefore = new ArrayList<>();
+    private final List<Map<String, Object>> stateAfter = new ArrayList<>();
   }
 
   public FakeSynapseHomeserver() {
@@ -93,14 +96,11 @@ public final class FakeSynapseHomeserver extends RestTemplate {
 
   /** The production gateway, talking to this homeserver. */
   public MatrixSynapseService gateway() {
-    var roomClient = new MatrixRoomClient(config, this, mock(LiveChatDiagnosticMetrics.class));
+    var redactor = MatrixIdentifierRedactor.withKey("fake-synapse");
+    var roomClient =
+        new MatrixRoomClient(config, this, mock(LiveChatDiagnosticMetrics.class), redactor);
     return new MatrixSynapseService(
-        config,
-        this,
-        this,
-        roomClient,
-        mock(MatrixMediaClient.class),
-        MatrixIdentifierRedactor.withKey("fake-synapse"));
+        config, this, this, roomClient, mock(MatrixMediaClient.class), redactor);
   }
 
   public static String adminMxid() {
@@ -115,6 +115,19 @@ public final class FakeSynapseHomeserver extends RestTemplate {
 
   public FakeSynapseHomeserver account(String mxid) {
     accounts.add(mxid);
+    return this;
+  }
+
+  /**
+   * Adds an {@code m.room.power_levels} event with a non-empty state key to the room's state,
+   * listed before or after the authoritative one. Synapse ignores it for authorisation.
+   */
+  public FakeSynapseHomeserver strayPowerLevels(
+      String roomId, Map<String, Object> content, boolean listedLast) {
+    var event =
+        Map.<String, Object>of(
+            "type", "m.room.power_levels", "state_key", "stray", "content", content);
+    (listedLast ? room(roomId).stateAfter : room(roomId).stateBefore).add(event);
     return this;
   }
 
@@ -199,6 +212,11 @@ public final class FakeSynapseHomeserver extends RestTemplate {
   /** How often the admin force-join endpoint was called. */
   public int adminJoinRequests() {
     return adminJoinRequests;
+  }
+
+  /** How often the admin read a room's state (Synapse admin API). */
+  public int stateReads() {
+    return stateReads;
   }
 
   /** How often the make_room_admin endpoint was called. */
@@ -287,6 +305,20 @@ public final class FakeSynapseHomeserver extends RestTemplate {
       var members = new ArrayList<>(room(path.get(4)).joined);
       return ResponseEntity.ok(Map.of("members", members, "total", members.size()));
     }
+    // /_synapse/admin/v1/rooms/{room}/state
+    if (method == HttpMethod.GET && path.get(3).equals("rooms") && path.get(5).equals("state")) {
+      stateReads++;
+      var room = room(path.get(4));
+      var state = new ArrayList<Map<String, Object>>(room.stateBefore);
+      state.add(
+          Map.of(
+              "type", "m.room.power_levels", "state_key", "", "content", powerLevelsContent(room)));
+      room.joined.forEach(user -> state.add(memberEvent(user, "join")));
+      room.invited.forEach(user -> state.add(memberEvent(user, "invite")));
+      room.left.forEach(user -> state.add(memberEvent(user, "leave")));
+      state.addAll(room.stateAfter);
+      return ResponseEntity.ok(Map.of("state", state));
+    }
     // /_synapse/admin/v1/join/{room}
     if (method == HttpMethod.POST && path.get(3).equals("join")) {
       adminJoinRequests++;
@@ -300,6 +332,11 @@ public final class FakeSynapseHomeserver extends RestTemplate {
       return makeRoomAdmin(path.get(4), (String) asMap(body).get("user_id"));
     }
     throw new IllegalStateException("FakeSynapseHomeserver has no admin route for " + path);
+  }
+
+  private static Map<String, Object> memberEvent(String user, String membership) {
+    return Map.of(
+        "type", "m.room.member", "state_key", user, "content", Map.of("membership", membership));
   }
 
   private ResponseEntity<?> forceJoin(String roomId, String target, String admin) {

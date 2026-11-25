@@ -86,6 +86,8 @@ public class AssignEnquiryFacade {
           .TopicDuplicateService
       topicDuplicateService;
   private final @NonNull Messaging messaging;
+  private final @NonNull de.caritas.cob.userservice.api.service.session.TeamSessionReadOnlyService
+      teamSessionReadOnly;
 
   /**
    * Assigns the given {@link Session} to the given {@link Consultant} and removes consultants who
@@ -121,6 +123,8 @@ public class AssignEnquiryFacade {
     // ADR-016 hard close: the pre-acceptance Team-Besprechung archives the moment the case is
     // accepted. Best-effort by the same contract — never blocks the acceptance.
     teamDiscussionFacade.archiveDiscussionIfPresent(session);
+    // FE#2494 *4: in Teamberatung only the accepting counsellor writes; colleagues stay readers.
+    teamSessionReadOnly.enforceAfterCommit(session.getId());
     eventNotificationService.createInquiryAcceptedNotification(session, consultant);
     retireOpenEnquiryNotificationsAfterCommit(session, consultant.getId());
     var event =
@@ -223,6 +227,7 @@ public class AssignEnquiryFacade {
     the notice to have been accepted. The current product decision is disclosure, not a write or
     assignment lock. */
     assignEnquiry(session, consultant, false, true);
+    teamSessionReadOnly.enforceAfterCommit(session.getId());
     eventNotificationService.createInquiryAcceptedNotification(session, consultant);
     retireOpenEnquiryNotificationsAfterCommit(session, consultant.getId());
   }
@@ -291,6 +296,10 @@ public class AssignEnquiryFacade {
     var previousStatus = session.getStatus();
     var assignment =
         sessionService.updateConsultantAndStatusForSession(session, consultant, IN_PROGRESS);
+
+    if (replacesHoldingRoom) {
+      roomRetirements.startExternalWork(session, assignment);
+    }
 
     // Create Matrix room and invite user
     Runnable createReplacement =

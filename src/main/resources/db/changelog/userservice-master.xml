@@ -296,6 +296,7 @@
   <include file="db/changelog/changeset/20261117_account_invite_deletion_1522/changeSet.xml"/>
   <include file="db/changelog/changeset/20261117_admin_type_statistics_1666/changeSet.xml"/>
   <include file="db/changelog/changeset/20261117_consultant_planned_absence_2303/changeSet.xml"/>
+  <include file="db/changelog/changeset/20261116_erstantwort_platform_override/changeSet.xml"/>
   <include file="db/changelog/changeset/20261117_guest_account_mode_1662/changeSet.xml"/>
   <include file="db/changelog/changeset/20261117_guest_account_mode_at_entry_1662/changeSet.xml"/>
   <include file="db/changelog/changeset/20261117_calendar_colleague_appointment_2305/changeSet.xml"/>
@@ -308,9 +309,20 @@
   <include file="db/changelog/changeset/20261119_journey_storage_1689/changeSet.xml"/>
   <include file="db/changelog/changeset/20261119_agency_enquiry_binding_index_1692/changeSet.xml"/>
   <include file="db/changelog/changeset/20261120_agency_enquiry_room_attempt_1692/changeSet.xml"/>
+  <include file="db/changelog/changeset/20261122_agency_enquiry_requester_join_1744/changeSet.xml"/>
   <include file="db/changelog/changeset/20261121_agency_enquiry_revocation_room_scope_1692/changeSet.xml"/>
   <include file="db/changelog/changeset/20261121_invitation_appointment_kind_1747/changeSet.xml"/>
   <include file="db/changelog/changeset/20261119_agency_enquiry_room_decision_1692/changeSet.xml"/>
+  <include file="db/changelog/changeset/20261119_agency_enquiry_room_preparation_1692/changeSet.xml"/>
   <include file="db/changelog/changeset/20261121_event_notification_read_day/changeSet.xml"/>
+  <include file="db/changelog/changeset/20261121_tenant_reservation_release_1052/changeSet.xml"/>
+  <include file="db/changelog/changeset/20261119_dpa_admin_notice_recovery_1704/changeSet.xml"/>
+  <include file="db/changelog/changeset/20261119_dpa_admin_notice_exact_event_1704/changeSet.xml"/>
+  <include file="db/changelog/changeset/20261119_dpa_admin_notice_outbox_cursor_1704/changeSet.xml"/>
+  <include file="db/changelog/changeset/20261123_team_discussion_closed_2491/changeSet.xml"/>
+  <include file="db/changelog/changeset/20261123_team_discussion_agency_2491/changeSet.xml"/>
+  <include file="db/changelog/changeset/20261124_calendar_consultation_once_2494/changeSet.xml"/>
+  <include file="db/changelog/changeset/20261124_calendar_consultation_once_blocker_2494/changeSet.xml"/>
+  <include file="db/changelog/changeset/20261124_session_delete_date_1524/changeSet.xml"/>
   <include file="db/changelog/changeset/20261121_group_roster_removal_1740/changeSet.xml"/>
 </databaseChangeLog>

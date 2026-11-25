@@ -9,7 +9,9 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.lenient;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -27,13 +29,17 @@ import de.caritas.cob.userservice.api.model.AccountInvite;
 import de.caritas.cob.userservice.api.model.ConsultantAvatarKind;
 import de.caritas.cob.userservice.api.model.InviteEmailDelivery;
 import de.caritas.cob.userservice.api.model.InviteEmailTemplate;
+import de.caritas.cob.userservice.api.model.TenantReservationReleaseTask;
 import de.caritas.cob.userservice.api.model.TopicPermission;
 import de.caritas.cob.userservice.api.port.out.AccountInviteRepository;
 import de.caritas.cob.userservice.api.port.out.IdReservationReleaseTaskRepository;
+import de.caritas.cob.userservice.api.port.out.IdentityAuthentication;
+import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
 import de.caritas.cob.userservice.api.port.out.IdentityEmailOwner;
 import de.caritas.cob.userservice.api.port.out.IdentityEmailOwnerLookup;
 import de.caritas.cob.userservice.api.port.out.InviteEmailDeliveryRepository;
 import de.caritas.cob.userservice.api.port.out.InviteEmailTemplateRepository;
+import de.caritas.cob.userservice.api.port.out.TenantReservationReleaseTaskRepository;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteService.CreateAccountInviteCommand;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteService.SendInviteCommand;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteService.WaiveTwoFactorCommand;
@@ -58,13 +64,17 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.EnumSource;
 import org.junit.jupiter.params.provider.NullSource;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageImpl;
 import org.springframework.http.HttpStatus;
 import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.web.client.HttpClientErrorException;
 
 @ExtendWith(MockitoExtension.class)
@@ -83,7 +93,10 @@ class AccountInviteServiceTest {
   @Mock private InviteEmailDeliveryFailureRecorder deliveryFailureRecorder;
   @Mock private IdentityEmailOwnerLookup identityEmailOwnerLookup;
   @Mock private IdReservationReleaseTaskRepository reservationReleaseTaskRepository;
+  @Mock private TenantReservationReleaseTaskRepository tenantReservationReleaseTaskRepository;
   @Mock private IdReservationReleaseProcessor reservationReleaseProcessor;
+  @Mock private ObjectProvider<IdentityClientConfig> identityClientConfig;
+  @Mock private ObjectProvider<IdentityAuthentication> identityAuthentication;
 
   @Mock
   private de.caritas.cob.userservice.api.port.out.IdReservationLockRepository
@@ -145,6 +158,7 @@ class AccountInviteServiceTest {
             agencyIdAllocationClient,
             accountInviteRepository,
             reservationReleaseTaskRepository,
+            tenantReservationReleaseTaskRepository,
             reservationReleaseProcessor,
             reservationLockRepository,
             transactionManager);
@@ -167,7 +181,14 @@ class AccountInviteServiceTest {
             new InviteTargetResolver(ledger),
             ledger,
             new UnitQueue(
-                accountInviteRepository, templateRepository, ledger, delivery, transactionManager),
+                accountInviteRepository,
+                templateRepository,
+                ledger,
+                delivery,
+                transactionManager,
+                tenantIdAllocationClient,
+                identityClientConfig,
+                identityAuthentication),
             delivery,
             existingAccountSetupIssuer);
     lenient().when(accessPolicy.authorizeCreate(any())).thenAnswer(call -> call.getArgument(0));
@@ -2473,7 +2494,7 @@ class AccountInviteServiceTest {
     assertThat(invite.getTenantIdReservationToken()).isNull();
     // No reservation exists, so no availability re-validation and no release compensation.
     verify(tenantIdAllocationClient, never()).getAvailability(anyLong());
-    verify(tenantIdAllocationClient, never()).release(anyLong());
+    verify(tenantReservationReleaseTaskRepository, never()).saveAndFlush(any());
   }
 
   @Test
@@ -2527,7 +2548,7 @@ class AccountInviteServiceTest {
 
     assertThat(invite.getTenantId()).isEqualTo(21L);
     assertThat(invite.getTenantIdReservationToken()).isEqualTo("res-token-21");
-    verify(tenantIdAllocationClient, never()).release(anyLong());
+    verify(tenantReservationReleaseTaskRepository, never()).saveAndFlush(any());
   }
 
   @Test
@@ -2576,7 +2597,7 @@ class AccountInviteServiceTest {
 
     assertThatThrownBy(() -> service.createInvite(command)).isInstanceOf(ConflictException.class);
     verify(accountInviteRepository, never()).save(any());
-    verify(tenantIdAllocationClient, never()).release(anyLong());
+    verify(tenantReservationReleaseTaskRepository, never()).saveAndFlush(any());
   }
 
   @Test
@@ -2601,11 +2622,16 @@ class AccountInviteServiceTest {
 
     assertThatThrownBy(() -> service.createInvite(command)).isInstanceOf(ConflictException.class);
     verify(accountInviteRepository, never()).save(any());
-    verify(tenantIdAllocationClient).release(21L);
+    verify(tenantReservationReleaseTaskRepository)
+        .saveAndFlush(
+            org.mockito.ArgumentMatchers.argThat(
+                task ->
+                    task.getTenantId().equals(21L)
+                        && task.getReservationToken().equals("res-token-21")));
   }
 
   @Test
-  void createInvite_Should_ReleaseReservation_When_SavingTheInviteFails() {
+  void createInvite_Should_KeepDurableRelease_When_ImmediateProcessingFails() {
     when(authenticatedUser.getUserId()).thenReturn("admin-1");
     when(authenticatedUser.getUsername()).thenReturn("admin@example.org");
     givenTenantIdFreeLocally(21L);
@@ -2613,6 +2639,13 @@ class AccountInviteServiceTest {
         .thenReturn(new TenantIdReservation(21L, "res-token-21"));
     when(tenantIdAllocationClient.getAvailability(21L)).thenReturn(IdAllocationStatus.RESERVED);
     when(accountInviteRepository.save(any())).thenThrow(new IllegalStateException("db down"));
+
+    var releaseTask = mock(TenantReservationReleaseTask.class);
+    when(releaseTask.getId()).thenReturn(1L);
+    when(tenantReservationReleaseTaskRepository.saveAndFlush(any())).thenReturn(releaseTask);
+    doThrow(new IllegalStateException("processing unavailable"))
+        .when(reservationReleaseProcessor)
+        .processTenant(1L);
 
     var command =
         new CreateAccountInviteCommand(
@@ -2628,8 +2661,64 @@ class AccountInviteServiceTest {
             null);
 
     assertThatThrownBy(() -> service.createInvite(command))
-        .isInstanceOf(IllegalStateException.class);
-    verify(tenantIdAllocationClient).release(21L);
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("db down");
+    verify(tenantReservationReleaseTaskRepository)
+        .saveAndFlush(
+            org.mockito.ArgumentMatchers.argThat(
+                task ->
+                    task.getTenantId().equals(21L)
+                        && task.getReservationToken().equals("res-token-21")));
+    verify(reservationReleaseProcessor).processTenant(1L);
+    verify(tenantIdAllocationClient, never()).release(anyLong(), any());
+  }
+
+  @ParameterizedTest
+  @ValueSource(booleans = {true, false})
+  void createInvite_Should_UseOriginalProof_When_ReleaseTaskCannotBeSaved(
+      boolean releasesOnFirstAttempt) {
+    when(authenticatedUser.getUserId()).thenReturn("admin-1");
+    when(authenticatedUser.getUsername()).thenReturn("admin@example.org");
+    givenTenantIdFreeLocally(21L);
+    when(tenantIdAllocationClient.reserve(21L))
+        .thenReturn(new TenantIdReservation(21L, "res-token-21"));
+    when(tenantIdAllocationClient.getAvailability(21L)).thenReturn(IdAllocationStatus.RESERVED);
+    var saveFailure = new IllegalStateException("invite database unavailable");
+    when(accountInviteRepository.save(any())).thenThrow(saveFailure);
+    when(tenantReservationReleaseTaskRepository.saveAndFlush(any()))
+        .thenThrow(new IllegalStateException("release queue unavailable"));
+    when(tenantIdAllocationClient.release(21L, "res-token-21"))
+        .thenReturn(releasesOnFirstAttempt, true);
+
+    var command =
+        new CreateAccountInviteCommand(
+            AccountInviteTargetRole.TENANT_ADMIN,
+            21L,
+            "owner@example.org",
+            null,
+            null,
+            null,
+            null,
+            null,
+            IdAllocationMode.MANUAL,
+            null);
+
+    TransactionSynchronizationManager.initSynchronization();
+    try {
+      assertThatThrownBy(() -> service.createInvite(command)).isSameAs(saveFailure);
+      verify(tenantIdAllocationClient).release(21L, "res-token-21");
+
+      for (var callback : TransactionSynchronizationManager.getSynchronizations()) {
+        callback.afterCompletion(TransactionSynchronization.STATUS_ROLLED_BACK);
+      }
+
+      int expectedAttempts = releasesOnFirstAttempt ? 1 : 2;
+      verify(tenantIdAllocationClient, times(expectedAttempts)).release(21L, "res-token-21");
+      verify(tenantReservationReleaseTaskRepository, times(expectedAttempts)).saveAndFlush(any());
+      verifyNoInteractions(reservationReleaseProcessor);
+    } finally {
+      TransactionSynchronizationManager.clearSynchronization();
+    }
   }
 
   @Test
@@ -2682,7 +2771,12 @@ class AccountInviteServiceTest {
             IdAllocationMode.MANUAL);
 
     assertThatThrownBy(() -> service.createInvite(command)).isInstanceOf(ConflictException.class);
-    verify(tenantIdAllocationClient).release(21L);
+    verify(tenantReservationReleaseTaskRepository)
+        .saveAndFlush(
+            org.mockito.ArgumentMatchers.argThat(
+                task ->
+                    task.getTenantId().equals(21L)
+                        && task.getReservationToken().equals("res-token-21")));
     verify(agencyIdAllocationClient, never()).release(anyLong());
     verify(accountInviteRepository, never()).save(any());
   }

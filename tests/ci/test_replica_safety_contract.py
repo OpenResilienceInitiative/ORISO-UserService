@@ -8,6 +8,27 @@ import unittest
 ROOT = Path(__file__).resolve().parents[2]
 CATALOG = ROOT / "src/main/resources/replica-safety-components.json"
 MAIN_JAVA = ROOT / "src/main/java"
+CLAIM_MECHANISMS = {"scheduled-task-claim", "row-lock", "unique-claim-row"}
+SOURCE_COMMENTS = re.compile(
+    r"""("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*')|//[^\n]*|/\*[\s\S]*?\*/|^[ \t]*--[^\n]*""",
+    re.MULTILINE,
+)
+
+
+def without_comments(text: str) -> str:
+    return SOURCE_COMMENTS.sub(lambda match: match.group(1) or " ", text)
+
+
+def uses_scheduled_task_claim(text: str) -> bool:
+    text = SOURCE_COMMENTS.sub(" ", text)
+    receivers = re.findall(r"\bScheduledTaskClaimService\s+(\w+)\s*[,;)=]", text)
+    return any(
+        re.search(
+            rf"\b{re.escape(receiver)}\s*\.\s*(?:tryClaim|tryClaimLease|runIfClaimed)\s*\(",
+            text,
+        )
+        for receiver in receivers
+    )
 
 
 def source_has_annotation(source: Path, annotation: str) -> bool:
@@ -119,6 +140,76 @@ class ReplicaSafetyContractTest(unittest.TestCase):
                 entry["signals"],
             )
 
+    def test_declared_scheduler_claims_are_backed_by_their_sources(self):
+        entries = [
+            entry for entry in load_catalog(self)["components"] if "claim" in entry
+        ]
+        self.assertTrue(entries, "inventory must include its verified scheduler claims")
+        for entry in entries:
+            with self.subTest(scheduler=entry["id"]):
+                claim = entry["claim"]
+                evidence = claim["evidence"]
+                self.assertEqual("scheduler", entry["kind"])
+                if entry["status"] == "blocker":
+                    covered = claim.get("coveredComponents", [])
+                    self.assertTrue(covered, "a blocker claim must name the protected methods")
+                    self.assertLess(
+                        set(covered),
+                        set(entry["components"]),
+                        "some scheduled methods must remain uncovered on a blocker",
+                    )
+                    self.assertTrue(
+                        all(
+                            any(
+                                f"{method}(" in fragment
+                                for item in evidence
+                                if item.get("source", entry["source"]) == entry["source"]
+                                for fragment in item["contains"]
+                            )
+                            for method in covered
+                        ),
+                        "evidence must name each protected scheduled method on a blocker",
+                    )
+                else:
+                    self.assertIn(entry["status"], {"bounded", "safe"})
+                    self.assertNotIn("coveredComponents", claim)
+                self.assertIn(claim["mechanism"], CLAIM_MECHANISMS)
+                self.assertIn(
+                    entry["source"],
+                    {item.get("source", entry["source"]) for item in evidence},
+                    "evidence must start at the scheduled source",
+                )
+                sources = []
+                for item in evidence:
+                    source = ROOT / item.get("source", entry["source"])
+                    self.assertTrue(source.is_file(), source)
+                    self.assertTrue(item["contains"], source)
+                    text = without_comments(source.read_text())
+                    for fragment in item["contains"]:
+                        self.assertIn(fragment, text, str(source.relative_to(ROOT)))
+                    sources.append(text)
+                if claim["mechanism"] == "scheduled-task-claim":
+                    self.assertTrue(
+                        any(uses_scheduled_task_claim(text) for text in sources),
+                        "a ScheduledTaskClaimService receiver must actually claim work",
+                    )
+
+    def test_scheduled_task_claims_are_catalogued(self):
+        for entry in load_catalog(self)["components"]:
+            if entry["kind"] != "scheduler":
+                continue
+            scheduled_source = ROOT / entry["source"]
+            if (
+                uses_scheduled_task_claim(scheduled_source.read_text())
+                or "ScheduledTaskClaimService" in entry["decision"]
+            ):
+                with self.subTest(scheduler=entry["id"]):
+                    self.assertEqual(
+                        "scheduled-task-claim",
+                        entry.get("claim", {}).get("mechanism"),
+                        "catalogue the direct or delegated ScheduledTaskClaimService protection",
+                    )
+
     def test_every_process_local_state_source_has_an_owner_decision_and_signal(self):
         catalog = load_catalog(self)
         entries = [
@@ -165,6 +256,23 @@ class ReplicaSafetyDetectorTest(unittest.TestCase):
 
             self.assertTrue(source_has_annotation(no_arguments, "Scheduled"))
             self.assertTrue(source_has_annotation(same_line, "Scheduled"))
+
+    def test_claim_detection_requires_a_call_on_the_claim_service(self):
+        self.assertFalse(
+            uses_scheduled_task_claim(
+                "import x.ScheduledTaskClaimService;\n"
+                "class Sample { ScheduledTaskClaimService claims;\n"
+                "  /* claims.tryClaim(task, duration); */\n"
+                '  String hint = "claims.tryClaim(task, duration)";\n'
+                "  void run() { another.tryClaim(task, duration); } }"
+            )
+        )
+        self.assertTrue(
+            uses_scheduled_task_claim(
+                "class Sample { ScheduledTaskClaimService claims;\n"
+                "  void run() { claims.tryClaimLease(task, duration); } }"
+            )
+        )
 
     def test_local_state_detection_accepts_final_executor_and_non_final_atomic_reference(self):
         with tempfile.TemporaryDirectory() as directory:

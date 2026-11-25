@@ -39,6 +39,8 @@ public class GroupChatParticipantReconciliationService {
   private final GroupChatMatrixCleanupService matrixCleanup;
   private final MembersOnlyRevocation revocation;
   private final GroupRosterRemovalRecovery removalRecovery;
+  private final de.caritas.cob.userservice.api.service.matrix.GroupModeratorPowerService
+      moderatorPower;
 
   /**
    * Reconciles co-moderators only when the client explicitly supplies {@code consultantIds}. A null
@@ -109,6 +111,7 @@ public class GroupChatParticipantReconciliationService {
     }
     var cleanupTasks = new ArrayList<Long>();
     var verifiedSideExits = new ArrayList<Long>();
+    var selectedMatrixUserIds = new ArrayList<String>();
     try {
       // Existing database rows do not prove Matrix membership: retry the join too.
       // Complete joins before removals; journal only confirmed new remote access.
@@ -132,6 +135,7 @@ public class GroupChatParticipantReconciliationService {
           throw new InternalServerErrorException(
               "Consultant " + consultantId + " could not join the Matrix room");
         }
+        selectedMatrixUserIds.add(matrixUserId);
       }
 
       for (var consultantId : desiredIds) {
@@ -157,6 +161,10 @@ public class GroupChatParticipantReconciliationService {
           revokeFromRoster(series, group, existing, verifiedSideExits);
         }
       }
+      // Every selected colleague is a co-moderator (or owner) and may blur passages
+      // (ORISO-Frontend#2229). Raised only once the selection has committed, so a failed update
+      // leaves nobody with a level the database does not record.
+      moderatorPower.grantModeratorsAfterCommit(series, selectedMatrixUserIds);
       cleanupTasks.forEach(matrixCleanup::clear);
       verifiedSideExits.forEach(removalRecovery::clearSideExit);
       removalRecovery.acceptRoster(series.getId());
@@ -182,6 +190,9 @@ public class GroupChatParticipantReconciliationService {
                 () -> consultantRepository.findById(participant.getConsultantId()))
             .map(Consultant::getMatrixUserId)
             .orElse(null);
+    // Deselecting a co-moderator is a demotion. It does not finish while Matrix still
+    // holds their moderator level.
+    moderatorPower.reconcileOrFail(series, memberId, null);
     if (!isBlank(memberId)) {
       var roomId = membershipService.resolveMatrixRoomId(series);
       if (isBlank(roomId)) {

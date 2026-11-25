@@ -27,7 +27,6 @@ import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.port.out.TeamDiscussionParticipantRepository;
 import de.caritas.cob.userservice.api.port.out.TeamDiscussionRepository;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
-import de.caritas.cob.userservice.api.service.matrix.RedisMessageMirrorService;
 import de.caritas.cob.userservice.api.service.notification.EventNotificationDeduplicationWriter;
 import de.caritas.cob.userservice.api.service.notification.EventNotificationService;
 import de.caritas.cob.userservice.api.service.notification.PrivacyEnvelope;
@@ -70,14 +69,12 @@ class EventNotificationControllerTest {
       internalChatEmailService;
 
   @Mock private AuthenticatedUser authenticatedUser;
-  @Mock private RedisMessageMirrorService redisMessageMirrorService;
 
-  private EventNotificationController controllerWithMirror;
-  private EventNotificationController controllerWithoutMirror;
+  private EventNotificationController controllerUnderTest;
 
   @BeforeEach
   void setUp() {
-    controllerWithMirror =
+    controllerUnderTest =
         new EventNotificationController(
             eventNotificationService,
             teamDiscussionNotificationService,
@@ -87,34 +84,20 @@ class EventNotificationControllerTest {
             authenticatedUser,
             mock(
                 de.caritas.cob.userservice.api.service.notification.MessageEventCurrentAccessService
-                    .class),
-            Optional.of(redisMessageMirrorService));
-    controllerWithoutMirror =
-        new EventNotificationController(
-            eventNotificationService,
-            teamDiscussionNotificationService,
-            messageMentionNotificationService,
-            feedbackMessageEmailService,
-            internalChatEmailService,
-            authenticatedUser,
-            mock(
-                de.caritas.cob.userservice.api.service.notification.MessageEventCurrentAccessService
-                    .class),
-            Optional.empty());
+                    .class));
   }
 
   /** ORISO-UserService#1510: first the marked row, then the fan-out that finds it written. */
   @Test
   void aCounsellorsMentionIsMarkedBeforeTheFanOut() {
     when(authenticatedUser.getUserId()).thenReturn("u-1");
-    when(authenticatedUser.getRoles()).thenReturn(Set.of("consultant"));
     when(authenticatedUser.isConsultant()).thenReturn(true);
     var request = new EventNotificationController.MessageEventRequestDTO();
     request.setRoomId("room-2");
     request.setMatrixEventId("$event-1");
     request.setMentionedUserIds(List.of("@colleague:oriso"));
 
-    controllerWithMirror.createMessageEventNotification(request);
+    controllerUnderTest.createMessageEventNotification(request);
 
     var order = Mockito.inOrder(messageMentionNotificationService, eventNotificationService);
     order
@@ -139,14 +122,13 @@ class EventNotificationControllerTest {
   @Test
   void anAdviceSeekerCannotMentionAnyone() {
     when(authenticatedUser.getUserId()).thenReturn("asker-1");
-    when(authenticatedUser.getRoles()).thenReturn(Set.of("user"));
     when(authenticatedUser.isConsultant()).thenReturn(false);
     var request = new EventNotificationController.MessageEventRequestDTO();
     request.setRoomId("room-2");
     request.setMatrixEventId("$event-1");
     request.setMentionedUserIds(List.of("@colleague:oriso"));
 
-    controllerWithMirror.createMessageEventNotification(request);
+    controllerUnderTest.createMessageEventNotification(request);
 
     Mockito.verifyNoInteractions(messageMentionNotificationService);
   }
@@ -166,8 +148,7 @@ class EventNotificationControllerTest {
             feedbackMessageEmailService,
             internalChatEmailService,
             authenticatedUser,
-            access,
-            Optional.of(redisMessageMirrorService));
+            access);
     var request = new EventNotificationController.MessageEventRequestDTO();
     request.setRoomId("!case:matrix.example");
     request.setMatrixEventId("$event");
@@ -185,8 +166,7 @@ class EventNotificationControllerTest {
         eventNotificationService,
         teamDiscussionNotificationService,
         feedbackMessageEmailService,
-        internalChatEmailService,
-        redisMessageMirrorService);
+        internalChatEmailService);
   }
 
   /** api-error-contract: a failed durable step never answers 2xx; the client retries. */
@@ -202,7 +182,7 @@ class EventNotificationControllerTest {
 
     org.junit.jupiter.api.Assertions.assertThrows(
         org.springframework.dao.DataAccessException.class,
-        () -> controllerWithoutMirror.createMessageEventNotification(request));
+        () -> controllerUnderTest.createMessageEventNotification(request));
     verifyNoInteractions(eventNotificationService);
   }
 
@@ -214,8 +194,7 @@ class EventNotificationControllerTest {
     protectedAside.setMatrixEventId("$aside");
     protectedAside.setSupervisorMessage(true);
 
-    assertThat(
-            controllerWithoutMirror.createMessageEventNotification(protectedAside).getStatusCode())
+    assertThat(controllerUnderTest.createMessageEventNotification(protectedAside).getStatusCode())
         .isEqualTo(HttpStatus.NO_CONTENT);
     verifyNoInteractions(feedbackMessageEmailService);
 
@@ -224,7 +203,7 @@ class EventNotificationControllerTest {
     feedback.setMatrixEventId("$feedback");
     feedback.setFeedbackMailIntent(true);
 
-    assertThat(controllerWithoutMirror.createMessageEventNotification(feedback).getStatusCode())
+    assertThat(controllerUnderTest.createMessageEventNotification(feedback).getStatusCode())
         .isEqualTo(HttpStatus.NO_CONTENT);
     verify(feedbackMessageEmailService)
         .onFeedbackIntent("!protected:matrix.example", "$feedback", authenticatedUser);
@@ -236,7 +215,7 @@ class EventNotificationControllerTest {
     feedback.setRoomId("!protected:matrix.example");
     feedback.setFeedbackMailIntent(true);
 
-    assertThat(controllerWithoutMirror.createMessageEventNotification(feedback).getStatusCode())
+    assertThat(controllerUnderTest.createMessageEventNotification(feedback).getStatusCode())
         .isEqualTo(HttpStatus.BAD_REQUEST);
     verifyNoInteractions(feedbackMessageEmailService, eventNotificationService);
   }
@@ -276,8 +255,7 @@ class EventNotificationControllerTest {
             authenticatedUser,
             mock(
                 de.caritas.cob.userservice.api.service.notification.MessageEventCurrentAccessService
-                    .class),
-            Optional.empty());
+                    .class));
 
     when(authenticatedUser.getUserId()).thenReturn("counsellor-1");
     when(consultantRepository.findByIdAndDeleteDateIsNull("counsellor-1"))
@@ -334,7 +312,7 @@ class EventNotificationControllerTest {
             .build();
     when(eventNotificationService.getFeed("u-1", 0, 50, Set.of())).thenReturn(feed);
 
-    var response = controllerWithMirror.getFeed(0, 50, null);
+    var response = controllerUnderTest.getFeed(0, 50, null);
 
     assertEquals(HttpStatus.OK, response.getStatusCode());
     assertEquals(0, response.getBody().getPage());
@@ -354,7 +332,7 @@ class EventNotificationControllerTest {
                 .unreadCount(0)
                 .build());
 
-    var response = controllerWithMirror.getFeed(3, 15, null);
+    var response = controllerUnderTest.getFeed(3, 15, null);
 
     assertEquals(HttpStatus.OK, response.getStatusCode());
     verify(eventNotificationService).getFeed("u-1", 3, 15, Set.of());
@@ -380,7 +358,7 @@ class EventNotificationControllerTest {
     request.setThreadRootId("thread-1");
     request.setActive(false);
 
-    var response = controllerWithMirror.updateActiveView(request);
+    var response = controllerUnderTest.updateActiveView(request);
 
     assertEquals(HttpStatus.NO_CONTENT, response.getStatusCode());
     verify(eventNotificationService).updateActiveView("u-1", "room-1", "thread-1", false, false);
@@ -394,7 +372,7 @@ class EventNotificationControllerTest {
     request.setThreadRootId("thread-1");
     request.setMainChatHidden(true);
 
-    controllerWithMirror.updateActiveView(request);
+    controllerUnderTest.updateActiveView(request);
 
     verify(eventNotificationService).updateActiveView("u-1", "room-1", "thread-1", true, true);
   }
@@ -405,7 +383,7 @@ class EventNotificationControllerTest {
     when(authenticatedUser.getUserId()).thenReturn("u-1");
     var request = new EventNotificationController.ActiveViewRequestDTO();
 
-    var response = controllerWithMirror.updateActiveView(request);
+    var response = controllerUnderTest.updateActiveView(request);
 
     assertEquals(HttpStatus.NO_CONTENT, response.getStatusCode());
     verify(eventNotificationService).updateActiveView("u-1", null, null, true, false);
@@ -417,7 +395,7 @@ class EventNotificationControllerTest {
     var request = new EventNotificationController.MessageEventRequestDTO();
     request.setRoomId("   ");
 
-    var response = controllerWithMirror.createMessageEventNotification(request);
+    var response = controllerUnderTest.createMessageEventNotification(request);
 
     assertEquals(HttpStatus.BAD_REQUEST, response.getStatusCode());
     verify(eventNotificationService, never())
@@ -428,75 +406,51 @@ class EventNotificationControllerTest {
   void createMessageEventNotification_withoutThread_delegatesMessageNotification() {
     // Business reason: plain message events must route through non-thread notification flow.
     when(authenticatedUser.getUserId()).thenReturn("u-1");
-    when(authenticatedUser.getUsername()).thenReturn("consultant");
-    when(authenticatedUser.getRoles()).thenReturn(Set.of("consultant"));
     var request = new EventNotificationController.MessageEventRequestDTO();
     request.setRoomId("room-2");
     request.setMessagePreview("hello");
     request.setSupervisorMessage(false);
     request.setSenderDisplayName("Sender");
 
-    var response = controllerWithMirror.createMessageEventNotification(request);
+    var response = controllerUnderTest.createMessageEventNotification(request);
 
     assertEquals(HttpStatus.NO_CONTENT, response.getStatusCode());
     verify(eventNotificationService)
-        .createMessageNotificationFromRoom("room-2", "u-1", "hello", false, (PrivacyEnvelope) null);
+        .createMessageNotificationFromRoom("room-2", "u-1", null, false, (PrivacyEnvelope) null);
   }
 
   @Test
-  void createMessageEventNotification_withThread_delegatesThreadReply() {
+  void createMessageEventNotification_withThread_ignoresLegacyPreviewText() throws Exception {
     // Business reason: thread replies must use dedicated event type to preserve client thread
     // context.
     when(authenticatedUser.getUserId()).thenReturn("u-2");
-    when(authenticatedUser.getUsername()).thenReturn("consultant");
-    when(authenticatedUser.getRoles()).thenReturn(Set.of("consultant"));
-    var request = new EventNotificationController.MessageEventRequestDTO();
-    request.setRoomId("room-3");
-    request.setThreadRootId("thread-3");
-    request.setMessagePreview("reply");
-    request.setSupervisorMessage(true);
-    request.setSenderDisplayName("Sender-3");
-    request.setThreadParentPreview("parent");
+    var request =
+        new com.fasterxml.jackson.databind.ObjectMapper()
+            .readValue(
+                """
+                {"roomId":"room-3","threadRootId":"thread-3","messagePreview":"reply",
+                 "threadParentPreview":"parent","supervisorMessage":true}
+                """,
+                EventNotificationController.MessageEventRequestDTO.class);
 
-    var response = controllerWithMirror.createMessageEventNotification(request);
+    var response = controllerUnderTest.createMessageEventNotification(request);
 
     assertEquals(HttpStatus.NO_CONTENT, response.getStatusCode());
     verify(eventNotificationService)
-        .createThreadReplyNotificationFromRoom(
-            "room-3", "u-2", "reply", "thread-3", true, "parent", null);
+        .createThreadReplyNotificationFromRoom("room-3", "u-2", null, "thread-3", true, null, null);
   }
 
   @Test
-  void createMessageEventNotification_redisMirrorPresent_callsMirror() {
-    // Business reason: mirrored outgoing previews support operational diagnostics for message
-    // events.
-    when(authenticatedUser.getUserId()).thenReturn("u-3");
-    when(authenticatedUser.getUsername()).thenReturn("consultant");
-    when(authenticatedUser.getRoles()).thenReturn(Set.of("consultant"));
-    var request = new EventNotificationController.MessageEventRequestDTO();
-    request.setRoomId("room-4");
-    request.setMessagePreview("preview");
-
-    controllerWithMirror.createMessageEventNotification(request);
-
-    verify(redisMessageMirrorService)
-        .mirrorOutgoingMessage(null, "room-4", "consultant", true, "preview", null);
-  }
-
-  @Test
-  void createMessageEventNotification_redisMirrorAbsent_noMirrorCallAndNoThrow() {
-    // Business reason: notification publishing must remain resilient even when mirror is disabled.
+  void createMessageEventNotification_keepsOnlyTheLegacySystemMarker() {
     when(authenticatedUser.getUserId()).thenReturn("u-4");
     var request = new EventNotificationController.MessageEventRequestDTO();
     request.setRoomId("room-5");
-    request.setMessagePreview("preview");
+    request.setMessagePreview("[SYSTEM_NOTIFICATION] synthetic event");
 
-    var response = controllerWithoutMirror.createMessageEventNotification(request);
+    controllerUnderTest.createMessageEventNotification(request);
 
-    assertEquals(HttpStatus.NO_CONTENT, response.getStatusCode());
     verify(eventNotificationService)
-        .createMessageNotificationFromRoom(
-            "room-5", "u-4", "preview", false, (PrivacyEnvelope) null);
+        .createMessageNotificationFromRoom("room-5", "u-4", "[SYSTEM_NOTIFICATION]", false, null);
   }
 
   @Test
@@ -508,7 +462,7 @@ class EventNotificationControllerTest {
     request.setMessagePreview("preview");
     request.setMatrixEventId("$evt-42");
 
-    var response = controllerWithoutMirror.createMessageEventNotification(request);
+    var response = controllerUnderTest.createMessageEventNotification(request);
 
     assertEquals(HttpStatus.NO_CONTENT, response.getStatusCode());
     var envelopeCaptor = org.mockito.ArgumentCaptor.forClass(PrivacyEnvelope.class);
@@ -516,7 +470,7 @@ class EventNotificationControllerTest {
         .createMessageNotificationFromRoom(
             org.mockito.ArgumentMatchers.eq("room-6"),
             org.mockito.ArgumentMatchers.eq("u-5"),
-            org.mockito.ArgumentMatchers.eq("preview"),
+            org.mockito.ArgumentMatchers.isNull(),
             org.mockito.ArgumentMatchers.eq(false),
             envelopeCaptor.capture());
     assertEquals("$evt-42", envelopeCaptor.getValue().getMessageId());
@@ -534,7 +488,7 @@ class EventNotificationControllerTest {
     request.setContentClass("image");
     request.setHasAttachment(true);
 
-    var response = controllerWithoutMirror.createMessageEventNotification(request);
+    var response = controllerUnderTest.createMessageEventNotification(request);
 
     assertEquals(HttpStatus.NO_CONTENT, response.getStatusCode());
     var envelopeCaptor = org.mockito.ArgumentCaptor.forClass(PrivacyEnvelope.class);
@@ -542,7 +496,7 @@ class EventNotificationControllerTest {
         .createMessageNotificationFromRoom(
             org.mockito.ArgumentMatchers.eq("room-7"),
             org.mockito.ArgumentMatchers.eq("u-6"),
-            org.mockito.ArgumentMatchers.eq("preview"),
+            org.mockito.ArgumentMatchers.isNull(),
             org.mockito.ArgumentMatchers.eq(false),
             envelopeCaptor.capture());
     assertEquals("IMAGE", envelopeCaptor.getValue().getContentClass());
@@ -559,7 +513,7 @@ class EventNotificationControllerTest {
     request.setMatrixEventId("$evt-43");
     request.setContentClass("<script>alert(1)</script>");
 
-    controllerWithoutMirror.createMessageEventNotification(request);
+    controllerUnderTest.createMessageEventNotification(request);
 
     var envelopeCaptor = org.mockito.ArgumentCaptor.forClass(PrivacyEnvelope.class);
     verify(eventNotificationService)
@@ -583,7 +537,7 @@ class EventNotificationControllerTest {
     request.setThreadRootId("$root-1");
     request.setMatrixEventId("$evt-44");
 
-    var response = controllerWithoutMirror.createMessageEventNotification(request);
+    var response = controllerUnderTest.createMessageEventNotification(request);
 
     assertEquals(HttpStatus.NO_CONTENT, response.getStatusCode());
     var envelopeCaptor = org.mockito.ArgumentCaptor.forClass(PrivacyEnvelope.class);
@@ -591,7 +545,7 @@ class EventNotificationControllerTest {
         .createThreadReplyNotificationFromRoom(
             org.mockito.ArgumentMatchers.eq("room-8"),
             org.mockito.ArgumentMatchers.eq("u-7"),
-            org.mockito.ArgumentMatchers.eq("reply"),
+            org.mockito.ArgumentMatchers.isNull(),
             org.mockito.ArgumentMatchers.eq("$root-1"),
             org.mockito.ArgumentMatchers.eq(false),
             org.mockito.ArgumentMatchers.isNull(),
@@ -634,7 +588,7 @@ class EventNotificationControllerTest {
                 .excludedEventTypes(List.of("call.missed", "supervisor.added"))
                 .build());
 
-    var response = controllerWithMirror.getFeed(0, 50, " supervisor.added, call.missed ,,");
+    var response = controllerUnderTest.getFeed(0, 50, " supervisor.added, call.missed ,,");
 
     assertEquals(HttpStatus.OK, response.getStatusCode());
     assertEquals(3, response.getBody().getUnreadCount());
@@ -650,7 +604,7 @@ class EventNotificationControllerTest {
             .reduce((a, b) -> a + "," + b)
             .orElseThrow();
 
-    var response = controllerWithMirror.getFeed(0, 50, tooMany);
+    var response = controllerUnderTest.getFeed(0, 50, tooMany);
 
     assertEquals(HttpStatus.BAD_REQUEST, response.getStatusCode());
     verify(eventNotificationService, never())
@@ -662,7 +616,7 @@ class EventNotificationControllerTest {
     when(authenticatedUser.getUserId()).thenReturn("u-1");
     when(eventNotificationService.countUnread("u-1", Set.of("call.missed"))).thenReturn(7L);
 
-    var response = controllerWithMirror.getUnreadCount("call.missed");
+    var response = controllerUnderTest.getUnreadCount("call.missed");
 
     assertEquals(HttpStatus.OK, response.getStatusCode());
     assertEquals(7L, response.getBody().getUnreadCount());
@@ -672,7 +626,7 @@ class EventNotificationControllerTest {
   @Test
   void getUnreadCount_overlongEventType_returnsBadRequest() {
     var response =
-        controllerWithMirror.getUnreadCount(
+        controllerUnderTest.getUnreadCount(
             "x".repeat(EventNotificationController.MAX_EVENT_TYPE_LENGTH + 1));
 
     assertEquals(HttpStatus.BAD_REQUEST, response.getStatusCode());
@@ -687,7 +641,7 @@ class EventNotificationControllerTest {
         .thenReturn(12);
 
     var response =
-        controllerWithMirror.markAsReadByEventTypes("supervisor.added,supervisor.removed");
+        controllerUnderTest.markAsReadByEventTypes("supervisor.added,supervisor.removed");
 
     assertEquals(HttpStatus.OK, response.getStatusCode());
     assertEquals(12, response.getBody().getUpdated());
@@ -699,9 +653,9 @@ class EventNotificationControllerTest {
   void markAsReadByEventTypes_emptyList_isBadRequestNotReadAll() {
     // Business reason: a missing list must never degrade into "mark everything read".
     assertEquals(
-        HttpStatus.BAD_REQUEST, controllerWithMirror.markAsReadByEventTypes(null).getStatusCode());
+        HttpStatus.BAD_REQUEST, controllerUnderTest.markAsReadByEventTypes(null).getStatusCode());
     assertEquals(
-        HttpStatus.BAD_REQUEST, controllerWithMirror.markAsReadByEventTypes(" , ").getStatusCode());
+        HttpStatus.BAD_REQUEST, controllerUnderTest.markAsReadByEventTypes(" , ").getStatusCode());
     verify(eventNotificationService, never()).markAsReadByEventTypes(any(), any());
     verify(eventNotificationService, never()).markAllAsRead(any());
   }
@@ -741,8 +695,7 @@ class EventNotificationControllerTest {
         authenticatedUser,
         mock(
             de.caritas.cob.userservice.api.service.notification.MessageEventCurrentAccessService
-                .class),
-        Optional.empty());
+                .class));
   }
 
   private void s6WireRealService() {
@@ -921,7 +874,8 @@ class EventNotificationControllerTest {
             s6RealService,
             mock(
                 de.caritas.cob.userservice.api.workflow.accountinactivity.AccountInactivityService
-                    .class));
+                    .class),
+            teamChatSwitchedOnGate());
     var controller = s6Controller(realTeamService);
 
     // Colleague A reads the enquiry's own room, colleague B reads the team discussion.
@@ -944,5 +898,15 @@ class EventNotificationControllerTest {
               assertThat(row.getEventType()).isEqualTo("team.discussion.new");
               assertThat(row.getParams()).contains("\"mentioned\":true");
             });
+  }
+
+  /** Team chat switched on; continuation after acceptance stays off (plain mock default). */
+  private static de.caritas.cob.userservice.api.service.teamdiscussion.TeamDiscussionFeatureGate
+      teamChatSwitchedOnGate() {
+    var gate =
+        org.mockito.Mockito.mock(
+            de.caritas.cob.userservice.api.service.teamdiscussion.TeamDiscussionFeatureGate.class);
+    org.mockito.Mockito.when(gate.isEnabled(org.mockito.ArgumentMatchers.any())).thenReturn(true);
+    return gate;
   }
 }

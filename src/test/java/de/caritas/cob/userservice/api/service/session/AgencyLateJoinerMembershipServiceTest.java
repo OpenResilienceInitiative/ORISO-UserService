@@ -456,12 +456,19 @@ class AgencyLateJoinerMembershipServiceTest {
     when(teamDiscussionRepository.findRoomIdsForParticipantInAgency(
             consultant.getId(), AGENCY_ID, TeamDiscussion.Status.OPEN))
         .thenReturn(List.of());
+    // FE#2491: a team chat switched off on an open enquiry is revoked as well.
+    when(teamDiscussionRepository.findRoomIdsForParticipantInAgency(
+            consultant.getId(), AGENCY_ID, TeamDiscussion.Status.CLOSED))
+        .thenReturn(List.of("!closed:example.org"));
+    when(sessionRoomGateway.removeUserFromRoom(
+            "!closed:example.org", CONSULTANT_MATRIX_USER_ID, AGENCY_TOKEN))
+        .thenReturn(true);
     agencyServiceAccountAvailable();
     when(sessionRoomGateway.removeUserFromRoom(
             "!archive:example.org", CONSULTANT_MATRIX_USER_ID, AGENCY_TOKEN))
         .thenReturn(true);
 
-    assertEquals(1, underTest.removeConsultantFromTeamRooms(consultant, AGENCY_ID));
+    assertEquals(2, underTest.removeConsultantFromTeamRooms(consultant, AGENCY_ID));
   }
 
   @Test

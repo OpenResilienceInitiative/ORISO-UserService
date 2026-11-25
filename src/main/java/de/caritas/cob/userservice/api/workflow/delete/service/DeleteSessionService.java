@@ -28,12 +28,26 @@ public class DeleteSessionService {
    * @return a {@link List} of {@link DeletionWorkflowError}
    */
   public List<DeletionWorkflowError> performSessionDeletion(Session session) {
+    return performSessionDeletion(session, false);
+  }
+
+  /**
+   * As {@link #performSessionDeletion(Session)}, but a failed child cleanup step keeps the session
+   * row, so a run that selects it again can retry (ORISO-Admin#1524).
+   */
+  public List<DeletionWorkflowError> performSessionDeletionKeepingFailed(Session session) {
+    return performSessionDeletion(session, true);
+  }
+
+  private List<DeletionWorkflowError> performSessionDeletion(
+      Session session, boolean keepSessionOnChildFailure) {
 
     if (isNull(session)) {
       return Collections.emptyList();
     }
 
-    var deletionWorkflowDTO = new SessionDeletionWorkflowDTO(session, new ArrayList<>());
+    var deletionWorkflowDTO =
+        new SessionDeletionWorkflowDTO(session, new ArrayList<>(), keepSessionOnChildFailure);
 
     this.actionsRegistry
         .buildContainerForType(SessionDeletionWorkflowDTO.class)

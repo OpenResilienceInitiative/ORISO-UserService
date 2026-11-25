@@ -37,6 +37,10 @@ public class DeleteUserAccountSchedulerTest {
 
   @Mock private IdentityReactivationRepairService identityReactivationRepairService;
 
+  @Mock
+  private de.caritas.cob.userservice.api.workflow.delete.service.TenantDeletionFinisher
+      tenantDeletionFinisher;
+
   @BeforeEach
   void setUp() {
     setField(deleteUserAccountScheduler, "claimDuration", Duration.ofHours(12));
@@ -57,12 +61,15 @@ public class DeleteUserAccountSchedulerTest {
             identityReactivationRepairService,
             userHardDeleteClaimService,
             consultantHardDeleteClaimService,
-            deleteUserAccountService);
+            deleteUserAccountService,
+            tenantDeletionFinisher);
     inOrder.verify(tenantContextProvider).setTechnicalContextIfMultiTenancyIsEnabled();
     inOrder.verify(identityReactivationRepairService).retryOutstandingRepairs();
     inOrder.verify(userHardDeleteClaimService).releaseInterruptedClaims();
     inOrder.verify(consultantHardDeleteClaimService).releaseInterruptedClaims();
     inOrder.verify(deleteUserAccountService).deleteUserAccounts();
+    // A Träger goes only after the run that removes what was in it (ORISO-Admin#1525).
+    inOrder.verify(tenantDeletionFinisher).finishMarkedTenants();
     inOrder.verifyNoMoreInteractions();
   }
 
@@ -77,6 +84,7 @@ public class DeleteUserAccountSchedulerTest {
         identityReactivationRepairService,
         userHardDeleteClaimService,
         consultantHardDeleteClaimService,
-        deleteUserAccountService);
+        deleteUserAccountService,
+        tenantDeletionFinisher);
   }
 }

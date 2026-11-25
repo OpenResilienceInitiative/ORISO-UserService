@@ -7,5 +7,16 @@ public enum ConversationFeature {
   /** "Dateianhänge": putting a file into a conversation. */
   MEDIA_UPLOAD,
   /** "Sprachnachrichten": an audio file becomes a voice message (an {@code m.audio} event). */
-  VOICE_MESSAGES
+  VOICE_MESSAGES,
+  /**
+   * "Team-Chat": the team-only side room on an open enquiry (ADR-016, ORISO-Frontend#2491). A
+   * master switch only; it has no switch per kind of conversation.
+   */
+  TEAM_DISCUSSION,
+  /**
+   * "Team-Chat nach Annahme": the team chat continues after the enquiry is accepted instead of
+   * being archived (ORISO-Frontend#2491). Unlike every other switch, <b>unset is off</b>: archiving
+   * at accept is the behaviour ADR-016 started with.
+   */
+  TEAM_DISCUSSION_AFTER_ACCEPT
 }

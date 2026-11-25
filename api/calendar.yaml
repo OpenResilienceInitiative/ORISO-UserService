@@ -372,6 +372,103 @@ paths:
           description: FORBIDDEN - no/invalid role/authorization or CSRF token
       security:
         - Bearer: [ ]
+  /users/calendar/consultation-hours/once:
+    get:
+      tags:
+        - calendar-controller
+      summary: 'The caller''s one-off Sprechstunden (ORISO-Frontend#2494): single dated windows
+        released for booking once, at short notice, each bookable until noticeMinutes before a
+        slot''s start; only those whose end lies ahead, ordered by start. [Authorization:
+        counsellor, their own only]'
+      operationId: getCalendarConsultationOnce
+      responses:
+        200:
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/CalendarConsultationOnceDTO'
+        401:
+          description: UNAUTHORIZED - no/invalid Keycloak token
+        403:
+          description: FORBIDDEN - no/invalid role/authorization
+      security:
+        - Bearer: [ ]
+    post:
+      tags:
+        - calendar-controller
+      summary: 'Releases one dated window of the caller''s time for booking once
+        (ORISO-Frontend#2494), start and end cut to the whole minute. Over one of the caller''s own
+        blockers only when overBlocker is true: the counsellor confirmed releasing over their
+        Sperrzeit. Only the blockers inside the window at that moment give way to it; a blocker
+        entered or moved later still takes its time. [Authorization: counsellor, their own only]'
+      operationId: createCalendarConsultationOnce
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CalendarConsultationOnceCreateDTO'
+      responses:
+        201:
+          description: CREATED
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CalendarConsultationOnceDTO'
+        400:
+          description: 'BAD REQUEST - nothing is stored. Start and end are cut to the whole
+            minute first. The X-Reason header names the refusal:
+            CONSULTATION_ONCE_END_NOT_AFTER_START (the end is not after the start),
+            CONSULTATION_ONCE_END_IN_PAST (the end does not lie in the future),
+            CONSULTATION_ONCE_TOO_LONG (longer than 12 hours),
+            CONSULTATION_ONCE_NOTICE_NOT_OFFERED (noticeMinutes not one of 0, 30, 60, 120, 720,
+            1440), CONSULTATION_ONCE_OVERLAP (overlaps another one-off of the caller),
+            CONSULTATION_ONCE_LIMIT_REACHED (the caller has 50 upcoming one-offs already).
+            Without the header: start or end missing or malformed'
+          headers:
+            X-Reason:
+              description: 'Why the one-off was refused, see the description'
+              schema:
+                type: string
+                enum:
+                  - CONSULTATION_ONCE_END_NOT_AFTER_START
+                  - CONSULTATION_ONCE_END_IN_PAST
+                  - CONSULTATION_ONCE_TOO_LONG
+                  - CONSULTATION_ONCE_NOTICE_NOT_OFFERED
+                  - CONSULTATION_ONCE_OVERLAP
+                  - CONSULTATION_ONCE_LIMIT_REACHED
+        401:
+          description: UNAUTHORIZED - no/invalid Keycloak token
+        403:
+          description: FORBIDDEN - no/invalid role/authorization or CSRF token
+        409:
+          description: 'CONFLICT - X-Reason CONSULTATION_ONCE_OVER_BLOCKER: the window overlaps
+            one of the caller''s own blockers and overBlocker is not true; nothing is stored'
+      security:
+        - Bearer: [ ]
+  /users/calendar/consultation-hours/once/{onceId}:
+    delete:
+      tags:
+        - calendar-controller
+      summary: 'Removes one one-off Sprechstunde of the caller; appointments already booked in it
+        stay. [Authorization: counsellor who owns it]'
+      operationId: deleteCalendarConsultationOnce
+      parameters:
+        - $ref: '#/components/parameters/OnceId'
+      responses:
+        204:
+          description: NO CONTENT
+        401:
+          description: UNAUTHORIZED - no/invalid Keycloak token
+        403:
+          description: FORBIDDEN - no/invalid role/authorization or CSRF token
+        404:
+          description: NOT FOUND - no such one-off Sprechstunde of the caller
+      security:
+        - Bearer: [ ]
   /users/calendar/working-hours/exceptions/{date}:
     put:
       tags:
@@ -753,6 +850,13 @@ components:
       schema:
         type: string
         format: date-time
+    OnceId:
+      name: onceId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
     BlockerId:
       name: blockerId
       in: path
@@ -1061,6 +1165,56 @@ components:
           description: Length of a bookable slot in minutes, 30 or 60. Default 60.
           type: integer
           format: int32
+    CalendarConsultationOnceCreateDTO:
+      description: One dated window a counsellor releases for booking once (ORISO-Frontend#2494)
+      type: object
+      required:
+        - start
+        - end
+        - noticeMinutes
+      properties:
+        start:
+          type: string
+          format: date-time
+        end:
+          description: After start and in the future, at most 12 hours after start
+          type: string
+          format: date-time
+        noticeMinutes:
+          description: A slot is bookable until this many minutes before its start, its own lead
+            time in place of the platform's; one of 0, 30, 60, 120, 720, 1440
+          type: integer
+          format: int32
+        overBlocker:
+          description: The counsellor confirmed releasing the window over their own blockers
+            (Sperrzeit); the blockers inside the window at that moment then do not take its
+            slots, one entered or moved later does
+          type: boolean
+          default: false
+    CalendarConsultationOnceDTO:
+      description: A one-off Sprechstunde of the caller (ORISO-Frontend#2494)
+      type: object
+      required:
+        - id
+        - start
+        - end
+        - noticeMinutes
+        - overBlocker
+      properties:
+        id:
+          type: string
+          format: uuid
+        start:
+          type: string
+          format: date-time
+        end:
+          type: string
+          format: date-time
+        noticeMinutes:
+          type: integer
+          format: int32
+        overBlocker:
+          type: boolean
     CalendarWorkingHoursDTO:
       type: object
       required:

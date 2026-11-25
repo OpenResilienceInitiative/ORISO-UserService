@@ -1045,7 +1045,11 @@ class ConsultantTenantChangeMariaDbIT {
         transactionManager,
         agencyService,
         mock(AdminScope.class),
-        mock(MembersOnlyChatAccess.class));
+        mock(MembersOnlyChatAccess.class),
+        org.mockito.Mockito.mock(
+            de.caritas.cob.userservice.api.service.agency.CaseSharingGate.class),
+        org.mockito.Mockito.mock(
+            de.caritas.cob.userservice.api.port.out.MatrixRoomMembershipLookup.class));
   }
 
   private static String matrixId(String consultantId) {

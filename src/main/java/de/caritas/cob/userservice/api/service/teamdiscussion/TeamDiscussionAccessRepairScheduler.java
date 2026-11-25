@@ -2,6 +2,7 @@ package de.caritas.cob.userservice.api.service.teamdiscussion;
 
 import de.caritas.cob.userservice.api.facade.TeamDiscussionFacade;
 import de.caritas.cob.userservice.api.model.Session.SessionStatus;
+import de.caritas.cob.userservice.api.model.TeamDiscussion;
 import de.caritas.cob.userservice.api.port.out.ConsultantAgencyRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
@@ -11,6 +12,8 @@ import de.caritas.cob.userservice.api.service.session.AgencyLateJoinerMembership
 import de.caritas.cob.userservice.api.tenant.TenantContext;
 import de.caritas.cob.userservice.api.workflow.scheduling.ScheduledTaskClaimService;
 import java.time.Duration;
+import java.util.HashMap;
+import java.util.Optional;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.annotation.Profile;
@@ -47,7 +50,13 @@ public class TeamDiscussionAccessRepairScheduler {
     if (lease.isEmpty()) return;
     try {
       TenantContext.setCurrentTenant(TenantContext.TECHNICAL_TENANT_ID);
-      var archives = discussions.findPendingArchiveRepairs(SessionStatus.NEW, archiveCursor, BATCH);
+      // Also OPEN/CLOSED rows of accepted cases (FE#2491): they are archived once the team chat no
+      // longer continues after acceptance. The settings are read once per Träger and
+      // Beratungsstelle per sweep, not once per row.
+      var archives =
+          discussions.findPendingArchiveRepairs(
+              SessionStatus.NEW, TeamDiscussion.Status.ARCHIVED, archiveCursor, BATCH);
+      var continuationDecisions = new HashMap<String, Optional<Boolean>>();
       if (archives.isEmpty()) archiveCursor = 0;
       var pending = participants.findAccessRepairs(participantCursor, BATCH);
       if (pending.isEmpty()) participantCursor = 0;
@@ -61,7 +70,10 @@ public class TeamDiscussionAccessRepairScheduler {
                 () ->
                     sessions
                         .findById(discussion.getSessionId())
-                        .ifPresent(facade::archiveDiscussionIfPresent))) break;
+                        .ifPresent(
+                            session ->
+                                facade.archiveDiscussionIfPresent(session, continuationDecisions))))
+              break;
           } catch (RuntimeException ex) {
             log.warn("Team archive repair remains pending for discussion {}", discussion.getId());
           }
@@ -91,9 +103,13 @@ public class TeamDiscussionAccessRepairScheduler {
     var discussion = discussions.findById(participant.getTeamDiscussionId()).orElse(null);
     if (discussion == null) return;
     var session = sessions.findById(discussion.getSessionId()).orElse(null);
-    if (session == null || session.getAgencyId() == null) return;
+    if (session == null) return;
+    // The discussion's own Beratungsstelle: after a move (D4) the former one's members keep it.
+    var agencyId =
+        discussion.getAgencyId() != null ? discussion.getAgencyId() : session.getAgencyId();
+    if (agencyId == null) return;
     if (agencies.existsByConsultantIdAndAgencyIdAndDeleteDateIsNull(
-        participant.getConsultantId(), session.getAgencyId())) {
+        participant.getConsultantId(), agencyId)) {
       if (participant.isAccessRepairRequired()) {
         facade.restoreExistingDiscussionMembership(
             discussion.getId(), participant.getConsultantId());
@@ -105,7 +121,6 @@ public class TeamDiscussionAccessRepairScheduler {
     if (consultant == null) return;
     // Independent commit before the external side effect survives a crash or reassignment.
     participantWriter.setAccessRepairRequired(participantId, true);
-    membership.removeConsultantFromTeamRoom(
-        consultant, session.getAgencyId(), discussion.getMatrixRoomId());
+    membership.removeConsultantFromTeamRoom(consultant, agencyId, discussion.getMatrixRoomId());
   }
 }

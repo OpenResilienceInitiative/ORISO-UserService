@@ -7,7 +7,6 @@ import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
-import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -15,10 +14,8 @@ import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import de.caritas.cob.userservice.api.adapters.web.dto.UserDTO;
-import de.caritas.cob.userservice.api.conversation.model.AnonymousUserCredentials;
 import de.caritas.cob.userservice.api.conversation.service.AnonymousConversationCreatorService;
 import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException;
-import de.caritas.cob.userservice.api.facade.rollback.RollbackFacade;
 import de.caritas.cob.userservice.api.model.ConversationType;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.Session.RegistrationType;
@@ -29,9 +26,7 @@ import de.caritas.cob.userservice.api.service.agency.AgencyService;
 import de.caritas.cob.userservice.api.service.consultingtype.TopicConsultantRoutingService;
 import de.caritas.cob.userservice.api.service.notification.EventNotificationService;
 import de.caritas.cob.userservice.api.service.session.SessionService;
-import de.caritas.cob.userservice.api.service.user.UserService;
 import java.util.List;
-import java.util.Optional;
 import org.jeasy.random.EasyRandom;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -43,9 +38,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 class AnonymousConversationCreatorServiceTest {
 
   @InjectMocks private AnonymousConversationCreatorService service;
-  @Mock private UserService userService;
   @Mock private SessionService sessionService;
-  @Mock private RollbackFacade rollbackFacade;
   @Mock private AgencyService agencyService;
   @Mock private ConsultantAgencyService consultantAgencyService;
   @Mock private EventNotificationService eventNotificationService;
@@ -58,8 +51,6 @@ class AnonymousConversationCreatorServiceTest {
     var session = easyRandom.nextObject(Session.class);
     session.setMatrixRoomId(null);
     session.setMainTopicId(11L);
-    var credentials = AnonymousUserCredentials.builder().userId(USER.getUserId()).build();
-    when(userService.getUser(credentials.getUserId())).thenReturn(Optional.of(USER));
     when(sessionService.initializeSession(
             any(User.class),
             any(UserDTO.class),
@@ -72,7 +63,7 @@ class AnonymousConversationCreatorServiceTest {
     when(consultantAgencyService.getConsultantAgenciesByConsultantIds(List.of("consultant-id")))
         .thenReturn(List.of());
 
-    var created = service.createAnonymousConversation(USER_DTO_SUCHT, credentials);
+    var created = service.createAnonymousConversation(USER_DTO_SUCHT, USER);
 
     assertThat(created).isSameAs(session);
     assertThat(created.getConversationType()).isEqualTo(ConversationType.LIVE_CHAT);
@@ -87,8 +78,6 @@ class AnonymousConversationCreatorServiceTest {
     var session = easyRandom.nextObject(Session.class);
     session.setMatrixRoomId(null);
     session.setMainTopicId(11L);
-    var credentials = AnonymousUserCredentials.builder().userId(USER.getUserId()).build();
-    when(userService.getUser(credentials.getUserId())).thenReturn(Optional.of(USER));
     when(sessionService.initializeSession(
             any(User.class),
             any(UserDTO.class),
@@ -104,29 +93,16 @@ class AnonymousConversationCreatorServiceTest {
         .when(eventNotificationService)
         .createWaitingRoomClientJoinedNotifications(session, List.of("consultant-id"));
 
-    assertThatCode(() -> service.createAnonymousConversation(USER_DTO_SUCHT, credentials))
+    assertThatCode(() -> service.createAnonymousConversation(USER_DTO_SUCHT, USER))
         .doesNotThrowAnyException();
 
     verify(sessionService).saveSession(session);
     verify(eventNotificationService)
         .createWaitingRoomClientJoinedNotifications(session, List.of("consultant-id"));
-    verifyNoInteractions(rollbackFacade);
   }
 
   @Test
-  void rejectsMissingAnonymousUserBeforeCreatingSession() {
-    when(userService.getUser(anyString())).thenReturn(Optional.empty());
-    var credentials = easyRandom.nextObject(AnonymousUserCredentials.class);
-
-    assertThatThrownBy(() -> service.createAnonymousConversation(USER_DTO_SUCHT, credentials))
-        .isInstanceOf(InternalServerErrorException.class);
-
-    verifyNoInteractions(sessionService, rollbackFacade);
-  }
-
-  @Test
-  void rollsBackUserWhenSessionInitializationFails() {
-    when(userService.getUser(anyString())).thenReturn(Optional.of(USER));
+  void reportsAFailedSessionAndLeavesTheUndoToTheRegistrationEntry() {
     when(sessionService.initializeSession(
             any(User.class),
             any(UserDTO.class),
@@ -134,13 +110,11 @@ class AnonymousConversationCreatorServiceTest {
             any(RegistrationType.class),
             any(SessionStatus.class)))
         .thenThrow(new IllegalArgumentException("database unavailable"));
-    var credentials = easyRandom.nextObject(AnonymousUserCredentials.class);
 
-    assertThatThrownBy(() -> service.createAnonymousConversation(USER_DTO_SUCHT, credentials))
+    assertThatThrownBy(() -> service.createAnonymousConversation(USER_DTO_SUCHT, USER))
         .isInstanceOf(InternalServerErrorException.class)
-        .hasMessageContaining("Could not create session");
+        .hasMessageContaining("Could not create the live-chat session");
 
-    verify(rollbackFacade).rollBackUserAccount(any());
     verify(sessionService, never()).saveSession(any());
     verifyNoInteractions(eventNotificationService);
   }

@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+  xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.3.xsd">
+  <!--
+    ORISO-Frontend#2491: a counsellor can switch the team chat of an open enquiry off (status
+    CLOSED, VARCHAR(20) needs no change) and on again. closed_date records the last switch-off.
+    Additive and kept on application rollback.
+  -->
+  <changeSet id="20261123-team-discussion-closed-date-2491" author="oriso">
+    <preConditions onFail="MARK_RAN" onError="HALT">
+      <not><columnExists tableName="team_discussion" columnName="closed_date"/></not>
+    </preConditions>
+    <addColumn tableName="team_discussion">
+      <column name="closed_date" type="datetime"/>
+    </addColumn>
+    <rollback><sql>SELECT 1</sql></rollback>
+  </changeSet>
+</databaseChangeLog>

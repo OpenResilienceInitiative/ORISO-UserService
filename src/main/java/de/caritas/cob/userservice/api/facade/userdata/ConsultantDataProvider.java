@@ -131,17 +131,12 @@ public class ConsultantDataProvider {
     } catch (RestClientResponseException e) {
       // Do not block login when agency-service cannot provide metadata for this token/agency.
       // Return a minimal consultant profile instead of surfacing agency errors as login failures.
-      log.warn(
-          "Could not load agencies for consultant {}: status={}, body={}",
-          consultant.getId(),
-          e.getStatusCode().value(),
-          e.getResponseBodyAsString());
+      log.warn("Could not load agencies for consultant (status={})", e.getStatusCode().value());
       return List.of();
     } catch (RestClientException e) {
       log.warn(
-          "Could not load agencies for consultant {}; returning user data without agencies",
-          consultant.getId(),
-          e);
+          "Could not load agencies for consultant; returning user data without agencies (failure={})",
+          e.getClass().getSimpleName());
       return List.of();
     }
   }
@@ -168,8 +163,8 @@ public class ConsultantDataProvider {
     } catch (Exception e) {
       log.warn(
           "Could not resolve consulting type settings for consultant user data; "
-              + "returning user data without anonymous conversation capability",
-          e);
+              + "returning user data without anonymous conversation capability (failure={})",
+          e.getClass().getSimpleName());
       return false;
     }
   }
