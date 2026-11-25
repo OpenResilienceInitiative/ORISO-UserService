@@ -11,7 +11,7 @@ import static org.hamcrest.Matchers.not;
 import static org.hamcrest.Matchers.notNullValue;
 import static org.junit.jupiter.api.Assertions.fail;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -162,7 +162,8 @@ public class ConsultantAgencyAdminUserServiceTenantAwareIT {
   }
 
   @Test
-  public void endTeamCounsellingForNewCases_Should_removeTeamConsultantFlagAndCallServices() {
+  public void
+      endTeamCounsellingForNewCases_Should_removeTeamConsultantFlag_When_NoTeamCaseIsRunning() {
     givenAValidConsultantPersisted(CONSULTANT1_ID, true);
     when(this.agencyService.getAgency(any())).thenReturn(new AgencyDTO().teamAgency(false));
 
@@ -184,7 +185,8 @@ public class ConsultantAgencyAdminUserServiceTenantAwareIT {
 
     assertThat(teamConsultantsAfter, is(not(teamCosnultantsBefore)));
     assertThat(teamConsultantsAfter, is(lessThan(teamCosnultantsBefore)));
-    verify(this.removeConsultantFromSessionRoomsService, times(1))
+    // FE#2494: running cases stay as they are; no colleague is removed from a room
+    verify(this.removeConsultantFromSessionRoomsService, never())
         .removeConsultantFromSessions(any());
   }
 

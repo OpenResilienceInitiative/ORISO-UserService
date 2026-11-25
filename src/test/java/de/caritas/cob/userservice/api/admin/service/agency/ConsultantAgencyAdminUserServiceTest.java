@@ -9,6 +9,7 @@ import static org.hamcrest.Matchers.notNullValue;
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyList;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -92,7 +93,7 @@ public class ConsultantAgencyAdminUserServiceTest {
   }
 
   @Test
-  public void endTeamCounsellingForNewCases_Should_changeTeamSessionToSession() {
+  public void endTeamCounsellingForNewCases_Should_LeaveARunningTeamCaseAsItIs() {
     Session session = new EasyRandom().nextObject(Session.class);
     session.setTeamSession(true);
 
@@ -101,8 +102,9 @@ public class ConsultantAgencyAdminUserServiceTest {
 
     this.consultantAgencyAdminService.endTeamCounsellingForNewCases(1L);
 
-    verify(this.sessionRepository, times(1)).save(any());
-    verify(this.removeFromSessionRoomsService, times(1)).removeConsultantFromSessions(any());
+    verify(this.sessionRepository, never()).save(any());
+    verify(this.removeFromSessionRoomsService, never()).removeConsultantFromSessions(any());
+    verify(this.consultantRepository, never()).save(any());
   }
 
   @Test
@@ -115,7 +117,7 @@ public class ConsultantAgencyAdminUserServiceTest {
     AgencyDTO agencyDTO = new AgencyDTO().id(1L).teamAgency(false);
 
     when(this.sessionRepository.findByAgencyIdAndStatusAndTeamSessionIsTrue(any(), any()))
-        .thenReturn(singletonList(session));
+        .thenReturn(List.of());
     when(this.consultantRepository.findByConsultantAgenciesAgencyIdInAndDeleteDateIsNull(anyList()))
         .thenReturn(consultants);
     // noOtherTeamAgency() now queries consultantAgencyRepository directly (not the lazy
@@ -142,7 +144,7 @@ public class ConsultantAgencyAdminUserServiceTest {
               new EasyRandom().objects(Consultant.class, 10).collect(Collectors.toList());
 
           when(this.sessionRepository.findByAgencyIdAndStatusAndTeamSessionIsTrue(any(), any()))
-              .thenReturn(singletonList(session));
+              .thenReturn(List.of());
           when(this.consultantRepository.findByConsultantAgenciesAgencyIdInAndDeleteDateIsNull(
                   anyList()))
               .thenReturn(consultants);

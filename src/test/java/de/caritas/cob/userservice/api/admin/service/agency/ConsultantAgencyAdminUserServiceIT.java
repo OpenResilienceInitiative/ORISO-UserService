@@ -7,13 +7,12 @@ import static org.hamcrest.Matchers.greaterThan;
 import static org.hamcrest.Matchers.hasSize;
 import static org.hamcrest.Matchers.instanceOf;
 import static org.hamcrest.Matchers.is;
-import static org.hamcrest.Matchers.lessThan;
 import static org.hamcrest.Matchers.not;
 import static org.hamcrest.Matchers.notNullValue;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -133,7 +132,7 @@ public class ConsultantAgencyAdminUserServiceIT {
   }
 
   @Test
-  public void endTeamCounsellingForNewCases_Should_removeTeamConsultantFlagAndCallServices() {
+  public void endTeamCounsellingForNewCases_Should_LeaveRunningTeamCasesAndTeamFlags() {
     when(this.agencyService.getAgency(any())).thenReturn(new AgencyDTO().teamAgency(false));
 
     long teamCosnultantsBefore =
@@ -152,9 +151,10 @@ public class ConsultantAgencyAdminUserServiceIT {
             .filter(Consultant::isTeamConsultant)
             .count();
 
-    assertThat(teamConsultantsAfter, is(not(teamCosnultantsBefore)));
-    assertThat(teamConsultantsAfter, is(lessThan(teamCosnultantsBefore)));
-    verify(this.removeConsultantFromSessionRoomsService, times(1))
+    // FE#2494: agency 0 still has running team cases; they stay as they are, and so does the
+    // team-consultant identifier the team-case list needs
+    assertThat(teamConsultantsAfter, is(teamCosnultantsBefore));
+    verify(this.removeConsultantFromSessionRoomsService, never())
         .removeConsultantFromSessions(any());
   }
 
