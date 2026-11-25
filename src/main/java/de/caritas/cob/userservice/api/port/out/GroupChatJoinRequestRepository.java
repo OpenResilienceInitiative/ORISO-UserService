@@ -111,6 +111,21 @@ public interface GroupChatJoinRequestRepository extends CrudRepository<GroupChat
   List<GroupChatJoinRequest> findByInviteLinkIdAndViaAndStatus(
       Long inviteLinkId, Via via, Status status);
 
+  /**
+   * ORISO-Frontend#2356: one person's open knocks of one kind through one link, read under lock
+   * from the start, so a decision committed meanwhile is never overwritten from a stale copy.
+   */
+  @Lock(LockModeType.PESSIMISTIC_WRITE)
+  @Query(
+      "SELECT request FROM GroupChatJoinRequest request WHERE request.inviteLinkId = :inviteLinkId"
+          + " AND request.userId = :userId AND request.via = :via"
+          + " AND request.status = de.caritas.cob.userservice.api.model.GroupChatJoinRequest.Status.PENDING"
+          + " ORDER BY request.id")
+  List<GroupChatJoinRequest> findPendingKnocksOfLinkForUpdate(
+      @Param("inviteLinkId") Long inviteLinkId,
+      @Param("userId") String userId,
+      @Param("via") Via via);
+
   List<GroupChatJoinRequest> findByInviteLinkIdAndUserIdAndVia(
       Long inviteLinkId, String userId, Via via);
 

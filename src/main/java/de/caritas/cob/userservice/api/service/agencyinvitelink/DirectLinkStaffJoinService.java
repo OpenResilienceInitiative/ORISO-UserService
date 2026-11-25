@@ -182,6 +182,10 @@ public class DirectLinkStaffJoinService {
             .latestStaffKnock(session.getId(), caller.getId(), StaffCallClock.startOf(binding))
             .orElse(null);
     var admitted = latest != null && latest.getStatus() == Status.ADMITTED ? latest : null;
+    // A decline holds for this call, also when "Anklopfen" is switched off afterwards.
+    if (latest != null && latest.getStatus() == Status.DECLINED) {
+      return StaffJoin.knock(StaffOutcome.REFUSED, medium, latest);
+    }
     if (admitted == null && link.isKnock()) {
       if (latest != null && knocks.stillWaitingStaffKnock(latest)) {
         return StaffJoin.knock(StaffOutcome.WAITING, medium, latest);

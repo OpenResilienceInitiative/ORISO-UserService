@@ -227,6 +227,16 @@ class DirectLinkStaffJoinServiceTest {
   }
 
   @Test
+  void aDeclineHoldsForTheCallAlsoWhenKnockingIsSwitchedOffAfterwards() {
+    link.setKnock(false);
+    when(knocks.latestStaffKnock(eq(SESSION_ID), eq(CALLER), any()))
+        .thenReturn(Optional.of(knock(91L, Status.DECLINED, OWNER)));
+
+    assertThat(service.join(TOKEN, CALLER, null).outcome()).isEqualTo(StaffOutcome.REFUSED);
+    verify(knocks, never()).admitStaffWithoutKnock(any(), any(), any(), any());
+  }
+
+  @Test
   void aKnockThePageWaitedOnThatWasWithdrawnIsRefused_ANewVisitKnocksAnew() {
     when(knocks.latestStaffKnock(eq(SESSION_ID), eq(CALLER), any()))
         .thenReturn(Optional.of(knock(91L, Status.CANCELLED, null)));

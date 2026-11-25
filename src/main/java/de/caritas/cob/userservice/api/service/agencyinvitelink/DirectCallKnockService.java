@@ -362,23 +362,15 @@ public class DirectCallKnockService {
   @Transactional
   public int cancelWaitingStaffKnocks(Long inviteLinkId, String consultantId) {
     var now = LocalDateTime.now();
+    // Locked on the first read: an admission or decline committed meanwhile is not PENDING any
+    // more and is left as it is (a decline must keep holding).
     var waiting =
-        repository
-            .findByInviteLinkIdAndUserIdAndVia(inviteLinkId, consultantId, Via.STAFF_LINK)
-            .stream()
-            .filter(GroupChatJoinRequest::isPending)
-            .toList();
+        repository.findPendingKnocksOfLinkForUpdate(inviteLinkId, consultantId, Via.STAFF_LINK);
     for (var knock : waiting) {
-      repository
-          .findByIdForUpdate(knock.getId())
-          .filter(GroupChatJoinRequest::isPending)
-          .ifPresent(
-              locked -> {
-                locked.setStatus(Status.CANCELLED);
-                locked.setDecidedAt(now);
-                locked.setDecidedBy(consultantId);
-                repository.save(locked);
-              });
+      knock.setStatus(Status.CANCELLED);
+      knock.setDecidedAt(now);
+      knock.setDecidedBy(consultantId);
+      repository.save(knock);
     }
     return waiting.size();
   }
@@ -722,9 +714,12 @@ public class DirectCallKnockService {
             .findByIdAndDeleteDateIsNull(consultant.getId())
             .map(Consultant::getMatrixUserId)
             .orElse(null);
+    // An admission holds for one call: only the call it was given for loses the seat, never a
+    // later call of the same conversation the counsellor was let into anew.
     long now = System.currentTimeMillis();
     callBindings.findBySessionIdIn(List.of(knock.getSessionId())).stream()
         .filter(binding -> binding.isLive(now))
+        .filter(binding -> !knock.getRequestedAt().isBefore(StaffCallClock.startOf(binding)))
         .forEach(binding -> callGuests.revokeSeat(binding, guestMatrixId, moderator));
     return repository.save(knock);
   }

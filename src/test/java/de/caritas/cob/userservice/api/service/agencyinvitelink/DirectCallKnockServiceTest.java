@@ -388,6 +388,54 @@ class DirectCallKnockServiceTest {
   }
 
   @Test
+  void declineAfterAdmit_Should_RevokeOnlyTheSeatOfTheCallTheAdmissionWasFor() {
+    var knock = staffKnock(3L);
+    knock.setStatus(Status.ADMITTED);
+    knock.setRequestedAt(LocalDateTime.now().minusMinutes(30));
+    when(repository.findByIdForUpdate(3L)).thenReturn(Optional.of(knock));
+    when(repository.save(any(GroupChatJoinRequest.class))).thenAnswer(i -> i.getArgument(0));
+    var guest = new Consultant();
+    guest.setId("colleague-9");
+    guest.setMatrixUserId("@colleague-9:m.test");
+    when(consultants.findByIdAndDeleteDateIsNull("colleague-9")).thenReturn(Optional.of(guest));
+    long now = System.currentTimeMillis();
+    var callOfTheAdmission =
+        de.caritas.cob.userservice.api.model.MatrixCallBinding.builder()
+            .id(1L)
+            .sessionId(SESSION_ID)
+            .invitedAt(now - 40 * 60_000)
+            .inviteExpiresAt(now + 60_000)
+            .build();
+    var laterCall =
+        de.caritas.cob.userservice.api.model.MatrixCallBinding.builder()
+            .id(2L)
+            .sessionId(SESSION_ID)
+            .invitedAt(now - 60_000)
+            .inviteExpiresAt(now + 60_000)
+            .build();
+    when(callBindings.findBySessionIdIn(List.of(SESSION_ID)))
+        .thenReturn(List.of(callOfTheAdmission, laterCall));
+
+    service.decline(3L, counsellor);
+
+    verify(callGuests).revokeSeat(eq(callOfTheAdmission), eq("@colleague-9:m.test"), any());
+    verify(callGuests, org.mockito.Mockito.never()).revokeSeat(eq(laterCall), any(), any());
+  }
+
+  @Test
+  void cancelWaitingStaffKnocks_Should_ReadUnderLock_AndCancelOnlyWhatIsStillOpen() {
+    var open = staffKnock(3L);
+    when(repository.findPendingKnocksOfLinkForUpdate(9L, "colleague-9", Via.STAFF_LINK))
+        .thenReturn(List.of(open));
+
+    assertThat(service.cancelWaitingStaffKnocks(9L, "colleague-9")).isEqualTo(1);
+
+    assertThat(open.getStatus()).isEqualTo(Status.CANCELLED);
+    verify(repository, org.mockito.Mockito.never())
+        .findByInviteLinkIdAndUserIdAndVia(any(), any(), any());
+  }
+
+  @Test
   void openStaffKnock_Should_RingTheCounsellor_AndEndAnEarlierOpenKnock() {
     var earlier = staffKnock(3L);
     when(repository.findPendingCallKnocksForUpdate(SESSION_ID, "colleague-9", Via.STAFF_LINK))
