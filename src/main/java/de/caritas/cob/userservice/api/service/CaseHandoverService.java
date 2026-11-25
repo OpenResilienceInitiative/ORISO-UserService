@@ -45,6 +45,7 @@ import de.caritas.cob.userservice.api.port.out.CaseHandoverRequestRepository.Can
 import de.caritas.cob.userservice.api.port.out.ConsultantAgencyRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
+import de.caritas.cob.userservice.api.service.agency.CaseSharingGate;
 import de.caritas.cob.userservice.api.service.chat.MembersOnlyChatAccess;
 import de.caritas.cob.userservice.api.service.matrix.MatrixSessionSystemMessageService;
 import de.caritas.cob.userservice.api.service.notification.AskerNotificationChannelPolicy;
@@ -372,6 +373,9 @@ public class CaseHandoverService {
   private final @NonNull AgencyService agencyService;
   private final @NonNull AdminScope adminScope;
   private final @NonNull MembersOnlyChatAccess membersOnlyChatAccess;
+
+  /** #374 / UserService#1687: case handover only where it is the centre's case sharing mode. */
+  private final @NonNull CaseSharingGate caseSharingGate;
 
   /**
    * When topics are off, a department degenerates to the agency. When they are on, an empty topic
@@ -2330,13 +2334,19 @@ public class CaseHandoverService {
         initial.needsPolicy()
             ? caseHandoverPolicyCacheService.getCurrent(initial.tenantId())
             : null;
+    if (initial.needsPolicy()) {
+      // outside any lock, like the policy read: the centre must have chosen case handover
+      caseSharingGate.requireCaseHandover(
+          initial.agencyId(), initial.tenantId(), initial.conversationType());
+    }
     return inNewTransaction(
         () -> {
           PreparedAction current = prepare.apply(true);
           if (current.terminal() != null) return current.terminal();
           if (!initial.stamp().equals(current.stamp())
               || initial.needsPolicy() != current.needsPolicy()
-              || !Objects.equals(initial.tenantId(), current.tenantId())) {
+              || !Objects.equals(initial.tenantId(), current.tenantId())
+              || !Objects.equals(initial.agencyId(), current.agencyId())) {
             throw new ConflictException("Case handover changed while its policy was checked");
           }
           return current.effect().apply(policy);
@@ -2356,7 +2366,7 @@ public class CaseHandoverService {
   }
 
   private PreparedAction terminalAction(CaseHandoverStatus status) {
-    return new PreparedAction(null, null, false, status, null);
+    return new PreparedAction(null, null, null, null, false, status, null);
   }
 
   private PreparedAction preparedAction(
@@ -2367,6 +2377,8 @@ public class CaseHandoverService {
     return new PreparedAction(
         PolicyStamp.capture(session, request),
         needsPolicy ? policyTenant(session) : null,
+        session.getAgencyId(),
+        AskerNotificationChannelPolicy.conversationType(session),
         needsPolicy,
         null,
         effect);
@@ -2375,6 +2387,8 @@ public class CaseHandoverService {
   private record PreparedAction(
       PolicyStamp stamp,
       Long tenantId,
+      Long agencyId,
+      ConversationType conversationType,
       boolean needsPolicy,
       CaseHandoverStatus terminal,
       Function<CaseHandoverPolicyCacheService.CurrentPolicy, CaseHandoverStatus> effect) {}

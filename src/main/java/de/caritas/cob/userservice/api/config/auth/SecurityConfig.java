@@ -667,6 +667,13 @@ public class SecurityConfig {
                     "/useradmin/tenants/{tenantId:[0-9]+}/deletion-blockers",
                     "/service/useradmin/tenants/{tenantId:[0-9]+}/deletion-blockers")
                 .hasAnyAuthority(USER_ADMIN, TENANT_ADMIN, SINGLE_TENANT_ADMIN)
+                // Called by TenantService when the platform administrator deletes a Träger
+                // (ORISO-Admin#1525). Only that person may empty a Träger, never a Träger admin.
+                .requestMatchers(
+                    HttpMethod.POST,
+                    "/useradmin/tenants/{tenantId:[0-9]+}/deletion",
+                    "/service/useradmin/tenants/{tenantId:[0-9]+}/deletion")
+                .access(this::isHumanPlatformAdmin)
                 .requestMatchers(HttpMethod.GET, "/useradmin/tenantadmins/search")
                 .hasAnyAuthority(TENANT_ADMIN, USER_ADMIN)
                 .requestMatchers(
@@ -820,6 +827,14 @@ public class SecurityConfig {
                     "/service/useradmin/erstantwort/agencies/{agencyId:[0-9]+}")
                 .hasAnyAuthority(
                     USER_ADMIN, TENANT_ADMIN, SINGLE_TENANT_ADMIN, RESTRICTED_AGENCY_ADMIN)
+                // Deleting a Beratungsstelle (ORISO-Admin#1524): the preview and the cascade
+                // AgencyService calls with the deleting admin's token. Träger and platform admins
+                // only, as for deleting the Beratungsstelle itself; AgencyDeletionCascadeService
+                // narrows to the caller's AdminScope.
+                .requestMatchers(
+                    "/useradmin/agencies/{agencyId:[0-9]+}/deletion",
+                    "/service/useradmin/agencies/{agencyId:[0-9]+}/deletion")
+                .hasAnyAuthority(USER_ADMIN, TENANT_ADMIN, SINGLE_TENANT_ADMIN)
                 // Contact person per counselling centre and Träger (ORISO-Admin#1534). Every admin
                 // role reaches it; ContactPersonAdminService narrows to the caller's AdminScope
                 // (agency admins: own centres only, never the Träger default).

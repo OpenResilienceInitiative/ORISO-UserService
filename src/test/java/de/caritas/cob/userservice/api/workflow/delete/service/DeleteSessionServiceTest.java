@@ -48,4 +48,15 @@ public class DeleteSessionServiceTest {
     verify(this.commandMockProvider.getActionMock(DeleteSingleRoomAndSessionAction.class), times(1))
         .execute(new SessionDeletionWorkflowDTO(session, emptyList()));
   }
+
+  @Test
+  public void performSessionDeletionKeepingFailed_Should_askTheActionToKeepAFailedSession() {
+    Session session = new Session();
+    when(this.actionsRegistry.buildContainerForType(SessionDeletionWorkflowDTO.class))
+        .thenReturn(this.commandMockProvider.getActionContainer(SessionDeletionWorkflowDTO.class));
+    this.deleteSessionService.performSessionDeletionKeepingFailed(session);
+
+    verify(this.commandMockProvider.getActionMock(DeleteSingleRoomAndSessionAction.class), times(1))
+        .execute(new SessionDeletionWorkflowDTO(session, emptyList(), true));
+  }
 }

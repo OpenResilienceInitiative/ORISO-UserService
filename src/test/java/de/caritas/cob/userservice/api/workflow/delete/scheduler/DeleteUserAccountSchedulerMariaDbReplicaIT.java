@@ -205,6 +205,9 @@ class DeleteUserAccountSchedulerMariaDbReplicaIT {
     var scheduler =
         new DeleteUserAccountScheduler(
             deletionService,
+            mock(
+                de.caritas.cob.userservice.api.workflow.delete.service.TenantDeletionFinisher
+                    .class),
             tenantContextProvider,
             taskClaimService,
             userHardDeleteClaimService,

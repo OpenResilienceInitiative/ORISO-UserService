@@ -86,6 +86,8 @@ class CaseHandoverRequiredConsentMailIT {
   private final TenantSystemEmailDelivery delivery = mock(TenantSystemEmailDelivery.class);
   @MockitoBean private CaseHandoverMailSender queuedMail;
   @MockitoBean private CaseHandoverPolicyCacheService policies;
+  // the centre's case sharing mode (#1687) is covered by CaseSharingGateTest
+  @MockitoBean de.caritas.cob.userservice.api.service.agency.CaseSharingGate caseSharingGate;
   @MockitoBean private UserAccountService actor;
   @MockitoBean private ReleaseToggleService toggles;
   @MockitoBean private MatrixFeedUpdateSignalService feedSignal;

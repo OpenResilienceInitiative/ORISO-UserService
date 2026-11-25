@@ -1187,7 +1187,9 @@ class EnquiryRejectionControllerIT {
                         .TenantErstantwortContentClient.class)),
             org.mockito.Mockito.mock(
                 de.caritas.cob.userservice.api.service.erstantwort.ErstantwortPlatformTextService
-                    .class));
+                    .class),
+            org.mockito.Mockito.mock(
+                de.caritas.cob.userservice.api.service.erstantwort.JourneyFirstReplyBuilder.class));
     when(matrix.loginAsUserAccessToken(original.getMatrixUserId()))
         .thenReturn("synthetic-seeker-token");
     when(matrix.getRoomEvent(

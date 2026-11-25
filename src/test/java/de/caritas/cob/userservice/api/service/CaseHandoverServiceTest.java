@@ -108,6 +108,8 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
 @MockitoSettings(strictness = Strictness.LENIENT)
 class CaseHandoverServiceTest {
 
+  @Mock private de.caritas.cob.userservice.api.service.agency.CaseSharingGate caseSharingGate;
+
   @InjectMocks private CaseHandoverService caseHandoverService;
 
   @Mock
@@ -1412,9 +1414,9 @@ class CaseHandoverServiceTest {
   }
 
   @ParameterizedTest
+  // anonymous sessions are live chats, where the case sharing gate refuses any handover (#1687)
   @org.junit.jupiter.params.provider.CsvSource({
-    "ANONYMOUS,LIVE_CHAT,NONE",
-    "ANONYMOUS,,NONE",
+    "REGISTERED,AGENCY_COUNSELLING,OPT_IN",
     "REGISTERED,,OPT_IN"
   })
   void createOffer_standingPreferenceUsesExactCurrentConversationScope(
@@ -1432,6 +1434,43 @@ class CaseHandoverServiceTest {
         caseHandoverService.createOffer(
             123L, "recipient", "UNPLANNED_ABSENCE", null, 0L, UUID.randomUUID());
     assertEquals(expected, result.getClientConsent());
+  }
+
+  @Test
+  void createOffer_asksTheCaseSharingGateWithTheSessionsCentreTenantAndFormat() {
+    session.setConsultant(requester);
+    Consultant recipient = eligibleConsultant("recipient", "Recipient");
+    when(consultantService.getConsultant("recipient")).thenReturn(Optional.of(recipient));
+
+    caseHandoverService.createOffer(
+        123L, "recipient", "UNPLANNED_ABSENCE", null, 0L, UUID.randomUUID());
+
+    verify(caseSharingGate)
+        .requireCaseHandover(
+            10L, 7L, de.caritas.cob.userservice.api.model.ConversationType.AGENCY_COUNSELLING);
+  }
+
+  @Test
+  void createOffer_changesNothing_whenTheCaseSharingGateRefuses() {
+    session.setConsultant(requester);
+    session.setRegistrationType(Session.RegistrationType.ANONYMOUS);
+    session.setConversationType(de.caritas.cob.userservice.api.model.ConversationType.LIVE_CHAT);
+    Consultant recipient = eligibleConsultant("recipient", "Recipient");
+    when(consultantService.getConsultant("recipient")).thenReturn(Optional.of(recipient));
+    org.mockito.Mockito.doThrow(new ForbiddenException("Case Handover exists only in Mailberatung"))
+        .when(caseSharingGate)
+        .requireCaseHandover(
+            10L, 7L, de.caritas.cob.userservice.api.model.ConversationType.LIVE_CHAT);
+
+    assertThrows(
+        ForbiddenException.class,
+        () ->
+            caseHandoverService.createOffer(
+                123L, "recipient", "UNPLANNED_ABSENCE", null, 0L, UUID.randomUUID()));
+
+    verify(sessionOwnershipService, never()).updateOwner(any(), any(), any(), any());
+    verify(caseHandoverRequestRepository, never()).save(any());
+    verify(caseHandoverEmailNotification, never()).ownershipGranted(any());
   }
 
   @ParameterizedTest

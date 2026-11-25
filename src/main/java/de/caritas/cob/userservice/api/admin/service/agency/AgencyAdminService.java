@@ -9,7 +9,9 @@ import de.caritas.cob.userservice.agencyadminserivce.generated.web.model.AgencyA
 import de.caritas.cob.userservice.api.config.apiclient.AgencyAdminServiceApiControllerFactory;
 import de.caritas.cob.userservice.api.service.httpheader.SecurityHeaderSupplier;
 import de.caritas.cob.userservice.api.service.httpheader.TenantHeaderSupplier;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.Objects;
 import java.util.stream.Collectors;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
@@ -20,6 +22,8 @@ import org.springframework.stereotype.Service;
 @Service
 @RequiredArgsConstructor
 public class AgencyAdminService {
+
+  private static final int AGENCY_PAGE_SIZE = 100;
 
   private final @NonNull SecurityHeaderSupplier securityHeaderSupplier;
   private final @NonNull TenantHeaderSupplier tenantHeaderSupplier;
@@ -64,6 +68,49 @@ public class AgencyAdminService {
           "AgencyService returned no agency total for tenant " + tenantId);
     }
     return result.getTotal();
+  }
+
+  /**
+   * Ids of the agencies of a Träger that are not deleted yet, read page by page before any is
+   * marked, so marking cannot shift the pages (ORISO-Admin#1525).
+   *
+   * @param tenantId the Träger
+   * @return ids of its agencies that are not soft-deleted
+   */
+  public List<Long> findActiveAgencyIdsOfTenant(Long tenantId) {
+    AdminAgencyControllerApi controllerApi =
+        agencyAdminServiceApiControllerFactory.createControllerApi();
+    addDefaultHeaders(controllerApi.getApiClient());
+    var ids = new ArrayList<Long>();
+    for (int page = 1; ; page++) {
+      var result = controllerApi.searchAgencies(page, AGENCY_PAGE_SIZE, null, null, true, tenantId);
+      var embedded = result == null ? null : result.getEmbedded();
+      if (embedded == null || embedded.isEmpty()) {
+        return ids;
+      }
+      embedded.stream()
+          .map(AgencyAdminFullResponseDTO::getEmbedded)
+          .filter(Objects::nonNull)
+          .map(AgencyAdminResponseDTO::getId)
+          .filter(Objects::nonNull)
+          .forEach(ids::add);
+      if (embedded.size() < AGENCY_PAGE_SIZE) {
+        return ids;
+      }
+    }
+  }
+
+  /**
+   * Marks one agency for deletion in AgencyService, as the calling admin. AgencyService refuses an
+   * agency that still has counsellors, so the Träger deletion marks those first.
+   *
+   * @param agencyId the agency
+   */
+  public void markAgencyForDeletion(Long agencyId) {
+    AdminAgencyControllerApi controllerApi =
+        agencyAdminServiceApiControllerFactory.createControllerApi();
+    addDefaultHeaders(controllerApi.getApiClient());
+    controllerApi.deleteAgency(agencyId);
   }
 
   public void addDefaultHeaders(ApiClient apiClient) {
