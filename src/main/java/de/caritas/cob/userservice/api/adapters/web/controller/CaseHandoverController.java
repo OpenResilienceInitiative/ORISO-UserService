@@ -216,6 +216,7 @@ public class CaseHandoverController {
   @PostMapping({"/users/case-handover/batch", "/service/users/case-handover/batch"})
   public ResponseEntity<List<CaseHandoverBatchResultDTO>> requestBatchAccess(
       @Valid @RequestBody CaseHandoverBatchRequestDTO request) {
+    caseHandoverService.validateBatchExplanation(request.getReasonCode(), request.getExplanation());
     List<CaseHandoverBatchResultDTO> results = new ArrayList<>();
     request.getOperations().stream()
         .forEach(
@@ -254,7 +255,8 @@ public class CaseHandoverController {
 
   public static class CaseHandoverRequestDTO {
     @NotBlank private String reasonCode;
-    @NotBlank private String explanation;
+    // Blank allowed: the reason's explanation level decides (FE#2040).
+    private String explanation;
 
     @Min(0)
     private Long expectedOwnershipRevision;
@@ -354,7 +356,8 @@ public class CaseHandoverController {
 
   public static class CaseHandoverBatchRequestDTO {
     @NotBlank private String reasonCode;
-    @NotBlank private String explanation;
+    // Blank allowed: the reason's explanation level decides (FE#2040).
+    private String explanation;
     @NotEmpty @Valid private List<@NotNull CaseHandoverBatchOperationDTO> operations;
 
     public String getReasonCode() {

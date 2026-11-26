@@ -277,10 +277,15 @@ public class CaseHandoverService {
               "uk",
               "Ваш попередній консультант більше не працює в цьому консультаційному центрі. Відтепер ваше консультування продовжить {{newAdvisor}}."));
 
+  static final String EXPLANATION_OFF = "OFF";
+  static final String EXPLANATION_OPTIONAL = "OPTIONAL";
+  static final String EXPLANATION_REQUIRED = "REQUIRED";
+
   private static final List<CaseHandoverReason> DEFAULT_REASONS =
       List.of(
           CaseHandoverReason.builder()
               .code(CaseHandoverReasonCodes.ADVICE_REQUESTED)
+              .explanationLevel(EXPLANATION_OFF)
               .clientNotificationTemplates(
                   DEFAULT_CLIENT_NOTIFICATION_TEMPLATES.get(
                       CaseHandoverReasonCodes.ADVICE_REQUESTED))
@@ -295,6 +300,7 @@ public class CaseHandoverService {
               .build(),
           CaseHandoverReason.builder()
               .code(CaseHandoverReasonCodes.PLANNED_ABSENCE)
+              .explanationLevel(EXPLANATION_OFF)
               .clientNotificationTemplates(
                   DEFAULT_CLIENT_NOTIFICATION_TEMPLATES.get(
                       CaseHandoverReasonCodes.PLANNED_ABSENCE))
@@ -308,6 +314,7 @@ public class CaseHandoverService {
               .build(),
           CaseHandoverReason.builder()
               .code("OTHER_EMERGENCY")
+              .explanationLevel(EXPLANATION_OFF)
               .clientNotificationTemplates(
                   DEFAULT_CLIENT_NOTIFICATION_TEMPLATES.get("OTHER_EMERGENCY"))
               .label("Other emergency")
@@ -320,6 +327,7 @@ public class CaseHandoverService {
               .build(),
           CaseHandoverReason.builder()
               .code(CaseHandoverReasonCodes.UNPLANNED_ABSENCE)
+              .explanationLevel(EXPLANATION_OFF)
               .clientNotificationTemplates(
                   DEFAULT_CLIENT_NOTIFICATION_TEMPLATES.get(
                       CaseHandoverReasonCodes.UNPLANNED_ABSENCE))
@@ -333,6 +341,7 @@ public class CaseHandoverService {
               .build(),
           CaseHandoverReason.builder()
               .code(CaseHandoverReasonCodes.ASSIGNMENT_ENDED)
+              .explanationLevel(EXPLANATION_OFF)
               .clientNotificationTemplates(
                   DEFAULT_CLIENT_NOTIFICATION_TEMPLATES.get(
                       CaseHandoverReasonCodes.ASSIGNMENT_ENDED))
@@ -578,6 +587,7 @@ public class CaseHandoverService {
       policy.getLabels().setValue(labels);
     }
     policy.getEnabled().setValue(requested.isEnabled());
+    applyExplanationLevel(policy, requested.getExplanationLevel());
     policy.getAccessAllowed().setValue(isAccessAllowed(requested));
     CaseHandoverConsentMode consent =
         requested.getClientConsent() != null
@@ -1088,6 +1098,31 @@ public class CaseHandoverService {
                 locked));
   }
 
+  /**
+   * Validates the policy-dependent fields shared by every operation in a batch before the first
+   * operation is started. This keeps malformed batch input on the API's HTTP 400 path instead of
+   * turning the validation error into a per-operation result under HTTP 201.
+   */
+  @Transactional(propagation = Propagation.NOT_SUPPORTED)
+  public void validateBatchExplanation(String reasonCode, String explanation) {
+    Consultant consultant = retrieveCurrentConsultant();
+    Long tenantId = consultant.getTenantId();
+    if (tenantId == null || tenantId <= 0) {
+      throw new ServiceUnavailableException("No tenant is available for Case Handover policy");
+    }
+    var current = caseHandoverPolicyCacheService.getCurrent(tenantId);
+    current.requireEnabled();
+    String normalized = CaseHandoverReasonCodes.canonical(reasonCode);
+    CaseHandoverReason reason =
+        current.policies().getReasons().values().stream()
+            .map(policy -> toReason(policy, "de"))
+            .filter(CaseHandoverReason::isEnabled)
+            .filter(candidate -> candidate.getCode().equals(normalized))
+            .findFirst()
+            .orElseThrow(() -> new BadRequestException("Unknown handover reason"));
+    explanationFor(reason, explanation);
+  }
+
   private PreparedAction prepareRequestAccess(
       Long sessionId,
       String reasonCode,
@@ -1129,13 +1164,13 @@ public class CaseHandoverService {
       return terminalAction(getStatus(sessionId));
     }
 
-    String normalizedExplanation = normalizeExplanation(explanation);
     return preparedAction(
         session,
         null,
         true,
         current -> {
           CaseHandoverReason reason = findReason(current, session, reasonCode, false);
+          String normalizedExplanation = explanationFor(reason, explanation);
 
           Optional<CaseHandoverRequest> existing =
               guarded
@@ -1199,6 +1234,7 @@ public class CaseHandoverService {
                   .reasonCode(reason.getCode())
                   .reasonLabel(reason.getLabel())
                   .explanation(normalizedExplanation)
+                  .explanationLevel(explanationLevel(reason))
                   .status(status)
                   .clientConsent(clientConsent)
                   .clientConsentRequired(clientConsentRequired)
@@ -1440,7 +1476,8 @@ public class CaseHandoverService {
                       .operationId(operationId)
                       .reasonCode(reason.getCode())
                       .reasonLabel(reason.getLabel())
-                      .explanation(normalizeOptionalExplanation(explanation))
+                      .explanation(explanationFor(reason, explanation))
+                      .explanationLevel(explanationLevel(reason))
                       .status(Status.PENDING_RECIPIENT_ACCEPTANCE)
                       .clientConsent(effectiveClientConsent(session, reason))
                       .clientConsentRequired(
@@ -2188,10 +2225,7 @@ public class CaseHandoverService {
       String reasonCode,
       String explanation,
       Long expectedOwnershipRevision) {
-    String expectedExplanation =
-        direction == Direction.PULL
-            ? normalizeExplanation(explanation)
-            : normalizeOptionalExplanation(explanation);
+    String expectedExplanation = normalizeOptionalExplanation(explanation);
     if (stored.getSession() == null
         || !Objects.equals(stored.getSession().getId(), session.getId())
         || !Objects.equals(stored.getTenantId(), session.getTenantId())
@@ -2203,10 +2237,24 @@ public class CaseHandoverService {
         || !Objects.equals(
             CaseHandoverReasonCodes.canonical(stored.getReasonCode()),
             CaseHandoverReasonCodes.canonical(reasonCode))
-        || !Objects.equals(stored.getExplanation(), expectedExplanation)
+        || !replayedExplanationMatches(stored, expectedExplanation)
         || !Objects.equals(stored.getExpectedOwnershipRevision(), expectedOwnershipRevision)) {
       throw new ConflictException("Operation identity was already used with another payload");
     }
+  }
+
+  /**
+   * FE#2040: a reason set to OFF stores no text, so a replay may carry the text the client sent the
+   * first time. Only a creation-time OFF level permits that comparison; an empty OPTIONAL text or a
+   * legacy request without a captured level still has to be replayed unchanged.
+   */
+  private boolean replayedExplanationMatches(
+      CaseHandoverRequest stored, String expectedExplanation) {
+    String storedExplanation = stored.getExplanation() == null ? "" : stored.getExplanation();
+    if (Objects.equals(storedExplanation, expectedExplanation)) {
+      return true;
+    }
+    return storedExplanation.isEmpty() && EXPLANATION_OFF.equals(stored.getExplanationLevel());
   }
 
   private Optional<CaseHandoverRequest> latestFor(Long sessionId, Consultant requester) {
@@ -2498,6 +2546,7 @@ public class CaseHandoverService {
     return CaseHandoverReason.builder()
         .code(code)
         .label(policy.getLabel())
+        .explanationLevel(EXPLANATION_OFF)
         .clientConsent(consent)
         .clientConsentRequired(consent == CaseHandoverConsentMode.OPT_IN)
         .accessAllowed(!Boolean.FALSE.equals(policy.getAccessAllowed()))
@@ -2551,6 +2600,10 @@ public class CaseHandoverService {
         .approvalRoles(approvalRoles)
         .clientNotificationTemplates(valueOf(policy.getClientNotificationTemplates()))
         .maxAccessDurationMinutes(duration)
+        .explanationLevel(
+            policy.getExplanationLevel() == null || policy.getExplanationLevel().getValue() == null
+                ? EXPLANATION_OFF
+                : policy.getExplanationLevel().getValue().getValue())
         .build();
   }
 
@@ -2620,6 +2673,55 @@ public class CaseHandoverService {
 
   private String normalizeOptionalExplanation(String explanation) {
     return explanation == null ? "" : explanation.trim();
+  }
+
+  static String explanationLevel(CaseHandoverReason reason) {
+    String level = reason == null ? null : reason.getExplanationLevel();
+    return EXPLANATION_REQUIRED.equals(level) || EXPLANATION_OPTIONAL.equals(level)
+        ? level
+        : EXPLANATION_OFF;
+  }
+
+  /**
+   * The explanation stored for {@code reason} (FE#2040): REQUIRED refuses a blank text, OPTIONAL
+   * keeps what was typed, OFF stores nothing even when a text was sent.
+   */
+  private String explanationFor(CaseHandoverReason reason, String explanation) {
+    return switch (explanationLevel(reason)) {
+      case EXPLANATION_REQUIRED -> normalizeExplanation(explanation);
+      case EXPLANATION_OPTIONAL -> normalizeOptionalExplanation(explanation);
+      default -> "";
+    };
+  }
+
+  private void applyExplanationLevel(
+      de.caritas.cob.userservice.tenantadminservice.generated.web.model.CaseHandoverReasonPolicy
+          policy,
+      String requestedLevel) {
+    if (requestedLevel == null) {
+      return;
+    }
+    de.caritas.cob.userservice.tenantadminservice.generated.web.model.CaseHandoverExplanationLevel
+        value;
+    try {
+      value =
+          de.caritas.cob.userservice.tenantadminservice.generated.web.model
+              .CaseHandoverExplanationLevel.fromValue(requestedLevel);
+    } catch (IllegalArgumentException exception) {
+      throw new BadRequestException("Unknown explanation level");
+    }
+    var current = policy.getExplanationLevel();
+    if (current == null) {
+      policy.setExplanationLevel(
+          new de.caritas.cob.userservice.tenantadminservice.generated.web.model
+                  .ExplanationLevelPermissionPolicy()
+              .value(value)
+              .mode(
+                  de.caritas.cob.userservice.tenantadminservice.generated.web.model
+                      .PermissionPolicyMode.SUGGESTED));
+    } else {
+      current.setValue(value);
+    }
   }
 
   private boolean isAccessAllowed(CaseHandoverReason reason) {
@@ -2828,6 +2930,7 @@ public class CaseHandoverService {
             .reasonCode(reason.getCode())
             .reasonLabel(reason.getLabel())
             .explanation(explanation)
+            .explanationLevel(explanationLevel(reason))
             .status(Status.DENIED)
             .clientConsent(effectiveClientConsent(reason))
             .clientConsentRequired(reason.isClientConsentRequired())
@@ -3999,6 +4102,12 @@ public class CaseHandoverService {
     private Set<String> approvalRoles;
     private Map<String, String> clientNotificationTemplates;
     private Integer maxAccessDurationMinutes;
+
+    /**
+     * {@code OFF}, {@code OPTIONAL} or {@code REQUIRED}: whether the counsellor writes an
+     * explanation for this reason (FE#2040). Absent or unknown reads as {@code OFF}.
+     */
+    private String explanationLevel;
 
     public void setClientConsent(CaseHandoverConsentMode clientConsent) {
       this.clientConsent = clientConsent;

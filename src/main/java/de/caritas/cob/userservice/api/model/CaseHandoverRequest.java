@@ -103,6 +103,10 @@ public class CaseHandoverRequest implements TenantAware {
   @Column(name = "explanation", nullable = false, columnDefinition = "text")
   private String explanation;
 
+  /** Explanation policy captured when this operation was created; null on legacy rows. */
+  @Column(name = "explanation_level", length = 16)
+  private String explanationLevel;
+
   @Enumerated(EnumType.STRING)
   @Column(name = "status", nullable = false, length = 40)
   private Status status;

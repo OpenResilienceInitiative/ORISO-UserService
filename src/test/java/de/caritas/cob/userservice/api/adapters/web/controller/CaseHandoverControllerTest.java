@@ -5,6 +5,8 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
@@ -17,6 +19,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import de.caritas.cob.userservice.api.adapters.web.controller.interceptor.ApiResponseEntityExceptionHandler;
 import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantSessionListResponseDTO;
+import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
 import de.caritas.cob.userservice.api.exception.httpresponses.ConflictException;
 import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
 import de.caritas.cob.userservice.api.service.CaseHandoverLogsService;
@@ -332,12 +335,17 @@ class CaseHandoverControllerTest {
   }
 
   @Test
-  void requestAccess_explanationField_hasNotBlankAnnotation() throws Exception {
-    // Business reason: explanation text is required to support case accountability.
-    Field field =
-        CaseHandoverController.CaseHandoverRequestDTO.class.getDeclaredField("explanation");
-
-    assertTrue(field.isAnnotationPresent(NotBlank.class));
+  void requestAccess_explanationField_isLeftToTheReasonsExplanationLevel() throws Exception {
+    // FE#2040: whether a text is required is decided per reason (OFF/OPTIONAL/REQUIRED) in the
+    // service, so the request body itself must accept a blank explanation.
+    for (Class<?> dto :
+        new Class<?>[] {
+          CaseHandoverController.CaseHandoverRequestDTO.class,
+          CaseHandoverController.CaseHandoverBatchRequestDTO.class
+        }) {
+      Field field = dto.getDeclaredField("explanation");
+      assertTrue(!field.isAnnotationPresent(NotBlank.class), dto.getSimpleName());
+    }
   }
 
   @Test
@@ -514,6 +522,100 @@ class CaseHandoverControllerTest {
         CaseHandoverController.CaseHandoverBatchRequestDTO.class.getDeclaredField("operations");
 
     assertTrue(field.isAnnotationPresent(NotEmpty.class));
+  }
+
+  @Test
+  void requestBatchAccess_requiredExplanationFailureReturnsBadRequestBeforeProcessing()
+      throws Exception {
+    UUID operationId = UUID.fromString("3f43450b-aab8-4f95-a379-a2f64d31f691");
+    doThrow(new BadRequestException("Explanation is required"))
+        .when(caseHandoverService)
+        .validateBatchExplanation("COUNSELLOR_IS_ILL", "   ");
+
+    mockMvc
+        .perform(
+            post("/users/case-handover/batch")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(
+                    """
+                    {
+                      "reasonCode": "COUNSELLOR_IS_ILL",
+                      "explanation": "   ",
+                      "operations": [{
+                        "sessionId": 100,
+                        "expectedOwnershipRevision": 2,
+                        "operationId": "%s"
+                      }]
+                    }
+                    """
+                        .formatted(operationId)))
+        .andExpect(status().isBadRequest());
+
+    verify(caseHandoverService, never()).requestAccess(any(), any(), any(), any(), any());
+  }
+
+  @Test
+  void requestBatchAccess_policyChangeDuringBatchIsReportedPerOperation() throws Exception {
+    UUID firstId = UUID.fromString("3f43450b-aab8-4f95-a379-a2f64d31f691");
+    UUID secondId = UUID.fromString("89829f34-1fd2-44d0-899e-84bb93f85530");
+    var status = CaseHandoverStatus.builder().status("PENDING").build();
+    when(caseHandoverService.requestAccess(100L, "COUNSELLOR_IS_ILL", "   ", 2L, firstId))
+        .thenReturn(status);
+    when(caseHandoverService.requestAccess(101L, "COUNSELLOR_IS_ILL", "   ", 3L, secondId))
+        .thenThrow(new BadRequestException("Explanation is required"));
+
+    mockMvc
+        .perform(
+            post("/users/case-handover/batch")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(
+                    """
+                    {
+                      "reasonCode": "COUNSELLOR_IS_ILL",
+                      "explanation": "   ",
+                      "operations": [
+                        {
+                          "sessionId": 100,
+                          "expectedOwnershipRevision": 2,
+                          "operationId": "%s"
+                        },
+                        {
+                          "sessionId": 101,
+                          "expectedOwnershipRevision": 3,
+                          "operationId": "%s"
+                        }
+                      ]
+                    }
+                    """
+                        .formatted(firstId, secondId)))
+        .andExpect(status().isCreated())
+        .andExpect(jsonPath("$[0].success").value(true))
+        .andExpect(jsonPath("$[1].success").value(false))
+        .andExpect(jsonPath("$[1].error").value("Explanation is required"));
+  }
+
+  @Test
+  void requestBatchAccess_missingFirstSessionDoesNotBlockLaterOperation() {
+    var request = new CaseHandoverController.CaseHandoverBatchRequestDTO();
+    request.setReasonCode("COUNSELLOR_ON_HOLIDAY");
+    request.setExplanation("batch");
+    var missing = batchOperation(300L, 2L, "3f43450b-aab8-4f95-a379-a2f64d31f691");
+    var valid = batchOperation(301L, 3L, "89829f34-1fd2-44d0-899e-84bb93f85530");
+    request.setOperations(List.of(missing, valid));
+    when(caseHandoverService.requestAccess(
+            300L, "COUNSELLOR_ON_HOLIDAY", "batch", 2L, missing.getOperationId()))
+        .thenThrow(new RuntimeException("Session not found: 300"));
+    when(caseHandoverService.requestAccess(
+            301L, "COUNSELLOR_ON_HOLIDAY", "batch", 3L, valid.getOperationId()))
+        .thenReturn(CaseHandoverStatus.builder().status("PENDING").build());
+
+    var response = controller.requestBatchAccess(request);
+
+    assertEquals(HttpStatus.CREATED, response.getStatusCode());
+    assertNotNull(response.getBody());
+    assertFalse(response.getBody().get(0).success);
+    assertTrue(response.getBody().get(1).success);
+    verify(caseHandoverService).validateBatchExplanation("COUNSELLOR_ON_HOLIDAY", "batch");
   }
 
   @Test

@@ -63,7 +63,7 @@ jobs:
         # TenantService #405 head (featureTeamDiscussionAfterAcceptEnabled, ORISO-Frontend#2491) includes
         # the landed dev revision (proof-bound release and assignment confirmation). Merge the provider
         # first so post-merge validation against dev also includes it.
-        ref: ${{ github.event_name != 'push' && 'bd15fe30ced95362a3eeaeae1303831588d07c98' || 'dev' }}
+        ref: ${{ github.event_name != 'push' && '26decb01acb8c15d26b76b0adf77997898203078' || 'dev' }}
         path: .providers/tenant
         persist-credentials: false
 
