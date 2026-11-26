@@ -13,6 +13,8 @@ import de.caritas.cob.userservice.api.port.out.GroupChatMatrixCleanupTaskReposit
 import de.caritas.cob.userservice.api.port.out.GroupChatParticipantRepository;
 import de.caritas.cob.userservice.api.service.matrix.GroupChatMembershipService;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
+import jakarta.persistence.EntityManager;
+import jakarta.persistence.LockModeType;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.LocalDateTime;
@@ -42,6 +44,7 @@ public class GroupChatMatrixCleanupService {
   private final MatrixSynapseService matrix;
   private final GroupChatMembershipService membership;
   private final Clock clock;
+  private final EntityManager entityManager;
 
   @Value("${group.chat.matrix-cleanup.retry-backoff:PT1M}")
   private Duration retryBackoff;
@@ -65,14 +68,22 @@ public class GroupChatMatrixCleanupService {
 
   @Transactional(propagation = Propagation.MANDATORY)
   public void lockGroup(Chat expected) {
+    var ownerId = expected.getChatOwner().getId();
+    var room = expected.getMatrixRoomId();
+    var occurrence = expected.getCurrentOccurrenceIndex();
+    var timezone = expected.getTimezone();
     lockOwner(expected.getChatOwner());
     var current =
         chats
             .findByIdForUpdate(expected.getId())
             .orElseThrow(() -> new ConflictException("Group no longer exists"));
-    if (!Objects.equals(current.getChatOwner().getId(), expected.getChatOwner().getId())
-        || !Objects.equals(current.getMatrixRoomId(), expected.getMatrixRoomId()))
-      throw new ConflictException("Group room ownership changed");
+    entityManager.refresh(current, LockModeType.PESSIMISTIC_WRITE);
+    if (!Objects.equals(current.getChatOwner().getId(), ownerId)
+        || !Objects.equals(current.getMatrixRoomId(), room)
+        || current.getCurrentOccurrenceIndex() != occurrence
+        || !Objects.equals(current.getTimezone(), timezone)
+        || Boolean.TRUE.equals(current.isActive()))
+      throw new ConflictException("Group changed before updating its roster");
   }
 
   /** Immutable ownership scalars extracted before suspending the caller's transaction. */

@@ -89,6 +89,14 @@ public interface SessionSupervisorRepository extends JpaRepository<SessionSuperv
   Optional<SessionSupervisor> findBySessionIdAndSupervisorConsultantIdAndIsActiveTrue(
       Long sessionId, String consultantId);
 
+  @Lock(LockModeType.PESSIMISTIC_WRITE)
+  @Query(
+      "select supervisor from SessionSupervisor supervisor "
+          + "where supervisor.session.id = :sessionId "
+          + "and supervisor.supervisorConsultant.id = :consultantId and supervisor.isActive = true")
+  Optional<SessionSupervisor> findActiveForUpdate(
+      @Param("sessionId") Long sessionId, @Param("consultantId") String consultantId);
+
   /**
    * Whether the Matrix account currently supervises the session. A single boolean read that needs
    * no lazy loading, so it is safe outside a transaction.

@@ -1,19 +1,27 @@
 package de.caritas.cob.userservice.api.service.chat;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
 import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
+import de.caritas.cob.userservice.api.exception.httpresponses.ConflictException;
 import de.caritas.cob.userservice.api.model.*;
 import de.caritas.cob.userservice.api.model.GroupChatMatrixCleanupTask.Action;
 import de.caritas.cob.userservice.api.port.out.*;
 import de.caritas.cob.userservice.api.service.matrix.GroupChatMembershipService;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
+import jakarta.persistence.EntityManager;
+import jakarta.persistence.LockModeType;
 import java.time.*;
 import java.util.*;
+import java.util.function.Consumer;
+import java.util.stream.Stream;
 import org.junit.jupiter.api.*;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.MethodSource;
 import org.mockito.*;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
@@ -29,6 +37,7 @@ class GroupChatMatrixCleanupServiceTest {
   @Mock GroupChatParticipantRepository participants;
   @Mock MatrixSynapseService matrix;
   @Mock GroupChatMembershipService membership;
+  @Mock EntityManager entityManager;
   GroupChatMatrixCleanupService service;
   GroupChatMatrixCleanupTask task;
   Consultant owner;
@@ -44,7 +53,8 @@ class GroupChatMatrixCleanupServiceTest {
             participants,
             matrix,
             membership,
-            Clock.systemUTC());
+            Clock.systemUTC(),
+            entityManager);
     owner = new Consultant();
     owner.setId("owner");
     owner.setTenantId(41L);
@@ -107,6 +117,50 @@ class GroupChatMatrixCleanupServiceTest {
     org.assertj.core.api.Assertions.assertThatThrownBy(() -> service.lockOwner(expected))
         .isInstanceOf(
             de.caritas.cob.userservice.api.exception.httpresponses.ConflictException.class);
+  }
+
+  @Test
+  void groupLockRefreshesTheGroupAfterLockingTheOwnerAndGroup() {
+    var group = chat(7L);
+    when(chats.findByIdForUpdate(7L)).thenReturn(Optional.of(group));
+
+    service.lockGroup(group);
+
+    var locks = inOrder(consultants, chats, entityManager);
+    locks.verify(consultants).findPictureOwnerForUpdate("owner");
+    locks.verify(chats).findByIdForUpdate(7L);
+    locks.verify(entityManager).refresh(group, LockModeType.PESSIMISTIC_WRITE);
+  }
+
+  @ParameterizedTest(name = "{0}")
+  @MethodSource("groupChangesDuringLock")
+  void groupLockRejectsChangesInRefreshedState(Consumer<Chat> change) {
+    var group = chat(7L);
+    when(chats.findByIdForUpdate(7L)).thenReturn(Optional.of(group));
+    doAnswer(
+            invocation -> {
+              change.accept(group);
+              return null;
+            })
+        .when(entityManager)
+        .refresh(group, LockModeType.PESSIMISTIC_WRITE);
+
+    assertThatThrownBy(() -> service.lockGroup(group)).isInstanceOf(ConflictException.class);
+  }
+
+  static Stream<Named<Consumer<Chat>>> groupChangesDuringLock() {
+    return Stream.of(
+        Named.of(
+            "owner",
+            group -> {
+              var newOwner = new Consultant();
+              newOwner.setId("different-owner");
+              group.setChatOwner(newOwner);
+            }),
+        Named.of("room", group -> group.setMatrixRoomId("!replacement:matrix")),
+        Named.of("occurrence", group -> group.setCurrentOccurrenceIndex(1)),
+        Named.of("time zone", group -> group.setTimezone("Europe/Berlin")),
+        Named.of("active state", group -> group.setActive(true)));
   }
 
   @Test

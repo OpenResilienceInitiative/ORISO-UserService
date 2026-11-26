@@ -28,9 +28,12 @@ import org.springframework.http.MediaType;
 import org.springframework.http.client.ClientHttpRequest;
 import org.springframework.http.client.ClientHttpResponse;
 import org.springframework.mock.http.client.MockClientHttpRequest;
+import tools.jackson.databind.json.JsonMapper;
 
 /** Actual public join/update APIs: assignment is not proof of begun participation. */
 class GroupCounsellingDpaEntryIT extends GroupCounsellingDpaHttpFixture {
+  private static final JsonMapper MATRIX_JSON = new JsonMapper();
+
   @Autowired private UserChatRepository userChats;
   @Autowired private UserRepository users;
   private final AtomicInteger memberReads = new AtomicInteger();
@@ -397,6 +400,29 @@ class GroupCounsellingDpaEntryIT extends GroupCounsellingDpaHttpFixture {
   protected ClientHttpResponse additionalExternalResponse(ClientHttpRequest request)
       throws IOException {
     String path = request.getURI().getPath();
+    if (path.startsWith("/_synapse/admin/v1/rooms/") && path.endsWith("/state")) {
+      if (memberStatus != 200) {
+        return withStatus(HttpStatus.valueOf(memberStatus)).createResponse(request);
+      }
+      var joined = MATRIX_JSON.readTree(members).path("members");
+      if (!joined.isArray()) {
+        return withStatus(HttpStatus.BAD_GATEWAY).createResponse(request);
+      }
+      var response = MATRIX_JSON.createObjectNode();
+      var state = response.putArray("state");
+      for (var member : joined) {
+        if (!member.isString()) {
+          return withStatus(HttpStatus.BAD_GATEWAY).createResponse(request);
+        }
+        state
+            .addObject()
+            .put("type", "m.room.member")
+            .put("state_key", member.asText())
+            .putObject("content")
+            .put("membership", "join");
+      }
+      return withSuccess(response.toString(), MediaType.APPLICATION_JSON).createResponse(request);
+    }
     if (path.startsWith("/_synapse/admin/v1/rooms/") && path.endsWith("/members")) {
       memberReads.incrementAndGet();
       return memberStatus == 200

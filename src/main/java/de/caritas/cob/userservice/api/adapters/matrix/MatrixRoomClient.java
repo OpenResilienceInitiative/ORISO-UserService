@@ -790,6 +790,14 @@ public class MatrixRoomClient {
    * @return true when the user is not in the room afterwards, false when the leave failed
    */
   public boolean leaveRoom(String roomId, String accessToken) {
+    var outcome = requestRoomDeparture(roomId, accessToken);
+    return outcome == LeaveResponse.ACCEPTED || outcome == LeaveResponse.FORBIDDEN_OR_MISSING;
+  }
+
+  /**
+   * Retains how the homeserver answered so a caller can distinguish rejection from a lost reply.
+   */
+  public LeaveResponse requestRoomDeparture(String roomId, String accessToken) {
     var roomRef = redactor.roomPseudonym(roomId);
     try {
       var headers = getClientHttpHeaders(accessToken);
@@ -803,22 +811,38 @@ public class MatrixRoomClient {
 
       if (response.getStatusCode().is2xxSuccessful()) {
         log.info("Successfully left Matrix room {}", roomRef);
-        return true;
+        return LeaveResponse.ACCEPTED;
       }
       log.warn(
           "Failed to leave Matrix room {} (HTTP {})", roomRef, response.getStatusCode().value());
-      return false;
-    } catch (Exception ex) {
-      if (ex instanceof HttpClientErrorException response && alreadyAbsent(response)) {
+      return classifyFailedLeave(response.getStatusCode().value());
+    } catch (HttpClientErrorException ex) {
+      if (alreadyAbsent(ex)) {
         log.info(
             "User was not in Matrix room {} (status {}); nothing to leave",
             roomRef,
-            response.getStatusCode().value());
-        return true;
+            ex.getStatusCode().value());
+        return LeaveResponse.FORBIDDEN_OR_MISSING;
       }
       log.error("Could not leave Matrix room {} ({})", roomRef, failureType(ex));
-      return false;
+      return classifyFailedLeave(ex.getStatusCode().value());
+    } catch (Exception ex) {
+      log.error("Could not leave Matrix room {} ({})", roomRef, failureType(ex));
+      return LeaveResponse.UNCERTAIN;
     }
+  }
+
+  private static LeaveResponse classifyFailedLeave(int status) {
+    return status >= 400 && status < 500 && status != 408
+        ? LeaveResponse.REJECTED
+        : LeaveResponse.UNCERTAIN;
+  }
+
+  public enum LeaveResponse {
+    ACCEPTED,
+    FORBIDDEN_OR_MISSING,
+    REJECTED,
+    UNCERTAIN
   }
 
   /**

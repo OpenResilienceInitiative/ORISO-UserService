@@ -3,6 +3,7 @@ package de.caritas.cob.userservice.api.service.matrix;
 import static org.apache.commons.lang3.StringUtils.isBlank;
 
 import de.caritas.cob.userservice.api.adapters.matrix.MatrixIdentifierRedactor;
+import de.caritas.cob.userservice.api.adapters.matrix.MatrixRoomClient.LeaveResponse;
 import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
 import de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHttpStatusException;
 import de.caritas.cob.userservice.api.exception.httpresponses.customheader.HttpStatusExceptionReason;
@@ -75,6 +76,47 @@ public class GroupChatMembershipService {
     if (membership.isPresent() && !membership.get()) return true;
     removeMemberFromRoom(roomId, memberId);
     return isMemberInRoom(roomId, memberId).map(present -> !present).orElse(false);
+  }
+
+  /** A roster exit must also clear a pending invite. An unreadable state remains unconfirmed. */
+  public Departure removeRosterMemberAndConfirm(String roomId, String memberId) {
+    if (isBlank(roomId) || isBlank(memberId)) {
+      return Departure.NOT_SENT;
+    }
+    if (matrixSynapseService.isOutOfRoom(roomId, memberId).orElse(false)) {
+      return Departure.CONFIRMED;
+    }
+    String token;
+    try {
+      token = matrixSynapseService.loginAsUserAccessToken(memberId);
+    } catch (RuntimeException exception) {
+      log.warn(
+          "Could not obtain a Matrix token for a roster departure ({})",
+          exception.getClass().getSimpleName());
+      return Departure.NOT_SENT;
+    }
+    if (isBlank(token)) {
+      return Departure.NOT_SENT;
+    }
+    var response = matrixSynapseService.requestRoomDeparture(roomId, token);
+    if (matrixSynapseService.isOutOfRoom(roomId, memberId).orElse(false)) {
+      return Departure.CONFIRMED;
+    }
+    if (response == LeaveResponse.ACCEPTED) {
+      return Departure.ACKNOWLEDGED;
+    }
+    if (response == LeaveResponse.REJECTED || response == LeaveResponse.FORBIDDEN_OR_MISSING) {
+      return Departure.REJECTED;
+    }
+    return Departure.UNKNOWN;
+  }
+
+  public enum Departure {
+    CONFIRMED,
+    ACKNOWLEDGED,
+    NOT_SENT,
+    REJECTED,
+    UNKNOWN
   }
 
   /**
@@ -280,7 +322,6 @@ public class GroupChatMembershipService {
     if (isBlank(matrixRoomId) || isBlank(memberMatrixUserId)) {
       return true;
     }
-
     try {
       var memberToken = matrixSynapseService.loginAsUserAccessToken(memberMatrixUserId);
       if (memberToken == null) {
