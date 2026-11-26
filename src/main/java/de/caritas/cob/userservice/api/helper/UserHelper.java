@@ -40,6 +40,7 @@ public class UserHelper {
    * ORISO-Frontend#1870. Fits {@link #REFERER_REGEXP}.
    */
   public static final String AGENCY_LINK_REFERER = "aidlink";
+
   public static final String REGISTRATION_REF_REGEXP = "[A-Za-z0-9_-]{1,64}";
   public static final int CHAT_MIN_DURATION = 30;
   public static final int CHAT_MAX_DURATION = 180;
