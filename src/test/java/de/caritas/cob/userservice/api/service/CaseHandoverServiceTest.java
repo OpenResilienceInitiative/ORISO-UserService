@@ -4107,6 +4107,7 @@ class CaseHandoverServiceTest {
 
   @Test
   void requestAccess_persistsReasonExplanationAndAuditOutcome() {
+    givenExplanationLevel("COUNSELLOR_IS_ILL", "OPTIONAL");
     ArgumentCaptor<CaseHandoverRequest> captor = ArgumentCaptor.forClass(CaseHandoverRequest.class);
 
     requestAccess(123L, "COUNSELLOR_IS_ILL", "Illness cover.");
@@ -4118,6 +4119,87 @@ class CaseHandoverServiceTest {
     assertEquals("Illness cover.", saved.getExplanation());
     assertEquals("ACCESS_GRANTED", saved.getAuditOutcome());
     assertEquals(previous, saved.getPreviousConsultant());
+  }
+
+  @Test
+  void requestAccess_explanationLevelOff_storesNoTextAndAcceptsBlank() {
+    ArgumentCaptor<CaseHandoverRequest> captor = ArgumentCaptor.forClass(CaseHandoverRequest.class);
+
+    requestAccess(123L, "COUNSELLOR_IS_ILL", "typed anyway");
+
+    verify(caseHandoverRequestRepository).save(captor.capture());
+    assertEquals("", captor.getValue().getExplanation());
+  }
+
+  @Test
+  void requestAccess_explanationLevelOptional_acceptsBlank() {
+    givenExplanationLevel("COUNSELLOR_IS_ILL", "OPTIONAL");
+    ArgumentCaptor<CaseHandoverRequest> captor = ArgumentCaptor.forClass(CaseHandoverRequest.class);
+
+    requestAccess(123L, "COUNSELLOR_IS_ILL", "  ");
+
+    verify(caseHandoverRequestRepository).save(captor.capture());
+    assertEquals("", captor.getValue().getExplanation());
+  }
+
+  @Test
+  void requestAccess_explanationLevelRequired_refusesBlankBeforeSaving() {
+    givenExplanationLevel("COUNSELLOR_IS_ILL", "REQUIRED");
+
+    assertThrows(BadRequestException.class, () -> requestAccess(123L, "COUNSELLOR_IS_ILL", "   "));
+
+    verify(caseHandoverRequestRepository, never()).save(any(CaseHandoverRequest.class));
+  }
+
+  @Test
+  void requestAccess_explanationLevelRequired_storesTrimmedText() {
+    givenExplanationLevel("COUNSELLOR_IS_ILL", "REQUIRED");
+    ArgumentCaptor<CaseHandoverRequest> captor = ArgumentCaptor.forClass(CaseHandoverRequest.class);
+
+    requestAccess(123L, "COUNSELLOR_IS_ILL", "  Cover for sick leave. ");
+
+    verify(caseHandoverRequestRepository).save(captor.capture());
+    assertEquals("Cover for sick leave.", captor.getValue().getExplanation());
+  }
+
+  @Test
+  void listReasons_exposesExplanationLevel_defaultOff() {
+    givenExplanationLevel("COUNSELLOR_ON_HOLIDAY", "REQUIRED");
+
+    var reasons = caseHandoverService.listReasonPolicies(7L);
+
+    assertEquals(
+        "REQUIRED",
+        reasons.stream()
+            .filter(reason -> "PLANNED_ABSENCE".equals(reason.getCode()))
+            .findFirst()
+            .orElseThrow()
+            .getExplanationLevel());
+    assertEquals(
+        "OFF",
+        reasons.stream()
+            .filter(reason -> "UNPLANNED_ABSENCE".equals(reason.getCode()))
+            .findFirst()
+            .orElseThrow()
+            .getExplanationLevel());
+  }
+
+  /** FE#2040: sets one reason's explanation level in the tenant policies every lookup returns. */
+  private void givenExplanationLevel(String tenantCode, String level) {
+    var policies = defaultTenantPolicies();
+    policies
+        .getReasons()
+        .get(tenantCode)
+        .explanationLevel(
+            new de.caritas.cob.userservice.tenantadminservice.generated.web.model
+                    .ExplanationLevelPermissionPolicy()
+                .value(
+                    de.caritas.cob.userservice.tenantadminservice.generated.web.model
+                        .CaseHandoverExplanationLevel.fromValue(level))
+                .mode(
+                    de.caritas.cob.userservice.tenantadminservice.generated.web.model
+                        .PermissionPolicyMode.SUGGESTED));
+    lenient().when(caseHandoverPolicyCacheService.getEffective(any())).thenReturn(policies);
   }
 
   @Test

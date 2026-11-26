@@ -332,12 +332,17 @@ class CaseHandoverControllerTest {
   }
 
   @Test
-  void requestAccess_explanationField_hasNotBlankAnnotation() throws Exception {
-    // Business reason: explanation text is required to support case accountability.
-    Field field =
-        CaseHandoverController.CaseHandoverRequestDTO.class.getDeclaredField("explanation");
-
-    assertTrue(field.isAnnotationPresent(NotBlank.class));
+  void requestAccess_explanationField_isLeftToTheReasonsExplanationLevel() throws Exception {
+    // FE#2040: whether a text is required is decided per reason (OFF/OPTIONAL/REQUIRED) in the
+    // service, so the request body itself must accept a blank explanation.
+    for (Class<?> dto :
+        new Class<?>[] {
+          CaseHandoverController.CaseHandoverRequestDTO.class,
+          CaseHandoverController.CaseHandoverBatchRequestDTO.class
+        }) {
+      Field field = dto.getDeclaredField("explanation");
+      assertTrue(!field.isAnnotationPresent(NotBlank.class), dto.getSimpleName());
+    }
   }
 
   @Test
