@@ -19,6 +19,7 @@ import de.caritas.cob.userservice.api.model.SupportRoom;
 import de.caritas.cob.userservice.api.port.out.AdminRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.SupportRoomRepository;
+import java.time.Clock;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
@@ -34,6 +35,7 @@ import org.springframework.context.annotation.Import;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
+import org.springframework.test.context.bean.override.convention.TestBean;
 import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
@@ -41,7 +43,7 @@ import org.springframework.transaction.annotation.Transactional;
 @DataJpaTest
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
 @EnabledIfEnvironmentVariable(named = "LIQUIBASE_IT_DB_URL", matches = ".+")
-@Import(SupportRoomLifecycle.class)
+@Import({SupportRoomLifecycle.class, SupportRoomProvisioningLedger.class})
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
 class SupportRoomClosureMariaDbIT {
 
@@ -54,9 +56,13 @@ class SupportRoomClosureMariaDbIT {
 
   @Autowired private SupportRoomRepository rooms;
   @Autowired private SupportRoomLifecycle lifecycle;
+  @Autowired private SupportRoomProvisioningLedger provisioning;
   @Autowired private AdminRepository admins;
   @Autowired private ConsultantRepository consultants;
   @Autowired private JdbcTemplate jdbc;
+
+  @TestBean(methodName = "utcClock")
+  private Clock supportRoomClock;
 
   @DynamicPropertySource
   static void databaseProperties(DynamicPropertyRegistry registry) {
@@ -172,8 +178,18 @@ class SupportRoomClosureMariaDbIT {
   private SupportRoomService newSweep(SupportRoomRepository dueRooms, MatrixSynapseService matrix) {
     var service =
         new SupportRoomService(
-            dueRooms, lifecycle, admins, consultants, matrix, mock(MatrixConfig.class));
+            dueRooms,
+            lifecycle,
+            provisioning,
+            admins,
+            consultants,
+            matrix,
+            mock(MatrixConfig.class));
     ReflectionTestUtils.setField(service, "sweepBatchSize", 20);
     return service;
+  }
+
+  static Clock utcClock() {
+    return Clock.systemUTC();
   }
 }

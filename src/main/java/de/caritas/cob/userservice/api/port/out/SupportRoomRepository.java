@@ -19,6 +19,11 @@ public interface SupportRoomRepository extends CrudRepository<SupportRoom, Strin
   Optional<SupportRoom> lockById(@Param("roomId") String roomId);
 
   @Query(
+      "select room.handshakeId from SupportRoom room where room.id = :roomId and room.status = :status")
+  Optional<String> findHandshakeIdByRoomIdAndStatus(
+      @Param("roomId") String roomId, @Param("status") SupportRoomStatus status);
+
+  @Query(
       """
       select room.id from SupportRoom room
       where (room.status in :expirable and room.expiryDate <= :now)

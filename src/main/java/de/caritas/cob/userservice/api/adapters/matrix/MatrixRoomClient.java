@@ -1,5 +1,7 @@
 package de.caritas.cob.userservice.api.adapters.matrix;
 
+import static org.springframework.util.StringUtils.hasText;
+
 import com.fasterxml.jackson.databind.ObjectMapper;
 import de.caritas.cob.userservice.api.adapters.matrix.config.MatrixConfig;
 import de.caritas.cob.userservice.api.adapters.matrix.dto.MatrixCreateRoomRequestDTO;
@@ -24,6 +26,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Service;
@@ -38,6 +41,8 @@ import org.springframework.web.client.RestTemplate;
 public class MatrixRoomClient {
 
   private static final String ENDPOINT_CREATE_ROOM = "/_matrix/client/r0/createRoom";
+  private static final String ROOM_CREATE_EVENT = "m.room.create";
+  private static final String SUPPORT_ROOM_ORIGIN_NONCE = "org.oriso.support.origin_nonce";
   private static final String POWER_LEVELS_EVENT = "m.room.power_levels";
   private static final String ROOM_ENCRYPTION_EVENT_TYPE = "m.room.encryption";
   private static final String MEGOLM_ALGORITHM = "m.megolm.v1.aes-sha2";
@@ -78,6 +83,7 @@ public class MatrixRoomClient {
   private final MatrixIdentifierRedactor redactor;
 
   private static final String ENDPOINT_ROOM_STATE = "/_matrix/client/v3/rooms/{roomId}/state";
+  private static final String ENDPOINT_ROOM_JOIN_RULES = ENDPOINT_ROOM_STATE + "/m.room.join_rules";
   private static final long MAX_SAFE_POWER = 9007199254740991L;
   private static final java.util.Set<String> CLOSED_CONTENT_EVENTS =
       java.util.Set.of(
@@ -355,11 +361,7 @@ public class MatrixRoomClient {
           new HttpEntity<>(power, getClientHttpHeaders(accessToken)));
       return true;
     } catch (RuntimeException ex) {
-      // Provider bodies can carry Matrix IDs; only the failure kind is logged.
-      log.warn(
-          "Matrix passage-blur rule could not be applied to room {}: {}",
-          roomId,
-          ex.getClass().getSimpleName());
+      log.warn("Matrix passage-blur rule could not be applied: {}", failureType(ex));
       return false;
     }
   }
@@ -384,7 +386,7 @@ public class MatrixRoomClient {
   public ResponseEntity<MatrixCreateRoomResponseDTO> createRoom(
       String roomName, String roomAlias, String accessToken, boolean encryptionEnabled)
       throws MatrixCreateRoomException {
-    return createRoom(roomName, roomAlias, accessToken, encryptionEnabled, false);
+    return createRoom(roomName, roomAlias, accessToken, encryptionEnabled, false, null);
   }
 
   /**
@@ -395,7 +397,80 @@ public class MatrixRoomClient {
   public ResponseEntity<MatrixCreateRoomResponseDTO> createMembersOnlyRoom(
       String roomName, String roomAlias, String accessToken, boolean encryptionEnabled)
       throws MatrixCreateRoomException {
-    return createRoom(roomName, roomAlias, accessToken, encryptionEnabled, true);
+    return createRoom(roomName, roomAlias, accessToken, encryptionEnabled, true, null);
+  }
+
+  /**
+   * Creates a private encrypted support room with its origin recorded in immutable create state.
+   */
+  public String createSupportRoom(String localAlias, String originNonce, String creatorAccessToken)
+      throws MatrixCreateRoomException {
+    if (!hasText(localAlias) || !hasText(originNonce) || !hasText(creatorAccessToken)) {
+      throw new MatrixCreateRoomException("Incomplete Matrix support room request");
+    }
+    return createRoom("Support", localAlias, creatorAccessToken, true, false, originNonce)
+        .getBody()
+        .getRoomId();
+  }
+
+  /** Reads the full state as the creator so the homeserver supplies the authenticated sender. */
+  public boolean verifySupportRoomOrigin(
+      String roomId, String expectedCreator, String originNonce, String creatorAccessToken) {
+    if (!hasText(roomId)
+        || !hasText(expectedCreator)
+        || !hasText(originNonce)
+        || !hasText(creatorAccessToken)) {
+      return false;
+    }
+    try {
+      var response =
+          restTemplate.exchange(
+              buildUrl(ENDPOINT_ROOM_STATE, Map.of("roomId", roomId)),
+              HttpMethod.GET,
+              new HttpEntity<>(getClientHttpHeaders(creatorAccessToken)),
+              java.util.List.class);
+      if (response.getStatusCode() != HttpStatus.OK || response.getBody() == null) return false;
+      Map<?, ?> creation = null;
+      for (Object raw : response.getBody()) {
+        if (!(raw instanceof Map<?, ?> event) || !(event.get("type") instanceof String type)) {
+          return false;
+        }
+        if (!ROOM_CREATE_EVENT.equals(type)) continue;
+        if (creation != null || !"".equals(event.get("state_key"))) return false;
+        creation = event;
+      }
+      return creation != null
+          && expectedCreator.equals(creation.get("sender"))
+          && (!creation.containsKey("room_id") || roomId.equals(creation.get("room_id")))
+          && (!creation.containsKey("unsigned")
+              || (creation.get("unsigned") instanceof Map<?, ?> unsigned
+                  && !unsigned.containsKey("redacted_because")))
+          && creation.get("content") instanceof Map<?, ?> content
+          && originNonce.equals(content.get(SUPPORT_ROOM_ORIGIN_NONCE));
+    } catch (RuntimeException ex) {
+      log.warn("Matrix support room origin could not be verified: {}", failureType(ex));
+      return false;
+    }
+  }
+
+  /** Applies the passage rule only after confirming that the room still requires an invitation. */
+  public boolean ensureSupportRoomModeration(String roomId, String creatorAccessToken) {
+    if (!hasText(roomId) || !hasText(creatorAccessToken)) return false;
+    try {
+      var response =
+          restTemplate.exchange(
+              buildUrl(ENDPOINT_ROOM_JOIN_RULES, Map.of("roomId", roomId)),
+              HttpMethod.GET,
+              new HttpEntity<>(getClientHttpHeaders(creatorAccessToken)),
+              Map.class);
+      return response.getStatusCode() == HttpStatus.OK
+          && response.getBody() != null
+          && "invite".equals(response.getBody().get("join_rule"))
+          && requireModeratorForPassageBlur(roomId, creatorAccessToken);
+    } catch (RuntimeException ex) {
+      log.warn("Matrix support room join rule could not be verified: {}", failureType(ex));
+      return false;
+    }
   }
 
   private ResponseEntity<MatrixCreateRoomResponseDTO> createRoom(
@@ -403,7 +478,8 @@ public class MatrixRoomClient {
       String roomAlias,
       String accessToken,
       boolean encryptionEnabled,
-      boolean membersOnly)
+      boolean membersOnly,
+      String originNonce)
       throws MatrixCreateRoomException {
 
     try {
@@ -415,6 +491,9 @@ public class MatrixRoomClient {
       roomCreateRequest.setRoomAliasName(roomAlias);
       roomCreateRequest.setPreset("private_chat");
       roomCreateRequest.setVisibility("private");
+      if (originNonce != null) {
+        roomCreateRequest.setCreationContent(Map.of(SUPPORT_ROOM_ORIGIN_NONCE, originNonce));
+      }
 
       roomCreateRequest.setInitialState(buildInitialState(encryptionEnabled, membersOnly));
       if (membersOnly) {
@@ -426,7 +505,8 @@ public class MatrixRoomClient {
       var url = buildUrl(ENDPOINT_CREATE_ROOM);
 
       var response = restTemplate.postForEntity(url, request, MatrixCreateRoomResponseDTO.class);
-      if (response.getBody() == null
+      if ((originNonce != null && !response.getStatusCode().is2xxSuccessful())
+          || response.getBody() == null
           || response.getBody().getRoomId() == null
           || response.getBody().getRoomId().isBlank()) {
         throw new IllegalStateException("Matrix create-room response did not contain a room ID");
@@ -440,16 +520,20 @@ public class MatrixRoomClient {
       }
 
       diagnosticMetrics.recordRoomCreation(encryptionEnabled, Outcome.SUCCESS);
-      log.info(
-          "Successfully created Matrix room {}",
-          redactor.roomPseudonym(response.getBody().getRoomId()));
+      if (originNonce == null) {
+        log.info(
+            "Successfully created Matrix room {}",
+            redactor.roomPseudonym(response.getBody().getRoomId()));
+      }
 
       return response;
     } catch (de.caritas.cob.userservice.api.exception.matrix.MatrixRoomRuleException ex) {
       // Already counted as a failure; keep the room ID so the caller can clean the room up.
+      if (originNonce != null) throw supportRoomCreationFailure(ex);
       throw ex;
     } catch (Exception ex) {
       diagnosticMetrics.recordRoomCreation(encryptionEnabled, Outcome.FAILURE);
+      if (originNonce != null) throw supportRoomCreationFailure(ex);
       log.error("{} ({})", CREATE_FAILURE, failureType(ex));
       if (ex instanceof HttpClientErrorException response && isRateLimited(response)) {
         throw new MatrixCreateRoomRateLimitedException(
@@ -457,6 +541,11 @@ public class MatrixRoomClient {
       }
       throw new MatrixCreateRoomException(CREATE_FAILURE);
     }
+  }
+
+  private MatrixCreateRoomException supportRoomCreationFailure(Exception failure) {
+    log.warn("Matrix support room could not be created: {}", failureType(failure));
+    return new MatrixCreateRoomException("Could not create Matrix support room");
   }
 
   private java.util.List<MatrixCreateRoomRequestDTO.InitialStateEvent> buildInitialState(
@@ -701,6 +790,14 @@ public class MatrixRoomClient {
    * @return true when the user is not in the room afterwards, false when the leave failed
    */
   public boolean leaveRoom(String roomId, String accessToken) {
+    var outcome = requestRoomDeparture(roomId, accessToken);
+    return outcome == LeaveResponse.ACCEPTED || outcome == LeaveResponse.FORBIDDEN_OR_MISSING;
+  }
+
+  /**
+   * Retains how the homeserver answered so a caller can distinguish rejection from a lost reply.
+   */
+  public LeaveResponse requestRoomDeparture(String roomId, String accessToken) {
     var roomRef = redactor.roomPseudonym(roomId);
     try {
       var headers = getClientHttpHeaders(accessToken);
@@ -714,22 +811,38 @@ public class MatrixRoomClient {
 
       if (response.getStatusCode().is2xxSuccessful()) {
         log.info("Successfully left Matrix room {}", roomRef);
-        return true;
+        return LeaveResponse.ACCEPTED;
       }
       log.warn(
           "Failed to leave Matrix room {} (HTTP {})", roomRef, response.getStatusCode().value());
-      return false;
-    } catch (Exception ex) {
-      if (ex instanceof HttpClientErrorException response && alreadyAbsent(response)) {
+      return classifyFailedLeave(response.getStatusCode().value());
+    } catch (HttpClientErrorException ex) {
+      if (alreadyAbsent(ex)) {
         log.info(
             "User was not in Matrix room {} (status {}); nothing to leave",
             roomRef,
-            response.getStatusCode().value());
-        return true;
+            ex.getStatusCode().value());
+        return LeaveResponse.FORBIDDEN_OR_MISSING;
       }
       log.error("Could not leave Matrix room {} ({})", roomRef, failureType(ex));
-      return false;
+      return classifyFailedLeave(ex.getStatusCode().value());
+    } catch (Exception ex) {
+      log.error("Could not leave Matrix room {} ({})", roomRef, failureType(ex));
+      return LeaveResponse.UNCERTAIN;
     }
+  }
+
+  private static LeaveResponse classifyFailedLeave(int status) {
+    return status >= 400 && status < 500 && status != 408
+        ? LeaveResponse.REJECTED
+        : LeaveResponse.UNCERTAIN;
+  }
+
+  public enum LeaveResponse {
+    ACCEPTED,
+    FORBIDDEN_OR_MISSING,
+    REJECTED,
+    UNCERTAIN
   }
 
   /**

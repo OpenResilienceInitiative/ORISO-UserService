@@ -1,0 +1,130 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+  xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-3.2.xsd">
+  <changeSet id="20261121-group-roster-participant-version-1740" author="oriso">
+    <preConditions onFail="MARK_RAN" onError="HALT">
+      <not><columnExists tableName="group_chat_participant" columnName="roster_version"/></not>
+    </preConditions>
+    <addColumn tableName="group_chat_participant">
+      <column name="roster_version" type="BIGINT" defaultValueNumeric="0">
+        <constraints nullable="false"/>
+      </column>
+    </addColumn>
+    <rollback/>
+  </changeSet>
+  <changeSet id="20261121-group-roster-removal-1740" author="oriso">
+    <preConditions onFail="MARK_RAN" onError="HALT">
+      <not><tableExists tableName="group_roster_removal_intent"/></not>
+    </preConditions>
+    <!-- Scalar references allow this intent to commit while the original writer holds row locks. -->
+    <createTable tableName="group_roster_removal_intent">
+      <column name="id" type="BIGINT" autoIncrement="true">
+        <constraints primaryKey="true" nullable="false"/>
+      </column>
+      <column name="series_id" type="BIGINT"><constraints nullable="false"/></column>
+      <column name="owner_id" type="VARCHAR(36)"><constraints nullable="false"/></column>
+      <column name="tenant_id" type="BIGINT"/>
+      <column name="series_room_id" type="VARCHAR(255)"/>
+      <column name="occurrence_index" type="INT"><constraints nullable="false"/></column>
+      <column name="participant_id" type="BIGINT"><constraints nullable="false"/></column>
+      <column name="participant_version" type="BIGINT"><constraints nullable="false"/></column>
+      <column name="consultant_id" type="VARCHAR(36)"><constraints nullable="false"/></column>
+      <column name="member_id" type="VARCHAR(255)"><constraints nullable="false"/></column>
+      <column name="room_id" type="VARCHAR(255)"><constraints nullable="false"/></column>
+      <column name="supervision_id" type="BIGINT"/>
+      <column name="local_supervision_id" type="BIGINT"/>
+      <column name="dispatch_settled" type="BOOLEAN" defaultValueBoolean="false">
+        <constraints nullable="false"/>
+      </column>
+      <column name="retry_at" type="DATETIME(6)"><constraints nullable="false"/></column>
+    </createTable>
+    <!-- Pending departures must survive a binary rollback. -->
+    <rollback/>
+    <modifySql dbms="mariadb,mysql">
+      <append value=" ENGINE=InnoDB"/>
+    </modifySql>
+  </changeSet>
+  <changeSet id="20261121-group-roster-removal-1740-retry-index" author="oriso">
+    <preConditions onFail="MARK_RAN" onError="HALT">
+      <not><indexExists tableName="group_roster_removal_intent"
+        indexName="idx_group_roster_removal_retry"/></not>
+    </preConditions>
+    <createIndex tableName="group_roster_removal_intent" indexName="idx_group_roster_removal_retry">
+      <column name="retry_at"/>
+      <column name="id"/>
+    </createIndex>
+    <rollback/>
+  </changeSet>
+  <changeSet id="20261121-group-roster-removal-1740-series-index" author="oriso">
+    <preConditions onFail="MARK_RAN" onError="HALT">
+      <not><indexExists tableName="group_roster_removal_intent"
+        indexName="idx_group_roster_removal_series"/></not>
+    </preConditions>
+    <createIndex tableName="group_roster_removal_intent" indexName="idx_group_roster_removal_series">
+      <column name="series_id"/>
+      <column name="supervision_id"/>
+      <column name="participant_id"/>
+    </createIndex>
+    <rollback/>
+  </changeSet>
+  <changeSet id="20261121-group-roster-removal-1740-verify" author="oriso" dbms="mariadb,mysql">
+    <preConditions onFail="HALT" onError="HALT"
+      onFailMessage="Incompatible schema for group_roster_removal_intent">
+      <!-- A failed migration or an intentional rollback can leave the table in place. Verify it
+           before accepting it, without altering rows left for the next compatible application. -->
+      <sqlCheck expectedResult="1">
+        SELECT COUNT(*) FROM information_schema.tables
+        WHERE table_schema = DATABASE() AND table_name = 'group_roster_removal_intent'
+          AND engine = 'InnoDB'
+      </sqlCheck>
+      <sqlCheck expectedResult="15">
+        SELECT COUNT(*)
+        FROM information_schema.columns
+        WHERE table_schema = DATABASE() AND table_name = 'group_roster_removal_intent'
+          AND is_nullable = CASE
+            WHEN column_name IN ('tenant_id', 'series_room_id', 'supervision_id',
+              'local_supervision_id') THEN 'YES' ELSE 'NO' END
+          AND (
+            (column_name = 'id' AND data_type = 'bigint' AND extra LIKE '%auto_increment%')
+            OR (column_name IN ('series_id', 'tenant_id', 'participant_id', 'participant_version', 'supervision_id',
+              'local_supervision_id') AND data_type = 'bigint')
+            OR (column_name = 'occurrence_index' AND data_type = 'int')
+            OR (column_name = 'dispatch_settled' AND column_type = 'tinyint(1)'
+              AND column_default = '0')
+            OR (column_name IN ('owner_id', 'consultant_id') AND data_type = 'varchar'
+              AND character_maximum_length = 36)
+            OR (column_name IN ('series_room_id', 'member_id', 'room_id') AND data_type = 'varchar'
+              AND character_maximum_length = 255)
+            OR (column_name = 'retry_at' AND data_type = 'datetime' AND datetime_precision = 6)
+          )
+      </sqlCheck>
+      <sqlCheck expectedResult="15">
+        SELECT COUNT(*) FROM information_schema.columns
+        WHERE table_schema = DATABASE() AND table_name = 'group_roster_removal_intent'
+      </sqlCheck>
+      <sqlCheck expectedResult="3">
+        SELECT COUNT(*)
+        FROM (
+          SELECT index_name, GROUP_CONCAT(column_name ORDER BY seq_in_index) AS column_names,
+            MAX(non_unique) AS non_unique
+          FROM information_schema.statistics
+          WHERE table_schema = DATABASE() AND table_name = 'group_roster_removal_intent'
+          GROUP BY index_name
+        ) index_shape
+        WHERE (index_name = 'PRIMARY' AND column_names = 'id' AND non_unique = 0)
+          OR (index_name = 'idx_group_roster_removal_retry' AND column_names = 'retry_at,id'
+            AND non_unique = 1)
+          OR (index_name = 'idx_group_roster_removal_series'
+            AND column_names = 'series_id,supervision_id,participant_id' AND non_unique = 1)
+      </sqlCheck>
+      <sqlCheck expectedResult="0">
+        SELECT COUNT(*) FROM information_schema.table_constraints
+        WHERE table_schema = DATABASE() AND table_name = 'group_roster_removal_intent'
+          AND constraint_type = 'FOREIGN KEY'
+      </sqlCheck>
+    </preConditions>
+    <sql>SELECT 1</sql>
+    <rollback/>
+  </changeSet>
+</databaseChangeLog>

@@ -16,6 +16,7 @@ import ch.qos.logback.classic.Logger;
 import ch.qos.logback.classic.spi.ILoggingEvent;
 import ch.qos.logback.core.read.ListAppender;
 import de.caritas.cob.userservice.api.adapters.matrix.MatrixIdentifierRedactor;
+import de.caritas.cob.userservice.api.adapters.matrix.MatrixRoomClient.LeaveResponse;
 import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
 import de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHttpStatusException;
 import de.caritas.cob.userservice.api.exception.matrix.MatrixInviteUserException;
@@ -99,6 +100,54 @@ class GroupChatMembershipServiceTest {
         groupChatMembershipService.removeMemberFromRoomAndConfirm(
             MATRIX_ROOM_ID, LEAVER_MATRIX_ID));
     verify(matrixSynapseService, never()).loginAsUserAccessToken(anyString());
+  }
+
+  @Test
+  void rosterRemovalUsesMembershipStateSoAnOutstandingInviteStillNeedsALeave() {
+    when(matrixSynapseService.isOutOfRoom(MATRIX_ROOM_ID, LEAVER_MATRIX_ID))
+        .thenReturn(Optional.of(false), Optional.of(true));
+    when(matrixSynapseService.loginAsUserAccessToken(LEAVER_MATRIX_ID)).thenReturn("token");
+    when(matrixSynapseService.requestRoomDeparture(MATRIX_ROOM_ID, "token"))
+        .thenReturn(LeaveResponse.UNCERTAIN);
+
+    assertEquals(
+        GroupChatMembershipService.Departure.CONFIRMED,
+        groupChatMembershipService.removeRosterMemberAndConfirm(MATRIX_ROOM_ID, LEAVER_MATRIX_ID));
+    verify(matrixSynapseService).requestRoomDeparture(MATRIX_ROOM_ID, "token");
+    verify(matrixSynapseService, never()).getRoomMembers(anyString());
+  }
+
+  @Test
+  void rosterRemovalDistinguishesAnUnsentLeaveFromAnUnconfirmedResponse() {
+    when(matrixSynapseService.isOutOfRoom(MATRIX_ROOM_ID, LEAVER_MATRIX_ID))
+        .thenReturn(Optional.empty(), Optional.of(false), Optional.empty());
+    when(matrixSynapseService.loginAsUserAccessToken(LEAVER_MATRIX_ID)).thenReturn(null, "token");
+    when(matrixSynapseService.requestRoomDeparture(MATRIX_ROOM_ID, "token"))
+        .thenReturn(LeaveResponse.UNCERTAIN);
+
+    assertEquals(
+        GroupChatMembershipService.Departure.NOT_SENT,
+        groupChatMembershipService.removeRosterMemberAndConfirm(MATRIX_ROOM_ID, LEAVER_MATRIX_ID));
+    assertEquals(
+        GroupChatMembershipService.Departure.UNKNOWN,
+        groupChatMembershipService.removeRosterMemberAndConfirm(MATRIX_ROOM_ID, LEAVER_MATRIX_ID));
+    verify(matrixSynapseService).requestRoomDeparture(MATRIX_ROOM_ID, "token");
+  }
+
+  @Test
+  void rosterRemovalCanClassifySettledResponsesWhileMembershipIsStillUnconfirmed() {
+    when(matrixSynapseService.isOutOfRoom(MATRIX_ROOM_ID, LEAVER_MATRIX_ID))
+        .thenReturn(Optional.empty());
+    when(matrixSynapseService.loginAsUserAccessToken(LEAVER_MATRIX_ID)).thenReturn("token");
+    when(matrixSynapseService.requestRoomDeparture(MATRIX_ROOM_ID, "token"))
+        .thenReturn(LeaveResponse.REJECTED, LeaveResponse.ACCEPTED);
+
+    assertEquals(
+        GroupChatMembershipService.Departure.REJECTED,
+        groupChatMembershipService.removeRosterMemberAndConfirm(MATRIX_ROOM_ID, LEAVER_MATRIX_ID));
+    assertEquals(
+        GroupChatMembershipService.Departure.ACKNOWLEDGED,
+        groupChatMembershipService.removeRosterMemberAndConfirm(MATRIX_ROOM_ID, LEAVER_MATRIX_ID));
   }
 
   @AfterEach

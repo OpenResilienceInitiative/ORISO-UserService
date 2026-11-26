@@ -1,5 +1,7 @@
 package de.caritas.cob.userservice.api.service.chat;
 
+import static org.apache.commons.lang3.StringUtils.isBlank;
+
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
 import de.caritas.cob.userservice.api.exception.httpresponses.ConflictException;
 import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException;
@@ -7,11 +9,13 @@ import de.caritas.cob.userservice.api.model.Chat;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.GroupChatParticipant;
 import de.caritas.cob.userservice.api.model.GroupChatParticipant.ParticipantRole;
+import de.caritas.cob.userservice.api.model.SessionSupervisor;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.GroupChatParticipantRepository;
 import de.caritas.cob.userservice.api.service.matrix.GroupChatMembershipService;
 import de.caritas.cob.userservice.api.service.session.AgencySilentMembershipService;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -34,6 +38,7 @@ public class GroupChatParticipantReconciliationService {
   private final GroupCounsellingDpaPolicy groupCounsellingDpaPolicy;
   private final GroupChatMatrixCleanupService matrixCleanup;
   private final MembersOnlyRevocation revocation;
+  private final GroupRosterRemovalRecovery removalRecovery;
   private final de.caritas.cob.userservice.api.service.matrix.GroupModeratorPowerService
       moderatorPower;
 
@@ -97,8 +102,16 @@ public class GroupChatParticipantReconciliationService {
     var cleanupOwner =
         new GroupChatMatrixCleanupService.GroupOwner(
             series.getId(), ownerId, series.getChatOwner().getTenantId());
-    var cleanupTasks = new java.util.ArrayList<Long>();
-    var selectedMatrixUserIds = new java.util.ArrayList<String>();
+    var group = GroupRosterRemovalRecovery.GroupScope.of(series);
+    if (!selectedConsultants.isEmpty()) {
+      var selectedMemberIds = new LinkedHashMap<String, String>();
+      selectedConsultants.forEach(
+          (id, account) -> selectedMemberIds.put(id, account.getMatrixUserId()));
+      removalRecovery.verifyRetainedMembers(group, selectedMemberIds);
+    }
+    var cleanupTasks = new ArrayList<Long>();
+    var verifiedSideExits = new ArrayList<Long>();
+    var selectedMatrixUserIds = new ArrayList<String>();
     try {
       // Existing database rows do not prove Matrix membership: retry the join too.
       // Complete joins before removals; journal only confirmed new remote access.
@@ -145,30 +158,7 @@ public class GroupChatParticipantReconciliationService {
       for (var existing : participants) {
         if (existing.getRole() == ParticipantRole.CO_MODERATOR
             && !desiredIds.contains(existing.getConsultantId())) {
-          // The side room of a supervision is left first, the main room last: when a leave fails
-          // everything rolls back, and the room that is already gone is then the harmless one.
-          revocation.revokeAccessOf(series, existing);
-          // A hard-deleted consultant's Matrix account is deactivated by the deletion workflow,
-          // and a blank identity was never a room member: neither has access left to revoke.
-          // An existing participant may come from another Träger (recipient scope PLATFORM) or may
-          // have been soft-deleted since: the owner's own Träger and an active-only lookup would
-          // not find them. They are resolved by participation.
-          var leavingMatrixUserId =
-              TenantContext.supplyAcrossTenants(
-                      () -> consultantRepository.findById(existing.getConsultantId()))
-                  .map(Consultant::getMatrixUserId)
-                  .orElse(null);
-          // Deselecting a co-moderator is a demotion. It does not finish while Matrix still
-          // holds their moderator level.
-          moderatorPower.reconcileOrFail(series, leavingMatrixUserId, null);
-          if (leavingMatrixUserId != null
-              && !leavingMatrixUserId.isBlank()
-              && !membershipService.removeLeavingMemberFromRoomAndConfirm(
-                  series, leavingMatrixUserId)) {
-            throw new InternalServerErrorException(
-                "Matrix removal is unconfirmed; participant tracking retained");
-          }
-          participantRepository.delete(existing);
+          revokeFromRoster(series, group, existing, verifiedSideExits);
         }
       }
       // Every selected colleague is a co-moderator (or owner) and may blur passages
@@ -176,9 +166,99 @@ public class GroupChatParticipantReconciliationService {
       // leaves nobody with a level the database does not record.
       moderatorPower.grantModeratorsAfterCommit(series, selectedMatrixUserIds);
       cleanupTasks.forEach(matrixCleanup::clear);
+      verifiedSideExits.forEach(removalRecovery::clearSideExit);
+      removalRecovery.acceptRoster(series.getId());
     } catch (RuntimeException failure) {
       cleanupTasks.forEach(matrixCleanup::compensate);
       throw failure;
     }
+  }
+
+  private void revokeFromRoster(
+      Chat series,
+      GroupRosterRemovalRecovery.GroupScope group,
+      GroupChatParticipant participant,
+      List<Long> verifiedSideExits) {
+    var supervision =
+        revocation.revokeForRoster(
+            series,
+            participant,
+            side -> leaveSupervision(group, participant, side, verifiedSideExits));
+    // Resolve existing participants including those from another tenant or since soft-deleted.
+    var memberId =
+        TenantContext.supplyAcrossTenants(
+                () -> consultantRepository.findById(participant.getConsultantId()))
+            .map(Consultant::getMatrixUserId)
+            .orElse(null);
+    // Deselecting a co-moderator is a demotion. It does not finish while Matrix still
+    // holds their moderator level.
+    moderatorPower.reconcileOrFail(series, memberId, null);
+    if (!isBlank(memberId)) {
+      var roomId = membershipService.resolveMatrixRoomId(series);
+      if (isBlank(roomId)) {
+        throw removalUnconfirmed();
+      }
+      var localSupervision =
+          supervision != null && isBlank(supervision.getMatrixRoomId())
+              ? supervision.getId()
+              : null;
+      var reservation =
+          removalRecovery.record(
+              group,
+              GroupRosterRemovalRecovery.ParticipantScope.of(participant),
+              roomId,
+              memberId,
+              null,
+              localSupervision);
+      leaveOrFail(reservation, roomId, memberId);
+    }
+    participantRepository.delete(participant);
+  }
+
+  private void leaveSupervision(
+      GroupRosterRemovalRecovery.GroupScope group,
+      GroupChatParticipant participant,
+      SessionSupervisor supervision,
+      List<Long> verifiedSideExits) {
+    var supervisor = supervision.getSupervisorConsultant();
+    var roomId = supervision.getMatrixRoomId();
+    if (isBlank(roomId) || supervisor == null || isBlank(supervisor.getMatrixUserId())) {
+      return;
+    }
+    var memberId = supervisor.getMatrixUserId();
+    var reservation =
+        removalRecovery.record(
+            group,
+            GroupRosterRemovalRecovery.ParticipantScope.of(participant),
+            roomId,
+            memberId,
+            supervision.getId(),
+            null);
+    leaveOrFail(reservation, roomId, memberId);
+    verifiedSideExits.add(reservation.id());
+  }
+
+  private void leaveOrFail(
+      GroupRosterRemovalRecovery.Reservation reservation, String roomId, String memberId) {
+    if (!reservation.sendLeave()) {
+      return;
+    }
+    var departure = membershipService.removeRosterMemberAndConfirm(roomId, memberId);
+    if (departure == GroupChatMembershipService.Departure.CONFIRMED) {
+      removalRecovery.markDispatchSettled(reservation.id());
+      return;
+    }
+    if (departure == GroupChatMembershipService.Departure.ACKNOWLEDGED) {
+      removalRecovery.markDispatchSettled(reservation.id());
+    } else if (departure == GroupChatMembershipService.Departure.NOT_SENT
+        || departure == GroupChatMembershipService.Departure.REJECTED) {
+      removalRecovery.discardUnsent(reservation.id());
+    }
+    throw removalUnconfirmed();
+  }
+
+  private InternalServerErrorException removalUnconfirmed() {
+    return new InternalServerErrorException(
+        "Matrix removal is unconfirmed; participant tracking retained");
   }
 }

@@ -63,7 +63,8 @@ class GroupChatMatrixCleanupTransactionTest {
               mock(GroupChatParticipantRepository.class),
               matrix,
               mock(GroupChatMembershipService.class),
-              Clock.systemUTC());
+              Clock.systemUTC(),
+              SharedEntityManagerCreator.createSharedEntityManager(factory));
       var proxy = new ProxyFactory(target);
       proxy.addAdvice(
           new TransactionInterceptor(manager, new AnnotationTransactionAttributeSource()));

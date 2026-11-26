@@ -16,6 +16,7 @@ import de.caritas.cob.userservice.api.adapters.web.dto.SessionTopicDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.SessionUserDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.UserSessionResponseDTO;
 import de.caritas.cob.userservice.api.helper.SessionDataKeyRegistration;
+import de.caritas.cob.userservice.api.helper.UserHelper;
 import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.Session;
@@ -99,7 +100,8 @@ public class SessionMapper {
             session.isConsentGateApplicable() && isNull(session.getConsentedLegalVersionId()))
         .topic(new SessionTopicDTO().id(session.getMainTopicId()))
         .directLinkMedium(directLinkMediumOf(session))
-        .directLinkName(session.getDirectLinkName());
+        .directLinkName(session.getDirectLinkName())
+        .viaAgencyLink(UserHelper.AGENCY_LINK_REFERER.equals(session.getReferer()));
   }
 
   /** FE#1952: an unknown stored value is left out rather than failing the whole list. */

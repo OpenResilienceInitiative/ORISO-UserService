@@ -734,7 +734,7 @@
         "mechanism": "row-lock",
         "evidence": [
           {
-            "contains": ["lifecycle.claimClosure(roomId, nowInUtc()).ifPresent(this::withdrawAndConfirm)"]
+            "contains": ["lifecycle.claimClosure(roomId).ifPresent(this::withdrawAndConfirm)"]
           },
           {
             "source": "src/main/java/de/caritas/cob/userservice/api/service/support/SupportRoomLifecycle.java",

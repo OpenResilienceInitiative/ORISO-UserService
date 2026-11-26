@@ -20,6 +20,10 @@ public class MatrixCreateRoomRequestDTO {
   private String preset;
   private String visibility;
 
+  @JsonInclude(JsonInclude.Include.NON_NULL)
+  @JsonProperty("creation_content")
+  private Map<String, Object> creationContent;
+
   @JsonProperty("initial_state")
   private List<InitialStateEvent> initialState;
 
