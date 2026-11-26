@@ -530,7 +530,7 @@ class CaseHandoverControllerTest {
     UUID operationId = UUID.fromString("3f43450b-aab8-4f95-a379-a2f64d31f691");
     doThrow(new BadRequestException("Explanation is required"))
         .when(caseHandoverService)
-        .validateBatchExplanation(100L, "COUNSELLOR_IS_ILL", "   ");
+        .validateBatchExplanation("COUNSELLOR_IS_ILL", "   ");
 
     mockMvc
         .perform(
@@ -555,9 +555,13 @@ class CaseHandoverControllerTest {
   }
 
   @Test
-  void requestBatchAccess_policyChangeToRequiredStillPropagatesBadRequest() throws Exception {
-    UUID operationId = UUID.fromString("3f43450b-aab8-4f95-a379-a2f64d31f691");
-    when(caseHandoverService.requestAccess(100L, "COUNSELLOR_IS_ILL", "   ", 2L, operationId))
+  void requestBatchAccess_policyChangeDuringBatchIsReportedPerOperation() throws Exception {
+    UUID firstId = UUID.fromString("3f43450b-aab8-4f95-a379-a2f64d31f691");
+    UUID secondId = UUID.fromString("89829f34-1fd2-44d0-899e-84bb93f85530");
+    var status = CaseHandoverStatus.builder().status("PENDING").build();
+    when(caseHandoverService.requestAccess(100L, "COUNSELLOR_IS_ILL", "   ", 2L, firstId))
+        .thenReturn(status);
+    when(caseHandoverService.requestAccess(101L, "COUNSELLOR_IS_ILL", "   ", 3L, secondId))
         .thenThrow(new BadRequestException("Explanation is required"));
 
     mockMvc
@@ -569,15 +573,49 @@ class CaseHandoverControllerTest {
                     {
                       "reasonCode": "COUNSELLOR_IS_ILL",
                       "explanation": "   ",
-                      "operations": [{
-                        "sessionId": 100,
-                        "expectedOwnershipRevision": 2,
-                        "operationId": "%s"
-                      }]
+                      "operations": [
+                        {
+                          "sessionId": 100,
+                          "expectedOwnershipRevision": 2,
+                          "operationId": "%s"
+                        },
+                        {
+                          "sessionId": 101,
+                          "expectedOwnershipRevision": 3,
+                          "operationId": "%s"
+                        }
+                      ]
                     }
                     """
-                        .formatted(operationId)))
-        .andExpect(status().isBadRequest());
+                        .formatted(firstId, secondId)))
+        .andExpect(status().isCreated())
+        .andExpect(jsonPath("$[0].success").value(true))
+        .andExpect(jsonPath("$[1].success").value(false))
+        .andExpect(jsonPath("$[1].error").value("Explanation is required"));
+  }
+
+  @Test
+  void requestBatchAccess_missingFirstSessionDoesNotBlockLaterOperation() {
+    var request = new CaseHandoverController.CaseHandoverBatchRequestDTO();
+    request.setReasonCode("COUNSELLOR_ON_HOLIDAY");
+    request.setExplanation("batch");
+    var missing = batchOperation(300L, 2L, "3f43450b-aab8-4f95-a379-a2f64d31f691");
+    var valid = batchOperation(301L, 3L, "89829f34-1fd2-44d0-899e-84bb93f85530");
+    request.setOperations(List.of(missing, valid));
+    when(caseHandoverService.requestAccess(
+            300L, "COUNSELLOR_ON_HOLIDAY", "batch", 2L, missing.getOperationId()))
+        .thenThrow(new RuntimeException("Session not found: 300"));
+    when(caseHandoverService.requestAccess(
+            301L, "COUNSELLOR_ON_HOLIDAY", "batch", 3L, valid.getOperationId()))
+        .thenReturn(CaseHandoverStatus.builder().status("PENDING").build());
+
+    var response = controller.requestBatchAccess(request);
+
+    assertEquals(HttpStatus.CREATED, response.getStatusCode());
+    assertNotNull(response.getBody());
+    assertFalse(response.getBody().get(0).success);
+    assertTrue(response.getBody().get(1).success);
+    verify(caseHandoverService).validateBatchExplanation("COUNSELLOR_ON_HOLIDAY", "batch");
   }
 
   @Test

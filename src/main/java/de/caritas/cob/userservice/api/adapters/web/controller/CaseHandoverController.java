@@ -3,7 +3,6 @@ package de.caritas.cob.userservice.api.adapters.web.controller;
 import de.caritas.cob.userservice.api.adapters.web.dto.CaseHandoverConsentPreferenceDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.CaseHandoverConsentPreferenceUpdateDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantSessionListResponseDTO;
-import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
 import de.caritas.cob.userservice.api.service.CaseHandoverLogsService;
 import de.caritas.cob.userservice.api.service.CaseHandoverLogsService.CaseHandoverLogEntry;
 import de.caritas.cob.userservice.api.service.CaseHandoverLogsService.CaseHandoverLogsResult;
@@ -217,10 +216,7 @@ public class CaseHandoverController {
   @PostMapping({"/users/case-handover/batch", "/service/users/case-handover/batch"})
   public ResponseEntity<List<CaseHandoverBatchResultDTO>> requestBatchAccess(
       @Valid @RequestBody CaseHandoverBatchRequestDTO request) {
-    caseHandoverService.validateBatchExplanation(
-        request.getOperations().get(0).getSessionId(),
-        request.getReasonCode(),
-        request.getExplanation());
+    caseHandoverService.validateBatchExplanation(request.getReasonCode(), request.getExplanation());
     List<CaseHandoverBatchResultDTO> results = new ArrayList<>();
     request.getOperations().stream()
         .forEach(
@@ -236,8 +232,6 @@ public class CaseHandoverController {
                             request.getExplanation(),
                             operation.getExpectedOwnershipRevision(),
                             operation.getOperationId())));
-              } catch (BadRequestException exception) {
-                throw exception;
               } catch (RuntimeException exception) {
                 results.add(
                     CaseHandoverBatchResultDTO.failure(

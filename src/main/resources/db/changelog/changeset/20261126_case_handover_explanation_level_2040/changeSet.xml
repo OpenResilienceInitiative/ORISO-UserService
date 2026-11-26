@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+  xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.3.xsd">
+  <!--
+    FE#2040: idempotent replays compare explanations with the policy that applied when the
+    operation was created. Existing rows remain NULL and use strict text equality.
+  -->
+  <changeSet id="20261126-case-handover-explanation-level-2040" author="oriso">
+    <preConditions onFail="MARK_RAN" onError="HALT">
+      <not><columnExists tableName="case_handover_request" columnName="explanation_level"/></not>
+    </preConditions>
+    <addColumn tableName="case_handover_request">
+      <column name="explanation_level" type="varchar(16)"/>
+    </addColumn>
+    <rollback><sql>SELECT 1</sql></rollback>
+  </changeSet>
+</databaseChangeLog>

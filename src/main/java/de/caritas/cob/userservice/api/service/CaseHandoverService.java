@@ -1104,14 +1104,22 @@ public class CaseHandoverService {
    * turning the validation error into a per-operation result under HTTP 201.
    */
   @Transactional(propagation = Propagation.NOT_SUPPORTED)
-  public void validateBatchExplanation(Long sessionId, String reasonCode, String explanation) {
-    Session session = sessionForAction(sessionId, false, true);
+  public void validateBatchExplanation(String reasonCode, String explanation) {
+    Consultant consultant = retrieveCurrentConsultant();
+    Long tenantId = consultant.getTenantId();
+    if (tenantId == null || tenantId <= 0) {
+      throw new ServiceUnavailableException("No tenant is available for Case Handover policy");
+    }
+    var current = caseHandoverPolicyCacheService.getCurrent(tenantId);
+    current.requireEnabled();
+    String normalized = CaseHandoverReasonCodes.canonical(reasonCode);
     CaseHandoverReason reason =
-        findReason(
-            caseHandoverPolicyCacheService.getCurrent(policyTenant(session)),
-            session,
-            reasonCode,
-            false);
+        current.policies().getReasons().values().stream()
+            .map(policy -> toReason(policy, "de"))
+            .filter(CaseHandoverReason::isEnabled)
+            .filter(candidate -> candidate.getCode().equals(normalized))
+            .findFirst()
+            .orElseThrow(() -> new BadRequestException("Unknown handover reason"));
     explanationFor(reason, explanation);
   }
 
@@ -1226,6 +1234,7 @@ public class CaseHandoverService {
                   .reasonCode(reason.getCode())
                   .reasonLabel(reason.getLabel())
                   .explanation(normalizedExplanation)
+                  .explanationLevel(explanationLevel(reason))
                   .status(status)
                   .clientConsent(clientConsent)
                   .clientConsentRequired(clientConsentRequired)
@@ -1468,6 +1477,7 @@ public class CaseHandoverService {
                       .reasonCode(reason.getCode())
                       .reasonLabel(reason.getLabel())
                       .explanation(explanationFor(reason, explanation))
+                      .explanationLevel(explanationLevel(reason))
                       .status(Status.PENDING_RECIPIENT_ACCEPTANCE)
                       .clientConsent(effectiveClientConsent(session, reason))
                       .clientConsentRequired(
@@ -2227,7 +2237,7 @@ public class CaseHandoverService {
         || !Objects.equals(
             CaseHandoverReasonCodes.canonical(stored.getReasonCode()),
             CaseHandoverReasonCodes.canonical(reasonCode))
-        || !replayedExplanationMatches(stored, session, expectedExplanation)
+        || !replayedExplanationMatches(stored, expectedExplanation)
         || !Objects.equals(stored.getExpectedOwnershipRevision(), expectedOwnershipRevision)) {
       throw new ConflictException("Operation identity was already used with another payload");
     }
@@ -2235,36 +2245,16 @@ public class CaseHandoverService {
 
   /**
    * FE#2040: a reason set to OFF stores no text, so a replay may carry the text the client sent the
-   * first time. Only then does an empty stored text match a non-blank one; an empty OPTIONAL text
-   * or an offer without text still has to be replayed unchanged. When the level cannot be read the
-   * replay is refused rather than guessed.
+   * first time. Only a creation-time OFF level permits that comparison; an empty OPTIONAL text or a
+   * legacy request without a captured level still has to be replayed unchanged.
    */
   private boolean replayedExplanationMatches(
-      CaseHandoverRequest stored, Session session, String expectedExplanation) {
+      CaseHandoverRequest stored, String expectedExplanation) {
     String storedExplanation = stored.getExplanation() == null ? "" : stored.getExplanation();
     if (Objects.equals(storedExplanation, expectedExplanation)) {
       return true;
     }
-    if (!storedExplanation.isEmpty()) {
-      return false;
-    }
-    try {
-      String code = CaseHandoverReasonCodes.canonical(stored.getReasonCode());
-      var current = caseHandoverPolicyCacheService.getCurrent(policyTenant(session));
-      if (!current.enabled()
-          || current.policies() == null
-          || current.policies().getReasons() == null) {
-        return false;
-      }
-      return current.policies().getReasons().values().stream()
-          .map(policy -> toReason(policy, "de"))
-          .filter(reason -> reason.getCode().equals(code))
-          .findFirst()
-          .map(reason -> EXPLANATION_OFF.equals(explanationLevel(reason)))
-          .orElse(false);
-    } catch (RuntimeException exception) {
-      return false;
-    }
+    return storedExplanation.isEmpty() && EXPLANATION_OFF.equals(stored.getExplanationLevel());
   }
 
   private Optional<CaseHandoverRequest> latestFor(Long sessionId, Consultant requester) {
@@ -2940,6 +2930,7 @@ public class CaseHandoverService {
             .reasonCode(reason.getCode())
             .reasonLabel(reason.getLabel())
             .explanation(explanation)
+            .explanationLevel(explanationLevel(reason))
             .status(Status.DENIED)
             .clientConsent(effectiveClientConsent(reason))
             .clientConsentRequired(reason.isClientConsentRequired())

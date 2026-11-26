@@ -1383,11 +1383,13 @@ class CaseHandoverServiceTest {
 
   @Test
   void requestAccess_replayOfOffReasonAcceptsTheTextThatWasDropped() {
+    givenExplanationLevel("COUNSELLOR_IS_ILL", "REQUIRED");
     UUID operationId = UUID.fromString("68fc1ae0-ed6d-4a28-909d-2592f6891b21");
     CaseHandoverRequest stored = grantedRequest(requester);
     stored.setOperationId(operationId);
     stored.setExpectedOwnershipRevision(0L);
     stored.setExplanation("");
+    stored.setExplanationLevel("OFF");
     when(caseHandoverRequestRepository.findByInitiatorConsultantIdAndOperationId(
             "requester", operationId))
         .thenReturn(Optional.of(stored));
@@ -1401,12 +1403,12 @@ class CaseHandoverServiceTest {
 
   @Test
   void requestAccess_replayOfBlankOptionalExplanationWithNewTextConflicts() {
-    givenExplanationLevel("COUNSELLOR_IS_ILL", "OPTIONAL");
     UUID operationId = UUID.fromString("68fc1ae0-ed6d-4a28-909d-2592f6891b21");
     CaseHandoverRequest stored = grantedRequest(requester);
     stored.setOperationId(operationId);
     stored.setExpectedOwnershipRevision(0L);
     stored.setExplanation("");
+    stored.setExplanationLevel("OPTIONAL");
     when(caseHandoverRequestRepository.findByInitiatorConsultantIdAndOperationId(
             "requester", operationId))
         .thenReturn(Optional.of(stored));
@@ -1418,11 +1420,11 @@ class CaseHandoverServiceTest {
 
   @Test
   void createOffer_replayWithTextOfOfferStoredWithoutTextConflictsUnlessReasonIsOff() {
-    givenExplanationLevel("COUNSELLOR_IS_ILL", "OPTIONAL");
     Consultant recipient = eligibleConsultant("recipient", "Recipient");
     UUID operationId = UUID.fromString("ca40d769-e617-43a8-8c89-5da47316672d");
     CaseHandoverRequest stored = pushRequest(recipient, operationId);
     stored.setExplanation(null);
+    stored.setExplanationLevel("OPTIONAL");
     when(caseHandoverRequestRepository.findByInitiatorConsultantIdAndOperationId(
             "requester", operationId))
         .thenReturn(Optional.of(stored));
@@ -1756,6 +1758,7 @@ class CaseHandoverServiceTest {
 
     verify(caseHandoverRequestRepository).save(captor.capture());
     assertEquals("Planned cover.", captor.getValue().getExplanation());
+    assertEquals("OPTIONAL", captor.getValue().getExplanationLevel());
   }
 
   @Test
@@ -1775,6 +1778,7 @@ class CaseHandoverServiceTest {
 
     verify(caseHandoverRequestRepository).save(captor.capture());
     assertEquals("", captor.getValue().getExplanation());
+    assertEquals("OFF", captor.getValue().getExplanationLevel());
   }
 
   @Test
@@ -4303,6 +4307,7 @@ class CaseHandoverServiceTest {
     assertEquals("UNPLANNED_ABSENCE", saved.getReasonCode());
     assertEquals("Unplanned absence", saved.getReasonLabel());
     assertEquals("Illness cover.", saved.getExplanation());
+    assertEquals("OPTIONAL", saved.getExplanationLevel());
     assertEquals("ACCESS_GRANTED", saved.getAuditOutcome());
     assertEquals(previous, saved.getPreviousConsultant());
   }
@@ -4315,6 +4320,7 @@ class CaseHandoverServiceTest {
 
     verify(caseHandoverRequestRepository).save(captor.capture());
     assertEquals("", captor.getValue().getExplanation());
+    assertEquals("OFF", captor.getValue().getExplanationLevel());
   }
 
   @Test
@@ -4326,6 +4332,7 @@ class CaseHandoverServiceTest {
 
     verify(caseHandoverRequestRepository).save(captor.capture());
     assertEquals("", captor.getValue().getExplanation());
+    assertEquals("OPTIONAL", captor.getValue().getExplanationLevel());
   }
 
   @Test
@@ -4346,6 +4353,19 @@ class CaseHandoverServiceTest {
 
     verify(caseHandoverRequestRepository).save(captor.capture());
     assertEquals("Cover for sick leave.", captor.getValue().getExplanation());
+    assertEquals("REQUIRED", captor.getValue().getExplanationLevel());
+  }
+
+  @Test
+  void validateBatchExplanationUsesConsultantTenantWithoutLookingUpASession() {
+    givenExplanationLevel("COUNSELLOR_IS_ILL", "REQUIRED");
+
+    assertThrows(
+        BadRequestException.class,
+        () -> caseHandoverService.validateBatchExplanation("COUNSELLOR_IS_ILL", "   "));
+
+    verifyNoInteractions(sessionRepository);
+    verify(caseHandoverPolicyCacheService).getCurrent(7L);
   }
 
   @Test
