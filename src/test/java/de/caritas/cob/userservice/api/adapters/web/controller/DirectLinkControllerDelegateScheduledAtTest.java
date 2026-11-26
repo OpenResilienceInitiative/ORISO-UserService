@@ -59,7 +59,11 @@ class DirectLinkControllerDelegateScheduledAtTest {
             mock(de.caritas.cob.userservice.api.service.chat.GroupWaitingRoomService.class),
             mock(UserRepository.class),
             mock(TemporaryAccountService.class),
-            consents);
+            consents,
+            mock(
+                de.caritas.cob.userservice.api.service.agencyinvitelink.DirectLinkStaffJoinService
+                    .class),
+            mock(de.caritas.cob.userservice.api.port.out.ConsultantRepository.class));
     counsellor.setId("counsellor-1");
     when(accounts.retrieveValidatedConsultant()).thenReturn(counsellor);
     when(topics.getAllTopicsMap()).thenReturn(Map.of());

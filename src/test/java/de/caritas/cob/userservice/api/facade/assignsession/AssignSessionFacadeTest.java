@@ -120,13 +120,27 @@ class AssignSessionFacadeTest {
   }
 
   /**
-   * FE#2494 *4: after a reassignment the colleagues kept in a team room, the former owner too,
-   * read.
+   * FE#2494 *4: a reassignment keeps the case as it is. Only a case that is already read-only is
+   * enforced again for the new owner; a team case accepted before this release is not marked.
    */
   @Test
-  void assignSession_makesTheKeptTeamColleaguesReaders() {
+  void assignSession_keepsTheCaseAsItIsOnAReassignment() {
+    assignSessionFacade.assignSession(session, consultantToAssign, authenticatedConsultant);
+
+    verify(teamSessionReadOnly).reenforceAfterCommitIfMarked(42L);
+    verify(teamSessionReadOnly, org.mockito.Mockito.never())
+        .enforceAfterCommit(org.mockito.ArgumentMatchers.any());
+  }
+
+  /** FE#2494 *4: accepting an enquiry through this path makes the team colleagues readers. */
+  @Test
+  void assignSession_makesTheTeamColleaguesReadersWhenItAcceptsAnEnquiry() {
+    when(session.getStatus()).thenReturn(SessionStatus.NEW);
+
     assignSessionFacade.assignSession(session, consultantToAssign, authenticatedConsultant);
 
     verify(teamSessionReadOnly).enforceAfterCommit(42L);
+    verify(teamSessionReadOnly, org.mockito.Mockito.never())
+        .reenforceAfterCommitIfMarked(org.mockito.ArgumentMatchers.any());
   }
 }

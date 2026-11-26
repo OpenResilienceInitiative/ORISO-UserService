@@ -40,6 +40,20 @@ public interface GroupChatJoinRequestRepository extends CrudRepository<GroupChat
   List<GroupChatJoinRequest> findPendingCallKnocksForUpdate(
       @Param("sessionId") Long sessionId, @Param("userId") String userId, @Param("via") Via via);
 
+  /**
+   * ORISO-Frontend#2356: one person's knocks of one kind in a conversation, newest first, locked,
+   * whatever their status.
+   */
+  @Lock(LockModeType.PESSIMISTIC_WRITE)
+  @Query(
+      "SELECT request FROM GroupChatJoinRequest request WHERE request.sessionId = :sessionId"
+          + " AND request.userId = :userId AND request.via = :via ORDER BY request.id DESC")
+  List<GroupChatJoinRequest> findCallKnocksOfPersonForUpdate(
+      @Param("sessionId") Long sessionId,
+      @Param("userId") String userId,
+      @Param("via") Via via,
+      Pageable page);
+
   Optional<GroupChatJoinRequest> findFirstBySessionIdAndUserIdAndViaAndStatusOrderByIdDesc(
       Long sessionId, String userId, Via via, Status status);
 
@@ -96,6 +110,21 @@ public interface GroupChatJoinRequestRepository extends CrudRepository<GroupChat
 
   List<GroupChatJoinRequest> findByInviteLinkIdAndViaAndStatus(
       Long inviteLinkId, Via via, Status status);
+
+  /**
+   * ORISO-Frontend#2356: one person's open knocks of one kind through one link, read under lock
+   * from the start, so a decision committed meanwhile is never overwritten from a stale copy.
+   */
+  @Lock(LockModeType.PESSIMISTIC_WRITE)
+  @Query(
+      "SELECT request FROM GroupChatJoinRequest request WHERE request.inviteLinkId = :inviteLinkId"
+          + " AND request.userId = :userId AND request.via = :via"
+          + " AND request.status = de.caritas.cob.userservice.api.model.GroupChatJoinRequest.Status.PENDING"
+          + " ORDER BY request.id")
+  List<GroupChatJoinRequest> findPendingKnocksOfLinkForUpdate(
+      @Param("inviteLinkId") Long inviteLinkId,
+      @Param("userId") String userId,
+      @Param("via") Via via);
 
   List<GroupChatJoinRequest> findByInviteLinkIdAndUserIdAndVia(
       Long inviteLinkId, String userId, Via via);

@@ -374,6 +374,52 @@ class DirectLinkControllerIT {
     verify(createNewSessionFacade, never()).initializeNewSession(any(), any(User.class), anyList());
   }
 
+  /**
+   * ORISO-Frontend#2356: a counsellor who holds the link joins its call through the staff route; an
+   * advice seeker cannot use it, and /conversations stays closed to counsellors (above).
+   */
+  @Test
+  void counsellorJoinsThroughTheStaffRoute_AdviceSeekerCannot() throws Exception {
+    actAsConsultant(owner);
+    long video = createLink("VIDEO");
+    long chat = createLink("CHAT");
+    String videoToken = linkRepository.findById(video).orElseThrow().getToken();
+    String chatToken = linkRepository.findById(chat).orElseThrow().getToken();
+
+    actAsConsultant(otherCounsellor);
+    // A link without an appointment: every person gets their own 1:1, there is no shared call.
+    asConsultant(post("/users/invitelinks/{token}/staff-join", videoToken))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.outcome", is("NO_SHARED_CALL")))
+        .andExpect(jsonPath("$.medium", is("VIDEO")))
+        .andExpect(jsonPath("$.sessionId").doesNotExist());
+    asConsultant(post("/users/invitelinks/{token}/staff-join", chatToken))
+        .andExpect(status().isBadRequest());
+    asConsultant(post("/users/invitelinks/{token}/staff-join", "no-such-token"))
+        .andExpect(status().isNotFound());
+    asConsultant(delete("/users/invitelinks/{token}/staff-join", videoToken))
+        .andExpect(status().isNoContent());
+
+    actAsAsker();
+    asAsker(post("/users/invitelinks/{token}/staff-join", videoToken))
+        .andExpect(status().isForbidden());
+    verify(createNewSessionFacade, never()).initializeNewSession(any(), any(User.class), anyList());
+  }
+
+  @Test
+  void staffRouteSaysNoLongerActiveForASwitchedOffLink() throws Exception {
+    actAsConsultant(owner);
+    long id = createLink("AUDIO");
+    String token = linkRepository.findById(id).orElseThrow().getToken();
+    var link = linkRepository.findById(id).orElseThrow();
+    link.setStatus("DISABLED");
+    linkRepository.save(link);
+    entityManager.flush();
+
+    actAsConsultant(otherCounsellor);
+    asConsultant(post("/users/invitelinks/{token}/staff-join", token)).andExpect(status().isGone());
+  }
+
   @Test
   void signedInPersonOpensTheirOwnConversationWithTheOwner() throws Exception {
     actAsConsultant(owner);

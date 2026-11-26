@@ -4,6 +4,7 @@ import de.caritas.cob.userservice.api.facade.SessionSupervisorFacade;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.helper.ConsultantDisplayNameResolver;
 import de.caritas.cob.userservice.api.model.Consultant;
+import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.SessionSupervisor;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.service.notification.EventNotificationService;
@@ -13,6 +14,7 @@ import de.caritas.cob.userservice.api.service.user.UserAccountService;
 import de.caritas.cob.userservice.api.supervision.SupervisionNotes;
 import de.caritas.cob.userservice.api.supervision.SupervisionReason;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
+import de.caritas.cob.userservice.api.tenant.TenantData;
 import io.swagger.annotations.Api;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotNull;
@@ -29,6 +31,7 @@ import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
@@ -202,6 +205,73 @@ public class SessionSupervisorController {
   }
 
   /**
+   * ORISO-Frontend#2494 *6: replace one supervisor by another in one step ("Supervisor verwalten" →
+   * "Wechseln"). The side room is kept, one notice goes into it, and the Admin log records one
+   * swap. The advice seeker gets one notification, and only when {@code notifyClient} is not false.
+   *
+   * @param sessionId the session ID
+   * @param supervisorId the active supervisor row being replaced
+   * @param request the new supervisor, reason and the notify choice
+   * @return the new supervisor
+   */
+  @PutMapping("/{sessionId}/supervisors/{supervisorId}")
+  public ResponseEntity<SessionSupervisorResponseDTO> replaceSupervisor(
+      @PathVariable @NotNull Long sessionId,
+      @PathVariable @NotNull Long supervisorId,
+      @Valid @RequestBody ReplaceSupervisorRequestDTO request) {
+    log.info(
+        "Replace supervisor request: sessionId={}, supervisorId={}, newSupervisorConsultantId={}",
+        sessionId,
+        supervisorId,
+        request.getSupervisorConsultantId());
+    Consultant currentConsultant = userAccountService.retrieveValidatedConsultant();
+    if (currentConsultant == null) {
+      return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
+    }
+    var replacement =
+        sessionSupervisorFacade.replaceSupervisor(
+            sessionId,
+            supervisorId,
+            request.getSupervisorConsultantId(),
+            currentConsultant,
+            request.getReasonCode(),
+            request.getNotes());
+    fireSupervisorReplacedNotifications(replacement, request.isNotifyClient());
+    return ResponseEntity.ok(mapToDTO(replacement.added()));
+  }
+
+  private void fireSupervisorReplacedNotifications(
+      SessionSupervisorFacade.SupervisorReplacement replacement, boolean notifyClient) {
+    String accessToken = authenticatedUser.getAccessToken();
+    SessionSupervisor added = replacement.added();
+    SessionSupervisor old = replacement.replaced();
+    Session session = added.getSession();
+    User client = session != null ? session.getUser() : null;
+    TenantData tenant = TenantContext.getCurrentTenantData();
+
+    if (notifyClient && client != null && client.getUserId() != null) {
+      // ADR-002 §2 / #1201: addressed to the advice seeker, so Matrix display names only.
+      eventNotificationService.createSupervisorReplacedNotification(
+          session,
+          client.getUserId(),
+          consultantDisplayNameResolver.resolveMatrixDisplayName(old.getSupervisorConsultant()),
+          consultantDisplayNameResolver.resolveMatrixDisplayName(added.getSupervisorConsultant()));
+    }
+    Long sessionId = session != null ? session.getId() : null;
+    // The supervisors are always told; the advice seeker gets at most the one "joined" mail.
+    supervisorAddedEmailNotificationService.notifySupervisorRemoved(
+        client, old.getSupervisorConsultant(), sessionId, tenant, accessToken, false);
+    supervisorAddedEmailNotificationService.notifySupervisorAdded(
+        client, added.getSupervisorConsultant(), sessionId, tenant, accessToken, notifyClient);
+    if (session != null
+        && added.getSupervisorConsultant() != null
+        && added.getSupervisorConsultant().getId() != null) {
+      eventNotificationService.createSupervisorAssignedNotification(
+          session, added.getSupervisorConsultant().getId());
+    }
+  }
+
+  /**
    * Get all active supervisors for a session.
    *
    * @param sessionId the session ID
@@ -263,6 +333,20 @@ public class SessionSupervisorController {
     dto.setJustification(payload.justification);
     dto.setConsent(payload.consent);
     return dto;
+  }
+
+  /** Request DTO for replacing a supervisor (#2494 *6). */
+  public static class ReplaceSupervisorRequestDTO extends AddSupervisorRequestDTO {
+    /** Whether the advice seeker is told; absent means yes. */
+    private Boolean notifyClient;
+
+    public boolean isNotifyClient() {
+      return !Boolean.FALSE.equals(notifyClient);
+    }
+
+    public void setNotifyClient(Boolean notifyClient) {
+      this.notifyClient = notifyClient;
+    }
   }
 
   /** Request DTO for adding a supervisor. */

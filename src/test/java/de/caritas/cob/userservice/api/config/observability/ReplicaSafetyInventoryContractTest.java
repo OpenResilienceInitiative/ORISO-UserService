@@ -86,6 +86,7 @@ class ReplicaSafetyInventoryContractTest {
           "agency-deletion-audit-pull-scheduler",
           "team-discussion-access-repair",
           "team-session-read-only-repair",
+          "case-sharing-model-snapshot",
           "statistics-dashboard-snapshot-scheduler",
           "calendar-import-scheduler",
           "calendar-visibility-policy-cache");
