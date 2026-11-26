@@ -34,6 +34,12 @@ public class UserHelper {
   public static final String CONSULTING_TYPE_REGEXP = "[0-9]+|";
 
   public static final String REFERER_REGEXP = "[a-zA-Z0-9]{1,8}";
+
+  /**
+   * Referer value the Frontend sends when the person registers through the agency link (?aid=),
+   * ORISO-Frontend#1870. Fits {@link #REFERER_REGEXP}.
+   */
+  public static final String AGENCY_LINK_REFERER = "aidlink";
   public static final String REGISTRATION_REF_REGEXP = "[A-Za-z0-9_-]{1,64}";
   public static final int CHAT_MIN_DURATION = 30;
   public static final int CHAT_MAX_DURATION = 180;

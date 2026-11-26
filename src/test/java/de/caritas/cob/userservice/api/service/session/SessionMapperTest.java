@@ -94,6 +94,21 @@ class SessionMapperTest {
   }
 
   @Test
+  void convertToSessionDTOShouldFlagAnEnquiryThatCameThroughTheAgencyLink() {
+    // ORISO-Frontend#1870: only the channel travels, never the raw referer.
+    Session session = new EasyRandom().nextObject(Session.class);
+
+    session.setReferer("aidlink");
+    assertEquals(true, new SessionMapper().convertToSessionDTO(session).getViaAgencyLink());
+
+    session.setReferer("partner1");
+    assertEquals(false, new SessionMapper().convertToSessionDTO(session).getViaAgencyLink());
+
+    session.setReferer(null);
+    assertEquals(false, new SessionMapper().convertToSessionDTO(session).getViaAgencyLink());
+  }
+
+  @Test
   void convertToSessionDTOShouldProjectConversationType() {
     Session session = new EasyRandom().nextObject(Session.class);
     session.setConversationType(ConversationType.LIVE_CHAT);

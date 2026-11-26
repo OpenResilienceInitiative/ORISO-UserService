@@ -4701,6 +4701,14 @@ components:
             other conversation. The call of the conversation is called that ("Anruf" without it).
             A snapshot: a later rename of the link does not change it. Additive - older clients can
             ignore it.
+        viaAgencyLink:
+          type: boolean
+          example: true
+          description: >-
+            ORISO-Frontend#1870 - true when the advice seeker registered through the agency link
+            (?aid=), so the Erstanfragen list can show "über Beratungsstellen-Link". Derived from
+            the stored registration channel (session.referer = "aidlink"); no personal data and
+            not the raw referer. Additive - older clients can ignore it.
         supervision:
           $ref: '#/components/schemas/SessionSupervisionDTO'
 
