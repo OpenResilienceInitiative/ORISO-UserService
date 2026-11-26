@@ -132,11 +132,7 @@ public class SecurityConfig {
     // tests load this chain without JPA repositories, so the repository is optional here.
     http.addFilterAfter(
         new de.caritas.cob.userservice.api.adapters.web.controller.interceptor
-            .TemporaryAccountDeletedAccessFilter(
-            userId -> {
-              var repository = users.getIfAvailable();
-              return repository != null && repository.isTemporaryAccountDeletionStarted(userId);
-            }),
+            .TemporaryAccountDeletedAccessFilter(deletionStarted(users)),
         SecurityContextHolderAwareRequestFilter.class);
 
     http.addFilterAfter(
@@ -1249,5 +1245,16 @@ public class SecurityConfig {
   private String principalName(Jwt jwt) {
     String principal = jwt.getClaimAsString(principalAttribute);
     return principal == null ? jwt.getSubject() : principal;
+  }
+
+  /** Absent repository (web-slice tests) means "not deleted"; FE#2550. */
+  private static java.util.function.Predicate<String> deletionStarted(
+      org.springframework.beans.factory.ObjectProvider<
+              de.caritas.cob.userservice.api.port.out.UserRepository>
+          users) {
+    return userId -> {
+      var repository = users.getIfAvailable();
+      return repository != null && repository.isTemporaryAccountDeletionStarted(userId);
+    };
   }
 }
