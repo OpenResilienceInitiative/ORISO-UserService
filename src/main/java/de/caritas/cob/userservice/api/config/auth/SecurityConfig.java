@@ -106,7 +106,9 @@ public class SecurityConfig {
       Converter<Jwt, AbstractAuthenticationToken> jwtAuthenticationConverter,
       de.caritas.cob.userservice.api.workflow.accountinactivity.AccountInactivityService inactivity,
       de.caritas.cob.userservice.api.admin.service.admin.ManagedAccountStatusService accounts,
-      de.caritas.cob.userservice.api.port.out.UserRepository users)
+      org.springframework.beans.factory.ObjectProvider<
+              de.caritas.cob.userservice.api.port.out.UserRepository>
+          users)
       throws Exception {
     http.csrf(AbstractHttpConfigurer::disable);
     http.addFilterBefore(new StatelessCsrfFilter(csrfSecurityProperties), CsrfFilter.class);
@@ -126,10 +128,15 @@ public class SecurityConfig {
             .ManagedAccountPauseAccessFilter(accounts),
         SecurityContextHolderAwareRequestFilter.class);
 
-    // A deleted direct-link guest's token stays signed until it expires (FE#2550).
+    // A deleted direct-link guest's token stays signed until it expires (FE#2550). Web-slice
+    // tests load this chain without JPA repositories, so the repository is optional here.
     http.addFilterAfter(
         new de.caritas.cob.userservice.api.adapters.web.controller.interceptor
-            .TemporaryAccountDeletedAccessFilter(users::isTemporaryAccountDeletionStarted),
+            .TemporaryAccountDeletedAccessFilter(
+            userId -> {
+              var repository = users.getIfAvailable();
+              return repository != null && repository.isTemporaryAccountDeletionStarted(userId);
+            }),
         SecurityContextHolderAwareRequestFilter.class);
 
     http.addFilterAfter(
