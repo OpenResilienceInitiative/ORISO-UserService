@@ -19,8 +19,10 @@ import org.springframework.web.bind.annotation.RestController;
 /** US#1796: a deleted guest's still-signed token is refused on every endpoint, with the reason. */
 class TemporaryAccountDeletedAccessFilterTest {
 
+  // Not static: a static nested @RestController is component-scanned into every @SpringBootTest
+  // and shadows the real /users/sessions/askers. standaloneSetup still registers this one.
   @RestController
-  static class AnyAskerEndpoints {
+  class AnyAskerEndpoints {
     @GetMapping("/users/sessions/askers")
     String sessions() {
       return "sessions";
@@ -41,7 +43,7 @@ class TemporaryAccountDeletedAccessFilterTest {
             .build());
   }
 
-  private static MockMvc mvcWith(TemporaryAccountDeletedAccessFilter filter) {
+  private MockMvc mvcWith(TemporaryAccountDeletedAccessFilter filter) {
     return MockMvcBuilders.standaloneSetup(new AnyAskerEndpoints()).addFilters(filter).build();
   }
 
