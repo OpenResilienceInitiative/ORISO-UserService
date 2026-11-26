@@ -108,6 +108,10 @@ class InternalSubsetChatHttpIT {
   @Autowired private JdbcTemplate database;
   @Autowired private UserAgencyRepository userAgencies;
   @Autowired private MatrixConfig matrixConfig;
+
+  @Autowired
+  private de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService matrixSynapseService;
+
   @Autowired private InternalGroupChatRecipientScopeResolver recipientScopes;
 
   @Autowired
@@ -540,6 +544,25 @@ class InternalSubsetChatHttpIT {
     assertThat(again.statusCode()).as(again.body()).isEqualTo(503);
     assertThat(reason(again)).isEqualTo("INTERNAL_CHAT_BUSY");
     assertThat(synapse.roomsCreated()).as("no third room").isEqualTo(2);
+  }
+
+  @Test
+  void anUnreadableRoomStateLeavesDepartureUnconfirmed() throws Exception {
+    var room = field(openRoom(creator, sameCentre), "matrixRoomId");
+    var member = matrix(creator);
+    assertThat(matrixSynapseService.isOutOfRoom(room, member)).contains(false);
+
+    synapse.unreadableRooms.add(room);
+    assertThat(matrixSynapseService.isOutOfRoom(room, member)).as("unreadable room").isEmpty();
+    synapse.unreadableRooms.remove(room);
+
+    synapse.failMemberReads = true;
+    try {
+      assertThat(matrixSynapseService.isOutOfRoom(room, member)).as("failed reads").isEmpty();
+    } finally {
+      synapse.failMemberReads = false;
+    }
+    assertThat(matrixSynapseService.isOutOfRoom(room, member)).contains(false);
   }
 
   @Test
@@ -2066,6 +2089,12 @@ class InternalSubsetChatHttpIT {
         }
         return withSuccess(powerLevelsOf(room), MediaType.APPLICATION_JSON).createResponse(request);
       }
+      // Inject read failures before any admin room read answers, so both reads can fail.
+      if (path.startsWith("/_synapse/admin/v1/rooms/")
+          && (path.endsWith("/members") || path.endsWith("/state"))
+          && (failMemberReads || unreadableRooms.stream().anyMatch(room -> path.contains(room)))) {
+        return withStatus(HttpStatus.INTERNAL_SERVER_ERROR).createResponse(request);
+      }
       if (path.startsWith("/_synapse/admin/v1/rooms/") && path.endsWith("/state")) {
         // Read before a named moderator is raised (ORISO-Frontend#2229).
         var room =
@@ -2075,7 +2104,10 @@ class InternalSubsetChatHttpIT {
                         "/_synapse/admin/v1/rooms/".length(), path.length() - "/state".length()),
                     StandardCharsets.UTF_8));
         if (room == null) {
-          return withStatus(HttpStatus.NOT_FOUND).createResponse(request);
+          return withStatus(HttpStatus.NOT_FOUND)
+              .body("{\"errcode\":\"M_NOT_FOUND\"}")
+              .contentType(MediaType.APPLICATION_JSON)
+              .createResponse(request);
         }
         var state = new java.util.ArrayList<String>();
         state.add(
@@ -2123,39 +2155,6 @@ class InternalSubsetChatHttpIT {
           room.invited.remove(actor);
         }
         return withSuccess("{}", MediaType.APPLICATION_JSON).createResponse(request);
-      }
-      if (path.startsWith("/_synapse/admin/v1/rooms/")
-          && (path.endsWith("/members") || path.endsWith("/state"))
-          && (failMemberReads || unreadableRooms.stream().anyMatch(room -> path.contains(room)))) {
-        return withStatus(HttpStatus.INTERNAL_SERVER_ERROR).createResponse(request);
-      }
-      if (path.startsWith("/_synapse/admin/v1/rooms/") && path.endsWith("/state")) {
-        var roomId =
-            URLDecoder.decode(
-                path.substring(
-                    "/_synapse/admin/v1/rooms/".length(), path.length() - "/state".length()),
-                StandardCharsets.UTF_8);
-        var room = rooms.get(roomId);
-        if (room == null) {
-          return withStatus(HttpStatus.NOT_FOUND)
-              .body("{\"errcode\":\"M_NOT_FOUND\"}")
-              .contentType(MediaType.APPLICATION_JSON)
-              .createResponse(request);
-        }
-        var membership = new LinkedHashMap<String, String>();
-        room.invited.forEach(user -> membership.put(user, "invite"));
-        room.joined.forEach(user -> membership.put(user, "join"));
-        var response = JSON.createObjectNode();
-        var state = response.putArray("state");
-        membership.forEach(
-            (user, status) ->
-                state
-                    .addObject()
-                    .put("type", "m.room.member")
-                    .put("state_key", user)
-                    .putObject("content")
-                    .put("membership", status));
-        return withSuccess(response.toString(), MediaType.APPLICATION_JSON).createResponse(request);
       }
       if (path.startsWith("/_synapse/admin/v1/rooms/") && path.endsWith("/members")) {
         var roomId =
