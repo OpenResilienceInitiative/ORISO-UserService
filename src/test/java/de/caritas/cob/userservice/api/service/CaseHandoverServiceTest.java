@@ -901,6 +901,88 @@ class CaseHandoverServiceTest {
   }
 
   @Test
+  void updateReasonPolicies_omittedExplanationLevelPreservesStoredRequiredLevel() {
+    givenExplanationLevel("COUNSELLOR_IS_ILL", "REQUIRED");
+    when(caseHandoverPolicyCacheService.updateEffective(eq(7L), any()))
+        .thenAnswer(invocation -> invocation.getArgument(1));
+    TenantContext.setCurrentTenant(7L);
+    try {
+      var labelOnlyUpdate =
+          CaseHandoverService.CaseHandoverReason.builder()
+              .code("COUNSELLOR_IS_ILL")
+              .label("Ausfall aktualisiert")
+              .enabled(true)
+              .accessAllowed(true)
+              .clientConsent(CaseHandoverConsentMode.NONE)
+              .build();
+
+      assertNull(labelOnlyUpdate.getExplanationLevel());
+      caseHandoverService.updateReasonPolicies(null, List.of(labelOnlyUpdate));
+
+      ArgumentCaptor<
+              de.caritas.cob.userservice.tenantadminservice.generated.web.model
+                  .CaseHandoverPolicies>
+          written =
+              ArgumentCaptor.forClass(
+                  de.caritas.cob.userservice.tenantadminservice.generated.web.model
+                      .CaseHandoverPolicies.class);
+      verify(caseHandoverPolicyCacheService).updateEffective(eq(7L), written.capture());
+      assertEquals(
+          de.caritas.cob.userservice.tenantadminservice.generated.web.model
+              .CaseHandoverExplanationLevel.REQUIRED,
+          written
+              .getValue()
+              .getReasons()
+              .get("COUNSELLOR_IS_ILL")
+              .getExplanationLevel()
+              .getValue());
+    } finally {
+      TenantContext.clear();
+    }
+  }
+
+  @Test
+  void updateReasonPolicies_explicitOffDisablesStoredRequiredExplanationLevel() {
+    givenExplanationLevel("COUNSELLOR_IS_ILL", "REQUIRED");
+    when(caseHandoverPolicyCacheService.updateEffective(eq(7L), any()))
+        .thenAnswer(invocation -> invocation.getArgument(1));
+    TenantContext.setCurrentTenant(7L);
+    try {
+      caseHandoverService.updateReasonPolicies(
+          null,
+          List.of(
+              CaseHandoverService.CaseHandoverReason.builder()
+                  .code("COUNSELLOR_IS_ILL")
+                  .label("Ausfall aktualisiert")
+                  .enabled(true)
+                  .accessAllowed(true)
+                  .clientConsent(CaseHandoverConsentMode.NONE)
+                  .explanationLevel("OFF")
+                  .build()));
+
+      ArgumentCaptor<
+              de.caritas.cob.userservice.tenantadminservice.generated.web.model
+                  .CaseHandoverPolicies>
+          written =
+              ArgumentCaptor.forClass(
+                  de.caritas.cob.userservice.tenantadminservice.generated.web.model
+                      .CaseHandoverPolicies.class);
+      verify(caseHandoverPolicyCacheService).updateEffective(eq(7L), written.capture());
+      assertEquals(
+          de.caritas.cob.userservice.tenantadminservice.generated.web.model
+              .CaseHandoverExplanationLevel.OFF,
+          written
+              .getValue()
+              .getReasons()
+              .get("COUNSELLOR_IS_ILL")
+              .getExplanationLevel()
+              .getValue());
+    } finally {
+      TenantContext.clear();
+    }
+  }
+
+  @Test
   void updateReasonPolicies_appliesTypedConsentValueAndModeFromAdminPayload() {
     when(caseHandoverPolicyCacheService.updateEffective(eq(7L), any()))
         .thenAnswer(invocation -> invocation.getArgument(1));
@@ -1642,6 +1724,57 @@ class CaseHandoverServiceTest {
             eq("/sessions/consultant/sessionView/session/123?caseHandoverRequestId=501"),
             eq(123L),
             eq(7L));
+  }
+
+  @Test
+  void createOffer_requiredExplanationRefusesBlankBeforeSavingOrNotification() {
+    givenExplanationLevel("COUNSELLOR_IS_ILL", "REQUIRED");
+    Consultant recipient = eligibleConsultant("recipient", "Recipient");
+    session.setConsultant(requester);
+    when(consultantService.getConsultant("recipient")).thenReturn(Optional.of(recipient));
+
+    assertThrows(
+        BadRequestException.class,
+        () ->
+            caseHandoverService.createOffer(
+                123L, "recipient", "UNPLANNED_ABSENCE", "   ", 0L, UUID.randomUUID()));
+
+    verify(caseHandoverRequestRepository, never()).save(any(CaseHandoverRequest.class));
+    verifyNoInteractions(eventNotificationService);
+  }
+
+  @Test
+  void createOffer_optionalExplanationStoresTrimmedText() {
+    givenExplanationLevel("COUNSELLOR_IS_ILL", "OPTIONAL");
+    Consultant recipient = eligibleConsultant("recipient", "Recipient");
+    session.setConsultant(requester);
+    when(consultantService.getConsultant("recipient")).thenReturn(Optional.of(recipient));
+    ArgumentCaptor<CaseHandoverRequest> captor = ArgumentCaptor.forClass(CaseHandoverRequest.class);
+
+    caseHandoverService.createOffer(
+        123L, "recipient", "UNPLANNED_ABSENCE", "  Planned cover.  ", 0L, UUID.randomUUID());
+
+    verify(caseHandoverRequestRepository).save(captor.capture());
+    assertEquals("Planned cover.", captor.getValue().getExplanation());
+  }
+
+  @Test
+  void createOffer_offExplanationStoresNoText() {
+    Consultant recipient = eligibleConsultant("recipient", "Recipient");
+    session.setConsultant(requester);
+    when(consultantService.getConsultant("recipient")).thenReturn(Optional.of(recipient));
+    ArgumentCaptor<CaseHandoverRequest> captor = ArgumentCaptor.forClass(CaseHandoverRequest.class);
+
+    caseHandoverService.createOffer(
+        123L,
+        "recipient",
+        "UNPLANNED_ABSENCE",
+        "This text must not be stored",
+        0L,
+        UUID.randomUUID());
+
+    verify(caseHandoverRequestRepository).save(captor.capture());
+    assertEquals("", captor.getValue().getExplanation());
   }
 
   @Test

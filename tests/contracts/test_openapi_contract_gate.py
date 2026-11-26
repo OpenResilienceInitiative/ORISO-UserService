@@ -166,9 +166,8 @@ class OpenApiContractGateTest(unittest.TestCase):
             workflow,
             re.compile(
                 r"repository: OpenResilienceInitiative/ORISO-TenantService.*"
-                # TenantService #405 includes dev (proof-bound release, assignment confirmation)
-                # and featureTeamDiscussionAfterAcceptEnabled.
-                r"bd15fe30ced95362a3eeaeae1303831588d07c98",
+                # TenantService #414 adds the per-reason handover explanation level.
+                r"26decb01acb8c15d26b76b0adf77997898203078",
                 re.DOTALL,
             ),
         )

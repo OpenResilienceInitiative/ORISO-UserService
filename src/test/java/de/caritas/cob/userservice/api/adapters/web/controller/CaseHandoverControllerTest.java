@@ -5,6 +5,8 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
@@ -17,6 +19,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import de.caritas.cob.userservice.api.adapters.web.controller.interceptor.ApiResponseEntityExceptionHandler;
 import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantSessionListResponseDTO;
+import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
 import de.caritas.cob.userservice.api.exception.httpresponses.ConflictException;
 import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
 import de.caritas.cob.userservice.api.service.CaseHandoverLogsService;
@@ -519,6 +522,62 @@ class CaseHandoverControllerTest {
         CaseHandoverController.CaseHandoverBatchRequestDTO.class.getDeclaredField("operations");
 
     assertTrue(field.isAnnotationPresent(NotEmpty.class));
+  }
+
+  @Test
+  void requestBatchAccess_requiredExplanationFailureReturnsBadRequestBeforeProcessing()
+      throws Exception {
+    UUID operationId = UUID.fromString("3f43450b-aab8-4f95-a379-a2f64d31f691");
+    doThrow(new BadRequestException("Explanation is required"))
+        .when(caseHandoverService)
+        .validateBatchExplanation(100L, "COUNSELLOR_IS_ILL", "   ");
+
+    mockMvc
+        .perform(
+            post("/users/case-handover/batch")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(
+                    """
+                    {
+                      "reasonCode": "COUNSELLOR_IS_ILL",
+                      "explanation": "   ",
+                      "operations": [{
+                        "sessionId": 100,
+                        "expectedOwnershipRevision": 2,
+                        "operationId": "%s"
+                      }]
+                    }
+                    """
+                        .formatted(operationId)))
+        .andExpect(status().isBadRequest());
+
+    verify(caseHandoverService, never()).requestAccess(any(), any(), any(), any(), any());
+  }
+
+  @Test
+  void requestBatchAccess_policyChangeToRequiredStillPropagatesBadRequest() throws Exception {
+    UUID operationId = UUID.fromString("3f43450b-aab8-4f95-a379-a2f64d31f691");
+    when(caseHandoverService.requestAccess(100L, "COUNSELLOR_IS_ILL", "   ", 2L, operationId))
+        .thenThrow(new BadRequestException("Explanation is required"));
+
+    mockMvc
+        .perform(
+            post("/users/case-handover/batch")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(
+                    """
+                    {
+                      "reasonCode": "COUNSELLOR_IS_ILL",
+                      "explanation": "   ",
+                      "operations": [{
+                        "sessionId": 100,
+                        "expectedOwnershipRevision": 2,
+                        "operationId": "%s"
+                      }]
+                    }
+                    """
+                        .formatted(operationId)))
+        .andExpect(status().isBadRequest());
   }
 
   @Test

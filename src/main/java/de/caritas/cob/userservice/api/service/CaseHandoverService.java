@@ -285,6 +285,7 @@ public class CaseHandoverService {
       List.of(
           CaseHandoverReason.builder()
               .code(CaseHandoverReasonCodes.ADVICE_REQUESTED)
+              .explanationLevel(EXPLANATION_OFF)
               .clientNotificationTemplates(
                   DEFAULT_CLIENT_NOTIFICATION_TEMPLATES.get(
                       CaseHandoverReasonCodes.ADVICE_REQUESTED))
@@ -299,6 +300,7 @@ public class CaseHandoverService {
               .build(),
           CaseHandoverReason.builder()
               .code(CaseHandoverReasonCodes.PLANNED_ABSENCE)
+              .explanationLevel(EXPLANATION_OFF)
               .clientNotificationTemplates(
                   DEFAULT_CLIENT_NOTIFICATION_TEMPLATES.get(
                       CaseHandoverReasonCodes.PLANNED_ABSENCE))
@@ -312,6 +314,7 @@ public class CaseHandoverService {
               .build(),
           CaseHandoverReason.builder()
               .code("OTHER_EMERGENCY")
+              .explanationLevel(EXPLANATION_OFF)
               .clientNotificationTemplates(
                   DEFAULT_CLIENT_NOTIFICATION_TEMPLATES.get("OTHER_EMERGENCY"))
               .label("Other emergency")
@@ -324,6 +327,7 @@ public class CaseHandoverService {
               .build(),
           CaseHandoverReason.builder()
               .code(CaseHandoverReasonCodes.UNPLANNED_ABSENCE)
+              .explanationLevel(EXPLANATION_OFF)
               .clientNotificationTemplates(
                   DEFAULT_CLIENT_NOTIFICATION_TEMPLATES.get(
                       CaseHandoverReasonCodes.UNPLANNED_ABSENCE))
@@ -337,6 +341,7 @@ public class CaseHandoverService {
               .build(),
           CaseHandoverReason.builder()
               .code(CaseHandoverReasonCodes.ASSIGNMENT_ENDED)
+              .explanationLevel(EXPLANATION_OFF)
               .clientNotificationTemplates(
                   DEFAULT_CLIENT_NOTIFICATION_TEMPLATES.get(
                       CaseHandoverReasonCodes.ASSIGNMENT_ENDED))
@@ -1091,6 +1096,23 @@ public class CaseHandoverService {
                 expectedOwnershipRevision,
                 operationId,
                 locked));
+  }
+
+  /**
+   * Validates the policy-dependent fields shared by every operation in a batch before the first
+   * operation is started. This keeps malformed batch input on the API's HTTP 400 path instead of
+   * turning the validation error into a per-operation result under HTTP 201.
+   */
+  @Transactional(propagation = Propagation.NOT_SUPPORTED)
+  public void validateBatchExplanation(Long sessionId, String reasonCode, String explanation) {
+    Session session = sessionForAction(sessionId, false, true);
+    CaseHandoverReason reason =
+        findReason(
+            caseHandoverPolicyCacheService.getCurrent(policyTenant(session)),
+            session,
+            reasonCode,
+            false);
+    explanationFor(reason, explanation);
   }
 
   private PreparedAction prepareRequestAccess(
@@ -2534,6 +2556,7 @@ public class CaseHandoverService {
     return CaseHandoverReason.builder()
         .code(code)
         .label(policy.getLabel())
+        .explanationLevel(EXPLANATION_OFF)
         .clientConsent(consent)
         .clientConsentRequired(consent == CaseHandoverConsentMode.OPT_IN)
         .accessAllowed(!Boolean.FALSE.equals(policy.getAccessAllowed()))
@@ -4093,7 +4116,7 @@ public class CaseHandoverService {
      * {@code OFF}, {@code OPTIONAL} or {@code REQUIRED}: whether the counsellor writes an
      * explanation for this reason (FE#2040). Absent or unknown reads as {@code OFF}.
      */
-    @Builder.Default private String explanationLevel = EXPLANATION_OFF;
+    private String explanationLevel;
 
     public void setClientConsent(CaseHandoverConsentMode clientConsent) {
       this.clientConsent = clientConsent;
