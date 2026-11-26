@@ -10,22 +10,28 @@ import static org.mockito.Mockito.when;
 
 import ch.qos.logback.classic.Level;
 import ch.qos.logback.classic.Logger;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import de.caritas.cob.userservice.api.adapters.matrix.config.MatrixConfig;
 import de.caritas.cob.userservice.api.adapters.matrix.dto.MatrixCreateRoomRequestDTO;
 import de.caritas.cob.userservice.api.adapters.matrix.dto.MatrixCreateRoomResponseDTO;
 import de.caritas.cob.userservice.api.adapters.matrix.dto.MatrixInviteUserRequestDTO;
 import de.caritas.cob.userservice.api.adapters.matrix.dto.MatrixInviteUserResponseDTO;
 import de.caritas.cob.userservice.api.config.observability.LiveChatDiagnosticMetrics;
+import de.caritas.cob.userservice.api.exception.matrix.MatrixCreateRoomException;
 import de.caritas.cob.userservice.api.exception.matrix.MatrixJoinRateLimitedException;
 import de.caritas.cob.userservice.testutils.LogbackCaptor;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
+import java.util.stream.Stream;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.MethodSource;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Captor;
@@ -47,6 +53,8 @@ class MatrixRoomClientTest {
   private static final String ACCESS_TOKEN = "access-token";
   private static final String API_URL = "https://matrix.example";
   private static final String ROOM_ID = "!room:matrix.example";
+  private static final String SUPPORT_ORIGIN = "org.oriso.support.origin_nonce";
+  private static final String SUPPORT_NONCE = "fdca9dce-c20b-4a78-a32f-87cf24adcee9";
   private static final String USER_ID = "@user:matrix.example";
   // encode().buildAndExpand() encodes Matrix IDs as opaque data: '!' → %21, ':' → %3A, '@' → %40.
   // UriUtils.encodePathSegment leaves those RFC-3986 sub-delimiters unencoded — do NOT use it
@@ -162,6 +170,7 @@ class MatrixRoomClientTest {
     assertThat(request.getBody().getPreset()).isEqualTo("private_chat");
     assertThat(request.getBody().getVisibility()).isEqualTo("private");
     assertThat(request.getBody().getInitialState()).isEmpty();
+    assertThat(new ObjectMapper().valueToTree(request.getBody()).has("creation_content")).isFalse();
     verify(diagnosticMetrics).recordRoomCreation(false, LiveChatDiagnosticMetrics.Outcome.SUCCESS);
   }
 
@@ -187,6 +196,237 @@ class MatrixRoomClientTest {
             de.caritas.cob.userservice.api.exception.matrix.MatrixRoomRuleException.class,
             failure -> assertThat(failure.getRoomId()).isEqualTo(ROOM_ID));
     verify(diagnosticMetrics).recordRoomCreation(false, LiveChatDiagnosticMetrics.Outcome.FAILURE);
+  }
+
+  @Test
+  void createSupportRoomSendsItsOriginInCreationContentAndAppliesModeration() throws Exception {
+    var response = new MatrixCreateRoomResponseDTO();
+    response.setRoomId(ROOM_ID);
+    when(restTemplate.postForEntity(
+            eq(uri(API_URL + "/_matrix/client/r0/createRoom")),
+            createRoomRequestCaptor.capture(),
+            eq(MatrixCreateRoomResponseDTO.class)))
+        .thenReturn(ResponseEntity.ok(response));
+    stubSynapseDefaultPowerLevels();
+
+    assertThat(matrixRoomClient.createSupportRoom("support-local", SUPPORT_NONCE, ACCESS_TOKEN))
+        .isEqualTo(ROOM_ID);
+
+    var request = createRoomRequestCaptor.getValue();
+    var payload = new ObjectMapper().valueToTree(request.getBody());
+    assertThat(request.getHeaders().getFirst("Authorization")).isEqualTo("Bearer " + ACCESS_TOKEN);
+    assertThat(payload.path("name").asText()).isEqualTo("Support");
+    assertThat(payload.path("room_alias_name").asText()).isEqualTo("support-local");
+    assertThat(payload.path("preset").asText()).isEqualTo("private_chat");
+    assertThat(payload.path("visibility").asText()).isEqualTo("private");
+    assertThat(payload.path("creation_content").size()).isEqualTo(1);
+    assertThat(payload.path("creation_content").path(SUPPORT_ORIGIN).asText())
+        .isEqualTo(SUPPORT_NONCE);
+    assertThat(payload.path("initial_state").size()).isEqualTo(1);
+    var encryption = payload.path("initial_state").get(0);
+    assertThat(encryption.path("type").asText()).isEqualTo("m.room.encryption");
+    assertThat(encryption.path("content").path("algorithm").asText())
+        .isEqualTo("m.megolm.v1.aes-sha2");
+    assertThat(objectMapOf(writtenPowerLevels().get("events")))
+        .containsEntry("org.oriso.passage_blur", 50);
+  }
+
+  @Test
+  void supportRoomCreationFailureDoesNotExposeTheProviderBody() {
+    when(restTemplate.postForEntity(
+            eq(uri(API_URL + "/_matrix/client/r0/createRoom")),
+            org.mockito.ArgumentMatchers.any(HttpEntity.class),
+            eq(MatrixCreateRoomResponseDTO.class)))
+        .thenThrow(
+            HttpClientErrorException.create(
+                HttpStatus.CONFLICT,
+                "Conflict",
+                null,
+                SUPPORT_NONCE.getBytes(StandardCharsets.UTF_8),
+                StandardCharsets.UTF_8));
+
+    try (var logs =
+        de.caritas.cob.userservice.testutils.LogbackCaptor.forClass(MatrixRoomClient.class)) {
+      assertThatThrownBy(
+              () ->
+                  matrixRoomClient.createSupportRoom("support-local", SUPPORT_NONCE, ACCESS_TOKEN))
+          .isInstanceOf(MatrixCreateRoomException.class)
+          .hasMessage("Could not create Matrix support room")
+          .hasNoCause();
+      assertThat(logs.messages(ch.qos.logback.classic.Level.WARN))
+          .singleElement()
+          .satisfies(message -> assertThat(message).doesNotContain(SUPPORT_NONCE, "support-local"));
+    }
+    verify(diagnosticMetrics).recordRoomCreation(true, LiveChatDiagnosticMetrics.Outcome.FAILURE);
+  }
+
+  private static Map<String, Object> supportCreationEvent(
+      String stateKey, String sender, Object content) {
+    return Map.of(
+        "type", "m.room.create", "state_key", stateKey, "sender", sender, "content", content);
+  }
+
+  private void stubSupportState(List<?> state) {
+    when(restTemplate.exchange(
+            eq(uri(API_URL + "/_matrix/client/v3/rooms/" + ENCODED_ROOM_ID + "/state")),
+            eq(HttpMethod.GET),
+            org.mockito.ArgumentMatchers.<HttpEntity<?>>argThat(
+                request ->
+                    ("Bearer " + ACCESS_TOKEN)
+                        .equals(request.getHeaders().getFirst("Authorization"))),
+            eq(List.class)))
+        .thenReturn(ResponseEntity.ok(state));
+  }
+
+  @Test
+  void verifiesASupportRoomWithOneAuthoritativeCreateEvent() {
+    stubSupportState(
+        List.of(
+            Map.of("type", "m.room.join_rules", "content", Map.of("join_rule", "public")),
+            supportCreationEvent("", USER_ID, Map.of(SUPPORT_ORIGIN, SUPPORT_NONCE))));
+
+    assertThat(
+            matrixRoomClient.verifySupportRoomOrigin(ROOM_ID, USER_ID, SUPPORT_NONCE, ACCESS_TOKEN))
+        .isTrue();
+  }
+
+  static Stream<Arguments> unverifiedSupportRoomStates() {
+    var origin = Map.of(SUPPORT_ORIGIN, SUPPORT_NONCE);
+    var create = supportCreationEvent("", USER_ID, origin);
+    var wrongRoom = new HashMap<>(create);
+    wrongRoom.put("room_id", "!other:matrix.example");
+    var redacted = new HashMap<>(create);
+    redacted.put("unsigned", Map.of("redacted_because", Map.of("type", "m.room.redaction")));
+    return Stream.of(
+        Arguments.of(
+            "missing create", List.of(Map.of("type", "org.oriso.other", "content", origin))),
+        Arguments.of("duplicate create", List.of(create, create)),
+        Arguments.of(
+            "malformed state key", List.of(supportCreationEvent("other", USER_ID, origin))),
+        Arguments.of(
+            "different creator",
+            List.of(supportCreationEvent("", "@another:matrix.example", origin))),
+        Arguments.of(
+            "different nonce",
+            List.of(supportCreationEvent("", USER_ID, Map.of(SUPPORT_ORIGIN, "other")))),
+        Arguments.of(
+            "malformed nonce",
+            List.of(
+                supportCreationEvent("", USER_ID, Map.of(SUPPORT_ORIGIN, List.of(SUPPORT_NONCE))))),
+        Arguments.of(
+            "malformed content", List.of(supportCreationEvent("", USER_ID, List.of(origin)))),
+        Arguments.of("wrong room", List.of(wrongRoom)),
+        Arguments.of("redacted create", List.of(redacted)));
+  }
+
+  @ParameterizedTest(name = "{0}")
+  @MethodSource("unverifiedSupportRoomStates")
+  void deniesAnUnverifiedSupportRoom(String description, List<?> state) {
+    stubSupportState(state);
+
+    assertThat(
+            matrixRoomClient.verifySupportRoomOrigin(ROOM_ID, USER_ID, SUPPORT_NONCE, ACCESS_TOKEN))
+        .as(description)
+        .isFalse();
+  }
+
+  private void stubSupportJoinRule(Map<String, Object> rule) {
+    when(restTemplate.exchange(
+            eq(
+                uri(
+                    API_URL
+                        + "/_matrix/client/v3/rooms/"
+                        + ENCODED_ROOM_ID
+                        + "/state/m.room.join_rules")),
+            eq(HttpMethod.GET),
+            org.mockito.ArgumentMatchers.any(HttpEntity.class),
+            eq(Map.class)))
+        .thenReturn(ResponseEntity.ok(rule));
+  }
+
+  @Test
+  void reappliesModerationToAnInviteOnlySupportRoom() {
+    stubSupportJoinRule(Map.of("join_rule", "invite"));
+    stubSynapseDefaultPowerLevels();
+
+    assertThat(matrixRoomClient.ensureSupportRoomModeration(ROOM_ID, ACCESS_TOKEN)).isTrue();
+    assertThat(objectMapOf(writtenPowerLevels().get("events")))
+        .containsEntry("org.oriso.passage_blur", 50);
+  }
+
+  static Stream<Arguments> nonInviteSupportJoinRules() {
+    return Stream.of(
+        Arguments.of(Map.of()),
+        Arguments.of(Map.of("join_rule", "public")),
+        Arguments.of(Map.of("join_rule", List.of("invite"))));
+  }
+
+  @ParameterizedTest
+  @MethodSource("nonInviteSupportJoinRules")
+  void refusesToChangeSupportRoomWithAnUnverifiedJoinRule(Map<String, Object> rule) {
+    stubSupportJoinRule(rule);
+
+    assertThat(matrixRoomClient.ensureSupportRoomModeration(ROOM_ID, ACCESS_TOKEN)).isFalse();
+    verify(restTemplate, times(0))
+        .put(org.mockito.ArgumentMatchers.any(URI.class), org.mockito.ArgumentMatchers.any());
+  }
+
+  /** Each provider failure leaves the support room unverifiable, so the gate must stay closed. */
+  static Stream<Arguments> supportRoomProviderFailures() {
+    return Stream.of(
+        Arguments.of("null body", (ProviderOutcome) () -> ResponseEntity.ok().build()),
+        Arguments.of(
+            "failed HTTP response",
+            (ProviderOutcome) () -> ResponseEntity.status(HttpStatus.BAD_GATEWAY).body(List.of())),
+        Arguments.of(
+            "transport exception",
+            (ProviderOutcome)
+                () -> {
+                  throw new ResourceAccessException("connection reset");
+                }));
+  }
+
+  @FunctionalInterface
+  interface ProviderOutcome {
+    ResponseEntity<?> get();
+  }
+
+  @ParameterizedTest(name = "{0}")
+  @MethodSource("supportRoomProviderFailures")
+  void deniesSupportRoomOriginWhenTheProviderFails(String description, ProviderOutcome outcome) {
+    when(restTemplate.exchange(
+            eq(uri(API_URL + "/_matrix/client/v3/rooms/" + ENCODED_ROOM_ID + "/state")),
+            eq(HttpMethod.GET),
+            org.mockito.ArgumentMatchers.any(HttpEntity.class),
+            eq(List.class)))
+        .thenAnswer(invocation -> outcome.get());
+
+    assertThat(
+            matrixRoomClient.verifySupportRoomOrigin(ROOM_ID, USER_ID, SUPPORT_NONCE, ACCESS_TOKEN))
+        .as(description)
+        .isFalse();
+  }
+
+  @ParameterizedTest(name = "{0}")
+  @MethodSource("supportRoomProviderFailures")
+  void refusesSupportRoomModerationWhenTheJoinRuleReadFails(
+      String description, ProviderOutcome outcome) {
+    when(restTemplate.exchange(
+            eq(
+                uri(
+                    API_URL
+                        + "/_matrix/client/v3/rooms/"
+                        + ENCODED_ROOM_ID
+                        + "/state/m.room.join_rules")),
+            eq(HttpMethod.GET),
+            org.mockito.ArgumentMatchers.any(HttpEntity.class),
+            eq(Map.class)))
+        .thenAnswer(invocation -> outcome.get());
+
+    assertThat(matrixRoomClient.ensureSupportRoomModeration(ROOM_ID, ACCESS_TOKEN))
+        .as(description)
+        .isFalse();
+    verifyNoPowerLevelWrite();
   }
 
   @Test

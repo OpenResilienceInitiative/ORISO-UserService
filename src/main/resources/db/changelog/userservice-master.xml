@@ -326,4 +326,5 @@
   <include file="db/changelog/changeset/20261124_session_delete_date_1524/changeSet.xml"/>
   <include file="db/changelog/changeset/20261124_session_supervisor_replace_2494/changeSet.xml"/>
   <include file="db/changelog/changeset/20261125_session_case_sharing_model_2494/changeSet.xml"/>
+  <include file="db/changelog/changeset/20261121_support_room_creation_intent_904/changeSet.xml"/>
 </databaseChangeLog>

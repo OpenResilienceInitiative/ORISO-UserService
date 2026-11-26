@@ -5,11 +5,13 @@ import static org.apache.commons.lang3.StringUtils.isBlank;
 
 import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
 import de.caritas.cob.userservice.api.adapters.matrix.config.MatrixConfig;
+import de.caritas.cob.userservice.api.exception.httpresponses.ServiceUnavailableException;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.model.Admin;
 import de.caritas.cob.userservice.api.model.HandshakeSession;
 import de.caritas.cob.userservice.api.model.SupportRoom;
 import de.caritas.cob.userservice.api.model.SupportRoom.SupportRoomStatus;
+import de.caritas.cob.userservice.api.model.SupportRoomCreationIntent;
 import de.caritas.cob.userservice.api.port.out.AdminRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.SupportRoomRepository;
@@ -40,11 +42,11 @@ import org.springframework.transaction.annotation.Transactional;
 @RequiredArgsConstructor
 public class SupportRoomService {
 
-  private static final Duration PROVISIONING_GRACE = Duration.ofMinutes(3);
   private static final Duration SWEEP_BUDGET = Duration.ofSeconds(20);
 
   private final @NonNull SupportRoomRepository supportRoomRepository;
   private final @NonNull SupportRoomLifecycle lifecycle;
+  private final @NonNull SupportRoomProvisioningLedger provisioning;
   private final @NonNull AdminRepository adminRepository;
   private final @NonNull ConsultantRepository consultantRepository;
   private final @NonNull MatrixSynapseService matrixSynapseService;
@@ -56,7 +58,7 @@ public class SupportRoomService {
   @Value("${support.room-sweep-batch-size:20}")
   private int sweepBatchSize;
 
-  /** Creates a verified support room; failed confirmation leaves a durable cleanup marker. */
+  /** Reuses only the verified room reserved by this authenticated confirmation. */
   @Transactional
   public SupportRoom createForConfirmedHandshake(HandshakeSession session) {
     var supportAdmin =
@@ -82,55 +84,116 @@ public class SupportRoomService {
               .formatted(consultant.getId()));
     }
 
-    var roomId = UUID.randomUUID().toString();
     try {
       var supportAdminMatrixId = resolveSupportAdminMatrixId(supportAdmin);
       var supportAdminToken = matrixSynapseService.loginAsUserAccessToken(supportAdminMatrixId);
       if (isBlank(supportAdminToken) || supportAdminMatrixId.equals(consultantMatrixId)) {
         throw new IllegalStateException("Support room requires two distinct Matrix identities");
       }
-      // Confidentiality-neutral room name: no names, no topic, no category.
-      var roomResponse = matrixSynapseService.createRoom("Support", null, supportAdminToken);
-      var matrixRoomId = roomResponse.getBody() != null ? roomResponse.getBody().getRoomId() : null;
-      if (isBlank(matrixRoomId)) {
-        throw new IllegalStateException("Matrix did not identify the created support room");
+      var reservation =
+          provisioning.reserve(
+              session.getId(),
+              supportAdmin.getId(),
+              supportAdminMatrixId,
+              consultant.getId(),
+              consultantMatrixId,
+              session.getTenantId(),
+              session.getExpiryDate());
+      var intent = reservation.intent();
+      var matrixRoomId = verifyOrRecoverRoom(reservation, supportAdminToken);
+      if (!provisioning.bindForConfirmation(intent, matrixRoomId)) {
+        throw new IllegalStateException("Support room provisioning grace has expired");
       }
-      var now = nowInUtc();
-      lifecycle.rememberProvisional(
-          SupportRoom.builder()
-              .id(roomId)
-              .handshakeId(session.getId())
-              .matrixRoomId(matrixRoomId)
-              .supportAdminId(supportAdmin.getId())
-              .supportAdminMatrixId(supportAdminMatrixId)
-              .consultantId(consultant.getId())
-              .status(SupportRoomStatus.PROVISIONING)
-              .createDate(now)
-              .expiryDate(now.plus(PROVISIONING_GRACE))
-              .tenantId(session.getTenantId())
-              .build());
 
       if (!matrixSynapseService.isRoomEncrypted(matrixRoomId).orElse(false)) {
         throw new IllegalStateException("Matrix did not confirm support room encryption");
       }
-      matrixSynapseService.inviteUserToRoom(matrixRoomId, consultantMatrixId, supportAdminToken);
-      var consultantToken = matrixSynapseService.loginAsUserAccessToken(consultantMatrixId);
-      if (isBlank(consultantToken)
-          || !matrixSynapseService.joinRoom(matrixRoomId, consultantToken)) {
-        throw new IllegalStateException(
-            "Matrix did not confirm the consultant joined the support room");
+      if (!matrixSynapseService.ensureSupportRoomModeration(matrixRoomId, supportAdminToken)) {
+        throw new ServiceUnavailableException("Support room restrictions could not be verified");
       }
-      var expectedMembers = Set.of(supportAdminMatrixId, consultantMatrixId);
-      var members = matrixSynapseService.getRoomMembers(matrixRoomId);
-      if (members.map(HashSet::new).filter(expectedMembers::equals).isEmpty()) {
-        throw new IllegalStateException("Matrix did not confirm both support room participants");
-      }
-    } catch (IllegalStateException e) {
+      confirmParticipants(matrixRoomId, intent, supportAdminToken);
+      var room = lifecycle.activate(intent.getId(), roomTtlHours);
+      provisioning.forgetConfirmed(session.getId());
+      return room;
+    } catch (RuntimeException e) {
       throw e;
     } catch (Exception e) {
       throw new IllegalStateException("Support room creation failed", e);
     }
-    return lifecycle.activate(roomId, roomTtlHours);
+  }
+
+  private String verifyOrRecoverRoom(
+      SupportRoomProvisioningLedger.Reservation reservation, String creatorToken) {
+    var intent = reservation.intent();
+    String roomId = null;
+    if (reservation.firstAttempt()) {
+      try {
+        roomId =
+            matrixSynapseService.createSupportRoom(
+                intent.getRoomAlias(), intent.getNonce(), creatorToken);
+      } catch (Exception ambiguous) {
+        // A lost response can leave a created room. Never issue another POST for this intent.
+        log.warn(
+            "Support room creation result is uncertain ({})", ambiguous.getClass().getSimpleName());
+      }
+    }
+    if (isBlank(roomId)) {
+      var lookup = matrixSynapseService.resolveRoomAlias(fullAlias(intent));
+      if (lookup != null && lookup.known()) {
+        roomId = lookup.roomId();
+      }
+    }
+    if (isBlank(roomId) || !hasExpectedOrigin(intent, roomId, creatorToken)) {
+      throw new ServiceUnavailableException("Matrix has not confirmed the reserved support room");
+    }
+    return roomId;
+  }
+
+  private String fullAlias(SupportRoomCreationIntent intent) {
+    return "#" + intent.getRoomAlias() + ":" + matrixConfig.getServerName();
+  }
+
+  private boolean hasExpectedOrigin(
+      SupportRoomCreationIntent intent, String roomId, String creatorToken) {
+    return matrixSynapseService.verifySupportRoomOrigin(
+        roomId, intent.getSupportAdminMatrixId(), intent.getNonce(), creatorToken);
+  }
+
+  private void confirmParticipants(
+      String matrixRoomId, SupportRoomCreationIntent intent, String supportAdminToken)
+      throws Exception {
+    var supportAdminMatrixId = intent.getSupportAdminMatrixId();
+    var consultantMatrixId = intent.getConsultantMatrixId();
+    var expected = Set.of(supportAdminMatrixId, consultantMatrixId);
+    var before = matrixSynapseService.getRoomMembers(matrixRoomId).map(HashSet::new);
+    if (before.filter(expected::equals).isPresent()) {
+      return;
+    }
+    if (before.filter(Set.of(supportAdminMatrixId)::equals).isEmpty()) {
+      throw new ServiceUnavailableException(
+          "Matrix did not confirm the expected support membership");
+    }
+    requireAdmissionWindow(intent);
+    matrixSynapseService.inviteUserToRoom(matrixRoomId, consultantMatrixId, supportAdminToken);
+    var consultantToken = matrixSynapseService.loginAsUserAccessToken(consultantMatrixId);
+    requireAdmissionWindow(intent);
+    if (isBlank(consultantToken) || !matrixSynapseService.joinRoom(matrixRoomId, consultantToken)) {
+      throw new IllegalStateException(
+          "Matrix did not confirm the consultant joined the support room");
+    }
+    if (matrixSynapseService
+        .getRoomMembers(matrixRoomId)
+        .map(HashSet::new)
+        .filter(expected::equals)
+        .isEmpty()) {
+      throw new IllegalStateException("Matrix did not confirm both support room participants");
+    }
+  }
+
+  private void requireAdmissionWindow(SupportRoomCreationIntent intent) {
+    if (!SupportRoomProvisioningLedger.canAdmit(intent, nowInUtc())) {
+      throw new IllegalStateException("Support room provisioning grace has expired");
+    }
   }
 
   /** Ends the app lease now. Matrix withdrawal runs from the persisted pending row. */
@@ -167,7 +230,50 @@ public class SupportRoomService {
       if (System.nanoTime() - startedAt >= SWEEP_BUDGET.toNanos()) {
         return;
       }
-      lifecycle.claimClosure(roomId, nowInUtc()).ifPresent(this::withdrawAndConfirm);
+      try {
+        lifecycle.claimClosure(roomId).ifPresent(this::withdrawAndConfirm);
+      } catch (RuntimeException failure) {
+        log.warn(
+            "Could not claim a support room withdrawal ({})", failure.getClass().getSimpleName());
+      }
+    }
+    for (var handshakeId : provisioning.expiredIds(nowInUtc(), sweepBatchSize)) {
+      if (System.nanoTime() - startedAt >= SWEEP_BUDGET.toNanos()) {
+        return;
+      }
+      try {
+        provisioning.claimExpired(handshakeId).ifPresent(this::recoverExpiredIntent);
+      } catch (RuntimeException failure) {
+        log.warn(
+            "Could not claim an expired support room intent ({})",
+            failure.getClass().getSimpleName());
+      }
+    }
+  }
+
+  private void recoverExpiredIntent(SupportRoomCreationIntent intent) {
+    try {
+      var lookup = matrixSynapseService.resolveRoomAlias(fullAlias(intent));
+      if (lookup != null && lookup.known() && !isBlank(lookup.roomId())) {
+        var creatorToken =
+            matrixSynapseService.loginAsUserAccessToken(intent.getSupportAdminMatrixId());
+        if (!isBlank(creatorToken) && hasExpectedOrigin(intent, lookup.roomId(), creatorToken)) {
+          provisioning.bindExpiredForCleanup(intent, lookup.roomId());
+          return;
+        }
+      }
+    } catch (RuntimeException failure) {
+      log.warn(
+          "Support room creation reconciliation remains pending ({})",
+          failure.getClass().getSimpleName());
+    }
+    try {
+      // An inconclusive lookup gives no evidence that the provider never created the room.
+      provisioning.deferUnresolvedRecovery(intent);
+    } catch (RuntimeException failure) {
+      log.warn(
+          "Support room creation reconciliation retry could not be deferred ({})",
+          failure.getClass().getSimpleName());
     }
   }
 

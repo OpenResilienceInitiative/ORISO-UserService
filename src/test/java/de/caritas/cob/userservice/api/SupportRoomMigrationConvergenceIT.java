@@ -139,6 +139,71 @@ class SupportRoomMigrationConvergenceIT {
     assertSupportRoomStatusColumn();
   }
 
+  @Test
+  void canonicalChangelogCreatesSupportRoomCreationIntentWithRetryIndex() throws Exception {
+    updateCanonicalChangelog();
+
+    assertThat(indexColumns("support_room_creation_intent"))
+        .containsEntry("PRIMARY", List.of("handshake_id"))
+        .containsEntry("uk_support_room_creation_id", List.of("id"))
+        .containsEntry("idx_support_room_creation_retry", List.of("retry_at", "handshake_id"));
+    try (Connection connection = openConnection();
+        Statement statement = connection.createStatement()) {
+      try (ResultSet uniqueness =
+          statement.executeQuery(
+              """
+          SELECT non_unique FROM information_schema.statistics
+          WHERE table_schema = 'userservice'
+            AND table_name = 'support_room_creation_intent'
+            AND index_name = 'uk_support_room_creation_id'
+          """)) {
+        assertThat(uniqueness.next()).isTrue();
+        assertThat(uniqueness.getInt("non_unique")).isZero();
+      }
+      try (ResultSet result =
+          statement.executeQuery(
+              """
+                SELECT column_name, datetime_precision, is_nullable
+                FROM information_schema.columns
+                WHERE table_schema = 'userservice'
+                  AND table_name = 'support_room_creation_intent'
+                  AND column_name IN ('expires_at', 'provisioning_deadline', 'retry_at')
+                ORDER BY column_name
+                """)) {
+        for (var column : List.of("expires_at", "provisioning_deadline", "retry_at")) {
+          assertThat(result.next()).as("%s column exists", column).isTrue();
+          assertThat(result.getString("column_name")).isEqualTo(column);
+          assertThat(result.getInt("datetime_precision")).isEqualTo(6);
+          assertThat(result.getString("is_nullable"))
+              .isEqualTo(column.equals("provisioning_deadline") ? "YES" : "NO");
+        }
+      }
+    }
+  }
+
+  @Test
+  void recoveryBackoffCounterDefaultsToZeroForOlderWriters() throws Exception {
+    updateCanonicalChangelog();
+
+    try (Connection connection = openConnection();
+        Statement statement = connection.createStatement();
+        ResultSet result =
+            statement.executeQuery(
+                """
+                SELECT data_type, is_nullable, column_default
+                FROM information_schema.columns
+                WHERE table_schema = 'userservice'
+                  AND table_name = 'support_room_creation_intent'
+                  AND column_name = 'recovery_probe_failures'
+                """)) {
+      assertThat(result.next()).isTrue();
+      assertThat(result.getString("data_type")).isEqualTo("int");
+      assertThat(result.getString("is_nullable")).isEqualTo("NO");
+      assertThat(result.getInt("column_default")).isZero();
+      assertThat(result.wasNull()).isFalse();
+    }
+  }
+
   private void deleteRepairChangelogRow(Statement statement) throws SQLException {
     int deletedRows =
         statement.executeUpdate(
@@ -197,25 +262,29 @@ class SupportRoomMigrationConvergenceIT {
   }
 
   private void assertSupportRoomIndexes(String description) throws SQLException {
-    Map<String, List<String>> actual = supportRoomIndexColumns();
+    Map<String, List<String>> actual = indexColumns("support_room");
     EXPECTED_INDEX_COLUMNS.forEach(
         (name, columns) ->
             assertThat(actual.get(name)).as("%s (%s)", description, name).isEqualTo(columns));
   }
 
-  private Map<String, List<String>> supportRoomIndexColumns() throws SQLException {
+  private Map<String, List<String>> indexColumns(String table) throws SQLException {
     Map<String, List<String>> columnsByIndex = new LinkedHashMap<>();
     try (Connection connection = openConnection();
-        Statement statement = connection.createStatement();
-        ResultSet result =
-            statement.executeQuery(
-                "SELECT index_name, column_name FROM information_schema.statistics"
-                    + " WHERE table_schema = 'userservice' AND table_name = 'support_room'"
-                    + " ORDER BY index_name, seq_in_index")) {
-      while (result.next()) {
-        columnsByIndex
-            .computeIfAbsent(result.getString("index_name"), key -> new ArrayList<>())
-            .add(result.getString("column_name"));
+        var statement =
+            connection.prepareStatement(
+                """
+                SELECT index_name, column_name FROM information_schema.statistics
+                WHERE table_schema = 'userservice' AND table_name = ?
+                ORDER BY index_name, seq_in_index
+                """)) {
+      statement.setString(1, table);
+      try (ResultSet result = statement.executeQuery()) {
+        while (result.next()) {
+          columnsByIndex
+              .computeIfAbsent(result.getString("index_name"), key -> new ArrayList<>())
+              .add(result.getString("column_name"));
+        }
       }
     }
     return columnsByIndex;
