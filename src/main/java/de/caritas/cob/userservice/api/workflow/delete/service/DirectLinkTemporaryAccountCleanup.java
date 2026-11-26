@@ -148,7 +148,8 @@ public class DirectLinkTemporaryAccountCleanup {
       return List.of();
     }
     var snapshot = user.getTemporaryAccountSnapshot();
-    if (snapshot.getDeletionStartedAt() == null) {
+    var startsNow = snapshot.getDeletionStartedAt() == null;
+    if (startsNow) {
       // The selection may be stale: a call or message since then keeps the account.
       if (!isDue(user, now)) {
         return List.of();
@@ -160,6 +161,10 @@ public class DirectLinkTemporaryAccountCleanup {
     } catch (RuntimeException exception) {
       log.error(
           "Temporary account identity deletion failed ({})", exception.getClass().getSimpleName());
+      if (startsNow) {
+        // The account still signs in: the mark would refuse a guest who is still there (401).
+        snapshot.setDeletionStartedAt(null);
+      }
       return List.of(error(userId, DeletionTargetType.KEYCLOAK, "Unable to delete keycloak user"));
     }
     var keep = snapshot.keepsMessages();

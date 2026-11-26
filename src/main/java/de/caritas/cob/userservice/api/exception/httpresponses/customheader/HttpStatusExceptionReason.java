@@ -10,6 +10,11 @@ public enum HttpStatusExceptionReason {
    */
   USERNAME_IN_DELETION,
   USERNAME_NOT_VALID,
+  /**
+   * The caller's temporary (guest) account has been deleted after its conversation; the browser
+   * still holds a token. Tells the client to say so instead of showing an error page.
+   */
+  TEMPORARY_ACCOUNT_DELETED,
   EMAIL_NOT_AVAILABLE,
   EMAIL_NOT_VALID,
   MISSING_ABSENCE_MESSAGE_FOR_ABSENT_USER,

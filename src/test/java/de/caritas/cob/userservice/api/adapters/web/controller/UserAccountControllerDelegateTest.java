@@ -113,6 +113,47 @@ class UserAccountControllerDelegateTest {
   }
 
   @Test
+  void deletedGuestAccountIsToldItIsGoneInsteadOfAFailedOtpLookup() {
+    var user =
+        new de.caritas.cob.userservice.api.model.User(
+            USER_ID, null, USERNAME, "guest@example.org", false);
+    var snapshot = new de.caritas.cob.userservice.api.model.TemporaryAccountSnapshot();
+    snapshot.setDeletionStartedAt(java.time.LocalDateTime.now());
+    user.setTemporaryAccountSnapshot(snapshot);
+    when(userAccountProvider.retrieveValidatedUser()).thenReturn(user);
+
+    assertThatThrownBy(() -> delegate.getUserData())
+        .isInstanceOfSatisfying(
+            de.caritas.cob.userservice.api.exception.httpresponses
+                .CustomValidationHttpStatusException.class,
+            refusal -> {
+              assertThat(refusal.getHttpStatus()).isEqualTo(HttpStatus.UNAUTHORIZED);
+              assertThat(refusal.getCustomHttpHeaders().getFirst("X-Reason"))
+                  .isEqualTo("TEMPORARY_ACCOUNT_DELETED");
+            });
+    // The Keycloak user is gone: asking for its OTP credential is what answered 503.
+    verifyNoInteractions(identityManager);
+    verifyNoInteractions(askerDataProvider);
+  }
+
+  @Test
+  void liveGuestAccountStillGetsItsUserData() {
+    var user =
+        new de.caritas.cob.userservice.api.model.User(
+            USER_ID, null, USERNAME, "guest@example.org", false);
+    user.setTemporaryAccountSnapshot(
+        new de.caritas.cob.userservice.api.model.TemporaryAccountSnapshot());
+    var partial = new UserDataResponseDTO();
+    when(authenticatedUser.getRoles()).thenReturn(Set.of(UserRole.USER.getValue()));
+    when(userAccountProvider.retrieveValidatedUser()).thenReturn(user);
+    when(askerDataProvider.retrieveData(user)).thenReturn(partial);
+    when(userDtoMapper.userDataOf(eq(partial), isNull(), anyBoolean(), anyBoolean()))
+        .thenReturn(partial);
+
+    assertThat(delegate.getUserData().getStatusCode()).isEqualTo(HttpStatus.OK);
+  }
+
+  @Test
   void legacyNameAndLanguageAccountPatchStillUpdatesLanguage() {
     var patch =
         new PatchUserDTO()

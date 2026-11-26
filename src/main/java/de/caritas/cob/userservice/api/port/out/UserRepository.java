@@ -57,6 +57,12 @@ public interface UserRepository extends CrudRepository<User, String> {
   @Lock(LockModeType.PESSIMISTIC_WRITE)
   List<User> findAllByUsernameInOrderByCreateDateAsc(Collection<String> usernames);
 
+  /** True once the deletion of this direct-link guest account started (FE#2550). */
+  @Query(
+      "SELECT COUNT(user) > 0 FROM User user WHERE user.userId = :userId"
+          + " AND user.temporaryAccountSnapshot.deletionStartedAt IS NOT NULL")
+  boolean isTemporaryAccountDeletionStarted(@Param("userId") String userId);
+
   @Lock(LockModeType.PESSIMISTIC_WRITE)
   @Query("SELECT user FROM User user WHERE user.userId = :userId")
   Optional<User> findByUserIdForUpdate(@Param("userId") String userId);
