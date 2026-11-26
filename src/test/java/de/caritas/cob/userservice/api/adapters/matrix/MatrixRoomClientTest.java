@@ -371,6 +371,64 @@ class MatrixRoomClientTest {
         .put(org.mockito.ArgumentMatchers.any(URI.class), org.mockito.ArgumentMatchers.any());
   }
 
+  /** Each provider failure leaves the support room unverifiable, so the gate must stay closed. */
+  static Stream<Arguments> supportRoomProviderFailures() {
+    return Stream.of(
+        Arguments.of("null body", (ProviderOutcome) () -> ResponseEntity.ok().build()),
+        Arguments.of(
+            "failed HTTP response",
+            (ProviderOutcome) () -> ResponseEntity.status(HttpStatus.BAD_GATEWAY).body(List.of())),
+        Arguments.of(
+            "transport exception",
+            (ProviderOutcome)
+                () -> {
+                  throw new ResourceAccessException("connection reset");
+                }));
+  }
+
+  @FunctionalInterface
+  interface ProviderOutcome {
+    ResponseEntity<?> get();
+  }
+
+  @ParameterizedTest(name = "{0}")
+  @MethodSource("supportRoomProviderFailures")
+  void deniesSupportRoomOriginWhenTheProviderFails(String description, ProviderOutcome outcome) {
+    when(restTemplate.exchange(
+            eq(uri(API_URL + "/_matrix/client/v3/rooms/" + ENCODED_ROOM_ID + "/state")),
+            eq(HttpMethod.GET),
+            org.mockito.ArgumentMatchers.any(HttpEntity.class),
+            eq(List.class)))
+        .thenAnswer(invocation -> outcome.get());
+
+    assertThat(
+            matrixRoomClient.verifySupportRoomOrigin(ROOM_ID, USER_ID, SUPPORT_NONCE, ACCESS_TOKEN))
+        .as(description)
+        .isFalse();
+  }
+
+  @ParameterizedTest(name = "{0}")
+  @MethodSource("supportRoomProviderFailures")
+  void refusesSupportRoomModerationWhenTheJoinRuleReadFails(
+      String description, ProviderOutcome outcome) {
+    when(restTemplate.exchange(
+            eq(
+                uri(
+                    API_URL
+                        + "/_matrix/client/v3/rooms/"
+                        + ENCODED_ROOM_ID
+                        + "/state/m.room.join_rules")),
+            eq(HttpMethod.GET),
+            org.mockito.ArgumentMatchers.any(HttpEntity.class),
+            eq(Map.class)))
+        .thenAnswer(invocation -> outcome.get());
+
+    assertThat(matrixRoomClient.ensureSupportRoomModeration(ROOM_ID, ACCESS_TOKEN))
+        .as(description)
+        .isFalse();
+    verifyNoPowerLevelWrite();
+  }
+
   @Test
   void createRoom_WhenEncryptionEnabled_ShouldSendMegolmInitialState() throws Exception {
     var responseBody = new MatrixCreateRoomResponseDTO();

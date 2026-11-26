@@ -223,10 +223,66 @@ class SupportRoomServiceTest {
     assertThat(supportRoomService.createForConfirmedHandshake(confirmedSession()).getMatrixRoomId())
         .isEqualTo(ROOM_ID);
     verify(matrixSynapseService).createSupportRoom(LOCAL_ALIAS, NONCE, "gsa-token");
-    var ordered = inOrder(provisioning, matrixSynapseService);
+    var ordered = inOrder(provisioning, matrixSynapseService, supportRoomRepository);
     ordered.verify(provisioning).bindForConfirmation(intent, ROOM_ID);
     ordered.verify(matrixSynapseService).inviteUserToRoom(ROOM_ID, CONSULTANT_MXID, "gsa-token");
     ordered.verify(matrixSynapseService).joinRoom(ROOM_ID, "consultant-token");
+    ordered.verify(supportRoomRepository).lockById(INTENT_ID);
+    ordered.verify(provisioning).forgetConfirmed("hs-1");
+    verify(handshakeAuditEventRepository).save(any());
+  }
+
+  @Test
+  void unavailableEncryptionPreventsAdmissionAndActivation() throws Exception {
+    stubAuthorizedReservation(true);
+    when(matrixSynapseService.createSupportRoom(LOCAL_ALIAS, NONCE, "gsa-token"))
+        .thenReturn(ROOM_ID);
+    when(matrixSynapseService.verifySupportRoomOrigin(ROOM_ID, GSA_MXID, NONCE, "gsa-token"))
+        .thenReturn(true);
+    when(provisioning.bindForConfirmation(intent, ROOM_ID)).thenReturn(true);
+    when(matrixSynapseService.isRoomEncrypted(ROOM_ID)).thenReturn(Optional.empty());
+
+    assertThatThrownBy(() -> supportRoomService.createForConfirmedHandshake(confirmedSession()))
+        .isInstanceOf(IllegalStateException.class);
+    verifyNoAdmissionOrActivation();
+  }
+
+  @Test
+  void failedModerationPreventsAdmissionAndActivation() throws Exception {
+    stubAuthorizedReservation(true);
+    when(matrixSynapseService.createSupportRoom(LOCAL_ALIAS, NONCE, "gsa-token"))
+        .thenReturn(ROOM_ID);
+    when(matrixSynapseService.verifySupportRoomOrigin(ROOM_ID, GSA_MXID, NONCE, "gsa-token"))
+        .thenReturn(true);
+    when(provisioning.bindForConfirmation(intent, ROOM_ID)).thenReturn(true);
+    when(matrixSynapseService.isRoomEncrypted(ROOM_ID)).thenReturn(Optional.of(true));
+    when(matrixSynapseService.ensureSupportRoomModeration(ROOM_ID, "gsa-token")).thenReturn(false);
+
+    assertThatThrownBy(() -> supportRoomService.createForConfirmedHandshake(confirmedSession()))
+        .isInstanceOf(ServiceUnavailableException.class);
+    verifyNoAdmissionOrActivation();
+  }
+
+  @Test
+  void anUnexpectedJoinedMemberPreventsAdmissionAndActivation() throws Exception {
+    stubAuthorizedReservation(true);
+    when(matrixSynapseService.createSupportRoom(LOCAL_ALIAS, NONCE, "gsa-token"))
+        .thenReturn(ROOM_ID);
+    stubVerifiedRoom();
+    when(matrixSynapseService.getRoomMembers(ROOM_ID))
+        .thenReturn(Optional.of(List.of(GSA_MXID, CONSULTANT_MXID, "@stranger:caritas.local")));
+
+    assertThatThrownBy(() -> supportRoomService.createForConfirmedHandshake(confirmedSession()))
+        .isInstanceOf(ServiceUnavailableException.class);
+    verifyNoAdmissionOrActivation();
+  }
+
+  private void verifyNoAdmissionOrActivation() throws Exception {
+    verify(matrixSynapseService, never()).inviteUserToRoom(any(), any(), any());
+    verify(matrixSynapseService, never()).joinRoom(any(), any());
+    verify(supportRoomRepository, never()).lockById(any());
+    verify(provisioning, never()).forgetConfirmed(any());
+    verifyNoInteractions(handshakeAuditEventRepository);
   }
 
   @Test
@@ -353,7 +409,9 @@ class SupportRoomServiceTest {
 
     assertThat(lifecycle.claimClosure(room.getId())).isPresent();
 
-    verify(handshakeSessionRepository).lockForSupportCleanup(room.getHandshakeId());
+    var ordered = inOrder(handshakeSessionRepository, supportRoomRepository);
+    ordered.verify(handshakeSessionRepository).lockForSupportCleanup(room.getHandshakeId());
+    ordered.verify(supportRoomRepository).lockById(room.getId());
     assertThat(room.getRetryAt()).isEqualTo(afterLock.plusMinutes(1));
   }
 

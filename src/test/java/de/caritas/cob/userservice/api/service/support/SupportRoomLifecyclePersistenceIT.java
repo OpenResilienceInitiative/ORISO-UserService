@@ -8,13 +8,20 @@ import static de.caritas.cob.userservice.api.model.SupportRoom.SupportRoomStatus
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.when;
 
+import de.caritas.cob.userservice.api.model.HandshakeSession;
 import de.caritas.cob.userservice.api.model.SupportRoom;
+import de.caritas.cob.userservice.api.port.out.HandshakeSessionRepository;
 import de.caritas.cob.userservice.api.port.out.SupportRoomRepository;
+import de.caritas.cob.userservice.api.service.handshake.HandshakePurpose;
 import java.time.Clock;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.util.List;
 import java.util.UUID;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.data.jpa.test.autoconfigure.DataJpaTest;
@@ -36,6 +43,7 @@ import org.springframework.transaction.support.TransactionTemplate;
 class SupportRoomLifecyclePersistenceIT {
   @Autowired private SupportRoomLifecycle lifecycle;
   @Autowired private SupportRoomRepository rooms;
+  @Autowired private HandshakeSessionRepository handshakes;
   @Autowired private PlatformTransactionManager transactionManager;
   @MockitoBean private Clock clock;
 
@@ -77,6 +85,97 @@ class SupportRoomLifecyclePersistenceIT {
     assertThat(rooms.findById(room.getId()).orElseThrow().getStatus()).isEqualTo(CLOSED);
     assertThat(lifecycle.claimClosure(room.getId())).isEmpty();
     rooms.deleteById(room.getId());
+  }
+
+  /** The sweep must not start withdrawing a room whose confirmation still holds its handshake. */
+  @Test
+  void closureClaimDefersWhileAConfirmationHoldsTheHandshake() throws Exception {
+    var now = nowInUtc();
+    var handshake = handshakeFor(UUID.randomUUID().toString(), now);
+    var room = provisionalRoom(now);
+    room.setHandshakeId(handshake.getId());
+    var transaction = new TransactionTemplate(transactionManager);
+    transaction.executeWithoutResult(
+        status -> {
+          handshakes.save(handshake);
+          rooms.save(room);
+        });
+    var later = now.plusMinutes(4);
+    when(clock.getZone()).thenReturn(ZoneOffset.UTC);
+    when(clock.instant()).thenReturn(later.toInstant(ZoneOffset.UTC));
+
+    var locked = new CountDownLatch(1);
+    var release = new CountDownLatch(1);
+    var workers = Executors.newFixedThreadPool(2);
+    try {
+      var confirmation =
+          workers.submit(
+              () ->
+                  transaction.executeWithoutResult(
+                      status -> {
+                        assertThat(handshakes.findByIdForUpdate(handshake.getId())).isPresent();
+                        locked.countDown();
+                        await(release);
+                      }));
+      assertThat(locked.await(10, TimeUnit.SECONDS)).isTrue();
+
+      var sweep = workers.submit(() -> lifecycle.claimClosure(room.getId()));
+      try {
+        // Either the sweep fails fast on the held lock or it is still waiting; it never claims.
+        assertThat(sweep.get(2, TimeUnit.SECONDS)).isEmpty();
+      } catch (java.util.concurrent.ExecutionException deferred) {
+        // The NOWAIT lock refused the claim; the next sweep retries.
+      } catch (TimeoutException stillWaiting) {
+        // Still blocked on the handshake lock.
+      }
+      assertThat(rooms.findById(room.getId()).orElseThrow().getStatus()).isEqualTo(PROVISIONING);
+
+      release.countDown();
+      confirmation.get(10, TimeUnit.SECONDS);
+      try {
+        sweep.get(10, TimeUnit.SECONDS);
+      } catch (java.util.concurrent.ExecutionException deferred) {
+        // Already reported above.
+      }
+    } finally {
+      release.countDown();
+      workers.shutdownNow();
+      assertThat(workers.awaitTermination(10, TimeUnit.SECONDS)).isTrue();
+    }
+
+    // Once the confirmation has committed, the room is withdrawn by this or the next sweep.
+    if (rooms.findById(room.getId()).orElseThrow().getStatus() == PROVISIONING) {
+      assertThat(lifecycle.claimClosure(room.getId())).isPresent();
+    }
+    assertThat(rooms.findById(room.getId()).orElseThrow().getStatus())
+        .isEqualTo(REVOCATION_PENDING);
+
+    rooms.deleteById(room.getId());
+    handshakes.deleteById(handshake.getId());
+  }
+
+  private static void await(CountDownLatch latch) {
+    try {
+      if (!latch.await(10, TimeUnit.SECONDS)) {
+        throw new IllegalStateException("Test latch was not released");
+      }
+    } catch (InterruptedException interrupted) {
+      Thread.currentThread().interrupt();
+      throw new IllegalStateException(interrupted);
+    }
+  }
+
+  private static HandshakeSession handshakeFor(String id, LocalDateTime now) {
+    return HandshakeSession.builder()
+        .id(id)
+        .purpose(HandshakePurpose.SUPPORT_ACCESS)
+        .initiatorId("support-test-admin")
+        .counterpartId("support-test-consultant")
+        .status(HandshakeSession.HandshakeStatus.PENDING)
+        .createDate(now)
+        .expiryDate(now.plusMinutes(5))
+        .tenantId(1L)
+        .build();
   }
 
   private SupportRoom provisionalRoom(LocalDateTime now) {
