@@ -62,15 +62,22 @@ public class ConsultantDataFacade {
     if (groupSessionList == null || groupSessionList.getSessions() == null) {
       return;
     }
+    // FE#2494 *4: one lookup per counsellor (and chat gate) for the whole response.
+    Map<String, Optional<String>> usernameById = new java.util.HashMap<>();
     groupSessionList
         .getSessions()
         .forEach(
             session -> {
               var consultant = session.getConsultant();
+              // The owner of a members-only chat may work for another Traeger than the reader.
+              var chatId = session.getChat() == null ? null : session.getChat().getId();
+              if (nonNull(consultant) && consultant.getUsername() == null) {
+                // FE#2494 *4: the counsellor view of a session carries only the counsellor's id and
+                // real name. A team reader's banner needs the public name, so resolve the username.
+                addUsernameById(consultant, chatId, usernameById);
+              }
               if (nonNull(consultant) && nonNull(consultant.getUsername())) {
                 try {
-                  // The owner of a members-only chat may work for another Traeger than the reader.
-                  var chatId = session.getChat() == null ? null : session.getChat().getId();
                   membersOnlyChatAccess
                       .readingAcrossTraegerOfChat(
                           chatId,
@@ -84,6 +91,36 @@ public class ConsultantDataFacade {
                 }
               }
             });
+  }
+
+  /**
+   * Resolves the public username by id, under the same members-only gate as the display-name read,
+   * so an owner from another Traeger is found only where the chat allows it. Never the real name.
+   */
+  private void addUsernameById(
+      de.caritas.cob.userservice.api.adapters.web.dto.GroupSessionConsultantDTO consultant,
+      Long chatId,
+      Map<String, Optional<String>> usernameById) {
+    if (consultant.getId() == null) {
+      return;
+    }
+    usernameById
+        .computeIfAbsent(
+            consultant.getId() + "/" + chatId,
+            key -> {
+              try {
+                return membersOnlyChatAccess.readingAcrossTraegerOfChat(
+                    chatId,
+                    () ->
+                        consultantService
+                            .getConsultant(consultant.getId())
+                            .map(Consultant::getUsername));
+              } catch (Exception e) {
+                log.error("Could not resolve consultant username: {}", e.getMessage());
+                return Optional.empty();
+              }
+            })
+        .ifPresent(consultant::setUsername);
   }
 
   public void addConsultantDisplayNameToSessionList(UserSessionListResponseDTO userSessionsDTO) {

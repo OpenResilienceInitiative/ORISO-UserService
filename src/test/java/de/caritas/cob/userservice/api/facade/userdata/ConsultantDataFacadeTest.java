@@ -247,6 +247,79 @@ public class ConsultantDataFacadeTest {
     Mockito.verifyNoInteractions(accountManager);
   }
 
+  /**
+   * FE#2494 *4: the counsellor view of a session carries only the id; the team reader's banner
+   * needs the public name, so the username is resolved by id and the display name follows.
+   */
+  @Test
+  public void
+      addConsultantDisplayNameToSessionList_GroupSession_Should_ResolveUsernameById_When_OnlyIdIsKnown() {
+    var session = new de.caritas.cob.userservice.api.adapters.web.dto.GroupSessionResponseDTO();
+    var consultant =
+        new de.caritas.cob.userservice.api.adapters.web.dto.GroupSessionConsultantDTO();
+    consultant.setId("owner-1");
+    consultant.setFirstName("Real");
+    consultant.setLastName("Name");
+    session.setConsultant(consultant);
+    var response = new GroupSessionListResponseDTO().sessions(List.of(session));
+    var owner = new Consultant();
+    owner.setId("owner-1");
+    owner.setUsername("marge.public");
+    when(consultantService.getConsultant("owner-1")).thenReturn(Optional.of(owner));
+    Map<String, Object> map = Map.of("displayName", "Marge S.");
+    when(accountManager.findConsultantByUsername("marge.public")).thenReturn(Optional.of(map));
+    when(userDtoMapper.displayNameOf(map)).thenReturn("Marge S.");
+
+    consultantDataFacade.addConsultantDisplayNameToSessionList(response);
+
+    assertEquals("marge.public", consultant.getUsername());
+    assertEquals("Marge S.", consultant.getDisplayName());
+  }
+
+  /** CodeRabbit: rows of the same counsellor share one lookup. */
+  @Test
+  public void
+      addConsultantDisplayNameToSessionList_GroupSession_Should_ResolveEachCounsellorOnce() {
+    var first = new de.caritas.cob.userservice.api.adapters.web.dto.GroupSessionConsultantDTO();
+    first.setId("owner-1");
+    var second = new de.caritas.cob.userservice.api.adapters.web.dto.GroupSessionConsultantDTO();
+    second.setId("owner-1");
+    var one = new de.caritas.cob.userservice.api.adapters.web.dto.GroupSessionResponseDTO();
+    one.setConsultant(first);
+    var two = new de.caritas.cob.userservice.api.adapters.web.dto.GroupSessionResponseDTO();
+    two.setConsultant(second);
+    var owner = new Consultant();
+    owner.setUsername("marge.public");
+    when(consultantService.getConsultant("owner-1")).thenReturn(Optional.of(owner));
+    when(accountManager.findConsultantByUsername("marge.public")).thenReturn(Optional.empty());
+
+    consultantDataFacade.addConsultantDisplayNameToSessionList(
+        new GroupSessionListResponseDTO().sessions(List.of(one, two)));
+
+    verify(consultantService, Mockito.times(1)).getConsultant("owner-1");
+    assertEquals("marge.public", second.getUsername());
+  }
+
+  @Test
+  public void
+      addConsultantDisplayNameToSessionList_GroupSession_Should_LeaveNamesEmpty_When_IdIsUnknown() {
+    var session = new de.caritas.cob.userservice.api.adapters.web.dto.GroupSessionResponseDTO();
+    var consultant =
+        new de.caritas.cob.userservice.api.adapters.web.dto.GroupSessionConsultantDTO();
+    consultant.setId("gone");
+    consultant.setFirstName("Real");
+    consultant.setLastName("Name");
+    session.setConsultant(consultant);
+    var response = new GroupSessionListResponseDTO().sessions(List.of(session));
+    when(consultantService.getConsultant("gone")).thenReturn(Optional.empty());
+
+    consultantDataFacade.addConsultantDisplayNameToSessionList(response);
+
+    assertNull(consultant.getUsername(), "never the real name");
+    assertNull(consultant.getDisplayName(), "never the real name");
+    Mockito.verifyNoInteractions(accountManager);
+  }
+
   @Test
   public void
       addConsultantDisplayNameToSessionList_GroupSession_Should_NotSetDisplayName_When_AccountManagerReturnsEmpty() {
