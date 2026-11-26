@@ -193,6 +193,14 @@ public class SessionOwnershipService {
       current.setConsultant(newOwner);
       current.setOwnershipRevision(Math.incrementExact(current.getOwnershipRevision()));
     }
+    if (initialAcceptance
+        && current.isTeamCounsellingCase()
+        && current.getTeamReadOnlySince() == null) {
+      // FE#2494 *4: an accepted Teamberatung case is read-only for colleagues. The marker is
+      // written in this locked, versioned save, so neither a later failure nor a stale copy can
+      // leave the accepted case unmarked; the repair job finds it from here on.
+      current.setTeamReadOnlySince(LocalDateTime.now(java.time.ZoneOffset.UTC));
+    }
     current.setStatus(newStatus);
     current.setUpdateDate(updateDate);
     sessionRepository.save(current);
@@ -208,6 +216,7 @@ public class SessionOwnershipService {
     expected.setStatus(current.getStatus());
     expected.setUpdateDate(current.getUpdateDate());
     expected.setRowVersion(current.getRowVersion());
+    expected.setTeamReadOnlySince(current.getTeamReadOnlySince());
   }
 
   private static OwnershipChange token(Session session) {

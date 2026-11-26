@@ -6,7 +6,9 @@ import de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHt
 import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
 import de.caritas.cob.userservice.api.exception.httpresponses.ServiceUnavailableException;
 import de.caritas.cob.userservice.api.exception.httpresponses.customheader.HttpStatusExceptionReason;
+import de.caritas.cob.userservice.api.model.CaseSharingModel;
 import de.caritas.cob.userservice.api.model.ConversationType;
+import java.util.Optional;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -52,34 +54,107 @@ public class CaseSharingGate {
   }
 
   /**
-   * FE#2494 *4: whether the centre's current case sharing model is Teamberatung, so colleagues may
-   * read its team cases. An AgencyService that predates #374 serves no {@code caseSharing}; then
-   * the session's own team flag (checked by the caller) decides alone. A refused or failed read is
-   * "no": nobody gains read access on an unknown setting.
+   * FE#2494 *4: the case keeps the model it was created under. A stamped case is decided by its
+   * stamp alone, whatever the centre chose since; only a case created before the stamp existed
+   * falls back to the centre's current model until the snapshot job stamps it.
    */
-  public boolean isTeamCounselling(Long agencyId, Long tenantId) {
-    return teamCounsellingMode(agencyId, tenantId).orElse(false);
+  public void requireCaseHandover(
+      Long agencyId, Long tenantId, ConversationType type, CaseSharingModel stamped) {
+    if (stamped == null) {
+      requireCaseHandover(agencyId, tenantId, type);
+      return;
+    }
+    if ((type != null && type != ConversationType.AGENCY_COUNSELLING)
+        || stamped != CaseSharingModel.CASE_HANDOVER) {
+      throw featureDisabled();
+    }
   }
 
   /**
-   * As {@link #isTeamCounselling}, but empty when the setting could not be read or was not served,
-   * so a caller can retry instead of treating either as "not Teamberatung". Only a served policy
-   * that names another model is a definite "no".
+   * FE#2494 *4: the centre's current case sharing model, to stamp on a case. Empty only while the
+   * setting is temporarily unreachable, so the caller retries instead of guessing. A setting that
+   * is refused or no longer served (a deleted centre) is "none": it can never offer case handover.
+   * An AgencyService that predates #374 serves no {@code caseSharing}: that legacy centre offered
+   * case handover under the Traeger master switch, which the handover caller still checks.
    */
-  public java.util.Optional<Boolean> teamCounsellingMode(Long agencyId, Long tenantId) {
+  public Optional<CaseSharingModel> currentModel(Long agencyId, Long tenantId) {
     Settings settings;
     try {
       settings = readSettings(agencyId, tenantId);
-    } catch (RuntimeException unavailableOrRefused) {
-      return java.util.Optional.empty();
+    } catch (ServiceUnavailableException unavailable) {
+      return Optional.empty();
+    } catch (RuntimeException refused) {
+      return Optional.of(CaseSharingModel.NONE);
     }
     if (settings == null) {
-      return java.util.Optional.empty();
+      return Optional.of(CaseSharingModel.NONE);
     }
     AgencyCaseSharingPolicy caseSharing = settings.getCaseSharing();
-    return java.util.Optional.of(
-        caseSharing == null
-            || caseSharing.getValue() == AgencyCaseSharingPolicy.ValueEnum.TEAM_COUNSELLING);
+    if (caseSharing == null) {
+      return Optional.of(CaseSharingModel.CASE_HANDOVER);
+    }
+    if (caseSharing.getValue() == null) {
+      // a served policy without a value refuses case handover, as requireCaseHandover does
+      return Optional.of(CaseSharingModel.NONE);
+    }
+    return Optional.of(CaseSharingModel.valueOf(caseSharing.getValue().name()));
+  }
+
+  /**
+   * FE#2494 *4: the model to stamp on a case being created. A team flag means Teamberatung without
+   * a further read. Otherwise the centre's current model; a non-team case in a centre that reads as
+   * Teamberatung in this instant is stamped "none", never case handover: a handover right is never
+   * inferred. A refused or deleted centre gives "none". Null only while the centre is temporarily
+   * unreachable: the case stays unstamped and the snapshot job stamps it once the centre answers. A
+   * case without a centre is "none".
+   */
+  public CaseSharingModel modelForNewCase(Long agencyId, Long tenantId, boolean teamSession) {
+    if (teamSession) {
+      return CaseSharingModel.TEAM_COUNSELLING;
+    }
+    if (agencyId == null) {
+      return CaseSharingModel.NONE;
+    }
+    return currentModel(agencyId, tenantId)
+        .map(model -> model == CaseSharingModel.TEAM_COUNSELLING ? CaseSharingModel.NONE : model)
+        .orElse(null);
+  }
+
+  /**
+   * FE#2494 *4: the model a default centre's running non-team cases were created under, read right
+   * before the centre becomes Teamberatung. Unlike {@link #currentModel}, a refused, missing or
+   * unreadable settings read is no model: it throws, so the type change is refused instead of
+   * stamping "none". A declared setting is returned as is ("none" only when declared).
+   */
+  public CaseSharingModel requirePreSwitchModel(Long agencyId, Long tenantId) {
+    Settings settings;
+    try {
+      settings = readSettings(agencyId, tenantId);
+    } catch (RuntimeException notEstablished) {
+      throw preSwitchModelUnknown(agencyId, notEstablished.getClass().getSimpleName());
+    }
+    if (settings == null) {
+      throw preSwitchModelUnknown(agencyId, "no settings");
+    }
+    AgencyCaseSharingPolicy caseSharing = settings.getCaseSharing();
+    if (caseSharing == null) {
+      return CaseSharingModel.CASE_HANDOVER;
+    }
+    if (caseSharing.getValue() == null) {
+      throw preSwitchModelUnknown(agencyId, "policy without value");
+    }
+    var model = CaseSharingModel.valueOf(caseSharing.getValue().name());
+    // a centre still reading as Teamberatung created its non-team cases as "none"
+    return model == CaseSharingModel.TEAM_COUNSELLING ? CaseSharingModel.NONE : model;
+  }
+
+  private static ServiceUnavailableException preSwitchModelUnknown(Long agencyId, String reason) {
+    log.warn(
+        "Agency {} type change refused: case sharing model not established ({})", agencyId, reason);
+    return new ServiceUnavailableException(
+        "Case sharing settings of agency "
+            + agencyId
+            + " could not be established; type not changed");
   }
 
   private Settings readSettings(Long agencyId, Long tenantId) {

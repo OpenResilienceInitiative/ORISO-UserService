@@ -4642,6 +4642,13 @@ components:
         isTeamSession:
           type: boolean
           example: false
+        caseSharingModel:
+          type: string
+          example: CASE_HANDOVER
+          description: >-
+            FE#2494 *4: the case sharing model the case was created under (CASE_HANDOVER,
+            TEAM_COUNSELLING or NONE). A later switch of the centre does not change it. Null
+            for a case created before the model was stamped, until the snapshot stamps it.
         isTopicDuplicate:
           type: boolean
           description: >-
@@ -4986,6 +4993,13 @@ components:
         isTeamSession:
           type: boolean
           example: false
+        caseSharingModel:
+          type: string
+          example: CASE_HANDOVER
+          description: >-
+            FE#2494 *4: the case sharing model the case was created under (CASE_HANDOVER,
+            TEAM_COUNSELLING or NONE). A later switch of the centre does not change it. Null
+            for a case created before the model was stamped, until the snapshot stamps it.
         age:
           type: integer
           example: 17
