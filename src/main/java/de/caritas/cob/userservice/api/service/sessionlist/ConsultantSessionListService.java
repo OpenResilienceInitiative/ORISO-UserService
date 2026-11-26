@@ -13,7 +13,6 @@ import de.caritas.cob.userservice.api.service.ChatService;
 import de.caritas.cob.userservice.api.service.session.SessionService;
 import de.caritas.cob.userservice.api.service.session.SessionSupervisionMarkerService;
 import java.util.ArrayList;
-import java.util.Comparator;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
@@ -240,10 +239,7 @@ public class ConsultantSessionListService {
   }
 
   private void sortSessionsByLastMessageDateDesc(List<ConsultantSessionResponseDTO> sessions) {
-    sessions.sort(
-        Comparator.comparing(
-            ConsultantSessionResponseDTO::getLatestMessage,
-            Comparator.nullsLast(Comparator.reverseOrder())));
+    sessions.sort(ConsultantSessionOrder.LATEST_ACTIVITY_FIRST);
   }
 
   private List<ConsultantSessionResponseDTO> updateConsultantSessionValues(
