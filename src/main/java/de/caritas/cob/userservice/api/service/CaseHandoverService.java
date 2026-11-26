@@ -2193,8 +2193,6 @@ public class CaseHandoverService {
       String reasonCode,
       String explanation,
       Long expectedOwnershipRevision) {
-    // The reason's explanation level may have dropped the text (OFF), so an empty stored text
-    // matches any replayed text (FE#2040).
     String expectedExplanation = normalizeOptionalExplanation(explanation);
     if (stored.getSession() == null
         || !Objects.equals(stored.getSession().getId(), session.getId())
@@ -2207,11 +2205,43 @@ public class CaseHandoverService {
         || !Objects.equals(
             CaseHandoverReasonCodes.canonical(stored.getReasonCode()),
             CaseHandoverReasonCodes.canonical(reasonCode))
-        || !(Objects.equals(stored.getExplanation(), expectedExplanation)
-            || stored.getExplanation() == null
-            || stored.getExplanation().isEmpty())
+        || !replayedExplanationMatches(stored, session, expectedExplanation)
         || !Objects.equals(stored.getExpectedOwnershipRevision(), expectedOwnershipRevision)) {
       throw new ConflictException("Operation identity was already used with another payload");
+    }
+  }
+
+  /**
+   * FE#2040: a reason set to OFF stores no text, so a replay may carry the text the client sent the
+   * first time. Only then does an empty stored text match a non-blank one; an empty OPTIONAL text
+   * or an offer without text still has to be replayed unchanged. When the level cannot be read the
+   * replay is refused rather than guessed.
+   */
+  private boolean replayedExplanationMatches(
+      CaseHandoverRequest stored, Session session, String expectedExplanation) {
+    String storedExplanation = stored.getExplanation() == null ? "" : stored.getExplanation();
+    if (Objects.equals(storedExplanation, expectedExplanation)) {
+      return true;
+    }
+    if (!storedExplanation.isEmpty()) {
+      return false;
+    }
+    try {
+      String code = CaseHandoverReasonCodes.canonical(stored.getReasonCode());
+      var current = caseHandoverPolicyCacheService.getCurrent(policyTenant(session));
+      if (!current.enabled()
+          || current.policies() == null
+          || current.policies().getReasons() == null) {
+        return false;
+      }
+      return current.policies().getReasons().values().stream()
+          .map(policy -> toReason(policy, "de"))
+          .filter(reason -> reason.getCode().equals(code))
+          .findFirst()
+          .map(reason -> EXPLANATION_OFF.equals(explanationLevel(reason)))
+          .orElse(false);
+    } catch (RuntimeException exception) {
+      return false;
     }
   }
 

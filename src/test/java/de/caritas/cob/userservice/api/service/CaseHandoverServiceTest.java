@@ -1300,6 +1300,59 @@ class CaseHandoverServiceTest {
   }
 
   @Test
+  void requestAccess_replayOfOffReasonAcceptsTheTextThatWasDropped() {
+    UUID operationId = UUID.fromString("68fc1ae0-ed6d-4a28-909d-2592f6891b21");
+    CaseHandoverRequest stored = grantedRequest(requester);
+    stored.setOperationId(operationId);
+    stored.setExpectedOwnershipRevision(0L);
+    stored.setExplanation("");
+    when(caseHandoverRequestRepository.findByInitiatorConsultantIdAndOperationId(
+            "requester", operationId))
+        .thenReturn(Optional.of(stored));
+
+    CaseHandoverStatus result =
+        requestAccess(123L, "UNPLANNED_ABSENCE", "typed anyway", 0L, operationId);
+
+    assertEquals("GRANTED", result.getStatus());
+    verify(caseHandoverRequestRepository, never()).save(any());
+  }
+
+  @Test
+  void requestAccess_replayOfBlankOptionalExplanationWithNewTextConflicts() {
+    givenExplanationLevel("COUNSELLOR_IS_ILL", "OPTIONAL");
+    UUID operationId = UUID.fromString("68fc1ae0-ed6d-4a28-909d-2592f6891b21");
+    CaseHandoverRequest stored = grantedRequest(requester);
+    stored.setOperationId(operationId);
+    stored.setExpectedOwnershipRevision(0L);
+    stored.setExplanation("");
+    when(caseHandoverRequestRepository.findByInitiatorConsultantIdAndOperationId(
+            "requester", operationId))
+        .thenReturn(Optional.of(stored));
+
+    assertThrows(
+        de.caritas.cob.userservice.api.exception.httpresponses.ConflictException.class,
+        () -> requestAccess(123L, "UNPLANNED_ABSENCE", "Added later", 0L, operationId));
+  }
+
+  @Test
+  void createOffer_replayWithTextOfOfferStoredWithoutTextConflictsUnlessReasonIsOff() {
+    givenExplanationLevel("COUNSELLOR_IS_ILL", "OPTIONAL");
+    Consultant recipient = eligibleConsultant("recipient", "Recipient");
+    UUID operationId = UUID.fromString("ca40d769-e617-43a8-8c89-5da47316672d");
+    CaseHandoverRequest stored = pushRequest(recipient, operationId);
+    stored.setExplanation(null);
+    when(caseHandoverRequestRepository.findByInitiatorConsultantIdAndOperationId(
+            "requester", operationId))
+        .thenReturn(Optional.of(stored));
+
+    assertThrows(
+        de.caritas.cob.userservice.api.exception.httpresponses.ConflictException.class,
+        () ->
+            caseHandoverService.createOffer(
+                123L, "recipient", "UNPLANNED_ABSENCE", "Added later", 0L, operationId));
+  }
+
+  @Test
   void requestAccess_rejectsFreshOperationFromStaleOwnershipPeriod() {
     session.setOwnershipRevision(2L);
 
