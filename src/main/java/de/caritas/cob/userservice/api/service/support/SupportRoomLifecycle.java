@@ -11,7 +11,9 @@ import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException
 import de.caritas.cob.userservice.api.model.HandshakeAuditEvent;
 import de.caritas.cob.userservice.api.model.SupportRoom;
 import de.caritas.cob.userservice.api.port.out.HandshakeAuditEventRepository;
+import de.caritas.cob.userservice.api.port.out.HandshakeSessionRepository;
 import de.caritas.cob.userservice.api.port.out.SupportRoomRepository;
+import java.time.Clock;
 import java.time.LocalDateTime;
 import java.util.Optional;
 import lombok.RequiredArgsConstructor;
@@ -30,12 +32,8 @@ class SupportRoomLifecycle {
 
   private final SupportRoomRepository rooms;
   private final HandshakeAuditEventRepository auditEvents;
-
-  /** Keep the provider identity and room if the enclosing handshake later rolls back. */
-  @Transactional(propagation = Propagation.REQUIRES_NEW)
-  public void rememberProvisional(SupportRoom room) {
-    rooms.save(room);
-  }
+  private final HandshakeSessionRepository handshakes;
+  private final Clock clock;
 
   /** The verified activation and its audit still commit with the confirmation. */
   @Transactional(propagation = Propagation.MANDATORY)
@@ -68,11 +66,16 @@ class SupportRoomLifecycle {
 
   /** Reserves one due attempt and commits its next retry before any Matrix call. */
   @Transactional
-  public Optional<Revocation> claimClosure(String roomId, LocalDateTime now) {
+  public Optional<Revocation> claimClosure(String roomId) {
+    // A confirmation holds the handshake lock across the last Matrix step and activation.
+    rooms
+        .findHandshakeIdByRoomIdAndStatus(roomId, PROVISIONING)
+        .ifPresent(handshakes::lockForSupportCleanup);
     var room = rooms.lockById(roomId).orElse(null);
     if (room == null || room.getStatus() == CLOSED) {
       return Optional.empty();
     }
+    var now = LocalDateTime.now(clock);
     if (room.getStatus() == REVOCATION_PENDING) {
       if (room.getRetryAt().isAfter(now)) {
         return Optional.empty();

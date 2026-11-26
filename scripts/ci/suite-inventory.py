@@ -47,11 +47,13 @@ def simple_class_name(root: ET.Element) -> str:
     return root.attrib.get("name", "").rsplit(".", 1)[-1]
 
 
-def collect(report_directory: Path) -> tuple[Suite, Suite]:
+def collect(report_directory: Path, modified_since_ns: int = 0) -> tuple[Suite, Suite]:
     unit = Suite("Unit")
     integration = Suite("Integration + contract + E2E")
 
     for report in sorted(report_directory.glob("TEST-*.xml")):
+        if modified_since_ns and report.stat().st_mtime_ns < modified_since_ns:
+            continue
         root = ET.parse(report).getroot()
         target = integration if simple_class_name(root).endswith("IT") else unit
         target.add(root)
@@ -116,13 +118,14 @@ def main() -> int:
         choices=["unit", "integration", "both"],
         help="Fail when a required suite ran no tests or reported failures or errors",
     )
+    parser.add_argument("--modified-since-ns", type=int, default=0)
     arguments = parser.parse_args()
 
     if not arguments.report_directory.is_dir():
         print(f"No report directory at {arguments.report_directory}.", file=sys.stderr)
         return 1
 
-    unit, integration = collect(arguments.report_directory)
+    unit, integration = collect(arguments.report_directory, arguments.modified_since_ns)
     print(render_markdown(unit, integration))
 
     if arguments.require is None:

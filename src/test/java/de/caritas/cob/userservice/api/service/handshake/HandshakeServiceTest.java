@@ -223,7 +223,7 @@ class HandshakeServiceTest {
   @Test
   void confirm_Should_ConfirmAndNotifyHandlers_When_CounterpartPasswordIsValid() {
     var session = pendingSession();
-    when(handshakeSessionRepository.findById("hs-1")).thenReturn(Optional.of(session));
+    when(handshakeSessionRepository.findByIdForUpdate("hs-1")).thenReturn(Optional.of(session));
     when(keycloakAuthClient.verifyIgnoringOtp("consultant.user", "pw")).thenReturn(true);
     when(handshakeSessionRepository.save(any(HandshakeSession.class)))
         .thenAnswer(invocation -> invocation.getArgument(0));
@@ -239,7 +239,8 @@ class HandshakeServiceTest {
 
   @Test
   void confirm_Should_Forbid_When_CallerIsNotTheCounterpart() {
-    when(handshakeSessionRepository.findById("hs-1")).thenReturn(Optional.of(pendingSession()));
+    when(handshakeSessionRepository.findByIdForUpdate("hs-1"))
+        .thenReturn(Optional.of(pendingSession()));
 
     assertThatThrownBy(() -> handshakeService.confirm(supportAdmin(), "hs-1", "pw"))
         .isInstanceOf(ForbiddenException.class);
@@ -249,7 +250,8 @@ class HandshakeServiceTest {
 
   @Test
   void confirm_Should_Forbid_When_PasswordCheckFails() {
-    when(handshakeSessionRepository.findById("hs-1")).thenReturn(Optional.of(pendingSession()));
+    when(handshakeSessionRepository.findByIdForUpdate("hs-1"))
+        .thenReturn(Optional.of(pendingSession()));
     when(keycloakAuthClient.verifyIgnoringOtp("consultant.user", "pw")).thenReturn(false);
 
     assertThatThrownBy(() -> handshakeService.confirm(consultant(), "hs-1", "pw"))
@@ -262,7 +264,7 @@ class HandshakeServiceTest {
   void confirm_Should_ExpireSessionWithAudit_When_WindowLapsed() {
     var session = pendingSession();
     session.setExpiryDate(LocalDateTime.now(ZoneOffset.UTC).minusSeconds(10));
-    when(handshakeSessionRepository.findById("hs-1")).thenReturn(Optional.of(session));
+    when(handshakeSessionRepository.findByIdForUpdate("hs-1")).thenReturn(Optional.of(session));
     when(handshakeSessionRepository.save(any(HandshakeSession.class)))
         .thenAnswer(invocation -> invocation.getArgument(0));
 
@@ -279,7 +281,7 @@ class HandshakeServiceTest {
   void confirm_Should_Reject_When_SessionAlreadyConfirmed() {
     var session = pendingSession();
     session.setStatus(HandshakeSession.HandshakeStatus.CONFIRMED);
-    when(handshakeSessionRepository.findById("hs-1")).thenReturn(Optional.of(session));
+    when(handshakeSessionRepository.findByIdForUpdate("hs-1")).thenReturn(Optional.of(session));
 
     assertThatThrownBy(() -> handshakeService.confirm(consultant(), "hs-1", "pw"))
         .isInstanceOf(BadRequestException.class);
@@ -292,7 +294,7 @@ class HandshakeServiceTest {
     // TOCTOU guard: the optimistic lock makes exactly one transition succeed; the
     // loser must never dispatch completion handlers.
     var session = pendingSession();
-    when(handshakeSessionRepository.findById("hs-1")).thenReturn(Optional.of(session));
+    when(handshakeSessionRepository.findByIdForUpdate("hs-1")).thenReturn(Optional.of(session));
     when(keycloakAuthClient.verifyIgnoringOtp("consultant.user", "pw")).thenReturn(true);
     when(handshakeSessionRepository.save(any(HandshakeSession.class)))
         .thenThrow(
@@ -308,7 +310,7 @@ class HandshakeServiceTest {
   @Test
   void confirm_Should_AuditRoleMismatch_When_CounterpartLacksThePurposeRole() {
     var session = pendingSession();
-    when(handshakeSessionRepository.findById("hs-1")).thenReturn(Optional.of(session));
+    when(handshakeSessionRepository.findByIdForUpdate("hs-1")).thenReturn(Optional.of(session));
     var wrongRoleCounterpart = new AuthenticatedUser();
     wrongRoleCounterpart.setUserId(CONSULTANT_ID);
     wrongRoleCounterpart.setUsername("consultant.user");
@@ -326,7 +328,7 @@ class HandshakeServiceTest {
   void confirm_Should_LockSession_When_FailedPasswordAttemptsReachTheLimit() {
     var session = pendingSession();
     session.setConfirmAttempts(4); // limit is 5 — this failure is the last straw
-    when(handshakeSessionRepository.findById("hs-1")).thenReturn(Optional.of(session));
+    when(handshakeSessionRepository.findByIdForUpdate("hs-1")).thenReturn(Optional.of(session));
     when(keycloakAuthClient.verifyIgnoringOtp("consultant.user", "pw")).thenReturn(false);
     when(handshakeSessionRepository.save(any(HandshakeSession.class)))
         .thenAnswer(invocation -> invocation.getArgument(0));
@@ -342,7 +344,7 @@ class HandshakeServiceTest {
   @Test
   void confirm_Should_PersistAttemptCounter_When_PasswordFailsBelowTheLimit() {
     var session = pendingSession();
-    when(handshakeSessionRepository.findById("hs-1")).thenReturn(Optional.of(session));
+    when(handshakeSessionRepository.findByIdForUpdate("hs-1")).thenReturn(Optional.of(session));
     when(keycloakAuthClient.verifyIgnoringOtp("consultant.user", "pw")).thenReturn(false);
     when(handshakeSessionRepository.save(any(HandshakeSession.class)))
         .thenAnswer(invocation -> invocation.getArgument(0));
@@ -362,7 +364,7 @@ class HandshakeServiceTest {
     var session = pendingSession();
     session.setPurpose(HandshakePurpose.RECOVERY_CONSULTANT);
     session.setTenantId(1L);
-    when(handshakeSessionRepository.findById("hs-1")).thenReturn(Optional.of(session));
+    when(handshakeSessionRepository.findByIdForUpdate("hs-1")).thenReturn(Optional.of(session));
     var crossTenantAdmin = new AuthenticatedUser();
     crossTenantAdmin.setUserId(CONSULTANT_ID);
     crossTenantAdmin.setUsername("agency.admin");
@@ -379,7 +381,7 @@ class HandshakeServiceTest {
   void confirm_Should_AllowCrossTenant_When_PurposeIsSupportAccess() {
     var session = pendingSession();
     session.setTenantId(0L); // platform-side support admin
-    when(handshakeSessionRepository.findById("hs-1")).thenReturn(Optional.of(session));
+    when(handshakeSessionRepository.findByIdForUpdate("hs-1")).thenReturn(Optional.of(session));
     when(keycloakAuthClient.verifyIgnoringOtp("consultant.user", "pw")).thenReturn(true);
     when(handshakeSessionRepository.save(any(HandshakeSession.class)))
         .thenAnswer(invocation -> invocation.getArgument(0));

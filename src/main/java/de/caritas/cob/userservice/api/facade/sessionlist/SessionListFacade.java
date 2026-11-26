@@ -16,6 +16,7 @@ import de.caritas.cob.userservice.api.model.Session.SessionStatus;
 import de.caritas.cob.userservice.api.service.session.SessionMapper;
 import de.caritas.cob.userservice.api.service.session.SessionTopicEnrichmentService;
 import de.caritas.cob.userservice.api.service.sessionlist.ConsultantSessionListService;
+import de.caritas.cob.userservice.api.service.sessionlist.ConsultantSessionOrder;
 import de.caritas.cob.userservice.api.service.sessionlist.UserSessionListService;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -147,8 +148,7 @@ public class SessionListFacade {
     List<ConsultantSessionResponseDTO> consultantSessions =
         consultantSessionListService.retrieveSessionsForConsultantAndRoomIds(
             consultant, roomIds, roles);
-    consultantSessions.sort(
-        comparing(ConsultantSessionResponseDTO::getLatestMessage, nullsLast(reverseOrder())));
+    consultantSessions.sort(ConsultantSessionOrder.LATEST_ACTIVITY_FIRST);
 
     SessionMapper sessionMapper = new SessionMapper();
     var sessions =
@@ -170,8 +170,7 @@ public class SessionListFacade {
     List<ConsultantSessionResponseDTO> consultantSessions =
         consultantSessionListService.retrieveSessionsForConsultantAndSessionIds(
             consultant, sessionIds, roles);
-    consultantSessions.sort(
-        comparing(ConsultantSessionResponseDTO::getLatestMessage, nullsLast(reverseOrder())));
+    consultantSessions.sort(ConsultantSessionOrder.LATEST_ACTIVITY_FIRST);
 
     SessionMapper sessionMapper = new SessionMapper();
     var sessions =
@@ -349,8 +348,7 @@ public class SessionListFacade {
   }
 
   private void sortSessionsByLastMessageDateDesc(List<ConsultantSessionResponseDTO> sessions) {
-    sessions.sort(
-        comparing(ConsultantSessionResponseDTO::getLatestMessage, nullsLast(reverseOrder())));
+    sessions.sort(ConsultantSessionOrder.LATEST_ACTIVITY_FIRST);
   }
 
   private boolean areMoreConsultantSessionsAvailable(

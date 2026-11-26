@@ -85,6 +85,18 @@ http://localhost:8082/service
 
 ## 5. Useful Checks
 
+From a dedicated checkout with Java 21 and Python 3, use the same unit gate as
+the GitHub Maven build. Pass one test class for a quick local check.
+
+```bash
+python3 scripts/ci/verify-maven-unit.py --test AccountInviteAccessPolicyTemplateKindTest
+python3 scripts/ci/verify-maven-unit.py
+```
+
+The final JSON line shows the checkout commit, whether it has local changes,
+the selected tests, the Java version and the outcome. A failure identifies
+the failed step. GitHub writes the same report to the check summary.
+
 Check whether UserService is listening:
 
 ```bash
@@ -92,6 +104,21 @@ lsof -nP -iTCP:8082 -sTCP:LISTEN
 ```
 
 Stop the service with `Ctrl+C` in the terminal running the app.
+
+### Run one required integration test locally
+
+From the repository root, use Java 21 and Python 3 to run a named test from the
+H2 assignment. Start in a terminal without the remote application configuration.
+
+```bash
+scripts/ci/run-required-integration-tests.sh --test AgencyDeletionCascadeAuthorizationIT
+```
+
+The command cleans this checkout’s Maven output and ends with a JSON result
+containing the Git revision, whether it has local changes, the test selection
+and the failure phase. The unit and integration starters share a per-worktree lock.
+Use separate worktrees for concurrent Maven runs.
+GitHub runs the full integration assignment through the same script.
 
 ## Frontend Pairing
 
