@@ -2716,6 +2716,31 @@ class UserControllerAuthorizationIT {
         .andExpect(status().isOk());
   }
 
+  /** US#1796: the reason reaches the browser as a real response header, so the app can say why. */
+  @Test
+  @WithMockUser(authorities = {AuthorityValue.ANONYMOUS_DEFAULT})
+  void getUserData_Should_Return401WithReason_When_TemporaryAccountDeletionStarted()
+      throws Exception {
+
+    when(this.authenticatedUser.getRoles()).thenReturn(Set.of(UserRole.ANONYMOUS.getValue()));
+    var deletedGuest = new EasyRandom().nextObject(User.class);
+    var snapshot = new de.caritas.cob.userservice.api.model.TemporaryAccountSnapshot();
+    snapshot.setDeletionStartedAt(java.time.LocalDateTime.now().minusMinutes(5));
+    deletedGuest.setTemporaryAccountSnapshot(snapshot);
+    when(this.userAccountService.retrieveValidatedUser()).thenReturn(deletedGuest);
+
+    mvc.perform(
+            get(PATH_GET_USER_DATA)
+                .cookie(CSRF_COOKIE)
+                .header(CSRF_HEADER, CSRF_VALUE)
+                .contentType(MediaType.APPLICATION_JSON)
+                .accept(MediaType.APPLICATION_JSON))
+        .andExpect(status().isUnauthorized())
+        .andExpect(
+            org.springframework.test.web.servlet.result.MockMvcResultMatchers.header()
+                .string("X-Reason", "TEMPORARY_ACCOUNT_DELETED"));
+  }
+
   @Test
   @WithMockUser(authorities = {AuthorityValue.ANONYMOUS_DEFAULT})
   void getAskerSessions_Should_ReturnNoContent_When_AnonymousAuthority() throws Exception {

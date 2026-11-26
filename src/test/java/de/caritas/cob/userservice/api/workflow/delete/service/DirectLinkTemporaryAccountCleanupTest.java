@@ -212,6 +212,18 @@ class DirectLinkTemporaryAccountCleanupTest {
     verify(matrix, never()).submitRedaction(anyString(), anyList());
     verify(matrix, never()).deactivateUser(anyString(), anyBoolean());
     verify(userRepository, never()).save(any());
+    // The guest can still sign in: no deletion mark, so no 401 "account deleted" (US#1796).
+    assertThat(user.getTemporaryAccountSnapshot().getDeletionStartedAt()).isNull();
+  }
+
+  @Test
+  void delete_Should_KeepAnEarlierDeletionMark_When_KeycloakFailsOnARetry() {
+    var started = NOW.minusHours(1);
+    user.getTemporaryAccountSnapshot().setDeletionStartedAt(started);
+    doThrow(new RuntimeException("down")).when(identityAccountRemover).deleteUser(USER_ID);
+
+    assertThat(cleanup.delete(USER_ID, NOW)).hasSize(1);
+    assertThat(user.getTemporaryAccountSnapshot().getDeletionStartedAt()).isEqualTo(started);
   }
 
   @Test
