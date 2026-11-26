@@ -28,12 +28,15 @@ class MavenCentralRetryTest(unittest.TestCase):
             ".github/workflows/ci-pull-request.yml": (
                 " -Dtest=ConsultantActivityRegistryRedisIT,RedisOneTimeTokenStoreIT test"
             ),
-            ".github/actions/maven-build/action.yml": " test || test_status=$?",
         }
         for filename, arguments in calls.items():
             with self.subTest(filename=filename):
                 contents = " ".join((ROOT / filename).read_text().split())
                 self.assertIn(f"bash scripts/ci/{RUNNER.name} -B{arguments}", contents)
+        action = (ROOT / ".github/actions/maven-build/action.yml").read_text()
+        verifier = (ROOT / "scripts/ci/verify-maven-unit.py").read_text()
+        self.assertIn("python3 scripts/ci/verify-maven-unit.py", action)
+        self.assertIn(f'["bash", str(CI / "{RUNNER.name}"), "-B"]', verifier)
 
     def test_maven_caches_are_keyed_by_repository_origin(self):
         default_paths = [

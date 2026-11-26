@@ -45,7 +45,7 @@ runs:
     shell: bash
     run: |
       test_status=0
-      bash scripts/ci/run-maven-with-central-retry.sh -B test || test_status=$?
+      python3 scripts/ci/verify-maven-unit.py || test_status=$?
       echo "MAVEN_TEST_STATUS=${test_status}" >> "$GITHUB_ENV"
 
   - name: Prepare sanitized SigNoz unit report
