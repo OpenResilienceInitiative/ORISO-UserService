@@ -15,6 +15,7 @@ import de.caritas.cob.userservice.agencyserivce.generated.web.model.AgencyRespon
 import de.caritas.cob.userservice.agencyserivce.generated.web.model.Settings;
 import de.caritas.cob.userservice.api.config.apiclient.AgencyServiceApiControllerFactory;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
+import de.caritas.cob.userservice.api.model.CaseSharingModel;
 import de.caritas.cob.userservice.api.service.httpheader.HttpHeadersResolver;
 import de.caritas.cob.userservice.api.service.httpheader.SecurityHeaderSupplier;
 import de.caritas.cob.userservice.api.service.httpheader.TenantHeaderSupplier;
@@ -27,10 +28,10 @@ import org.springframework.beans.factory.support.ScopeNotActiveException;
 import org.springframework.test.util.ReflectionTestUtils;
 
 /**
- * FE#2494 *4: the read-only sweep runs without a user (technical tenant 0, no request scope). The
- * mode lookup must still reach AgencyService anonymously with {@code tenantId: 0}: {@code
- * /agencies/**} is public there, tenant 0 disables its tenant filter, and the served settings are
- * resolved from the agency's own tenant. Verified on Dev on 2026-11-25: {@code GET
+ * FE#2494 *4: the case sharing model snapshot runs without a user (technical tenant 0, no request
+ * scope). The mode lookup must still reach AgencyService anonymously with {@code tenantId: 0}:
+ * {@code /agencies/**} is public there, tenant 0 disables its tenant filter, and the served
+ * settings are resolved from the agency's own tenant. Verified on Dev on 2026-11-25: {@code GET
  * /service/agencies/1} with {@code tenantId: 0} and no token answers 200 with {@code
  * settings.caseSharing}.
  */
@@ -81,7 +82,7 @@ class CaseSharingGateSchedulerContextTest {
                             new AgencyCaseSharingPolicy()
                                 .value(AgencyCaseSharingPolicy.ValueEnum.TEAM_COUNSELLING)))));
 
-    assertThat(gate.teamCounsellingMode(CENTRE, TENANT)).contains(true);
+    assertThat(gate.currentModel(CENTRE, TENANT)).contains(CaseSharingModel.TEAM_COUNSELLING);
     verify(apiClient).addDefaultHeader("tenantId", "0");
     verify(apiClient, never()).addDefaultHeader(eq("Authorization"), anyString());
   }

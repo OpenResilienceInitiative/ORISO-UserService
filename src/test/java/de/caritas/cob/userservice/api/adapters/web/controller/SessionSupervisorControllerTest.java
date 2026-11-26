@@ -153,6 +153,87 @@ class SessionSupervisorControllerTest {
             any(User.class), any(Consultant.class), eq(77L), eq(null), eq("token"));
   }
 
+  // ---- ORISO-Frontend#2494 *6: one swap call, the advice seeker told at most once ----
+
+  private SessionSupervisorFacade.SupervisorReplacement replacement() {
+    var client = user("u-9");
+    var old = supervisor(30L, "sup-old", "added-by", "Mona S.", "Mona Full", client);
+    var added = supervisor(31L, "sup-new", "added-by", "Blinky F.", "Blinky Full", client);
+    added.setSession(old.getSession());
+    added.setReplacesSessionSupervisorId(30L);
+    return new SessionSupervisorFacade.SupervisorReplacement(added, old);
+  }
+
+  private SessionSupervisorController.ReplaceSupervisorRequestDTO replaceRequest(Boolean notify) {
+    var request = new SessionSupervisorController.ReplaceSupervisorRequestDTO();
+    request.setSupervisorConsultantId("sup-new");
+    request.setNotes("Elternzeit");
+    request.setNotifyClient(notify);
+    return request;
+  }
+
+  @Test
+  void replaceSupervisor_Should_returnTheNewSupervisor_andNotifyTheAdviceSeekerOnce() {
+    var current = consultant("current-1", "Current");
+    var replacement = replacement();
+    when(userAccountService.retrieveValidatedConsultant()).thenReturn(current);
+    when(authenticatedUser.getAccessToken()).thenReturn("token");
+    when(sessionSupervisorFacade.replaceSupervisor(
+            77L, 30L, "sup-new", current, null, "Elternzeit"))
+        .thenReturn(replacement);
+
+    var response = controller.replaceSupervisor(77L, 30L, replaceRequest(null));
+
+    assertEquals(HttpStatus.OK, response.getStatusCode());
+    assertNotNull(response.getBody());
+    assertEquals(31L, response.getBody().getId());
+    assertEquals("sup-new", response.getBody().getSupervisorConsultantId());
+    // Display names only towards the advice seeker (ADR-002 §2).
+    verify(eventNotificationService)
+        .createSupervisorReplacedNotification(any(), eq("u-9"), eq("Mona S."), eq("Blinky F."));
+    verify(eventNotificationService, never())
+        .createSupervisorRemovedNotification(any(), any(), any());
+    verify(eventNotificationService, never())
+        .createSupervisorAddedNotification(any(), any(), any());
+    verify(supervisorAddedEmailNotificationService)
+        .notifySupervisorRemoved(any(), any(), eq(77L), any(), eq("token"), eq(false));
+    verify(supervisorAddedEmailNotificationService)
+        .notifySupervisorAdded(any(), any(), eq(77L), any(), eq("token"), eq(true));
+    verify(eventNotificationService).createSupervisorAssignedNotification(any(), eq("sup-new"));
+  }
+
+  @Test
+  void replaceSupervisor_Should_tellTheAdviceSeekerNothing_whenTheCounsellorUnticksIt() {
+    var current = consultant("current-1", "Current");
+    when(userAccountService.retrieveValidatedConsultant()).thenReturn(current);
+    when(authenticatedUser.getAccessToken()).thenReturn("token");
+    when(sessionSupervisorFacade.replaceSupervisor(
+            77L, 30L, "sup-new", current, null, "Elternzeit"))
+        .thenReturn(replacement());
+
+    controller.replaceSupervisor(77L, 30L, replaceRequest(false));
+
+    verify(eventNotificationService, never())
+        .createSupervisorReplacedNotification(any(), any(), any(), any());
+    verify(supervisorAddedEmailNotificationService)
+        .notifySupervisorAdded(any(), any(), eq(77L), any(), eq("token"), eq(false));
+    verify(supervisorAddedEmailNotificationService)
+        .notifySupervisorRemoved(any(), any(), eq(77L), any(), eq("token"), eq(false));
+    // The new supervisor is still told.
+    verify(eventNotificationService).createSupervisorAssignedNotification(any(), eq("sup-new"));
+  }
+
+  @Test
+  void replaceSupervisor_Should_beForbidden_withoutAValidatedConsultant() {
+    when(userAccountService.retrieveValidatedConsultant()).thenReturn(null);
+
+    var response = controller.replaceSupervisor(77L, 30L, replaceRequest(true));
+
+    assertEquals(HttpStatus.FORBIDDEN, response.getStatusCode());
+    verify(sessionSupervisorFacade, never())
+        .replaceSupervisor(any(), any(), any(), any(), any(), any());
+  }
+
   // ---------------------------------------------------------------------------
   // ADR-002 §2 / #1201: both supervisor entries are addressed to the advice seeker
   // (session.getUser()), so neither may name the colleague who joined or left their case.

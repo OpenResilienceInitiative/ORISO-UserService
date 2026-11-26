@@ -14,9 +14,12 @@ import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
 /**
- * Sweeps accepted team sessions and lowers colleagues to readers (FE#2494 *4, decision d). Covers
- * the rooms that existed before Teamberatung became read-only and repairs a failed after-commit
- * enforcement or a later raise. Each run handles one batch and continues after the last id.
+ * Repairs the Matrix reader level of team cases that were made read-only when accepted or
+ * reassigned (FE#2494 *4, decision d): a failed after-commit run or a later raise heals here. It
+ * never reads the centre's case sharing model and never converts a case: cases accepted before
+ * read-only existed carry no {@code team_read_only_since} and stay as they are ("cases that are
+ * already running stay as they are", Frank, 2026-11-25). Each run handles one batch and continues
+ * after the last id.
  */
 @Component
 @Profile("!testing")
@@ -46,7 +49,7 @@ public class TeamSessionReadOnlyRepairScheduler {
       }
       for (Long id : ids) {
         try {
-          if (!claims.runIfHeld(lease.get(), () -> readOnly.repairSafely(id))) break;
+          if (!claims.runIfHeld(lease.get(), () -> readOnly.enforceSafely(id))) break;
         } catch (RuntimeException failure) {
           log.warn("Team read-only repair remains pending for session {}", id);
         }

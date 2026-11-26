@@ -17,6 +17,14 @@ public interface SessionSupervisorRepository extends JpaRepository<SessionSuperv
 
   Optional<SessionSupervisor> findByMatrixRoomId(String matrixRoomId);
 
+  /**
+   * The row locked for a swap (ORISO-Frontend#2494 *6): a second swap of the same supervisor waits
+   * and then sees the row inactive, instead of both swaps adding a successor.
+   */
+  @Lock(LockModeType.PESSIMISTIC_WRITE)
+  @Query("SELECT ss FROM SessionSupervisor ss WHERE ss.id = :id")
+  Optional<SessionSupervisor> findByIdForUpdate(@Param("id") Long id);
+
   @EntityGraph(attributePaths = {"session", "supervisorConsultant"})
   List<SessionSupervisor> findByMatrixRoomIdAndIsActiveTrue(String matrixRoomId);
 

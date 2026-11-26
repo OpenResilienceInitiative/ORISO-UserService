@@ -9,6 +9,7 @@ import static org.hamcrest.Matchers.notNullValue;
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyList;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -92,30 +93,29 @@ public class ConsultantAgencyAdminUserServiceTest {
   }
 
   @Test
-  public void removeConsultantsFromTeamSessionsByAgencyId_Should_changeTeamSessionToSession() {
+  public void endTeamCounsellingForNewCases_Should_LeaveARunningTeamCaseAsItIs() {
     Session session = new EasyRandom().nextObject(Session.class);
     session.setTeamSession(true);
 
-    when(this.sessionRepository.findByAgencyIdAndStatusAndTeamSessionIsTrue(any(), any()))
-        .thenReturn(singletonList(session));
+    when(this.sessionRepository.existsTeamCase(any(), any())).thenReturn(true);
 
-    this.consultantAgencyAdminService.removeConsultantsFromTeamSessionsByAgencyId(1L);
+    this.consultantAgencyAdminService.endTeamCounsellingForNewCases(1L);
 
-    verify(this.sessionRepository, times(1)).save(any());
-    verify(this.removeFromSessionRoomsService, times(1)).removeConsultantFromSessions(any());
+    verify(this.sessionRepository, never()).save(any());
+    verify(this.removeFromSessionRoomsService, never()).removeConsultantFromSessions(any());
+    verify(this.consultantRepository, never()).save(any());
   }
 
   @Test
   public void
-      removeConsultantsFromTeamSessionsByAgencyId_Should_removeTeamConsultingFlag_When_theyAreNotInAnotherTeamAgency() {
+      endTeamCounsellingForNewCases_Should_removeTeamConsultingFlag_When_theyAreNotInAnotherTeamAgency() {
     Session session = new EasyRandom().nextObject(Session.class);
     session.setTeamSession(true);
     List<Consultant> consultants =
         new EasyRandom().objects(Consultant.class, 10).collect(Collectors.toList());
     AgencyDTO agencyDTO = new AgencyDTO().id(1L).teamAgency(false);
 
-    when(this.sessionRepository.findByAgencyIdAndStatusAndTeamSessionIsTrue(any(), any()))
-        .thenReturn(singletonList(session));
+    when(this.sessionRepository.existsTeamCase(any(), any())).thenReturn(false);
     when(this.consultantRepository.findByConsultantAgenciesAgencyIdInAndDeleteDateIsNull(anyList()))
         .thenReturn(consultants);
     // noOtherTeamAgency() now queries consultantAgencyRepository directly (not the lazy
@@ -125,14 +125,14 @@ public class ConsultantAgencyAdminUserServiceTest {
         .thenAnswer(invocation -> singleOtherAgencyRelation());
     when(this.agencyService.getAgency(any())).thenReturn(agencyDTO);
 
-    this.consultantAgencyAdminService.removeConsultantsFromTeamSessionsByAgencyId(1L);
+    this.consultantAgencyAdminService.endTeamCounsellingForNewCases(1L);
 
     verify(this.consultantRepository, times(10)).save(any());
   }
 
   @Test
   public void
-      removeConsultantsFromTeamSessionsByAgencyId_Should_throwInternalServerErrorException_When_agencyServiceFails() {
+      endTeamCounsellingForNewCases_Should_throwInternalServerErrorException_When_agencyServiceFails() {
     assertThrows(
         InternalServerErrorException.class,
         () -> {
@@ -141,8 +141,7 @@ public class ConsultantAgencyAdminUserServiceTest {
           List<Consultant> consultants =
               new EasyRandom().objects(Consultant.class, 10).collect(Collectors.toList());
 
-          when(this.sessionRepository.findByAgencyIdAndStatusAndTeamSessionIsTrue(any(), any()))
-              .thenReturn(singletonList(session));
+          when(this.sessionRepository.existsTeamCase(any(), any())).thenReturn(false);
           when(this.consultantRepository.findByConsultantAgenciesAgencyIdInAndDeleteDateIsNull(
                   anyList()))
               .thenReturn(consultants);
@@ -150,7 +149,7 @@ public class ConsultantAgencyAdminUserServiceTest {
               .thenAnswer(invocation -> singleOtherAgencyRelation());
           when(this.agencyService.getAgency(any())).thenThrow(new InternalServerErrorException(""));
 
-          this.consultantAgencyAdminService.removeConsultantsFromTeamSessionsByAgencyId(1L);
+          this.consultantAgencyAdminService.endTeamCounsellingForNewCases(1L);
         });
   }
 

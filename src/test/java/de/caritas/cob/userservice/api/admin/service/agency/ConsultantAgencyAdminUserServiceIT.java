@@ -7,13 +7,12 @@ import static org.hamcrest.Matchers.greaterThan;
 import static org.hamcrest.Matchers.hasSize;
 import static org.hamcrest.Matchers.instanceOf;
 import static org.hamcrest.Matchers.is;
-import static org.hamcrest.Matchers.lessThan;
 import static org.hamcrest.Matchers.not;
 import static org.hamcrest.Matchers.notNullValue;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -44,6 +43,8 @@ import org.springframework.transaction.annotation.Transactional;
 @AutoConfigureTestDatabase(replace = Replace.NONE)
 @Transactional
 public class ConsultantAgencyAdminUserServiceIT {
+
+  @Autowired private de.caritas.cob.userservice.api.port.out.SessionRepository sessionRepository;
 
   @Autowired private ConsultantAgencyAdminService consultantAgencyAdminService;
 
@@ -133,9 +134,15 @@ public class ConsultantAgencyAdminUserServiceIT {
   }
 
   @Test
-  public void
-      removeConsultantsFromTeamSessionsByAgencyId_Should_removeTeamConsultantFlagAndCallServices() {
+  public void endTeamCounsellingForNewCases_Should_LeaveRunningTeamCasesAndTeamFlags() {
     when(this.agencyService.getAgency(any())).thenReturn(new AgencyDTO().teamAgency(false));
+    var teamCasesBefore =
+        this.sessionRepository
+            .findByAgencyIdAndStatusAndTeamSessionIsTrue(
+                0L, de.caritas.cob.userservice.api.model.Session.SessionStatus.IN_PROGRESS)
+            .stream()
+            .map(session -> session.getId() + ":" + session.getCaseSharingModel())
+            .toList();
 
     long teamCosnultantsBefore =
         this.consultantRepository
@@ -144,7 +151,7 @@ public class ConsultantAgencyAdminUserServiceIT {
             .filter(Consultant::isTeamConsultant)
             .count();
 
-    this.consultantAgencyAdminService.removeConsultantsFromTeamSessionsByAgencyId(0L);
+    this.consultantAgencyAdminService.endTeamCounsellingForNewCases(0L);
 
     long teamConsultantsAfter =
         this.consultantRepository
@@ -153,9 +160,20 @@ public class ConsultantAgencyAdminUserServiceIT {
             .filter(Consultant::isTeamConsultant)
             .count();
 
-    assertThat(teamConsultantsAfter, is(not(teamCosnultantsBefore)));
-    assertThat(teamConsultantsAfter, is(lessThan(teamCosnultantsBefore)));
-    verify(this.removeConsultantFromSessionRoomsService, times(1))
+    // FE#2494: agency 0 still has running team cases; they stay as they are, and so does the
+    // team-consultant identifier the team-case list needs
+    assertThat(teamConsultantsAfter, is(teamCosnultantsBefore));
+    // the persisted cases keep their team flag and their stamp
+    assertThat(teamCasesBefore.isEmpty(), is(false));
+    assertThat(
+        this.sessionRepository
+            .findByAgencyIdAndStatusAndTeamSessionIsTrue(
+                0L, de.caritas.cob.userservice.api.model.Session.SessionStatus.IN_PROGRESS)
+            .stream()
+            .map(session -> session.getId() + ":" + session.getCaseSharingModel())
+            .toList(),
+        is(teamCasesBefore));
+    verify(this.removeConsultantFromSessionRoomsService, never())
         .removeConsultantFromSessions(any());
   }
 

@@ -124,6 +124,51 @@ class SessionOwnershipServiceTest {
     assertThat(current.getConsultant()).isSameAs(owner);
   }
 
+  /** FE#2494 *4: the accepting save marks a team case read-only; a reassignment does not. */
+  @Test
+  void acceptingATeamEnquiryMarksItReadOnlyInTheSameSave() {
+    var owner = consultant("a");
+    var current = session(35L, null, 0L);
+    current.setStatus(Session.SessionStatus.NEW);
+    current.setConversationType(
+        de.caritas.cob.userservice.api.model.ConversationType.AGENCY_COUNSELLING);
+    current.setCaseSharingModel(
+        de.caritas.cob.userservice.api.model.CaseSharingModel.TEAM_COUNSELLING);
+    var expected = session(35L, null, 0L);
+    expected.setStatus(Session.SessionStatus.NEW);
+    when(sessionRepository.findByIdForUpdate(35L)).thenReturn(Optional.of(current));
+
+    ownershipService.updateOwnerAndStatus(expected, owner, IN_PROGRESS);
+
+    assertThat(current.getTeamReadOnlySince()).isNotNull();
+    assertThat(expected.getTeamReadOnlySince()).isEqualTo(current.getTeamReadOnlySince());
+    verify(sessionRepository).save(current);
+  }
+
+  @Test
+  void neitherAReassignmentNorANonTeamAcceptanceIsMarked() {
+    var reassigned = session(36L, consultant("a"), 1L);
+    reassigned.setConversationType(
+        de.caritas.cob.userservice.api.model.ConversationType.AGENCY_COUNSELLING);
+    reassigned.setTeamSession(true);
+    when(sessionRepository.findByIdForUpdate(36L)).thenReturn(Optional.of(reassigned));
+    ownershipService.updateOwnerAndStatus(
+        session(36L, consultant("a"), 1L), consultant("b"), IN_PROGRESS);
+    assertThat(reassigned.getTeamReadOnlySince()).isNull();
+
+    var handover = session(37L, null, 0L);
+    handover.setStatus(Session.SessionStatus.NEW);
+    handover.setConversationType(
+        de.caritas.cob.userservice.api.model.ConversationType.AGENCY_COUNSELLING);
+    handover.setCaseSharingModel(
+        de.caritas.cob.userservice.api.model.CaseSharingModel.CASE_HANDOVER);
+    var expected = session(37L, null, 0L);
+    expected.setStatus(Session.SessionStatus.NEW);
+    when(sessionRepository.findByIdForUpdate(37L)).thenReturn(Optional.of(handover));
+    ownershipService.updateOwnerAndStatus(expected, consultant("a"), IN_PROGRESS);
+    assertThat(handover.getTeamReadOnlySince()).isNull();
+  }
+
   @Test
   void guardedAssignmentCompensationClearsOnlyItsNewlyBoundDepartment() {
     var owner = consultant("a");

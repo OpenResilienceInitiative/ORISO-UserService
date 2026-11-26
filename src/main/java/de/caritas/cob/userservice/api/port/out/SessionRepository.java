@@ -1,6 +1,7 @@
 package de.caritas.cob.userservice.api.port.out;
 
 import de.caritas.cob.userservice.api.model.CaseHandoverRequest;
+import de.caritas.cob.userservice.api.model.CaseSharingModel;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.HandoverCandidate;
 import de.caritas.cob.userservice.api.model.Session;
@@ -211,14 +212,17 @@ public interface SessionRepository extends CrudRepository<Session, Long>, Sessio
       boolean isTeamSession);
 
   /**
-   * Accepted Teamberatung 1:1 cases with a case room (group chats excluded), in id order after
-   * {@code afterId}: the sweep of {@code TeamSessionReadOnlyRepairScheduler} (FE#2494 *4, decision
-   * d).
+   * Accepted Teamberatung 1:1 cases that were made read-only for colleagues, in id order after
+   * {@code afterId}: the repair of {@code TeamSessionReadOnlyRepairScheduler} (FE#2494 *4). Cases
+   * accepted before read-only existed are not marked and stay as they are.
    */
   @Query(
       """
       select s.id from Session s
-      where s.teamSession = true and s.status = :status and s.consultant is not null
+      where s.status = :status and s.consultant is not null
+        and s.teamReadOnlySince is not null
+        and (s.caseSharingModel = de.caritas.cob.userservice.api.model.CaseSharingModel.TEAM_COUNSELLING
+          or (s.caseSharingModel is null and s.teamSession = true))
         and (s.conversationType is null
           or s.conversationType = de.caritas.cob.userservice.api.model.ConversationType.AGENCY_COUNSELLING)
         and s.matrixRoomId is not null and s.id > :afterId
@@ -226,6 +230,90 @@ public interface SessionRepository extends CrudRepository<Session, Long>, Sessio
       """)
   List<Long> findTeamReadOnlyCandidates(
       @Param("status") SessionStatus status, @Param("afterId") long afterId, Pageable page);
+
+  /** The facts the one-time case sharing snapshot needs, read in one query (no per-row load). */
+  interface UnstampedCase {
+
+    Long getId();
+
+    Long getAgencyId();
+
+    Long getTenantId();
+
+    boolean isTeamSession();
+  }
+
+  /**
+   * 1:1 cases with a centre that were created before the case sharing model was stamped, in id
+   * order after {@code afterId}: the one-time snapshot of {@code CaseSharingModelSnapshotScheduler}
+   * (FE#2494 *4). Group chats and live chats, including legacy live chats without a modality, are
+   * never counselling cases and are left out. Index {@code idx_session_case_sharing_model} serves
+   * this scan.
+   */
+  @Query(
+      """
+      select s.id as id, s.agencyId as agencyId, s.tenantId as tenantId,
+        s.teamSession as teamSession
+      from Session s
+      where s.caseSharingModel is null and s.agencyId is not null
+        and (s.conversationType = de.caritas.cob.userservice.api.model.ConversationType.AGENCY_COUNSELLING
+          or (s.conversationType is null
+            and (s.registrationType is null or s.registrationType <> :anonymousRegistrationType)
+            and (s.postcode is null or s.postcode <> '00000')))
+        and s.id > :afterId
+      order by s.id asc
+      """)
+  List<UnstampedCase> findUnstampedCases(
+      @Param("afterId") long afterId,
+      @Param("anonymousRegistrationType") RegistrationType anonymousRegistrationType,
+      Pageable page);
+
+  /**
+   * FE#2494 *4: whether the centre still has a team case in one of {@code statuses}, by the stamp,
+   * or the team flag for a case not stamped yet. Group and live chats are not counted.
+   */
+  @Query(
+      """
+      select count(s) > 0 from Session s
+      where s.agencyId = :agencyId and s.status in :statuses
+        and (s.caseSharingModel = de.caritas.cob.userservice.api.model.CaseSharingModel.TEAM_COUNSELLING
+          or (s.caseSharingModel is null and s.teamSession = true
+            and (s.conversationType is null
+              or s.conversationType = de.caritas.cob.userservice.api.model.ConversationType.AGENCY_COUNSELLING)))
+      """)
+  boolean existsTeamCase(
+      @Param("agencyId") Long agencyId, @Param("statuses") Collection<SessionStatus> statuses);
+
+  /**
+   * FE#2494 *4: stamps a centre's unstamped 1:1 cases with or without the team flag before its type
+   * changes, so the snapshot never reads the post-switch model for them. Same case scope as {@link
+   * #findUnstampedCases}; a stamped case keeps its stamp.
+   */
+  @Transactional
+  @Modifying(flushAutomatically = true, clearAutomatically = true)
+  @Query(
+      """
+      update Session s set s.caseSharingModel = :model
+      where s.agencyId = :agencyId and s.caseSharingModel is null and s.teamSession = :teamSession
+        and (s.conversationType = de.caritas.cob.userservice.api.model.ConversationType.AGENCY_COUNSELLING
+          or (s.conversationType is null
+            and (s.registrationType is null or s.registrationType <> :anonymousRegistrationType)
+            and (s.postcode is null or s.postcode <> '00000')))
+      """)
+  int stampUnstampedCasesOfAgency(
+      @Param("agencyId") Long agencyId,
+      @Param("teamSession") boolean teamSession,
+      @Param("model") CaseSharingModel model,
+      @Param("anonymousRegistrationType") RegistrationType anonymousRegistrationType);
+
+  /** Stamps the model once; a case that already carries one keeps it. */
+  @Transactional
+  @Modifying(flushAutomatically = true)
+  @Query(
+      "UPDATE Session session SET session.caseSharingModel = :model"
+          + " WHERE session.id = :sessionId AND session.caseSharingModel IS NULL")
+  int stampCaseSharingModel(
+      @Param("sessionId") Long sessionId, @Param("model") CaseSharingModel model);
 
   /**
    * Find metadata-only case handover candidates in the requester's agencies. These sessions are

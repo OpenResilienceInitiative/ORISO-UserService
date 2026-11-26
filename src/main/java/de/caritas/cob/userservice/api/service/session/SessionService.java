@@ -22,6 +22,7 @@ import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.manager.consultingtype.ConsultingTypeManager;
+import de.caritas.cob.userservice.api.model.CaseSharingModel;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.ConsultantAgency;
 import de.caritas.cob.userservice.api.model.ConversationType;
@@ -265,9 +266,27 @@ public class SessionService {
    */
   public Session initializeDirectSession(
       Consultant consultant, User user, UserDTO userDto, boolean isTeamSession) {
+    return initializeDirectSession(consultant, user, userDto, isTeamSession, null);
+  }
+
+  /**
+   * As {@link #initializeDirectSession(Consultant, User, UserDTO, boolean)}, with the case sharing
+   * model set before the first insert (FE#2494 *4). A null model leaves it to the snapshot job.
+   */
+  public Session initializeDirectSession(
+      Consultant consultant,
+      User user,
+      UserDTO userDto,
+      boolean isTeamSession,
+      CaseSharingModel caseSharingModel) {
     var session =
         initializeSession(
-            user, userDto, isTeamSession, RegistrationType.REGISTERED, SessionStatus.NEW);
+            user,
+            userDto,
+            isTeamSession,
+            RegistrationType.REGISTERED,
+            SessionStatus.NEW,
+            caseSharingModel);
     session.setConsultant(consultant);
     return saveSession(session);
   }
@@ -300,6 +319,17 @@ public class SessionService {
       boolean isTeamSession,
       RegistrationType registrationType,
       SessionStatus sessionStatus) {
+    return initializeSession(user, userDto, isTeamSession, registrationType, sessionStatus, null);
+  }
+
+  /** The case sharing model is part of the first insert; the column is write-once (FE#2494). */
+  private Session initializeSession(
+      User user,
+      UserDTO userDto,
+      boolean isTeamSession,
+      RegistrationType registrationType,
+      SessionStatus sessionStatus,
+      CaseSharingModel caseSharingModel) {
     var extendedConsultingTypeResponseDTO = obtainConsultingTypeSettings(userDto);
 
     var session =
@@ -313,6 +343,7 @@ public class SessionService {
             .languageCode(LanguageCode.de)
             .status(sessionStatus)
             .teamSession(isTeamSession)
+            .caseSharingModel(caseSharingModel)
             .createDate(nowInUtc())
             .updateDate(nowInUtc())
             .mainTopicId(userDto.getMainTopicId())
@@ -383,6 +414,25 @@ public class SessionService {
     current.setEnquiryMessageDate(nowInUtc());
     if (language != null) current.setLanguageCode(LanguageCode.getByCode(language));
     return saveSession(current);
+  }
+
+  /**
+   * FE#2494 *4: stamps the case sharing model once. The column is write-once, so this repository
+   * update is the only way the stamp is set and a later whole-entity save cannot overwrite it.
+   */
+  public void stampCaseSharingModel(Session session, CaseSharingModel model) {
+    if (session == null || session.getId() == null || model == null) {
+      return;
+    }
+    if (sessionRepository.stampCaseSharingModel(session.getId(), model) > 0) {
+      session.setCaseSharingModel(model);
+      return;
+    }
+    // Already stamped (by the snapshot job, for one): the stored write-once stamp wins.
+    sessionRepository
+        .findById(session.getId())
+        .map(Session::getCaseSharingModel)
+        .ifPresent(session::setCaseSharingModel);
   }
 
   /**
@@ -1126,6 +1176,8 @@ public class SessionService {
     var consultantSessionDTO =
         new ConsultantSessionDTO()
             .isTeamSession(session.isTeamSession())
+            .caseSharingModel(
+                session.getCaseSharingModel() == null ? null : session.getCaseSharingModel().name())
             .supervision(supervisionMarkerService.buildFor(session, requester))
             .agencyId(session.getAgencyId())
             .consultingType(session.getConsultingTypeId())

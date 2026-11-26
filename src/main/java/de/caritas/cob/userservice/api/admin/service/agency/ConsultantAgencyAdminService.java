@@ -9,14 +9,12 @@ import static org.apache.commons.lang3.StringUtils.isNotBlank;
 
 import de.caritas.cob.userservice.api.adapters.web.dto.AgencyAdminResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.AgencyConsultantResponseDTO;
-import de.caritas.cob.userservice.api.adapters.web.dto.AgencyDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantAgencyResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantDTO;
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
 import de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHttpStatusException;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.ConsultantAgency;
-import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.Session.SessionStatus;
 import de.caritas.cob.userservice.api.port.out.ConsultantAgencyRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
@@ -47,7 +45,6 @@ public class ConsultantAgencyAdminService {
   private final @NonNull AgencyEnquiryRevocations enquiryRevocations;
   private final @NonNull ConsultantRepository consultantRepository;
   private final @NonNull SessionRepository sessionRepository;
-  private final @NonNull RemoveConsultantFromSessionRoomsService removeFromSessionRoomsService;
   private final @NonNull AgencyService agencyService;
   private final @NonNull AgencyAdminService agencyAdminService;
   private final @NonNull ConsultantAgencyDeletionValidationService agencyDeletionValidationService;
@@ -183,34 +180,50 @@ public class ConsultantAgencyAdminService {
     this.consultantRepository.save(consultant);
   }
 
+  // Archived cases count: they can be reactivated and still need their colleagues' team access.
+  private static final List<SessionStatus> TEAM_ACCESS_STATUSES =
+      List.of(
+          SessionStatus.INITIAL,
+          SessionStatus.NEW,
+          SessionStatus.IN_PROGRESS,
+          SessionStatus.IN_ARCHIVE);
+
   /**
-   * Removes the consultant from all session rooms where they are not directly assigned, changes the
-   * sessions to non-team sessions and removes the team-consultant identifier when the consultant
-   * has no other team agency assigned.
+   * Ends team counselling for new cases of a centre that switched to the default type.
+   *
+   * <p>Frank's rule of 2026-11-25 (ORISO-Frontend#2494): "cases that are already running stay as
+   * they are". Running team cases keep their colleagues, their rooms and their team flag; only new
+   * cases follow the new type. The team-consultant identifier is therefore only removed once the
+   * centre has no open or archived team case left (an enquiry not yet accepted included) and the
+   * consultant has no other team agency, because the team-case list requires it.
    *
    * @param agencyId the id of the agency
    */
-  public void removeConsultantsFromTeamSessionsByAgencyId(Long agencyId) {
-    List<Session> teamSessionsInProgress =
-        this.sessionRepository.findByAgencyIdAndStatusAndTeamSessionIsTrue(
-            agencyId, SessionStatus.IN_PROGRESS);
+  public void endTeamCounsellingForNewCases(Long agencyId) {
+    if (this.sessionRepository.existsTeamCase(agencyId, TEAM_ACCESS_STATUSES)) {
+      log.info(
+          "Agency {} switched to the default type; its open and archived team cases keep their model and"
+              + " its counsellors keep the team-consultant identifier",
+          agencyId);
+      return;
+    }
 
-    this.removeFromSessionRoomsService.removeConsultantFromSessions(teamSessionsInProgress);
-    teamSessionsInProgress.forEach(this::changeSessionToNonTeamSession);
-
+    // One answer per other centre for the whole type change, not one query per counsellor.
+    var teamAccessByAgency = new java.util.HashMap<Long, Boolean>();
     this.consultantRepository
         .findByConsultantAgenciesAgencyIdInAndDeleteDateIsNull(singletonList(agencyId))
         .stream()
-        .filter(consultant -> noOtherTeamAgency(consultant, agencyId))
+        .filter(consultant -> noOtherTeamAccess(consultant, agencyId, teamAccessByAgency))
         .forEach(this::removeTeamConsultantFlag);
   }
 
-  private void changeSessionToNonTeamSession(Session session) {
-    session.setTeamSession(false);
-    this.sessionRepository.save(session);
-  }
-
-  private boolean noOtherTeamAgency(Consultant consultant, Long agencyId) {
+  /**
+   * No other centre of the consultant is a team agency or still has an open or archived team case.
+   * A centre that switched to the default type earlier keeps its team cases, and the consultant
+   * keeps the team-consultant identifier they need (FE#2494 *4).
+   */
+  private boolean noOtherTeamAccess(
+      Consultant consultant, Long agencyId, java.util.Map<Long, Boolean> teamAccessByAgency) {
     // Deliberately query the repository instead of navigating consultant.getConsultantAgencies():
     // this method runs outside of an open Hibernate session (changeAgencyType() is not
     // @Transactional, and spring.jpa.open-in-view is disabled), so the lazy collection on a
@@ -220,13 +233,16 @@ public class ConsultantAgencyAdminService {
     return consultantAgencyRepository
         .findByConsultantIdAndDeleteDateIsNull(consultant.getId())
         .stream()
-        .filter(consultantAgency -> !agencyId.equals(consultantAgency.getAgencyId()))
-        .map(this::toAgencyDto)
-        .noneMatch(AgencyDTO::getTeamAgency);
+        .map(ConsultantAgency::getAgencyId)
+        .filter(otherAgencyId -> !agencyId.equals(otherAgencyId))
+        .noneMatch(
+            otherAgencyId ->
+                teamAccessByAgency.computeIfAbsent(otherAgencyId, this::givesTeamAccess));
   }
 
-  private AgencyDTO toAgencyDto(ConsultantAgency consultantAgency) {
-    return this.agencyService.getAgency(consultantAgency.getAgencyId());
+  private boolean givesTeamAccess(Long agencyId) {
+    return Boolean.TRUE.equals(agencyService.getAgency(agencyId).getTeamAgency())
+        || sessionRepository.existsTeamCase(agencyId, TEAM_ACCESS_STATUSES);
   }
 
   private void removeTeamConsultantFlag(Consultant consultant) {

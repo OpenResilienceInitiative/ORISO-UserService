@@ -991,6 +991,7 @@ class SessionSupervisorFacadeTest {
     verify(matrixSynapseService).removeUserFromRoom(CLIENT_ROOM, SUPERVISOR_MXID, "tok");
     assertThat(active.getIsActive()).isFalse();
     assertThat(active.getRemovedDate()).isNotNull();
+    assertThat(active.getRemovedByConsultantId()).isEqualTo("con-1");
     verify(sessionSupervisorRepository).save(active);
   }
 
@@ -1358,5 +1359,214 @@ class SessionSupervisorFacadeTest {
         .isInstanceOf(
             de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException
                 .class);
+  }
+
+  // ---- ORISO-Frontend#2494 *6: swap the supervisor in one step ----
+
+  private static final String NEW_SUPERVISOR_ID = "sup-2";
+  private static final String NEW_SUPERVISOR_MXID = "@sup2:oriso";
+
+  private Consultant newSupervisorInSameAgency() {
+    Consultant next = new Consultant();
+    next.setId(NEW_SUPERVISOR_ID);
+    next.setUsername("sup2");
+    next.setFirstName("Blinky");
+    next.setLastName("Fish");
+    next.setMatrixUserId(NEW_SUPERVISOR_MXID);
+    next.setSupervisor(true);
+    when(consultantRepository.findById(NEW_SUPERVISOR_ID)).thenReturn(Optional.of(next));
+    when(sessionSupervisorRepository.findBySessionIdAndSupervisorConsultantIdAndIsActiveTrue(
+            SESSION_ID, NEW_SUPERVISOR_ID))
+        .thenReturn(Optional.empty());
+    when(consultantAgencyRepository.findByConsultantIdAndDeleteDateIsNull(NEW_SUPERVISOR_ID))
+        .thenReturn(List.of(ConsultantAgency.builder().agencyId(7L).build()));
+    return next;
+  }
+
+  @Test
+  void replaceSupervisor_Should_keepTheSideRoom_linkTheRows_andPostOneNotice() throws Exception {
+    SessionSupervisor old = activeSupervisorRow(1L);
+    when(sessionSupervisorRepository.findByIdForUpdate(1L)).thenReturn(Optional.of(old));
+    when(matrixSynapseService.removeUserFromRoom(any(), any(), any())).thenReturn(true);
+    newSupervisorInSameAgency();
+
+    var result =
+        facade.replaceSupervisor(
+            SESSION_ID, 1L, NEW_SUPERVISOR_ID, addedBy, "PEER_SUPPORT", "Elternzeit");
+
+    // Same side room: the new supervisor continues the history, no second room.
+    assertThat(result.added().getMatrixRoomId()).isEqualTo(SIDE_ROOM);
+    verify(matrixSynapseService, never()).createRoom(any(), any(), any());
+    assertThat(result.added().getReplacesSessionSupervisorId()).isEqualTo(1L);
+    assertThat(result.replaced()).isSameAs(old);
+    assertThat(old.getIsActive()).isFalse();
+    assertThat(old.getRemovedDate()).isNotNull();
+    assertThat(old.getRemovedByConsultantId()).isEqualTo("con-1");
+    verify(matrixSynapseService).removeUserFromRoom(eq(SIDE_ROOM), eq(SUPERVISOR_MXID), any());
+    verify(matrixSynapseService).removeUserFromRoom(eq(CLIENT_ROOM), eq(SUPERVISOR_MXID), any());
+
+    ArgumentCaptor<String> body = ArgumentCaptor.forClass(String.class);
+    verify(matrixSynapseService).sendMessage(eq(SIDE_ROOM), body.capture(), any());
+    assertThat(body.getValue())
+        .startsWith("[SYSTEM_NOTIFICATION]")
+        .contains("\"type\":\"SUPERVISOR_REPLACED\"")
+        .contains("\"reason\":\"Elternzeit\"");
+    // Never into the client room.
+    verify(matrixSynapseService, never()).sendMessage(eq(CLIENT_ROOM), any(), any());
+  }
+
+  @Test
+  void replaceSupervisor_Should_changeNothing_whenTheNewPersonIsRefused() {
+    SessionSupervisor old = activeSupervisorRow(1L);
+    when(sessionSupervisorRepository.findByIdForUpdate(1L)).thenReturn(Optional.of(old));
+    newSupervisorInSameAgency();
+    when(consultantAgencyRepository.findByConsultantIdAndDeleteDateIsNull(NEW_SUPERVISOR_ID))
+        .thenReturn(List.of(ConsultantAgency.builder().agencyId(99L).build()));
+
+    assertThatThrownBy(
+            () ->
+                facade.replaceSupervisor(
+                    SESSION_ID, 1L, NEW_SUPERVISOR_ID, addedBy, "PEER_SUPPORT", "x"))
+        .isInstanceOf(RuntimeException.class);
+
+    assertThat(old.getIsActive()).isTrue();
+    verify(matrixSynapseService, never()).removeUserFromRoom(any(), any(), any());
+    verify(sessionSupervisorRepository, never()).save(old);
+  }
+
+  @Test
+  void replaceSupervisor_Should_refuseTheSamePerson() {
+    when(sessionSupervisorRepository.findByIdForUpdate(1L))
+        .thenReturn(Optional.of(activeSupervisorRow(1L)));
+
+    assertThatThrownBy(
+            () ->
+                facade.replaceSupervisor(
+                    SESSION_ID, 1L, SUPERVISOR_ID, addedBy, "PEER_SUPPORT", "x"))
+        .isInstanceOf(BadRequestException.class);
+    verify(matrixSynapseService, never()).removeUserFromRoom(any(), any(), any());
+  }
+
+  @Test
+  void replaceSupervisor_Should_refuseAnInactiveRow() {
+    newSupervisorInSameAgency();
+    SessionSupervisor inactive = activeSupervisorRow(1L);
+    inactive.setIsActive(false);
+    when(sessionSupervisorRepository.findByIdForUpdate(1L)).thenReturn(Optional.of(inactive));
+
+    assertThatThrownBy(
+            () ->
+                facade.replaceSupervisor(
+                    SESSION_ID, 1L, NEW_SUPERVISOR_ID, addedBy, "PEER_SUPPORT", "x"))
+        .isInstanceOf(BadRequestException.class);
+    verify(matrixSynapseService, never()).removeUserFromRoom(any(), any(), any());
+  }
+
+  @Test
+  void replaceSupervisor_Should_answerNotFound_forARowOfAnotherSession() {
+    newSupervisorInSameAgency();
+    SessionSupervisor foreign = activeSupervisorRow(1L);
+    Session other = new Session();
+    other.setId(SESSION_ID + 1);
+    foreign.setSession(other);
+    when(sessionSupervisorRepository.findByIdForUpdate(1L)).thenReturn(Optional.of(foreign));
+
+    assertThatThrownBy(
+            () ->
+                facade.replaceSupervisor(
+                    SESSION_ID, 1L, NEW_SUPERVISOR_ID, addedBy, "PEER_SUPPORT", "x"))
+        .isInstanceOf(NotFoundException.class);
+    assertThat(foreign.getIsActive()).isTrue();
+  }
+
+  @Test
+  void replaceSupervisor_Should_checkPermissionBeforeLookingAtTheSupervisorRow() {
+    Consultant stranger = new Consultant();
+    stranger.setId("someone-else");
+    stranger.setMatrixUserId("@else:oriso");
+    newSupervisorInSameAgency();
+
+    assertThatThrownBy(
+            () ->
+                facade.replaceSupervisor(
+                    SESSION_ID, 1L, NEW_SUPERVISOR_ID, stranger, "PEER_SUPPORT", "x"))
+        .isInstanceOf(RuntimeException.class);
+    verify(sessionSupervisorRepository, never()).findByIdForUpdate(any());
+    verify(matrixSynapseService, never()).removeUserFromRoom(any(), any(), any());
+  }
+
+  @Test
+  void replaceSupervisor_Should_leaveTheOldSupervisorsRoomsAlone_whenTheNewOneCannotBeProvisioned()
+      throws Exception {
+    SessionSupervisor old = activeSupervisorRow(1L);
+    when(sessionSupervisorRepository.findByIdForUpdate(1L)).thenReturn(Optional.of(old));
+    newSupervisorInSameAgency();
+    org.mockito.Mockito.doThrow(new MatrixInviteUserException("synapse down"))
+        .when(matrixSynapseService)
+        .inviteUserToRoom(eq(SIDE_ROOM), eq(NEW_SUPERVISOR_MXID), any());
+
+    assertThatThrownBy(
+            () ->
+                facade.replaceSupervisor(
+                    SESSION_ID, 1L, NEW_SUPERVISOR_ID, addedBy, "PEER_SUPPORT", "x"))
+        .isInstanceOf(RuntimeException.class);
+
+    // Matrix kicks cannot be rolled back, so none may happen before the successor is in place.
+    verify(matrixSynapseService, never()).removeUserFromRoom(any(), any(), any());
+    verify(matrixSynapseService, never()).leaveRoom(any(), any());
+    assertThat(old.getIsActive()).isTrue();
+  }
+
+  @Test
+  void replaceSupervisor_Should_readTheOldRowWithALock() throws Exception {
+    SessionSupervisor old = activeSupervisorRow(1L);
+    when(sessionSupervisorRepository.findByIdForUpdate(1L)).thenReturn(Optional.of(old));
+    when(matrixSynapseService.removeUserFromRoom(any(), any(), any())).thenReturn(true);
+    newSupervisorInSameAgency();
+
+    facade.replaceSupervisor(SESSION_ID, 1L, NEW_SUPERVISOR_ID, addedBy, "PEER_SUPPORT", "x");
+
+    verify(sessionSupervisorRepository).findByIdForUpdate(1L);
+    verify(sessionSupervisorRepository, never()).findById(1L);
+  }
+
+  @Test
+  void replaceSupervisor_Should_standEvenWhenTheNoticeCannotBePosted() throws Exception {
+    SessionSupervisor old = activeSupervisorRow(1L);
+    when(sessionSupervisorRepository.findByIdForUpdate(1L)).thenReturn(Optional.of(old));
+    when(matrixSynapseService.removeUserFromRoom(any(), any(), any())).thenReturn(true);
+    newSupervisorInSameAgency();
+    when(matrixSynapseService.sendMessage(any(), any(), any()))
+        .thenThrow(new IllegalStateException("matrix down"));
+
+    var result =
+        facade.replaceSupervisor(SESSION_ID, 1L, NEW_SUPERVISOR_ID, addedBy, "PEER_SUPPORT", "x");
+
+    assertThat(result.added().getIsActive()).isTrue();
+    assertThat(old.getIsActive()).isFalse();
+  }
+
+  @Test
+  void buildReplacedNoticeBody_Should_carryNamesAndTheTrimmedReason() throws Exception {
+    String body =
+        SessionSupervisorFacade.buildReplacedNoticeBody(
+            "Mona Simpson", "Blinky Fish", "  Elternzeit ");
+    assertThat(body).startsWith("[SYSTEM_NOTIFICATION]");
+    var json =
+        new com.fasterxml.jackson.databind.ObjectMapper()
+            .readTree(body.substring("[SYSTEM_NOTIFICATION]".length()));
+    assertThat(json.get("type").asText()).isEqualTo("SUPERVISOR_REPLACED");
+    assertThat(json.get("previousName").asText()).isEqualTo("Mona Simpson");
+    assertThat(json.get("newName").asText()).isEqualTo("Blinky Fish");
+    assertThat(json.get("reason").asText()).isEqualTo("Elternzeit");
+    assertThat(json.get("title").asText()).isEqualTo("Supervision gewechselt");
+  }
+
+  @Test
+  void buildReplacedNoticeBody_Should_leaveOutABlankReason_andNeedBothNames() throws Exception {
+    String body = SessionSupervisorFacade.buildReplacedNoticeBody("A", "B", "  ");
+    assertThat(body).doesNotContain("\"reason\"");
+    assertThat(SessionSupervisorFacade.buildReplacedNoticeBody(null, "B", "x")).isNull();
+    assertThat(SessionSupervisorFacade.buildReplacedNoticeBody("A", null, "x")).isNull();
   }
 }

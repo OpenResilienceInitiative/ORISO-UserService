@@ -190,6 +190,25 @@ public class Session implements TenantAware, SessionRoom {
   @JdbcTypeCode(SqlTypes.TINYINT)
   private boolean teamSession;
 
+  /**
+   * FE#2494 *4: the case sharing model this case was created under; a later centre switch does not
+   * change it. Null only for a case created before the column, until the snapshot job stamps it.
+   */
+  @Enumerated(EnumType.STRING)
+  // Write-once: only SessionRepository#stampCaseSharingModel sets it, so a stale whole-entity save
+  // can never write NULL or another model over the stamp.
+  @Column(name = "case_sharing_model", length = 32, updatable = false)
+  @Nullable
+  private CaseSharingModel caseSharingModel;
+
+  /**
+   * FE#2494 *4: when the case became read-only for colleagues (accepted or reassigned as a
+   * Teamberatung case). Null for a case accepted before that existed: it stays as it is.
+   */
+  @Column(name = "team_read_only_since", columnDefinition = "datetime")
+  @Nullable
+  private LocalDateTime teamReadOnlySince;
+
   @Column(nullable = false, columnDefinition = "bit default false")
   private Boolean isConsultantDirectlySet;
 
@@ -349,14 +368,32 @@ public class Session implements TenantAware, SessionRoom {
   }
 
   /**
-   * FE#2494 *4: a Teamberatung 1:1 case, the only kind whose colleagues become readers. Group chats
-   * also carry {@code teamSession} (see {@code CreateChatFacade}) but are never counselling cases;
-   * legacy rooms without a modality are 1:1 cases.
+   * FE#2494 *4: a Teamberatung 1:1 case, the only kind whose colleagues become readers. The stamped
+   * case sharing model decides; only a case not stamped yet falls back to the team flag it was
+   * created with. Group chats also carry {@code teamSession} (see {@code CreateChatFacade}) and
+   * legacy live chats have no modality; neither is a counselling case.
    */
   @JsonIgnore
   public boolean isTeamCounsellingCase() {
-    return teamSession
-        && (conversationType == null || conversationType == ConversationType.AGENCY_COUNSELLING);
+    if (!isOneToOneCase()) {
+      return false;
+    }
+    return caseSharingModel == null
+        ? teamSession
+        : caseSharingModel == CaseSharingModel.TEAM_COUNSELLING;
+  }
+
+  /**
+   * A 1:1 counselling case. A known modality is authoritative; a legacy row without one is a live
+   * chat when it was registered anonymously or carries the anonymous postcode, as in {@code
+   * SessionRepository.LIVE_CHAT_MODALITY}.
+   */
+  @JsonIgnore
+  public boolean isOneToOneCase() {
+    if (conversationType != null) {
+      return conversationType == ConversationType.AGENCY_COUNSELLING;
+    }
+    return registrationType != RegistrationType.ANONYMOUS && !"00000".equals(postcode);
   }
 
   @JsonIgnore

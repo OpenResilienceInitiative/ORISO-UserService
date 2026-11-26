@@ -23,6 +23,7 @@ import de.caritas.cob.userservice.api.model.Session.SessionStatus;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.out.ConsultantAgencyRepository;
 import de.caritas.cob.userservice.api.service.SessionDataService;
+import de.caritas.cob.userservice.api.service.agency.CaseSharingGate;
 import de.caritas.cob.userservice.api.service.session.AgencyPreAssignmentRoomService;
 import de.caritas.cob.userservice.api.service.session.DirectSessionMatrixRoomService;
 import de.caritas.cob.userservice.api.service.session.SessionService;
@@ -55,6 +56,9 @@ public class CreateSessionFacade {
   private final @NonNull ConsultantAgencyRepository consultantAgencyRepository;
   private final @NonNull AgencyPreAssignmentRoomService agencyPreAssignmentRoomService;
   private final @NonNull DirectSessionMatrixRoomService directSessionMatrixRoomService;
+  private final @NonNull CaseSharingGate caseSharingGate;
+  private final @NonNull de.caritas.cob.userservice.api.service.session.TeamSessionReadOnlyService
+      teamSessionReadOnly;
 
   /**
    * Creates a new session for the provided user.
@@ -123,6 +127,9 @@ public class CreateSessionFacade {
       // An earlier visit may have failed to provision the room; provisioning is idempotent.
       if (session.getMatrixRoomId() == null || session.getMatrixRoomId().isBlank()) {
         directSessionMatrixRoomService.provisionRoomForDirectSession(session, consultant);
+        if (session.getTeamReadOnlySince() != null) {
+          teamSessionReadOnly.enforceAfterCommit(session.getId());
+        }
       }
       return new NewRegistrationResponseDto()
           .sessionId(session.getId())
@@ -155,15 +162,30 @@ public class CreateSessionFacade {
     var agencyDTO = obtainVerifiedAgency(userDTO, extendedConsultingTypeResponseDTO);
     // Direct creation commences counselling immediately; check before persisting it.
     dpaPolicy.requireForAgency(agencyDTO);
+    // FE#2494 *4: the model is part of the first insert, so no separate stamp write joins a
+    // surrounding transaction (direct appointment) and can mark it rollback-only.
     var session =
         sessionService.initializeDirectSession(
-            consultant, user, userDTO, agencyDTO.getTeamAgency());
+            consultant,
+            user,
+            userDTO,
+            agencyDTO.getTeamAgency(),
+            caseSharingGate.modelForNewCase(
+                agencyDTO.getId(), agencyDTO.getTenantId(), isTrue(agencyDTO.getTeamAgency())));
     sessionDataService.saveInitialSessionData(session, user, fromUserDTO(userDTO));
     session.setConsultant(consultant);
     session.setStatus(SessionStatus.IN_PROGRESS);
+    if (session.isTeamCounsellingCase()) {
+      // FE#2494 *4: counselling starts here, without an acceptance, so this versioned save marks
+      // the new team case read-only for colleagues, as the acceptance does for an enquiry.
+      session.setTeamReadOnlySince(java.time.LocalDateTime.now(java.time.ZoneOffset.UTC));
+    }
     session = sessionService.saveSession(session);
 
     directSessionMatrixRoomService.provisionRoomForDirectSession(session, consultant);
+    if (session.getTeamReadOnlySince() != null) {
+      teamSessionReadOnly.enforceAfterCommit(session.getId());
+    }
 
     return new NewRegistrationResponseDto()
         .sessionId(session.getId())
@@ -182,6 +204,7 @@ public class CreateSessionFacade {
       initialized = nonNull(session) && nonNull(session.getId());
       sessionId = initialized ? session.getId() : null;
       sessionDataService.saveInitialSessionData(session, user, sessionData);
+      stampCaseSharingModel(session);
 
       return session;
     } catch (Exception ex) {
@@ -204,6 +227,25 @@ public class CreateSessionFacade {
       var stepWord = initialized ? "save session data" : "initialize session";
       var message = String.format("Could not %s for user %s.", stepWord, user.getUsername());
       throw new InternalServerErrorException(message, ex);
+    }
+  }
+
+  /**
+   * FE#2494 *4: the case keeps the model it was created under. A centre that is temporarily
+   * unreachable, or a failed write, leaves the stamp to the snapshot job (see {@link
+   * CaseSharingGate#modelForNewCase}); it never fails the registration.
+   */
+  private void stampCaseSharingModel(Session session) {
+    try {
+      sessionService.stampCaseSharingModel(
+          session,
+          caseSharingGate.modelForNewCase(
+              session.getAgencyId(), session.getTenantId(), session.isTeamSession()));
+    } catch (RuntimeException failure) {
+      log.warn(
+          "Case sharing model of session {} left to the snapshot job ({})",
+          session.getId(),
+          failure.getClass().getSimpleName());
     }
   }
 

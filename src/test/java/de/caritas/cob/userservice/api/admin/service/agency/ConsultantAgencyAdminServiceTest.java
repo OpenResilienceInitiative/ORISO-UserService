@@ -15,7 +15,6 @@ import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestExceptio
 import de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHttpStatusException;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.ConsultantAgency;
-import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.Session.SessionStatus;
 import de.caritas.cob.userservice.api.port.out.ConsultantAgencyRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
@@ -135,28 +134,40 @@ class ConsultantAgencyAdminServiceTest {
   }
 
   // ---------------------------------------------------------------------------
-  // removeConsultantsFromTeamSessionsByAgencyId
+  // endTeamCounsellingForNewCases
   // ---------------------------------------------------------------------------
 
   @Test
-  void removeConsultantsFromTeamSessionsByAgencyId_Should_ChangeSessionsToNonTeam() {
-    var session = new Session();
-    session.setTeamSession(true);
-    when(sessionRepository.findByAgencyIdAndStatusAndTeamSessionIsTrue(
-            10L, SessionStatus.IN_PROGRESS))
-        .thenReturn(List.of(session));
-    when(consultantRepository.findByConsultantAgenciesAgencyIdInAndDeleteDateIsNull(List.of(10L)))
-        .thenReturn(List.of());
+  void endTeamCounsellingForNewCases_Should_CountOpenAndArchivedTeamCases() {
+    consultantAgencyAdminService.endTeamCounsellingForNewCases(10L);
 
-    consultantAgencyAdminService.removeConsultantsFromTeamSessionsByAgencyId(10L);
-
-    assertThat(session.isTeamSession()).isFalse();
-    verify(sessionRepository).save(session);
-    verify(removeFromSessionRoomsService).removeConsultantFromSessions(List.of(session));
+    // an archived team case can be reactivated and still needs its colleagues' team access
+    verify(sessionRepository)
+        .existsTeamCase(
+            10L,
+            List.of(
+                SessionStatus.INITIAL,
+                SessionStatus.NEW,
+                SessionStatus.IN_PROGRESS,
+                SessionStatus.IN_ARCHIVE));
   }
 
   @Test
-  void removeConsultantsFromTeamSessionsByAgencyId_Should_RemoveTeamFlag_When_NoOtherTeamAgency() {
+  void endTeamCounsellingForNewCases_Should_LeaveRunningTeamCasesAndTeamFlagsAlone() {
+    // The cases themselves are checked on persisted rows in ConsultantAgencyAdminUserServiceIT;
+    // this test covers the early return.
+    when(sessionRepository.existsTeamCase(any(), any())).thenReturn(true);
+
+    consultantAgencyAdminService.endTeamCounsellingForNewCases(10L);
+
+    verify(sessionRepository, never()).save(any());
+    verifyNoInteractions(removeFromSessionRoomsService);
+    verify(consultantRepository, never())
+        .findByConsultantAgenciesAgencyIdInAndDeleteDateIsNull(any());
+  }
+
+  @Test
+  void endTeamCounsellingForNewCases_Should_RemoveTeamFlag_When_NoOtherTeamAgency() {
     var consultantAgency = new ConsultantAgency();
     consultantAgency.setAgencyId(10L);
 
@@ -165,29 +176,26 @@ class ConsultantAgencyAdminServiceTest {
     consultant.setTeamConsultant(true);
     // Deliberately NOT populating consultant.consultantAgencies here: production code must no
     // longer touch that lazy collection (it reproduces LazyInitializationException outside an
-    // open Hibernate session — see #1069). noOtherTeamAgency() must instead go through
+    // open Hibernate session — see #1069). noOtherTeamAccess() must instead go through
     // consultantAgencyRepository, which is what this test stubs below.
 
-    when(sessionRepository.findByAgencyIdAndStatusAndTeamSessionIsTrue(
-            10L, SessionStatus.IN_PROGRESS))
-        .thenReturn(List.of());
+    when(sessionRepository.existsTeamCase(any(), any())).thenReturn(false);
     when(consultantRepository.findByConsultantAgenciesAgencyIdInAndDeleteDateIsNull(List.of(10L)))
         .thenReturn(List.of(consultant));
     when(consultantAgencyRepository.findByConsultantIdAndDeleteDateIsNull("c-1"))
         .thenReturn(List.of(consultantAgency));
     // The only agency is 10L (the one being removed), so no other team agency remains.
-    // noOtherTeamAgency filters out agencyId == 10L, leaving nothing — noneMatch returns true.
+    // noOtherTeamAccess filters out agencyId == 10L, leaving nothing — noneMatch returns true.
     // agencyService.getAgency is never called because the stream filters it out.
 
-    consultantAgencyAdminService.removeConsultantsFromTeamSessionsByAgencyId(10L);
+    consultantAgencyAdminService.endTeamCounsellingForNewCases(10L);
 
     assertThat(consultant.isTeamConsultant()).isFalse();
     verify(consultantRepository).save(consultant);
   }
 
   @Test
-  void
-      removeConsultantsFromTeamSessionsByAgencyId_Should_KeepTeamFlag_When_ConsultantHasOtherTeamAgency() {
+  void endTeamCounsellingForNewCases_Should_KeepTeamFlag_When_ConsultantHasOtherTeamAgency() {
     var convertedAgencyRelation = new ConsultantAgency();
     convertedAgencyRelation.setAgencyId(10L);
     var otherAgencyRelation = new ConsultantAgency();
@@ -201,19 +209,112 @@ class ConsultantAgencyAdminServiceTest {
     consultant.setId("c-1");
     consultant.setTeamConsultant(true);
 
-    when(sessionRepository.findByAgencyIdAndStatusAndTeamSessionIsTrue(
-            10L, SessionStatus.IN_PROGRESS))
-        .thenReturn(List.of());
+    when(sessionRepository.existsTeamCase(any(), any())).thenReturn(false);
     when(consultantRepository.findByConsultantAgenciesAgencyIdInAndDeleteDateIsNull(List.of(10L)))
         .thenReturn(List.of(consultant));
     when(consultantAgencyRepository.findByConsultantIdAndDeleteDateIsNull("c-1"))
         .thenReturn(List.of(convertedAgencyRelation, otherAgencyRelation));
     when(agencyService.getAgency(20L)).thenReturn(otherTeamAgency);
 
-    consultantAgencyAdminService.removeConsultantsFromTeamSessionsByAgencyId(10L);
+    consultantAgencyAdminService.endTeamCounsellingForNewCases(10L);
 
     assertThat(consultant.isTeamConsultant()).isTrue();
     verify(consultantRepository, never()).save(consultant);
+  }
+
+  /**
+   * FE#2494 *4 (Codex): a counsellor of centre A (switched earlier, team case still open) and
+   * centre B keeps the identifier when B switches, although A is no team agency any more.
+   */
+  @Test
+  void endTeamCounsellingForNewCases_Should_KeepTeamFlag_When_AnotherCentreStillHasATeamCase() {
+    var switchedRelation = new ConsultantAgency();
+    switchedRelation.setAgencyId(10L);
+    var earlierSwitchedRelation = new ConsultantAgency();
+    earlierSwitchedRelation.setAgencyId(20L);
+    var earlierSwitched = new AgencyDTO();
+    earlierSwitched.setId(20L);
+    earlierSwitched.setTeamAgency(false);
+    var consultant = new Consultant();
+    consultant.setId("c-1");
+    consultant.setTeamConsultant(true);
+
+    when(sessionRepository.existsTeamCase(org.mockito.ArgumentMatchers.eq(10L), any()))
+        .thenReturn(false);
+    when(sessionRepository.existsTeamCase(org.mockito.ArgumentMatchers.eq(20L), any()))
+        .thenReturn(true);
+    when(consultantRepository.findByConsultantAgenciesAgencyIdInAndDeleteDateIsNull(List.of(10L)))
+        .thenReturn(List.of(consultant));
+    when(consultantAgencyRepository.findByConsultantIdAndDeleteDateIsNull("c-1"))
+        .thenReturn(List.of(switchedRelation, earlierSwitchedRelation));
+    when(agencyService.getAgency(20L)).thenReturn(earlierSwitched);
+
+    consultantAgencyAdminService.endTeamCounsellingForNewCases(10L);
+
+    assertThat(consultant.isTeamConsultant()).isTrue();
+    verify(consultantRepository, never()).save(consultant);
+  }
+
+  /** CodeRabbit: another default centre without a team case does not keep the identifier. */
+  @Test
+  void endTeamCounsellingForNewCases_Should_RemoveTeamFlag_When_OtherCentreHasNoTeamCase() {
+    var switchedRelation = new ConsultantAgency();
+    switchedRelation.setAgencyId(10L);
+    var otherRelation = new ConsultantAgency();
+    otherRelation.setAgencyId(20L);
+    var other = new AgencyDTO();
+    other.setId(20L);
+    other.setTeamAgency(false);
+    var consultant = new Consultant();
+    consultant.setId("c-1");
+    consultant.setTeamConsultant(true);
+
+    when(sessionRepository.existsTeamCase(any(), any())).thenReturn(false);
+    when(consultantRepository.findByConsultantAgenciesAgencyIdInAndDeleteDateIsNull(List.of(10L)))
+        .thenReturn(List.of(consultant));
+    when(consultantAgencyRepository.findByConsultantIdAndDeleteDateIsNull("c-1"))
+        .thenReturn(List.of(switchedRelation, otherRelation));
+    when(agencyService.getAgency(20L)).thenReturn(other);
+
+    consultantAgencyAdminService.endTeamCounsellingForNewCases(10L);
+
+    assertThat(consultant.isTeamConsultant()).isFalse();
+    verify(consultantRepository).save(consultant);
+  }
+
+  /** CodeRabbit: each other centre is resolved once per type change, not once per counsellor. */
+  @Test
+  void endTeamCounsellingForNewCases_Should_ResolveEachOtherCentreOnce() {
+    var switchedRelation = new ConsultantAgency();
+    switchedRelation.setAgencyId(10L);
+    var otherRelation = new ConsultantAgency();
+    otherRelation.setAgencyId(20L);
+    var other = new AgencyDTO();
+    other.setId(20L);
+    other.setTeamAgency(false);
+    var first = new Consultant();
+    first.setId("c-1");
+    first.setTeamConsultant(true);
+    var second = new Consultant();
+    second.setId("c-2");
+    second.setTeamConsultant(true);
+
+    when(sessionRepository.existsTeamCase(any(), any())).thenReturn(false);
+    when(consultantRepository.findByConsultantAgenciesAgencyIdInAndDeleteDateIsNull(List.of(10L)))
+        .thenReturn(List.of(first, second));
+    when(consultantAgencyRepository.findByConsultantIdAndDeleteDateIsNull(any()))
+        .thenReturn(List.of(switchedRelation, otherRelation));
+    when(agencyService.getAgency(20L)).thenReturn(other);
+
+    consultantAgencyAdminService.endTeamCounsellingForNewCases(10L);
+
+    assertThat(first.isTeamConsultant()).isFalse();
+    assertThat(second.isTeamConsultant()).isFalse();
+    verify(consultantRepository).save(first);
+    verify(consultantRepository).save(second);
+    verify(agencyService, org.mockito.Mockito.times(1)).getAgency(20L);
+    verify(sessionRepository, org.mockito.Mockito.times(1))
+        .existsTeamCase(org.mockito.ArgumentMatchers.eq(20L), any());
   }
 
   // ---------------------------------------------------------------------------

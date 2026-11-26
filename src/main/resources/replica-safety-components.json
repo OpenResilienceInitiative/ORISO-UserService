@@ -1264,7 +1264,31 @@
       "components": [
         "repair"
       ],
-      "decision": "Uses a database lease to sweep accepted team sessions in id batches and lower non-owner counsellors to the Matrix reader power level. The write only ever lowers a level, so a repeated or concurrent sweep converges on the same state.",
+      "decision": "Uses a database lease to re-apply the Matrix reader power level to team cases marked read-only at accept or reassignment, in id batches. It never reads the centre's model; a repeated or concurrent run converges on the same state.",
+      "signals": [
+        "userservice.scheduler.executions",
+        "userservice.scheduler.duration"
+      ],
+      "status": "bounded",
+      "claim": {
+        "mechanism": "scheduled-task-claim",
+        "evidence": [
+          {
+            "contains": ["claims.tryClaimLease(", "TASK", "claims.runIfHeld("]
+          }
+        ]
+      }
+    },
+    {
+      "id": "case-sharing-model-snapshot",
+      "source": "src/main/java/de/caritas/cob/userservice/api/service/session/CaseSharingModelSnapshotScheduler.java",
+      "kind": "scheduler",
+      "owner": "team-counselling",
+      "risk": "duplicate-side-effect",
+      "components": [
+        "snapshot"
+      ],
+      "decision": "Uses a database lease to stamp the case sharing model once on cases created before the column, in id batches. The update only writes where the column is still null, so a repeated or concurrent run converges on the same state.",
       "signals": [
         "userservice.scheduler.executions",
         "userservice.scheduler.duration"

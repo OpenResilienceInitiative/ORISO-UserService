@@ -82,6 +82,8 @@ public class SessionMapper {
             nonNull(session.getConsultant()) ? session.getConsultant().getMatrixUserId() : null)
         .messageDate(toUnixTime(session.getEnquiryMessageDate()))
         .isTeamSession(session.isTeamSession())
+        .caseSharingModel(
+            session.getCaseSharingModel() == null ? null : session.getCaseSharingModel().name())
         .language(LanguageCode.fromValue(session.getLanguageCode().name()))
         .registrationType(session.getRegistrationType().name())
         .createDate(toIsoTime(session.getCreateDate()))

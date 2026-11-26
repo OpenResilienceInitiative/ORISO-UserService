@@ -30,6 +30,7 @@ import de.caritas.cob.userservice.api.model.CaseHandoverRequest;
 import de.caritas.cob.userservice.api.model.CaseHandoverRequest.AccessType;
 import de.caritas.cob.userservice.api.model.CaseHandoverRequest.Direction;
 import de.caritas.cob.userservice.api.model.CaseHandoverRequest.Status;
+import de.caritas.cob.userservice.api.model.CaseSharingModel;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.ConsultantAgency;
 import de.caritas.cob.userservice.api.model.ConsultantTopic;
@@ -683,8 +684,7 @@ public class CaseHandoverService {
     // FE#2494 *4 (decision d): in Teamberatung a room member of the department reads the case
     // without a request; writing stays with the owner (TeamSessionReadOnlyService). Only the read
     // fields change, so a pending offer, a takeover and its reclaim keep their state.
-    if (!status.isCanViewContent()
-        && isTeamReader(session, new java.util.HashMap<>(), joinedRooms(requester))) {
+    if (!status.isCanViewContent() && isTeamReader(session, joinedRooms(requester))) {
       status.setCanViewContent(true);
       if (OUTCOME_NOT_REQUESTED.equals(status.getStatus())) {
         status.setStatus(Status.GRANTED.name());
@@ -911,7 +911,6 @@ public class CaseHandoverService {
                 .collect(
                     Collectors.toMap(CandidateStatusRequest::getSessionId, Function.identity()));
     LocalDateTime now = LocalDateTime.now(clock);
-    Map<Long, Boolean> teamCentres = new java.util.HashMap<>();
     var requesterRooms = joinedRooms(requester);
     List<ConsultantSessionResponseDTO> page =
         pageSessions.stream()
@@ -919,7 +918,7 @@ public class CaseHandoverService {
                 candidate ->
                     toCandidateDto(candidate, agencyNames)
                         .caseHandoverStatus(
-                            isTeamReader(candidate, teamCentres, requesterRooms)
+                            isTeamReader(candidate, requesterRooms)
                                 ? teamReaderCandidateStatus()
                                 : candidateStatus(requestsBySession.get(candidate.getId()), now)))
             .collect(Collectors.toList());
@@ -2060,25 +2059,18 @@ public class CaseHandoverService {
 
   /**
    * Department eligibility is checked before. The team reader needs an accepted Teamberatung 1:1
-   * case in a centre whose <em>current</em> case sharing model is Teamberatung: after a switch to
-   * case handover or "none" the old team flag no longer opens the case, and a case handover centre
-   * keeps its request, handover and reclaim flow.
+   * case: the case keeps the model it was created under, so a later switch of the centre neither
+   * opens a case handover case to colleagues nor closes a team case (FE#2494 *4, 2026-11-25).
    */
   private boolean isTeamReader(
-      Session session,
-      Map<Long, Boolean> teamCentres,
-      java.util.function.Supplier<java.util.Set<String>> requesterRooms) {
+      Session session, java.util.function.Supplier<java.util.Set<String>> requesterRooms) {
     if (!session.isTeamCounsellingCase()
         || session.getConsultant() == null
         || session.getStatus() != Session.SessionStatus.IN_PROGRESS
-        || session.getAgencyId() == null
         || session.getMatrixRoomId() == null) {
       return false;
     }
-    return teamCentres.computeIfAbsent(
-            session.getAgencyId(),
-            agencyId -> caseSharingGate.isTeamCounselling(agencyId, session.getTenantId()))
-        && requesterRooms.get().contains(session.getMatrixRoomId());
+    return requesterRooms.get().contains(session.getMatrixRoomId());
   }
 
   private void verifyEligibleForSession(Session session, Consultant requester) {
@@ -2375,7 +2367,10 @@ public class CaseHandoverService {
     if (initial.needsPolicy()) {
       // outside any lock, like the policy read: the centre must have chosen case handover
       caseSharingGate.requireCaseHandover(
-          initial.agencyId(), initial.tenantId(), initial.conversationType());
+          initial.agencyId(),
+          initial.tenantId(),
+          initial.conversationType(),
+          initial.caseSharingModel());
     }
     return inNewTransaction(
         () -> {
@@ -2383,6 +2378,8 @@ public class CaseHandoverService {
           if (current.terminal() != null) return current.terminal();
           if (!initial.stamp().equals(current.stamp())
               || initial.needsPolicy() != current.needsPolicy()
+              // the locked case must still carry the model the gate checked above
+              || !Objects.equals(initial.caseSharingModel(), current.caseSharingModel())
               || !Objects.equals(initial.tenantId(), current.tenantId())
               || !Objects.equals(initial.agencyId(), current.agencyId())) {
             throw new ConflictException("Case handover changed while its policy was checked");
@@ -2404,7 +2401,7 @@ public class CaseHandoverService {
   }
 
   private PreparedAction terminalAction(CaseHandoverStatus status) {
-    return new PreparedAction(null, null, null, null, false, status, null);
+    return new PreparedAction(null, null, null, null, null, false, status, null);
   }
 
   private PreparedAction preparedAction(
@@ -2417,6 +2414,7 @@ public class CaseHandoverService {
         needsPolicy ? policyTenant(session) : null,
         session.getAgencyId(),
         AskerNotificationChannelPolicy.conversationType(session),
+        session.getCaseSharingModel(),
         needsPolicy,
         null,
         effect);
@@ -2427,6 +2425,7 @@ public class CaseHandoverService {
       Long tenantId,
       Long agencyId,
       ConversationType conversationType,
+      CaseSharingModel caseSharingModel,
       boolean needsPolicy,
       CaseHandoverStatus terminal,
       Function<CaseHandoverPolicyCacheService.CurrentPolicy, CaseHandoverStatus> effect) {}

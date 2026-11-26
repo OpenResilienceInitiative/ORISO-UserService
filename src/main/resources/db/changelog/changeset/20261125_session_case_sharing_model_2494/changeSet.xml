@@ -1,0 +1,59 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+  xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.3.xsd">
+  <!--
+    FE#2494 *4: each case keeps the case sharing model it was created under; a centre switch
+    affects new cases only. NULL = created before this column; CaseSharingModelSnapshotScheduler
+    stamps those rows once. Team 1:1 cases are stamped here: their team flag already records the
+    model they were created under. Additive and kept on application rollback.
+  -->
+  <changeSet id="20261125-session-case-sharing-model-2494" author="oriso">
+    <preConditions onFail="MARK_RAN" onError="HALT">
+      <not><columnExists tableName="session" columnName="case_sharing_model"/></not>
+    </preConditions>
+    <addColumn tableName="session">
+      <column name="case_sharing_model" type="varchar(32)"/>
+    </addColumn>
+    <rollback><sql>SELECT 1</sql></rollback>
+  </changeSet>
+  <changeSet id="20261125-session-case-sharing-model-team-2494" author="oriso">
+    <update tableName="session">
+      <column name="case_sharing_model" value="TEAM_COUNSELLING"/>
+      <where>is_team_session = 1 AND case_sharing_model IS NULL
+        AND (conversation_type = 'AGENCY_COUNSELLING'
+          OR (conversation_type IS NULL
+            AND (registration_type IS NULL OR registration_type &lt;&gt; 'ANONYMOUS')
+            AND (postcode IS NULL OR postcode &lt;&gt; '00000')))</where>
+    </update>
+    <rollback><sql>SELECT 1</sql></rollback>
+  </changeSet>
+  <!--
+    FE#2494 *4: when a Teamberatung case became read-only for colleagues (accept or reassignment
+    after this release). NULL for cases accepted before: they stay as they are, and the repair job
+    of TeamSessionReadOnlyRepairScheduler only touches marked cases.
+  -->
+  <changeSet id="20261125-session-team-read-only-since-2494" author="oriso">
+    <preConditions onFail="MARK_RAN" onError="HALT">
+      <not><columnExists tableName="session" columnName="team_read_only_since"/></not>
+    </preConditions>
+    <addColumn tableName="session">
+      <column name="team_read_only_since" type="datetime"/>
+    </addColumn>
+    <rollback><sql>SELECT 1</sql></rollback>
+  </changeSet>
+  <!--
+    FE#2494 *4: serves the snapshot scan of CaseSharingModelSnapshotScheduler (unstamped cases in id
+    order) without a full table scan.
+  -->
+  <changeSet id="20261125-session-case-sharing-model-index-2494" author="oriso">
+    <preConditions onFail="MARK_RAN" onError="HALT">
+      <not><indexExists tableName="session" indexName="idx_session_case_sharing_model"/></not>
+    </preConditions>
+    <createIndex tableName="session" indexName="idx_session_case_sharing_model">
+      <column name="case_sharing_model"/>
+      <column name="id"/>
+    </createIndex>
+    <rollback><dropIndex tableName="session" indexName="idx_session_case_sharing_model"/></rollback>
+  </changeSet>
+</databaseChangeLog>
